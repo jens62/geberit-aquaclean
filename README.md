@@ -6,7 +6,7 @@ It connects to the Geberit AquaClean Mera toilet and works fine for basic contro
 
 ## Use cases
 
-- Connect [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") to the home automation software of your choice via [MQTT](http://mqtt.org/ "MQTT") broker, e.g. [openHAB](https://www.openhab.org "openHAB") or [Home Assistant](https://www.home-assistant.io "Home Assistant").
+- Connect [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") to the home automation software of your choice via [MQTT](http://mqtt.org/ "MQTT") broker, e.g. [openHAB](https://www.openhab.org "openHAB") (see [Geberit AquaClean with openHAB - Basic UI](./operation_support/Geberit%20AquaClean%20with%20openHAB%20-%20Basic%20UI.png)) or [Home Assistant](https://www.home-assistant.io "Home Assistant").
 
 - Control [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") via e.g. Apple Homekit and your home automation software by voice. (Voice control Geberit AquaClean)
 
@@ -307,6 +307,8 @@ The following topics are used:
 - `Geberit/AquaClean/peripheralDevice/monitor/isLadyShowerRunning              `
 - `Geberit/AquaClean/peripheralDevice/monitor/isDryerRunning                   `
 - `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition                `
+
+See [MQTT Explorer.png](https://github.com/jens62/geberit-aquaclean/blob/main/operation_support/MQTT%20Explorer.png)
 
 
 ## How does ist work?
