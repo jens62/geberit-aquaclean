@@ -1,0 +1,13 @@
+[Unit]
+Desription=aquaclean to monitor and control Geberit Aquaclean Mera Comfort
+After=network.target
+After=bluetooth.target
+
+[Service]
+Type=simple
+ExecStart=/absolute/path/to/start_aquaclean.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
