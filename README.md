@@ -16,7 +16,7 @@ It connects to the Geberit AquaClean Mera toilet and works fine for basic contro
 
 - Dismiss the user when they leave the toilet. ("*Prima, dass wir ins Geschäft gekommen waren.*")
 
-- Inform the user of the duration of their session. ("*Wir hat für 3 Minuten und 19 Sekunden das Vergnügen*")
+- Inform the user of the duration of their session. ("*Wir hatten für 3 Minuten und 19 Sekunden das Vergnügen.*")
 
 
 
