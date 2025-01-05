@@ -1,19 +1,37 @@
 
+# monitor the `aquaclean_console_app`
 
+## tail current log
 ```
 └─$ tail -f /absolute/path/to/aquaclean_console_app/logs/aquaclean_$(date '+%Y.%m.%d').log
 ```
 
-```
-└─$ cat /proc/$(pgrep -f aquaclean_console_app)/statm  
-29892 8284 3094 1535 0 7607 0
-```
+## get process info
 
 ```
 └─$ ps v $(pgrep -f aquaclean_console_app)                                          
     PID TTY      STAT   TIME  MAJFL   TRS   DRS   RSS %MEM COMMAND
    1405 ?        Sl    15:52      0     0 119568 33136  0.4 /usr/bin/python /absolute/path/to/aquaclean_console_app/main.py
 
+```
+
+
+
+## monitor memory usage
+```
+
+
+```
+┌──(kali㉿raspi-5)-[/usr/src/kernel/Documentation]
+└─$ free -h                                            
+               total        used        free      shared  buff/cache   available
+Mem:           7.8Gi       236Mi       5.3Gi       6.7Mi       2.3Gi       7.5Gi
+Swap:             0B          0B          0B                                              
+```
+
+
+└─$ cat /proc/$(pgrep -f aquaclean_console_app)/statm  
+29892 8284 3094 1535 0 7607 0
 ```
 
 
@@ -32,14 +50,7 @@ See `/usr/src/kernel/Documentation/filesystems/proc.rst` (on Raspberry Pi):
 | dt       | number of dirty pages | (always 0 on 2.6)              |
 
 
-
-```
-┌──(kali㉿raspi-5)-[/usr/src/kernel/Documentation]
-└─$ free -h                                            
-               total        used        free      shared  buff/cache   available
-Mem:           7.8Gi       236Mi       5.3Gi       6.7Mi       2.3Gi       7.5Gi
-Swap:             0B          0B          0B                                              
-```
+## run `aquaclean_console_app` during development
 
 
-`PYTHONMALLOC=debug PYTHONASYNCIODEBUG=1  PYTHONTRACEMALLOC=1 python -W default -X faulthandler /home/kali/homeautomation/geberit-py_bleak/V7_2024-12-03/toggleLidPosition.py`
+`PYTHONMALLOC=debug PYTHONASYNCIODEBUG=1  PYTHONTRACEMALLOC=1 python -W default -X faulthandler /absolute/path/to/aquaclean_console_app/main.py`
