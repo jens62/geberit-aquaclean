@@ -159,7 +159,7 @@ Dec 19 10:25:04 raspi-5 bluetoothd[494]: Battery Provider Manager created
 
 Check whether the Geberit AquaClean toilet is visible using the  *Bluetooth Control Command Line Tool* `bluetoothctl`
 
-Once `bluetoothctl` is started use the command `scan on` to start the discovery. Use `scan off` to staop the discovery and `quit` to leave `bluetoothctl`
+Once `bluetoothctl` is started use the command `scan on` to start the discovery. Use `scan off` to stop the discovery and `quit` to leave `bluetoothctl`
 
 The discovery includes `[bluetooth]# [NEW] Device XX:XX:XX:XX:XX:XX Geberit AC PRO` in case of success:
 

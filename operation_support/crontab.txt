@@ -1,0 +1,3 @@
+# If cronolog is in use and not logrotate, it must be cleaned up.
+30 1 * * * /usr/bin/find /absolute/path/to/logs/ -mtime +3 -type f -name 'aquaclean_20[2-9][0-9].[0-1][0-9].[0-3][0-9].log' -exec gzip {} +
+35 1 * * * /usr/bin/find /absolute/path/to/logs/ -mtime +8 -type f -name 'aquaclean_20[2-9][0-9].[0-1][0-9].[0-3][0-9].log.gz' -delete
