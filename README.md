@@ -31,7 +31,7 @@ As the appliance comes with a remote control and an app, there had to be interfa
 During my research I came across [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s ['Geberit AquaClean Mera Library'](https://github.com/thomas-bingel/geberit-aquaclean "'Geberit AquaClean Mera Library'") project.
 
 I managed to compile my very first C# project.
-After 
+After
  - adapting the addresses (BLE address of the AquaClean, address of the mqtt server) and 
  - allowing access to the private network ( see [Universal Windows project - HttpClient exception](https://stackoverflow.com/questions/33235131/universal-windows-project-httpclient-exception "Universal Windows project - HttpClient exception"): `Double-click the Package.appxmanifest file in your project. Click on the Capabilities tab. Add the Private Networks capability to your project.`)
 
@@ -79,7 +79,7 @@ Operating System: Ubuntu 24.04.1 LTS
           Kernel: Linux 6.8.0-51-generic
     Architecture: x86-64
   Hardware Model: VirtualBox
-````
+```
 and
 
 SABRENT USB Bluetooth 4.0 Mikro Adapter
@@ -95,7 +95,6 @@ Operating System: Kali GNU/Linux Rolling
     Architecture: arm64
 ```
 and Python 3.12.8
-
 
 
 
