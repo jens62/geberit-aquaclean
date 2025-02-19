@@ -96,7 +96,7 @@ Operating System: Kali GNU/Linux Rolling
 ```
 and Python 3.12.8
 
-#### Python  3.13
+#### Python 3.13
 
 <ins>**Warning:**</ins> With Python 3.13 `haggis/logs.py` broke.
 See [AttributeError: module 'logging' has no attribute '_acquireLock' when calling add_trace_level – Potential Python 3.13 Compatibility Issue](https://gitlab.com/madphysicist/haggis/-/issues/2)
