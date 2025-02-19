@@ -106,7 +106,6 @@ I added [workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355
 After applying the described [workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561), no further problems occurred with Python 3.13.2.
 
 
-
 ## Installation
 
 For now, just download and unpack the folder `aquaclean_console_app`.
@@ -355,7 +354,6 @@ The application has subscribed to the `Geberit/AquaClean/peripheralDevice/contro
   - Double check shutdown process
   - Double check exception handling
   - Consolidate function to publish to mqtt
-  - Replace `sleep` to wait for the `mqtt-client` to initialise with a `event_wait_queue.get(timeout=0.1)`
   - Make `orientationLightState` work
 - Following [PEP 8 – Style Guide for Python Code](https://peps.python.org/pep-0008/ "PEP 8 – Style Guide for Python Code")'s guidelines, revise the programme.
 

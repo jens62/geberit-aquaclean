@@ -16,6 +16,7 @@ from aquaclean_utils                                           import utils
 import os
 import configparser
 
+from queue import Queue, Empty
 from aiorun import run, shutdown_waits_for
 from signal import SIGINT, SIGTERM
 
@@ -47,10 +48,27 @@ class MainPage:
     def __init__(self):
         self.mqttConfig = dict(config.items('MQTT'))
         self.mqtt_service = Mqtt(self.mqttConfig)
-        self.client = None        
+        self.client = None
+        self.mqtt_initialized_wait_queue = Queue()  
 
     async def initialize(self):
-        await self.mqtt_service.start_async( asyncio.get_running_loop())
+        await self.mqtt_service.start_async( asyncio.get_running_loop(), self.mqtt_initialized_wait_queue)
+
+        logger.trace(f"self.mqtt_initialized_wait_queue.qsize(): {self.mqtt_initialized_wait_queue.qsize()}")
+        mqtt_initialized_wait_queue_get_result = "No value yet"
+        count = 50 
+        while True and count > 0:
+            count -= 1
+            try:
+                logger.trace(f"self.mqtt_initialized_wait_queue.get()...")
+                mqtt_initialized_wait_queue_get_result = self.mqtt_initialized_wait_queue.get(timeout=0.1)
+                logger.trace(f"mqtt_initialized_wait_queue_get_result: {mqtt_initialized_wait_queue_get_result}")
+                break
+            except Empty:
+                logger.trace(f"mqtt_initialized_wait_queue_get_result - timeout")
+                logger.trace(f"mqtt_initialized_wait_queue_get_result: {mqtt_initialized_wait_queue_get_result}")
+            await asyncio.sleep(0.1)
+
         await self.test3()
 
     async def test3(self):
@@ -62,7 +80,7 @@ class MainPage:
         # for some reason self.mqtt_service.ToggleLidPosition was not available without wait??
         # TODO sync (with means of a queue, similar to on_transaction_completeForBaseClient in AquaCleanBaseClient),
         # because mqtt runs in an other thread)
-        await asyncio.sleep(3)
+
         self.mqtt_service.ToggleLidPosition += self.on_toggleLidMessage
     
         self.client = factory.create_client()
@@ -82,12 +100,13 @@ class MainPage:
             await self.client.connect(device_id)
         except Exception as e:
             exception_class_name = get_full_class_name(e)
-            logger.trace(f'{exception_class_name}: {e}')
+            logger.error(f'{exception_class_name}: {e}')
             if exception_class_name == "bleak.exc.BleakError" and (str(e) == "Service Discovery has not been performed yet"):
                 logger.error(f'this exception is ok on shutdown')
             else:
                 print ('{exception_class_name}: {e}')
                 print(traceback.format_exc())
+
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", f'{exception_class_name}: {e}, see log for details')
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
                 if exception_class_name == "bleak.exc.BleakError":
@@ -115,7 +134,9 @@ class MainPage:
                     # ...
                     # __main__ 91 ERROR: TimeoutError:
                     print(e)
-            exit(1)
+            exitCode = 1
+            logger.error(f"existing with exitCode {exitCode} ...")
+            exit(exitCode)
         finally:
             logger.trace(f'finally...')
             await self.client.disconnect()

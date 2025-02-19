@@ -24,13 +24,14 @@ class MqttService:
         self.ToggleLidPosition = myEvent.EventHandler()
 
 
-    async def start_async(self, aquaclean_loop):
-        self.aquaclean_loop       = aquaclean_loop
-        self.mqttc.on_connect     = self.on_connect
-        self.mqttc.on_message     = self.on_message
-        self.mqttc.on_subscribe   = self.on_subscribe
-        self.mqttc.on_unsubscribe = self.on_unsubscribe
-        self.mqttc.on_publish     = self.on_publish
+    async def start_async(self, aquaclean_loop, mqtt_initialized_wait_queue):
+        self.aquaclean_loop              = aquaclean_loop
+        self.mqtt_initialized_wait_queue = mqtt_initialized_wait_queue
+        self.mqttc.on_connect            = self.on_connect
+        self.mqttc.on_message            = self.on_message
+        self.mqttc.on_subscribe          = self.on_subscribe
+        self.mqttc.on_unsubscribe        = self.on_unsubscribe
+        self.mqttc.on_publish            = self.on_publish
 
         self.mqttc.user_data_set([])
         # self.mqttc.username_pw_set(username, password)
@@ -68,6 +69,8 @@ class MqttService:
         else:
             logger.info(f"Broker granted the following QoS: {reason_code_list[0].value}")
             logger.trace("subscription properties: %s", properties)
+            logger.trace("self.mqtt_initialized_wait_queue.put('on_subscribe without errors')")
+            self.mqtt_initialized_wait_queue.put("on_subscribe without errors")
 
     def on_unsubscribe(self, client, userdata, mid, reason_code_list, properties):
         # Be careful, the reason_code_list is only present in MQTTv5.
