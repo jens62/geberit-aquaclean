@@ -76,13 +76,17 @@ Check that all entities are created:
    mkdir -p /config/www/custom_icons/geberit
    ```
 
-2. Upload your SVG icon files to `/config/www/custom_icons/geberit/`:
-   - `is_user_sitting-on.svg`
-   - `is_user_sitting-off.svg`
-   - `analshower.svg`
-   - `ladywash.svg`
-   - `dryer_to_the_right-on.svg`
-   - `dryer_to_the_right-off.svg`
+2. Copy the SVG icon files from the project's `graphics/` folder to `/config/www/custom_icons/geberit/`:
+   ```bash
+   cp /path/to/geberit-aquaclean/graphics/is_user_sitting-on.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/is_user_sitting-off.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/analshower.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/ladywash.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/dryer_to_the_right-on.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/dryer_to_the_right-off.svg /config/www/custom_icons/geberit/
+   ```
+
+   **Note:** Replace `/path/to/geberit-aquaclean` with the actual path where you cloned this repository. The required SVG files are available in the [`graphics/`](https://github.com/jens62/geberit-aquaclean/tree/main/graphics) folder of this project.
 
 3. Set proper permissions:
    ```bash
@@ -96,13 +100,13 @@ Check that all entities are created:
    http://YOUR_HOME_ASSISTANT:8123/local/custom_icons/geberit/is_user_sitting-on.svg
    ```
 
-### Icon Files Required
+### Icon Files Included
 
-The following icon files are needed:
-- **User Sitting**: Two states (on/off)
-- **Anal Shower**: Single icon (brightness adjusted for on/off)
-- **Lady Shower**: Single icon (brightness adjusted for on/off)
-- **Dryer**: Two states (on/off)
+The following icon files are included in the project's [`graphics/`](https://github.com/jens62/geberit-aquaclean/tree/main/graphics) folder:
+- **User Sitting**: Two states (`is_user_sitting-on.svg`, `is_user_sitting-off.svg`)
+- **Anal Shower**: Single icon (`analshower.svg`) - brightness adjusted for on/off states
+- **Lady Shower**: Single icon (`ladywash.svg`) - brightness adjusted for on/off states
+- **Dryer**: Two states (`dryer_to_the_right-on.svg`, `dryer_to_the_right-off.svg`)
 
 ## Dashboard Cards
 
