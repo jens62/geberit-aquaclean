@@ -2,6 +2,8 @@
 
 This guide provides complete setup instructions for integrating a Geberit AquaClean smart toilet with Home Assistant via MQTT.
 
+![Geberit AquaClean in Home Assistant](./geberit-aquaclean-in-homeassistant.png)
+
 ## Table of Contents
 - [Prerequisites](#prerequisites)
 - [MQTT Topics](#mqtt-topics)
