@@ -318,6 +318,45 @@ The following topics are used:
 See [MQTT Explorer.png](https://github.com/jens62/geberit-aquaclean/blob/main/operation_support/MQTT%20Explorer.png)
 
 
+## Home Assistant Integration
+
+This project includes a complete Home Assistant integration via MQTT. The integration allows you to monitor your Geberit AquaClean toilet status and control the lid position directly from Home Assistant.
+
+![Geberit AquaClean in Home Assistant](./homeassistant/geberit-aquaclean-in-homeassistant.png)
+
+### Features
+
+- **Binary Sensors**: Monitor user sitting, anal shower, lady shower, and dryer status
+- **Sensors**: View device information (SAP number, serial number, production date, etc.)
+- **Switch**: Control the toilet lid position
+- **Dashboard Cards**: Two ready-to-use dashboard options (simple and advanced with custom icons)
+- **Custom Icons**: Support for custom SVG icons to visualize toilet states
+
+### Quick Start
+
+1. Ensure the AquaClean console application is running and publishing to your MQTT broker
+2. Navigate to the [`homeassistant/`](./homeassistant/) directory
+3. Follow the complete setup instructions in [`homeassistant/SETUP_GUIDE.md`](./homeassistant/SETUP_GUIDE.md)
+
+### Available Files
+
+All Home Assistant integration files are located in the [`homeassistant/`](./homeassistant/) directory:
+
+- **[SETUP_GUIDE.md](./homeassistant/SETUP_GUIDE.md)** - Complete installation and configuration guide with troubleshooting
+- **[configuration_mqtt.yaml](./homeassistant/configuration_mqtt.yaml)** - MQTT entities configuration for `configuration.yaml`
+- **[dashboard_simple_card.yaml](./homeassistant/dashboard_simple_card.yaml)** - Basic dashboard card (no custom components required)
+- **[dashboard_button_card.yaml](./homeassistant/dashboard_button_card.yaml)** - Advanced dashboard with custom icons (requires Custom Button Card from HACS)
+
+### Prerequisites
+
+- Home Assistant with MQTT integration configured
+- MQTT broker running and accessible
+- This AquaClean console application running and connected to the MQTT broker
+- (Optional) Custom Button Card from HACS for the advanced dashboard
+
+For detailed setup instructions, troubleshooting, and customization options, see the complete guide: [`homeassistant/SETUP_GUIDE.md`](./homeassistant/SETUP_GUIDE.md)
+
+
 ## How does ist work?
 
 If you are interested in the process, you can set the 

@@ -1,0 +1,50 @@
+# Simple Dashboard Card for Geberit AquaClean
+# No custom components required
+# Use this if you don't want to install Custom Button Card
+
+type: vertical-stack
+cards:
+  - type: markdown
+    content: |
+      ## Geberit AquaClean Mera Comfort
+      ### 1. OG, Toilette im Master-Bad
+  
+  - type: entities
+    title: Control
+    entities:
+      - entity: switch.geberit_aquaclean_toggle_lid
+        name: Toggle Lid Position
+  
+  - type: entities
+    title: Monitor
+    entities:
+      - entity: binary_sensor.geberit_aquaclean_user_sitting
+        name: User Sitting
+      - entity: binary_sensor.geberit_aquaclean_anal_shower_running
+        name: Anal Shower Running
+      - entity: binary_sensor.geberit_aquaclean_lady_shower_running
+        name: Lady Shower Running
+      - entity: binary_sensor.geberit_aquaclean_dryer_running
+        name: Dryer Running
+  
+  - type: entities
+    title: Device Information
+    entities:
+      - entity: sensor.geberit_aquaclean_sap_number
+        name: SAP Number
+      - entity: sensor.geberit_aquaclean_production_date
+        name: Production Date
+      - entity: sensor.geberit_aquaclean_serial_number
+        name: Serial Number
+      - entity: sensor.geberit_aquaclean_description
+        name: Description
+      - entity: sensor.geberit_aquaclean_initial_operation_date
+        name: Initial Operation Date
+  
+  - type: entities
+    title: Connection Status
+    entities:
+      - entity: sensor.geberit_aquaclean_connected
+        name: Connected
+      - entity: sensor.geberit_aquaclean_error
+        name: Error

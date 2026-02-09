@@ -1,0 +1,90 @@
+# Add this section to your configuration.yaml
+# This configures all MQTT entities for the Geberit AquaClean integration
+
+mqtt:
+  sensor:
+    # Monitor sensors (string values from MQTT)
+    - name: "Geberit AquaClean User Sitting"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isUserSitting"
+      icon: mdi:seat
+      
+    - name: "Geberit AquaClean Anal Shower Running"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isAnalShowerRunning"
+      icon: mdi:shower
+      
+    - name: "Geberit AquaClean Lady Shower Running"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isLadyShowerRunning"
+      icon: mdi:shower
+      
+    - name: "Geberit AquaClean Dryer Running"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isDryerRunning"
+      icon: mdi:air-filter
+      
+    # Device information
+    - name: "Geberit AquaClean SAP Number"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/Identification/SapNumber"
+      icon: mdi:identifier
+      
+    - name: "Geberit AquaClean Production Date"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/Identification/ProductionDate"
+      icon: mdi:calendar
+      
+    - name: "Geberit AquaClean Serial Number"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/Identification/SerialNumber"
+      icon: mdi:barcode
+      
+    - name: "Geberit AquaClean Description"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/Identification/Description"
+      icon: mdi:information
+      
+    - name: "Geberit AquaClean Initial Operation Date"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/initialOperationDate"
+      icon: mdi:calendar-clock
+      
+    - name: "Geberit AquaClean Connected"
+      state_topic: "Geberit/AquaClean/centralDevice/connected"
+      icon: mdi:bluetooth-connect
+      
+    - name: "Geberit AquaClean Error"
+      state_topic: "Geberit/AquaClean/centralDevice/error"
+      icon: mdi:alert-circle
+
+  switch:
+    # Control switch for lid position
+    - name: "Geberit AquaClean Toggle Lid"
+      command_topic: "Geberit/AquaClean/peripheralDevice/control/toggleLidPosition"
+      payload_on: "true"
+      payload_off: "false"
+      icon: mdi:toilet
+      optimistic: true
+      retain: false
+  
+  binary_sensor:
+    # Binary sensors for monitor states (on/off display)
+    # Note: payload_on and payload_off use "True"/"False" (capitalized)
+    # to match the MQTT messages from the Geberit device.
+    # Adjust to "true"/"false" (lowercase) if your device differs.
+    
+    - name: "Geberit AquaClean User Sitting"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isUserSitting"
+      payload_on: "True"
+      payload_off: "False"
+      icon: mdi:seat
+      
+    - name: "Geberit AquaClean Anal Shower Running"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isAnalShowerRunning"
+      payload_on: "True"
+      payload_off: "False"
+      icon: mdi:shower
+      
+    - name: "Geberit AquaClean Lady Shower Running"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isLadyShowerRunning"
+      payload_on: "True"
+      payload_off: "False"
+      icon: mdi:shower
+      
+    - name: "Geberit AquaClean Dryer Running"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isDryerRunning"
+      payload_on: "True"
+      payload_off: "False"
+      icon: mdi:air-filter
