@@ -6,12 +6,48 @@ This guide provides complete setup instructions for integrating a Geberit AquaCl
 
 
 ## Table of Contents
+- [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [MQTT Topics](#mqtt-topics)
 - [Configuration](#configuration)
 - [Custom Icons](#custom-icons)
 - [Dashboard Cards](#dashboard-cards)
 - [Troubleshooting](#troubleshooting)
+
+## Architecture
+
+### Why MQTT Integration Instead of a Custom Component?
+
+This integration uses **MQTT** rather than a native Home Assistant custom component. This architectural choice is intentional and optimal for Bluetooth LE devices:
+
+#### The BLE Proximity Challenge
+
+The Geberit AquaClean communicates via **Bluetooth Low Energy (BLE)**, which has a limited range (typically 10-30 meters, much less through walls). The device running the AquaClean software **must be physically close to the toilet**.
+
+#### Current Architecture (Optimal)
+
+```
+AquaClean (BLE) ← → Raspberry Pi (Bridge) → MQTT Broker → Home Assistant
+   [Bathroom]           [Bathroom]           [Network]      [Anywhere]
+```
+
+**Benefits:**
+- ✅ Small, inexpensive Raspberry Pi placed near the toilet handles BLE
+- ✅ MQTT broker distributes data across your network
+- ✅ Home Assistant can run anywhere (cellar, server room, etc.)
+- ✅ Easy to hide a small RPi in the bathroom
+- ✅ Works with any MQTT-capable system (Home Assistant, openHAB, Node-RED)
+- ✅ Decoupled architecture - debug BLE issues without touching HA
+- ✅ Scalable - multiple toilets = multiple Raspberry Pis
+
+#### Why Not a Custom Component?
+
+A custom Home Assistant component would still require:
+1. A device near the toilet to handle BLE communication
+2. Some protocol (like MQTT) to communicate with Home Assistant
+3. Additional complexity without solving the proximity requirement
+
+This MQTT-based approach is the industry-standard pattern for BLE devices, similar to how Philips Hue uses a bridge or Zigbee uses coordinators.
 
 ## Prerequisites
 
