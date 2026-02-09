@@ -83,28 +83,66 @@ The integration uses the following MQTT topics:
 
 ## Configuration
 
-### 1. Add MQTT Configuration to configuration.yaml
+You have **two options** for configuring the entities in Home Assistant:
 
-Add the MQTT entities to your `configuration.yaml`. See the complete configuration in [`configuration_mqtt.yaml`](configuration_mqtt.yaml).
+### Option 1: MQTT Discovery (Recommended) ⭐
 
-**Important Note:** The binary sensors use `payload_on: "True"` and `payload_off: "False"` (capitalized) to match the MQTT messages from the Geberit device. If your device sends lowercase `true`/`false`, adjust accordingly.
+**Pros:** Automatic entity creation, no manual YAML editing, entities grouped as a device, easier updates
+**Cons:** Requires running a script once
 
-### 2. Restart Home Assistant
+**Steps:**
 
-After adding the configuration:
-1. Go to **Developer Tools** → **YAML**
-2. Click **Check Configuration** to verify syntax
-3. Click **Restart** to apply changes
+1. **Run the discovery script** from the `homeassistant/` directory:
+   ```bash
+   python publish_discovery.py --host YOUR_MQTT_BROKER_IP
+   ```
 
-### 3. Verify Entities
+   With authentication:
+   ```bash
+   python publish_discovery.py --host 192.168.1.100 --username admin --password secret
+   ```
 
-Check that all entities are created:
-- Go to **Settings** → **Devices & Services** → **Entities**
-- Search for "Geberit AquaClean"
-- You should see:
-  - 4 binary sensors (monitor states)
-  - 7 sensors (device information and status)
-  - 1 switch (lid control)
+2. **Verify in Home Assistant**:
+   - Go to **Settings** → **Devices & Services** → **MQTT**
+   - You should see **"Geberit AquaClean"** device
+   - Click on it to see all 12 entities grouped together
+   - All entities are automatically created - no configuration.yaml editing needed!
+
+**Important Notes:**
+- The script publishes discovery messages to your MQTT broker
+- Home Assistant (connected to the same MQTT broker) automatically detects and creates the entities
+- Works alongside any existing manual MQTT configuration in `configuration.yaml`
+- Binary sensors use `payload_on: "True"` and `payload_off: "False"` (capitalized)
+
+### Option 2: Manual Configuration
+
+**Pros:** Full control over entity configuration
+**Cons:** Manual YAML editing, entities not grouped as a device, harder to update
+
+**Steps:**
+
+1. **Add MQTT Configuration to configuration.yaml**
+
+   Add the MQTT entities to your `configuration.yaml`. See the complete configuration in [`configuration_mqtt.yaml`](configuration_mqtt.yaml).
+
+   **Important Note:** The binary sensors use `payload_on: "True"` and `payload_off: "False"` (capitalized) to match the MQTT messages from the Geberit device. If your device sends lowercase `true`/`false`, adjust accordingly.
+
+2. **Restart Home Assistant**
+
+   After adding the configuration:
+   - Go to **Developer Tools** → **YAML**
+   - Click **Check Configuration** to verify syntax
+   - Click **Restart** to apply changes
+
+3. **Verify Entities**
+
+   Check that all entities are created:
+   - Go to **Settings** → **Devices & Services** → **Entities**
+   - Search for "Geberit AquaClean"
+   - You should see:
+     - 4 binary sensors (monitor states)
+     - 7 sensors (device information and status)
+     - 1 switch (lid control)
 
 ## Custom Icons
 
