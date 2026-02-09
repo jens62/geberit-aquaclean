@@ -324,6 +324,7 @@ This project includes a complete Home Assistant integration via MQTT. The integr
 
 ![Geberit AquaClean in Home Assistant](./homeassistant/geberit-aquaclean-in-homeassistant.png)
 
+
 ### Features
 
 - **Binary Sensors**: Monitor user sitting, anal shower, lady shower, and dryer status
