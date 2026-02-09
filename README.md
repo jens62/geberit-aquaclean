@@ -322,7 +322,7 @@ See [MQTT Explorer.png](https://github.com/jens62/geberit-aquaclean/blob/main/op
 
 This project includes a complete Home Assistant integration via MQTT. The integration allows you to monitor your Geberit AquaClean toilet status and control the lid position directly from Home Assistant.
 
-![Geberit AquaClean in Home Assistant](./homeassistant/geberit-aquaclean-in-homeassistant.png)
+![Geberit AquaClean in Home Assistant](./homeassistant/geberit_aquaclean_in_homeassistant.png)
 
 
 ### Features
