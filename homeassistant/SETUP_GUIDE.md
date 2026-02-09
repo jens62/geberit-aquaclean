@@ -108,6 +108,8 @@ You have **two options** for configuring the entities in Home Assistant:
    - Click on it to see all 12 entities grouped together
    - All entities are automatically created - no configuration.yaml editing needed!
 
+   ![MQTT Discovery Result](./mqtt_discovery_result.png)
+
 **Important Notes:**
 - The script publishes discovery messages to your MQTT broker
 - Home Assistant (connected to the same MQTT broker) automatically detects and creates the entities
