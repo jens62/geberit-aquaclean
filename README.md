@@ -220,11 +220,6 @@ The *nRF Connect for Mobile* app developed by Nordic Semiconductor ASA can also 
 
 Modify at least the `server` address in the `MQTT` section of the `config.ini` file as appropriate.
 
-Edit the config file.
-At least the address for the AquaClean and the MQTT server.
-
-I found out the address of the AquaClean using the 'nRF Connect' app.
-
 ### run the console application
 
 Just run `python /path/to/aquaclean_console_app/main.py` and watch the result in your favorite MQTT Tool.
