@@ -220,6 +220,17 @@ The *nRF Connect for Mobile* app developed by Nordic Semiconductor ASA can also 
 
 Modify at least the `server` address in the `MQTT` section of the `config.ini` file as appropriate.
 
+#### Polling interval
+
+The interval at which the device status is polled can be configured in the `POLL` section of `config.ini` (value in seconds):
+
+```
+[POLL]
+interval = 10.5
+```
+
+A longer interval reduces the frequency of BLE requests to the AquaClean, which may help extend the connection lifetime and avoid the issue where the device stops responding after a few days.
+
 ### run the console application
 
 Just run `python /path/to/aquaclean_console_app/main.py` and watch the result in your favorite MQTT Tool.
@@ -371,7 +382,7 @@ Subsequently *requests* are assembled from the Python script (see `AquaCleanClie
 The *response* comes asynchronously and can consist of several chunks, so-called *frames*.
 These response frames are collected (see `FrameCollector.py`), assembled into one transaction-response, deserialised/decoded and then published via mqtt.
 
-The request to query the device status (`get_system_parameter_list_async`, e.g. `userIsSitting`, ...) is repeated every 2.5 seconds.
+The request to query the device status (`get_system_parameter_list_async`, e.g. `userIsSitting`, ...) is repeated at a configurable interval (see `[POLL] interval` in `config.ini`; default: 10.5 seconds).
 The request/response cycle for this is approximately 600 ms.
 
 Set `log_level = TRACE` in `config.ini` and run
