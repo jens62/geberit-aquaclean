@@ -97,7 +97,19 @@ class MainPage:
         await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
 
         try:
-            await self.client.connect(device_id)
+            # Attempt to fetch and convert the value
+            interval = float(config.get("POLL", "interval"))
+        except Exception as e:
+            # Use a default fallback
+            interval = 2.5 
+            # Log the specific error and the action taken
+            logger.warning(
+                f"Could not read 'intervall' from config (Error: {e}). "
+                f"Falling back to default: {interval} seconds."
+            )
+
+        try:
+            await self.client.connect(device_id, interval)
         except Exception as e:
             exception_class_name = get_full_class_name(e)
             logger.error(f'{exception_class_name}: {e}')

@@ -47,7 +47,7 @@ class AquaCleanClient(IAquaCleanClient):
             logger.trace("self.ConnectionStatusChanged is None")
 
 
-    async def connect(self, device_id: str):
+    async def connect(self, device_id: str, interval: float):
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
 
         await self.base_client.connect_async(device_id)
@@ -114,7 +114,7 @@ class AquaCleanClient(IAquaCleanClient):
             millis = int(delta.total_seconds() * 1000) # milliseconds
             logger.trace(f"getting the device changes took {millis} milliseconds")
 
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(interval)
 
     async def disconnect(self):
         await self.base_client.disconnect()
