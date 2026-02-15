@@ -152,14 +152,7 @@ async def run_cli(args):
     finally:
         await client.disconnect()
 
-async def main():
-    parser = argparse.ArgumentParser(description="Geberit AquaClean Controller")
-    parser.add_argument('--mode', choices=['service', 'cli'], default='service', help="Operation mode")
-    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'], help="CLI Command")
-    parser.add_argument('--address', help="Override BLE MAC address")
-    
-    args = parser.parse_args()
-
+async def main(args):
     if args.mode == 'service':
         service = ServiceMode()
         await shutdown_waits_for(service.run())
@@ -170,4 +163,14 @@ async def main():
         await run_cli(args)
 
 if __name__ == "__main__":
-    run(main())
+    # 1. Move argparse OUTSIDE the async loop
+    parser = argparse.ArgumentParser(description="Geberit AquaClean Controller")
+    parser.add_argument('--mode', choices=['service', 'cli'], default='service', help="Operation mode")
+    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'], help="CLI Command")
+    parser.add_argument('--address', help="Override BLE MAC address")
+    
+    # 2. Parse args synchronously. If --help is passed, it cleanly exits here.
+    args = parser.parse_args()
+
+    # 3. Pass the parsed args into the async loop
+    run(main(args))
