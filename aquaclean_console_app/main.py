@@ -201,15 +201,49 @@ async def main(args):
         loop = asyncio.get_running_loop()
         loop.stop()
 
-if __name__ == "__main__":
-    # 1. Move argparse OUTSIDE the async loop
-    parser = argparse.ArgumentParser(description="Geberit AquaClean Controller")
-    parser.add_argument('--mode', choices=['service', 'cli'], default='service', help="Operation mode")
-    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'], help="CLI Command")
-    parser.add_argument('--address', help="Override BLE MAC address")
+class JsonArgumentParser(argparse.ArgumentParser):
+    """Custom parser that forces all output to JSON format."""
     
-    # 2. Parse args synchronously. If --help is passed, it cleanly exits here.
+    def _print_message(self, message, file=None):
+        # Prevent any raw text from leaking to stdout/stderr
+        pass
+
+    def error(self, message):
+        """Called on invalid choices, missing arguments, or bad types."""
+        result = {
+            "status": "error",
+            "command": "invalid",
+            "message": f"Argument Error: {message}",
+            "data": {}
+        }
+        # Print JSON to stdout for machine parsing
+        print(json.dumps(result, indent=2))
+        sys.exit(0) 
+
+    def exit(self, status=0, message=None):
+        # Override exit to prevent standard text printing
+        if message:
+            self.error(message)
+        sys.exit(status)
+
+if __name__ == "__main__":
+    parser = JsonArgumentParser(description="Geberit AquaClean Controller", add_help=False)
+
+    # Add --help manually if you want it to return JSON too
+    parser.add_argument('-h', '--help', action='store_true')
+    parser.add_argument('--mode', choices=['service', 'cli'], default='service')
+    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'])
+    parser.add_argument('--address')
+
     args = parser.parse_args()
+
+    if getattr(args, 'help', False):
+        print(json.dumps({
+            "status": "help",
+            "options": ["--mode", "--command", "--address"],
+            "commands": ["toggle-lid", "toggle-anal", "status"]
+        }, indent=2))
+        sys.exit(0)
 
     # 3. Pass the parsed args into the async loop
     run(main(args))
