@@ -155,12 +155,21 @@ async def run_cli(args):
 async def main(args):
     if args.mode == 'service':
         service = ServiceMode()
+        # Service mode uses shutdown_waits_for to run indefinitely
         await shutdown_waits_for(service.run())
     else:
         if not args.command:
             print("Error: CLI mode requires --command")
             sys.exit(1)
+            
+        # Execute the command
         await run_cli(args)
+        
+        # --- NEW LOGIC HERE ---
+        # Explicitly stop the loop so the program exits back to the terminal
+        print("Command complete. Exiting...")
+        loop = asyncio.get_running_loop()
+        loop.stop()
 
 if __name__ == "__main__":
     # 1. Move argparse OUTSIDE the async loop
