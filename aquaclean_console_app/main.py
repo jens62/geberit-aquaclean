@@ -238,22 +238,28 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if getattr(args, 'help', False):
-        # Dynamically extract options and choices from the parser
         help_data = {
             "status": "help",
             "description": parser.description,
-            "options": [],
-            "commands": []
+            "arguments": {}
         }
         
         for action in parser._actions:
-            # Get the flags (e.g., --mode, --command)
-            opts = action.option_strings
-            help_data["options"].extend(opts)
+            # Skip the help flag itself to keep the output clean
+            if 'help' in action.dest:
+                continue
+                
+            arg_info = {
+                "flags": action.option_strings,
+                "default": action.default if action.default != argparse.SUPPRESS else None,
+                "required": action.required
+            }
             
-            # If the option has 'choices', identify them as our commands
-            if action.dest == 'command' and action.choices:
-                help_data["commands"] = list(action.choices)
+            # Dynamically capture choices for ANY argument (mode, command, etc.)
+            if action.choices:
+                arg_info["choices"] = list(action.choices)
+            
+            help_data["arguments"][action.dest] = arg_info
 
         print(json.dumps(help_data, indent=2))
         sys.exit(0)
