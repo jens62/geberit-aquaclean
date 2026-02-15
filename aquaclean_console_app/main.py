@@ -238,11 +238,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if getattr(args, 'help', False):
-        print(json.dumps({
+        # Dynamically extract options and choices from the parser
+        help_data = {
             "status": "help",
-            "options": ["--mode", "--command", "--address"],
-            "commands": ["toggle-lid", "toggle-anal", "status"]
-        }, indent=2))
+            "description": parser.description,
+            "options": [],
+            "commands": []
+        }
+        
+        for action in parser._actions:
+            # Get the flags (e.g., --mode, --command)
+            opts = action.option_strings
+            help_data["options"].extend(opts)
+            
+            # If the option has 'choices', identify them as our commands
+            if action.dest == 'command' and action.choices:
+                help_data["commands"] = list(action.choices)
+
+        print(json.dumps(help_data, indent=2))
         sys.exit(0)
 
     # 3. Pass the parsed args into the async loop
