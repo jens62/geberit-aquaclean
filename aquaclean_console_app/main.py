@@ -1,4 +1,5 @@
-﻿import asyncio
+﻿import json
+import asyncio
 import logging
 import os
 import configparser
@@ -135,39 +136,68 @@ class ServiceMode:
             sys.exit(1)
 
 async def run_cli(args):
-    """Executes a single command without MQTT overhead."""
-    device_id = args.address or config.get("BLE", "device_id")
-    connector = BluetoothLeConnector()
-    factory = AquaCleanClientFactory(connector)
-    client = factory.create_client()
+    """Executes the CLI logic and ensures JSON is always printed."""
+    result = {
+        "status": "error",
+        "command": getattr(args, 'command', None),
+        "device": None,
+        "serial_number": None,
+        "data": {},
+        "message": "Unknown error"
+    }
+
+    client = None
     try:
+        # 1. Internal Validation
+        if not args.command:
+            raise ValueError("CLI mode requires --command (e.g., --command status)")
+
+        # 2. Resource Initialization
+        device_id = args.address or config.get("BLE", "device_id")
+        connector = BluetoothLeConnector()
+        factory = AquaCleanClientFactory(connector)
+        client = factory.create_client()
+
+        logger.info(f"Connecting to {device_id}...")
         await client.connect(device_id)
-        if args.command == 'toggle-lid':
+        
+        # Populate metadata
+        result["device"] = client.Description
+        result["serial_number"] = client.SerialNumber
+
+        # 3. Command Execution
+        if args.command == 'status':
+            result["data"]["connection"] = "active"
+            # Add more status data here if available
+        elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
+            result["data"]["action"] = "lid_toggled"
         elif args.command == 'toggle-anal':
             await client.toggle_anal_shower()
-        elif args.command == 'status':
-            print(f"Device: {client.Description} - SN: {client.SerialNumber}")
-        print(f"Success: {args.command}")
+            result["data"]["action"] = "anal_shower_toggled"
+        
+        result["status"] = "success"
+        result["message"] = f"Command {args.command} completed"
+
+    except Exception as e:
+        result["status"] = "error"
+        result["message"] = str(e)
+        logger.error(f"CLI Error: {e}")
     finally:
-        await client.disconnect()
+        if client:
+            await client.disconnect()
+        # The ONLY thing sent to stdout
+        print(json.dumps(result, indent=2))
 
 async def main(args):
     if args.mode == 'service':
         service = ServiceMode()
         # Service mode uses shutdown_waits_for to run indefinitely
         await shutdown_waits_for(service.run())
-    else:
-        if not args.command:
-            print("Error: CLI mode requires --command")
-            sys.exit(1)
-            
+    else:            
         # Execute the command
         await run_cli(args)
         
-        # --- NEW LOGIC HERE ---
-        # Explicitly stop the loop so the program exits back to the terminal
-        print("Command complete. Exiting...")
         loop = asyncio.get_running_loop()
         loop.stop()
 
