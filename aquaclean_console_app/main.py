@@ -5,15 +5,21 @@ import configparser
 import argparse
 import traceback
 import sys
-from queue import Queue, Empty
+from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
 from haggis import logs
 
-from aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory 
-from bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
-from MqttService import MqttService as Mqtt
-from AquaCleanClient import AquaCleanClient
-from aquaclean_utils import utils
+from aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
+from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient       
+from aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory 
+from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification   
+from aquaclean_core.Message.MessageService                    import MessageService         
+from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector  
+from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector
+from MqttService                                              import MqttService as Mqtt
+from myEvent                                                  import myEvent   
+from aquaclean_utils                                          import utils
+from MqttService                                              import MqttService as Mqtt
 
 # --- Configuration & Logging Setup ---
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
