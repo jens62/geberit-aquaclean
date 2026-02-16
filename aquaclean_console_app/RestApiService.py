@@ -114,21 +114,30 @@ class RestApiService:
         )
         server = uvicorn.Server(server_config)
 
-        async def _force_exit_on_shutdown():
-            # Uvicorn's first Ctrl+C sets should_exit=True then waits for
-            # keep-alive connections to drain (potentially forever).  Setting
-            # force_exit=True immediately skips that wait — equivalent to a
-            # second Ctrl+C but automatic, so one Ctrl+C is enough to exit.
-            while not server.should_exit:
-                await asyncio.sleep(0.05)
-            server.force_exit = True
+        # Run serve() as a task so we can monitor it from outside.
+        serve_task = asyncio.create_task(server.serve())
 
-        watcher = asyncio.create_task(_force_exit_on_shutdown())
+        # Wait for the server to finish its startup sequence.
+        while not server.started:
+            if serve_task.done():
+                break
+            await asyncio.sleep(0.05)
+
+        # Wait for uvicorn's SIGINT handler to signal a shutdown.
+        while not server.should_exit:
+            if serve_task.done():
+                break
+            await asyncio.sleep(0.05)
+
+        # Skip connection/task draining so serve() exits immediately.
+        server.force_exit = True
+
+        # Give serve() a moment to notice and return on its own.
         try:
-            await server.serve()
-        finally:
-            watcher.cancel()
+            await asyncio.wait_for(serve_task, timeout=2.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            serve_task.cancel()
             try:
-                await watcher
+                await serve_task
             except asyncio.CancelledError:
                 pass
