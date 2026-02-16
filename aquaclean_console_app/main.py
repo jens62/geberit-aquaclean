@@ -11,6 +11,7 @@ from aiorun import run, shutdown_waits_for
 from haggis import logs
 
 from bleak import BleakScanner
+from bleak.exc import BleakError
 from aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
 from aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
 from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
@@ -163,6 +164,18 @@ class ServiceMode:
                 except Exception:
                     pass
                 await self.wait_for_device_restart(device_id)
+            except BleakError as e:
+                msg = (
+                    f"{e} — "
+                    "Try in order: "
+                    "1) Power cycle the Geberit. "
+                    "2) Restart the Bluetooth service on the host machine. "
+                    "3) Restart the host machine."
+                )
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await asyncio.sleep(30)
             except Exception as e:
                 await self.handle_exception(e)
             finally:
