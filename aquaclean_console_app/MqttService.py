@@ -125,6 +125,15 @@ class MqttService:
             _ = future.result()
 
 
+    def stop(self):
+        """Stop the MQTT network loop and disconnect from the broker."""
+        try:
+            self.mqttc.loop_stop()
+            self.mqttc.disconnect()
+        except Exception as ex:
+            logger.debug(f"MQTT stop: {ex}")
+        logger.info("### MQTT STOPPED ###")
+
     async def send_data_async(self, topic, value):
         logger.trace("send_data_async...")
         logger.trace(f"topic: {topic}, value: {value}")
