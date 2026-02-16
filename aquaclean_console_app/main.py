@@ -464,6 +464,62 @@ class ApiMode:
         else:
             return {"status": "success", "action": "no persistent connection to disconnect"}
 
+    # --- Data query endpoints ---
+
+    async def get_system_parameters(self):
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            await self.service.client._state_changed_timer_elapsed()
+            return self.service.device_state
+        else:
+            return await self._on_demand(lambda client: self._fetch_state(client))
+
+    async def get_soc_versions(self):
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            return {"soc_versions": str(self.service.client.soc_application_versions)}
+        else:
+            async def _fetch(client):
+                return {"soc_versions": str(client.soc_application_versions)}
+            return await self._on_demand(_fetch)
+
+    async def get_initial_operation_date(self):
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            return {"initial_operation_date": str(self.service.client.InitialOperationDate)}
+        else:
+            async def _fetch(client):
+                return {"initial_operation_date": str(client.InitialOperationDate)}
+            return await self._on_demand(_fetch)
+
+    async def get_identification(self):
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            c = self.service.client
+            return {
+                "sap_number": c.SapNumber,
+                "serial_number": c.SerialNumber,
+                "production_date": c.ProductionDate,
+                "description": c.Description,
+            }
+        else:
+            async def _fetch(client):
+                return {
+                    "sap_number": client.SapNumber,
+                    "serial_number": client.SerialNumber,
+                    "production_date": client.ProductionDate,
+                    "description": client.Description,
+                }
+            return await self._on_demand(_fetch)
+
     # --- Helpers ---
 
     async def _on_demand(self, action):

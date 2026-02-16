@@ -390,6 +390,27 @@
       </button>
     </div>
 
+    <h2 id="queriesHeading" style="display:none">Queries</h2>
+    <div id="queriesSection" style="display:none">
+      <div class="controls">
+        <button onclick="queryGet('/data/system-parameters', this, onSystemParameters)">
+          <span class="spinner"></span>System Parameters
+        </button>
+        <button onclick="queryGet('/data/identification', this, onIdentification)">
+          <span class="spinner"></span>Identification
+        </button>
+        <button onclick="queryGet('/data/initial-operation-date', this, onInitialOpDate)">
+          <span class="spinner"></span>Initial Op Date
+        </button>
+        <button onclick="queryGet('/data/soc-versions', this, onSocVersions)">
+          <span class="spinner"></span>SOC Versions
+        </button>
+      </div>
+      <dl class="info-grid" id="socVersionsGrid" style="display:none;margin-top:0.75rem">
+        <dt>SOC Versions</dt><dd id="info-soc-versions">—</dd>
+      </dl>
+    </div>
+
   </main>
 
   <footer>API: <span id="apiBase"></span></footer>
@@ -435,6 +456,8 @@
       document.getElementById('offlineBanner').classList.add('visible');
       document.getElementById('connBtn').style.display = 'none';
       document.getElementById('bleConnModeBtn').style.display = 'none';
+      document.getElementById('queriesHeading').style.display = 'none';
+      document.getElementById('queriesSection').style.display = 'none';
 
       _pollEpoch = null;
       const pollLabel = document.getElementById('pollLabel');
@@ -527,6 +550,9 @@
       if (modeLabel) modeLabel.textContent = mode === 'persistent' ? 'Persistent' : 'On-Demand';
       const btnLabel = document.getElementById('bleConnModeBtnLabel');
       if (btnLabel) btnLabel.textContent = mode === 'persistent' ? 'Switch to On-Demand' : 'Switch to Persistent';
+      const show = mode === 'on-demand';
+      document.getElementById('queriesHeading').style.display = show ? '' : 'none';
+      document.getElementById('queriesSection').style.display = show ? '' : 'none';
     }
 
     async function toggleBleConnectionMode(btn) {
@@ -549,6 +575,51 @@
         btn.classList.remove('loading');
         setTimeout(() => btn.classList.remove('success', 'error'), 2000);
       }
+    }
+
+    // --- Queries (on-demand mode) ---
+    async function queryGet(url, btn, onResult) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.classList.remove('success', 'error');
+      try {
+        const r = await fetch(apiBase + url);
+        if (r.ok) {
+          const data = await r.json();
+          if (onResult) onResult(data);
+          btn.classList.add('success');
+        } else {
+          btn.classList.add('error');
+        }
+      } catch (_) {
+        btn.classList.add('error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
+    }
+
+    function onSystemParameters(data) {
+      updateCards(data);
+    }
+
+    function onIdentification(data) {
+      set('info-description', data.description);
+      set('info-serial',      data.serial_number);
+      set('info-sap',         data.sap_number);
+      set('info-production',  data.production_date);
+    }
+
+    function onInitialOpDate(data) {
+      set('info-initial', data.initial_operation_date);
+    }
+
+    function onSocVersions(data) {
+      const el = document.getElementById('info-soc-versions');
+      if (el) el.textContent = data.soc_versions || '—';
+      const grid = document.getElementById('socVersionsGrid');
+      if (grid) grid.style.display = '';
     }
 
     // --- Connection status ---
