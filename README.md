@@ -241,6 +241,55 @@ In log_level `DEBUG`, the output is very similar to [Thomas Bingel](https://gith
 
 Publish any value (payload is not evaluated) on the `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition` topic to change the lid position using MQTT.
 
+### CLI mode
+
+In addition to the long-running service mode, the application can be used as a one-shot CLI tool. Results and errors are always written to stdout as JSON; log output goes to stderr.
+
+```
+python /path/to/aquaclean_console_app/main.py --mode cli --command <command> [--address <ble-address>]
+```
+
+Available commands:
+
+| Command | Description |
+|---|---|
+| `toggle-lid` | Toggle the lid position |
+| `toggle-anal` | Toggle the anal shower |
+| `status` | Report connection status |
+
+If `--address` is omitted, the address from `config.ini` is used.
+
+Redirect stderr to keep stdout clean for machine parsing:
+
+```
+python /path/to/aquaclean_console_app/main.py --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log
+```
+
+Example output:
+
+```json
+{
+  "status": "success",
+  "command": "toggle-lid",
+  "device": "AquaClean Mera Comfort",
+  "serial_number": "HB23XXEUXXXXXX",
+  "data": {
+    "action": "lid_toggled"
+  },
+  "message": "Command toggle-lid completed"
+}
+```
+
+Errors are also returned as JSON, e.g. for an unsupported command:
+
+```json
+{
+  "status": "error",
+  "command": "invalid",
+  "message": "Argument Error: argument --command: invalid choice: 'foo' (choose from 'toggle-lid', 'toggle-anal', 'status')",
+  "data": {}
+}
+```
 
 
 ## Troubleshooting:
@@ -298,6 +347,28 @@ Two types of errors can occur:
    # cases, retrying will connect successfully.
    # Note: this error was added in BlueZ 6.62.
    ```
+
+
+## Automatic recovery
+
+The application detects when the AquaClean stops responding and attempts to recover automatically — no manual restart of the script is required.
+
+### How it works
+
+If the BLE peripheral sends no response within 5 seconds (normal request/response cycle is ~600 ms), a `BLEPeripheralTimeoutError` is raised containing the device name and BLE address as reported at connection time (e.g. `Geberit AC PRO / 38:AB:41:2A:0D:67`).
+
+The recovery sequence then proceeds as follows:
+
+1. The error is published to `Geberit/AquaClean/centralDevice/error`.
+2. The BLE connection is disconnected.
+3. **Phase 1 — wait for shutdown:** The application passively scans for the device every few seconds. Once the device disappears from the BLE scanner (confirming it has been powered off), `Geberit/AquaClean/centralDevice/connected` is updated to `Device offline. Waiting for it to power back on...`
+4. **Phase 2 — wait for reappearance:** The application continues scanning. Once the device is visible again, `centralDevice/connected` is updated to `Device detected (...). Reconnecting...` and the application reconnects automatically.
+
+### What you need to do
+
+Power cycle the AquaClean (disconnect and reconnect the power supply). The script will detect the restart and reconnect on its own.
+
+If you have your AquaClean on a smart switch with a daily automatic restart (e.g. via openHAB), no manual intervention is needed at all.
 
 
 ## MQTT topics

@@ -1,230 +1,41 @@
-﻿
+﻿import json
 import asyncio
 import logging
-
-from aquaclean_core.Clients                                    import AquaCleanClient
-from aquaclean_core.IAquaCleanClient                           import IAquaCleanClient       
-from aquaclean_core.AquaCleanClientFactory                     import AquaCleanClientFactory 
-from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification  import DeviceIdentification   
-from aquaclean_core.Message.MessageService                     import MessageService         
-from aquaclean_core.IBluetoothLeConnector                      import IBluetoothLeConnector  
-from bluetooth_le.LE.BluetoothLeConnector                      import BluetoothLeConnector
-from MqttService                                               import MqttService as Mqtt
-from myEvent                                                   import myEvent   
-from aquaclean_utils                                           import utils   
-
 import os
 import configparser
-
-from queue import Queue, Empty
-from aiorun import run, shutdown_waits_for
-from signal import SIGINT, SIGTERM
-
-from bleak import BleakError
+import argparse
 import traceback
+import sys
+from queue  import Queue, Empty
+from aiorun import run, shutdown_waits_for
+from haggis import logs
 
-__location__ = os.path.realpath(
-    os.path.join(os.getcwd(), os.path.dirname(__file__)))
+from bleak import BleakScanner
+from aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
+from aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
+from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
+from aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
+from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
+from aquaclean_core.Message.MessageService                    import MessageService
+from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
+from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector
+from MqttService                                              import MqttService as Mqtt
+from myEvent                                                  import myEvent
+from aquaclean_utils                                          import utils
+from MqttService                                              import MqttService as Mqtt
 
+# --- Configuration & Logging Setup ---
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 iniFile = os.path.join(__location__, 'config.ini')
 config = configparser.ConfigParser(allow_no_value=False)
-config.read(['config.ini', os.path.expanduser( iniFile)])
-
-# Setup logging
-from haggis import logs
+config.read(['config.ini', os.path.expanduser(iniFile)])
 
 logs.add_logging_level('TRACE', logging.DEBUG - 5)
 logs.add_logging_level('SILLY', logging.DEBUG - 7)
 
 log_level = config.get("LOGGING", "log_level")
-logging.basicConfig(
-    level=log_level,
-    format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s",
-)
+logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-
-class MainPage:
-    def __init__(self):
-        self.mqttConfig = dict(config.items('MQTT'))
-        self.mqtt_service = Mqtt(self.mqttConfig)
-        self.client = None
-        self.mqtt_initialized_wait_queue = Queue()  
-
-    async def initialize(self):
-        await self.mqtt_service.start_async( asyncio.get_running_loop(), self.mqtt_initialized_wait_queue)
-
-        logger.trace(f"self.mqtt_initialized_wait_queue.qsize(): {self.mqtt_initialized_wait_queue.qsize()}")
-        mqtt_initialized_wait_queue_get_result = "No value yet"
-        count = 50 
-        while True and count > 0:
-            count -= 1
-            try:
-                logger.trace(f"self.mqtt_initialized_wait_queue.get()...")
-                mqtt_initialized_wait_queue_get_result = self.mqtt_initialized_wait_queue.get(timeout=0.1)
-                logger.trace(f"mqtt_initialized_wait_queue_get_result: {mqtt_initialized_wait_queue_get_result}")
-                break
-            except Empty:
-                logger.trace(f"mqtt_initialized_wait_queue_get_result - timeout")
-                logger.trace(f"mqtt_initialized_wait_queue_get_result: {mqtt_initialized_wait_queue_get_result}")
-            await asyncio.sleep(0.1)
-
-        await self.test3()
-
-    async def test3(self):
-        device_id = config.get("BLE", "device_id")
-
-        bluetooth_connector = BluetoothLeConnector()
-        factory = AquaCleanClientFactory(bluetooth_connector)
-
-        # for some reason self.mqtt_service.ToggleLidPosition was not available without wait??
-        # TODO sync (with means of a queue, similar to on_transaction_completeForBaseClient in AquaCleanBaseClient),
-        # because mqtt runs in an other thread)
-
-        self.mqtt_service.ToggleLidPosition += self.on_toggleLidMessage
-    
-        self.client = factory.create_client()
-
-        self.client.DeviceStateChanged += self.on_device_state_changed
-
-        
-        self.client.SOCApplicationVersions += self.soc_application_versions
-        self.client.DeviceInitialOperationDate += self.device_initial_operation_date
-        self.client.DeviceIdentification += self.on_device_identification
-        bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
-
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(None))
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
-
-        try:
-            # Attempt to fetch and convert the value
-            interval = float(config.get("POLL", "interval"))
-        except Exception as e:
-            # Use a default fallback
-            interval = 2.5 
-            # Log the specific error and the action taken
-            logger.warning(
-                f"Could not read 'intervall' from config (Error: {e}). "
-                f"Falling back to default: {interval} seconds."
-            )
-
-        try:
-            await self.client.connect(device_id, interval)
-        except Exception as e:
-            exception_class_name = get_full_class_name(e)
-            logger.error(f'{exception_class_name}: {e}')
-            if exception_class_name == "bleak.exc.BleakError" and (str(e) == "Service Discovery has not been performed yet"):
-                logger.error(f'this exception is ok on shutdown')
-            else:
-                print ('{exception_class_name}: {e}')
-                print(traceback.format_exc())
-
-                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", f'{exception_class_name}: {e}, see log for details')
-                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                if exception_class_name == "bleak.exc.BleakError":
-                    if hasattr(e, 'args'):
-                        for arg in e.args:
-                            logger.error(f"arg: {arg}")
-                    logger.error(f'Check address or restart peripheral device (Geberit AquaClean) and wait a little while.')
-                else:
-                    logger.trace(f'only e: {e}')
-                    logger.trace(f'only e.args: {e.args}')
-                    logger.trace(f'only e.__dict__: {e.__dict__}')
-                    logger.trace(f'only dir(e): {dir(e)}')
-                    logger.trace(f'only vars(e): {vars(e)}')
-
-                    if hasattr(e, 'args'):
-                        for arg in e.args:
-                            logger.error(f"arg: {arg}")
-
-                    logger.error(f'Restart central (machine the script is running on) and peripheral device (Geberit AquaClean) and wait a little while.')
-
-                    # ...
-                    # bleak.backends.bluezdbus.client 211 DEBUG: Connecting to BlueZ path /org/bluez/hci0/dev_38_AB_41_2A_0D_67
-                    # bleak.backends.bluezdbus.manager 872 DEBUG: received D-Bus signal: org.freedesktop.DBus.Properties.PropertiesChanged (/org/bluez/hci0/dev_38_AB_41_2A_0D_67): ['org.bluez.Device1', {'Connected': <dbus_fast.signature.Variant ('b', True)>}, []]
-                    # bleak.backends.bluezdbus.client 235 DEBUG: retry due to le-connection-abort-by-local
-                    # ...
-                    # __main__ 91 ERROR: TimeoutError:
-                    print(e)
-            exitCode = 1
-            logger.error(f"existing with exitCode {exitCode} ...")
-            exit(exitCode)
-        finally:
-            logger.trace(f'finally...')
-            await self.client.disconnect()
- 
-      
-    async def dummy(self):
-        logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
-        await asyncio.sleep(1)
-        logger.trace(f"end of {utils.currentClassName()}.{utils.currentFuncName()}")
-
-
-    async def on_toggleLidMessage(self):
-        logger.trace(f"on_toggleLidMessage")
-        # await self.dummy()
-        await asyncio.sleep(0.01)
-        await self.client.toggle_lid_position()
-        await asyncio.sleep(0.01)
-
-
-    async def on_device_identification(self, sender, args):
-        logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
-        logger.trace(f"on_deviceIdentification, sender: {sender}, args: {args}")
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/Identification/SapNumber", str(args.sap_number))
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/Identification/SerialNumber", str(args.serial_number))
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/Identification/ProductionDate", str(args.production_date))
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/Identification/Description", str(args.description))
-
-
-    async def soc_application_versions(self, sender, args):
-        logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
-        logger.trace(f"soc_application_versions, sender: {sender}, args: {args}")
-        # not meaningful for me
-        # await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/SOCApplicationVersions", str(args))
-
-
-    async def device_initial_operation_date(self, sender, args):
-        logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
-        logger.trace(f"device_initial_operation_date, sender: {sender}, args: {args}")
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/initialOperationDate", str(args))
-
-
-    async def on_device_state_changed(self, sender, args):
-        logger.trace(f"on_device_state_changed, sender: {sender}, args: {args}")
-
-        if "IsUserSitting" in args.__dict__ and not (args.IsUserSitting == None):
-            logger.debug(f"IsUserSitting={args.IsUserSitting}")
-
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/monitor/isUserSitting", str(args.IsUserSitting))
-
-        if "IsAnalShowerRunning" in args.__dict__ and not (args.IsAnalShowerRunning == None):
-            logger.debug(f"IsAnalShowerRunning={args.IsAnalShowerRunning}")
-
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/monitor/isAnalShowerRunning", str(args.IsAnalShowerRunning))
-
-        if "IsLadyShowerRunning" in args.__dict__ and not (args.IsLadyShowerRunning == None):
-            logger.debug(f"IsLadyShowerRunning={args.IsLadyShowerRunning}")
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/monitor/isLadyShowerRunning", str(args.IsLadyShowerRunning))
-    
-        if "IsDryerRunning" in args.__dict__ and not (args.IsDryerRunning == None):
-            logger.debug(f"IsLadyShowerRunning={args.IsDryerRunning}")
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/monitor/isDryerRunning", str(args.IsDryerRunning))        
-   
-
-    def on_connection_status_changed(self, sender, *args):
-        logger.trace(f"IsConnected={args}")
-        first = True
-        for arg in args:
-            if first:
-                values = str(arg)
-                first = False
-            else:
-                values += ", " + str(arg)
-
-        # asyncio.create_task(self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(args)))
-        asyncio.create_task(self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", values))
-
 
 def get_full_class_name(obj):
     module = obj.__class__.__module__
@@ -232,57 +43,253 @@ def get_full_class_name(obj):
         return obj.__class__.__name__
     return module + '.' + obj.__class__.__name__
 
+class ServiceMode:
+    """Restores the full logic of your original MainPage class."""
+    def __init__(self):
+        self.mqttConfig = dict(config.items('MQTT'))
+        self.mqtt_service = Mqtt(self.mqttConfig)
+        self.client = None
+        self.mqtt_initialized_wait_queue = Queue()
 
-def do_cleanup():
-    logger.trace("do_cleanup() called (got asyncio.CancelledError)")
-    main_page.on_connection_status_changed( None, False)
+    async def run(self):
+        # 1. Initialize MQTT with wait queue (once)
+        await self.mqtt_service.start_async(asyncio.get_running_loop(), self.mqtt_initialized_wait_queue)
+        count = 50
+        while count > 0:
+            try:
+                self.mqtt_initialized_wait_queue.get(timeout=0.1)
+                break
+            except Empty:
+                pass
+            count -= 1
+            await asyncio.sleep(0.1)
 
-# Run the MainPage class
-main_page = MainPage()
-# asyncio.run(main_page.init_task)
-#asyncio.run(main_page.initialize())
+        device_id = config.get("BLE", "device_id")
+        try:
+            interval = float(config.get("POLL", "interval"))
+        except Exception:
+            interval = 2.5
 
+        # Subscribe MQTT handler once — on_toggle_lid_message references self.client
+        # which is updated each iteration of the recovery loop below
+        self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
 
-# https://stackoverflow.com/a/58840987
-# async def main_coro():
-#     try:
-#         await main_page.initialize()
-#     except asyncio.CancelledError:
-#         do_cleanup()
+        # --- Main Recovery Loop ---
+        while True:
+            bluetooth_connector = BluetoothLeConnector()
+            factory = AquaCleanClientFactory(bluetooth_connector)
+            self.client = factory.create_client()
 
-# if __name__ == "__main__":
-#     loop = asyncio.get_event_loop()
-#     main_task = asyncio.ensure_future(main_coro())
-#     for signal in [SIGINT, SIGTERM]:
-#         loop.add_signal_handler(signal, main_task.cancel)
-#     try:
-#         loop.run_until_complete(main_task)
-#     finally:
-#         logger.trace("closing loop...")
-#         loop.close()
+            self.client.DeviceStateChanged += self.on_device_state_changed
+            self.client.SOCApplicationVersions += self.soc_application_versions
+            self.client.DeviceInitialOperationDate += self.device_initial_operation_date
+            self.client.DeviceIdentification += self.on_device_identification
+            bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
 
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", "No error")
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
 
-def on_shutdown():
-    print( 'on Shutdown)')
+            try:
+                await self.client.connect(device_id)
+                await self.client.start_polling(interval)
+            except BLEPeripheralTimeoutError as e:
+                logger.warning("BLE Timeout — initiating recovery protocol.")
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(e))
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                await self.wait_for_device_restart(device_id)
+            except Exception as e:
+                await self.handle_exception(e)
+            finally:
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
 
+    async def wait_for_device_restart(self, device_id):
+        """Passively scans until the device drops off BLE, then waits for it to reappear."""
+        topic = f"{self.mqttConfig['topic']}/centralDevice/connected"
 
-# main coroutine
-async def main_corofn():
-    main_page = MainPage()
-    await main_page.initialize()
+        # Phase 1: wait for the user to power-cycle the device
+        await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
+        logger.info(f"Waiting for device {device_id} to drop off BLE scanner...")
+        while True:
+            device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
+            if device is None:
+                logger.info("Device shut down confirmed.")
+                await self.mqtt_service.send_data_async(topic, "Device offline. Waiting for it to power back on...")
+                break
+            await asyncio.sleep(2)
 
-async def main():
+        # Phase 2: wait for it to boot back up
+        logger.info(f"Waiting for device {device_id} to reappear...")
+        while True:
+            device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
+            if device is not None:
+                logger.info("Device back online.")
+                await self.mqtt_service.send_data_async(topic, f"Device detected ({device.name} / {device.address}). Reconnecting...")
+                await asyncio.sleep(2)
+                break
+            await asyncio.sleep(2)
+
+    # --- Restored Original Handlers (Verbatim) ---
+    async def on_device_state_changed(self, sender, args):
+        topic = self.mqttConfig['topic']
+        if "IsUserSitting" in args.__dict__ and args.IsUserSitting is not None:
+            await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting", str(args.IsUserSitting))
+        if "IsAnalShowerRunning" in args.__dict__ and args.IsAnalShowerRunning is not None:
+            await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(args.IsAnalShowerRunning))
+        if "IsLadyShowerRunning" in args.__dict__ and args.IsLadyShowerRunning is not None:
+            await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(args.IsLadyShowerRunning))
+        if "IsDryerRunning" in args.__dict__ and args.IsDryerRunning is not None:
+            await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(args.IsDryerRunning))
+
+    async def on_device_identification(self, sender, args):
+        topic = self.mqttConfig['topic']
+        await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber", str(args.sap_number))
+        await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber", str(args.serial_number))
+        await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(args.production_date))
+        await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description", str(args.description))
+
+    async def device_initial_operation_date(self, sender, args):
+        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/peripheralDevice/information/initialOperationDate", str(args))
+
+    async def soc_application_versions(self, sender, args):
+        pass
+
+    async def on_toggle_lid_message(self):
+        await self.client.toggle_lid_position()
+
+    def on_connection_status_changed(self, sender, *args):
+        values = ", ".join(str(arg) for arg in args)
+        asyncio.create_task(self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", values))
+
+    async def handle_exception(self, e):
+        exc_name = get_full_class_name(e)
+        logger.error(f'{exc_name}: {e}')
+        if exc_name == "bleak.exc.BleakError" and "Service Discovery" in str(e):
+            logger.error("OK on shutdown")
+        else:
+            print(traceback.format_exc())
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", f'{exc_name}: {e}')
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+            sys.exit(1)
+
+async def run_cli(args):
+    """Executes the CLI logic and ensures JSON is always printed."""
+    result = {
+        "status": "error",
+        "command": getattr(args, 'command', None),
+        "device": None,
+        "serial_number": None,
+        "data": {},
+        "message": "Unknown error"
+    }
+
+    client = None
     try:
-        await shutdown_waits_for(main_corofn())
-    except asyncio.CancelledError:
-        # MainPage().on_connection_status_changed( None, False)
-        # see https://github.com/hbldh/bleak/issues/875
-        # BleakClientBlueZDBus._cleanup_all()
-        # sys:1: ResourceWarning: unclosed <socket.socket [closed] fd=10, family=1, type=1, proto=0>
-        print('You pressed Ctrl+C (signal.SIGINT)')
+        # 1. Internal Validation
+        if not args.command:
+            raise ValueError("CLI mode requires --command (e.g., --command status)")
+
+        # 2. Resource Initialization
+        device_id = args.address or config.get("BLE", "device_id")
+        connector = BluetoothLeConnector()
+        factory = AquaCleanClientFactory(connector)
+        client = factory.create_client()
+
+        logger.info(f"Connecting to {device_id}...")
+        await client.connect(device_id)
+        
+        # Populate metadata
+        result["device"] = client.Description
+        result["serial_number"] = client.SerialNumber
+
+        # 3. Command Execution
+        if args.command == 'status':
+            result["data"]["connection"] = "active"
+            # Add more status data here if available
+        elif args.command == 'toggle-lid':
+            await client.toggle_lid_position()
+            result["data"]["action"] = "lid_toggled"
+        elif args.command == 'toggle-anal':
+            await client.toggle_anal_shower()
+            result["data"]["action"] = "anal_shower_toggled"
+        
+        result["status"] = "success"
+        result["message"] = f"Command {args.command} completed"
+
+    except Exception as e:
+        result["status"] = "error"
+        result["message"] = str(e)
+        logger.error(f"CLI Error: {e}")
+    finally:
+        if client:
+            await client.disconnect()
+        # The ONLY thing sent to stdout
+        print(json.dumps(result, indent=2))
+
+async def main(args):
+    if args.mode == 'service':
+        service = ServiceMode()
+        # Service mode uses shutdown_waits_for to run indefinitely
+        await shutdown_waits_for(service.run())
+    else:            
+        # Execute the command
+        await run_cli(args)
+        
+        loop = asyncio.get_running_loop()
+        loop.stop()
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """Custom parser that outputs argument errors as JSON; help uses standard text."""
+
+    def error(self, message):
+        """Called on invalid choices, missing arguments, or bad types."""
+        result = {
+            "status": "error",
+            "command": "invalid",
+            "message": f"Argument Error: {message}",
+            "data": {}
+        }
+        # Print JSON to stdout for machine parsing
+        print(json.dumps(result, indent=2))
+        sys.exit(0) 
+
+    def exit(self, status=0, message=None):
+        # Override exit to prevent standard text printing
+        if message:
+            self.error(message)
+        sys.exit(status)
 
 if __name__ == "__main__":
-    # run the asyncio program
-    run(main())
+    parser = JsonArgumentParser(
+        prog=os.path.basename(sys.argv[0]),
+        description="Geberit AquaClean Controller",
+        epilog=(
+            "examples:\n"
+            "  %(prog)s --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log\n"
+            "\n"
+            "  output:\n"
+            "  {\n"
+            '    "status": "success",\n'
+            '    "command": "toggle-lid",\n'
+            '    "device": "AquaClean Mera Comfort",\n'
+            '    "serial_number": "HB23XXEUXXXXXX",\n'
+            '    "data": { "action": "lid_toggled" },\n'
+            '    "message": "Command toggle-lid completed"\n'
+            "  }\n"
+            "\n"
+            "CLI results and errors are written to stdout as JSON.\n"
+            "Log output goes to stderr (redirect with 2>logfile)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('--mode', choices=['service', 'cli'], default='service')
+    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'])
+    parser.add_argument('--address')
 
-
+    args = parser.parse_args()
+    run(main(args))

@@ -38,6 +38,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.data_received_handlers = myEvent.EventHandler()
         self.data_received = None
         self.connection_status_changed_handlers = myEvent.EventHandler()
+        self.device_address = 'Unknown'
+        self.device_name = 'Unknown'
 
 
     async def connect_async(self, device_id):
@@ -45,7 +47,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         device = await BleakScanner.find_device_by_address(device_id)
         if device is None:
             raise BleakError(f"AquaClean device with address {device_id} not found.")
-        
+
+        self.device_address = device.address
+        self.device_name = device.name
+
         logger.trace(f"################### device ####################### : {device}")
         logger.trace(f"device.address: {device.address}, device.name: {device.name}")
 
