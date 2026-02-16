@@ -121,6 +121,8 @@ Not very pythonic, but it fits the whole project ;)
 | [paho-mqtt](https://github.com/eclipse-paho/paho.mqtt.python "paho-mqtt") | 2.0.0     | connect to a [MQTT](http://mqtt.org/ "MQTT") broker |
 | [aiorun](https://github.com/cjrh/aiorun "aiorun")                         | v2024.8.1 | handle shutdown sequence |
 | [haggis](https://gitlab.com/madphysicist/haggis "haggis")                 | 0.14.1    | extend the logging framework |
+| [fastapi](https://fastapi.tiangolo.com "FastAPI")                         | ≥0.110    | REST API framework (API mode only) |
+| [uvicorn](https://www.uvicorn.org "uvicorn")                              | ≥0.29     | ASGI server (API mode only) |
 
 
 
@@ -231,6 +233,29 @@ interval = 10.5
 
 A longer interval reduces the frequency of BLE requests to the AquaClean, which may help extend the connection lifetime and avoid the issue where the device stops responding after a few days.
 
+#### Service options
+
+The `[SERVICE]` section controls optional features:
+
+```
+[SERVICE]
+; mqtt_enabled: publish status to MQTT broker (true/false)
+mqtt_enabled = true
+; ble_connection: persistent = keep BLE connected with polling loop
+;                 on-demand  = connect/disconnect per REST request (api mode only)
+ble_connection = persistent
+```
+
+#### REST API options
+
+The `[API]` section configures the REST API server (used when `--mode api`):
+
+```
+[API]
+host = 0.0.0.0
+port = 8080
+```
+
 ### run the console application
 
 Just run `python /path/to/aquaclean_console_app/main.py` and watch the result in your favorite MQTT Tool.
@@ -301,6 +326,64 @@ Errors are also returned as JSON, e.g. for an unsupported command:
 }
 ```
 
+
+### REST API mode
+
+In addition to the long-running service mode, the application can expose a REST API. This is useful for integrating the AquaClean into home automation systems that prefer HTTP over MQTT, or for scripting one-off commands from other services.
+
+```
+python /path/to/aquaclean_console_app/main.py --mode api
+```
+
+The server starts on the host/port configured in the `[API]` section of `config.ini` (default: `0.0.0.0:8080`). An interactive API reference (Swagger UI) is available at `http://<host>:<port>/docs`.
+
+#### BLE connection modes
+
+Configured via `ble_connection` in `[SERVICE]`:
+
+| Value | Behaviour |
+|---|---|
+| `persistent` | BLE stays connected with a background polling loop, just like service mode. State is always available immediately. |
+| `on-demand` | BLE is connected, queried, and disconnected for each request. Higher latency, lower resource usage. |
+
+MQTT publishing can be enabled or disabled independently via `mqtt_enabled`.
+
+#### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/status` | Current device state (user sitting, showers, dryer) |
+| `GET` | `/info` | Device identification (serial number, SAP number, etc.) |
+| `POST` | `/command/toggle-lid` | Toggle the lid position |
+| `POST` | `/command/toggle-anal` | Toggle the anal shower |
+| `POST` | `/connect` | Trigger a BLE reconnect (persistent mode) or connect + return info (on-demand) |
+| `POST` | `/disconnect` | Trigger a BLE reconnect (persistent mode) or no-op (on-demand) |
+| `POST` | `/reconnect` | Trigger a BLE reconnect (persistent mode) or connect + return info (on-demand) |
+
+Example:
+
+```
+curl -s http://localhost:8080/status
+```
+
+```json
+{
+  "is_user_sitting": false,
+  "is_anal_shower_running": false,
+  "is_lady_shower_running": false,
+  "is_dryer_running": false
+}
+```
+
+#### Reconnect via MQTT (service mode)
+
+In service mode, a reconnect can also be triggered by publishing any value to:
+
+```
+Geberit/AquaClean/centralDevice/control/reconnect
+```
+
+This is equivalent to the `/reconnect` REST endpoint.
 
 ## Troubleshooting:
 
@@ -389,18 +472,24 @@ Default: `topic = Geberit/AquaClean`
 
 The following topics are used:
 
+**Published by the application (subscribe to these):**
+
 - `Geberit/AquaClean/centralDevice/error                                       `
 - `Geberit/AquaClean/centralDevice/connected                                   `
 - `Geberit/AquaClean/peripheralDevice/information/Identification/SapNumber     `
-- `Geberit/AquaClean/peripheralDevice/information/Identification/SerialNumber  `  
-- `Geberit/AquaClean/peripheralDevice/information/Identification/ProductionDate`    
-- `Geberit/AquaClean/peripheralDevice/information/Identification/Description   ` 
+- `Geberit/AquaClean/peripheralDevice/information/Identification/SerialNumber  `
+- `Geberit/AquaClean/peripheralDevice/information/Identification/ProductionDate`
+- `Geberit/AquaClean/peripheralDevice/information/Identification/Description   `
 - `Geberit/AquaClean/peripheralDevice/information/initialOperationDate         `
 - `Geberit/AquaClean/peripheralDevice/monitor/isUserSitting                    `
 - `Geberit/AquaClean/peripheralDevice/monitor/isAnalShowerRunning              `
 - `Geberit/AquaClean/peripheralDevice/monitor/isLadyShowerRunning              `
 - `Geberit/AquaClean/peripheralDevice/monitor/isDryerRunning                   `
-- `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition                `
+
+**Subscribed to by the application (publish to these to send commands):**
+
+- `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition                ` — toggle lid (any payload)
+- `Geberit/AquaClean/centralDevice/control/reconnect                           ` — trigger BLE reconnect (any payload)
 
 See [MQTT Explorer.png](https://github.com/jens62/geberit-aquaclean/blob/main/operation_support/MQTT%20Explorer.png)
 
