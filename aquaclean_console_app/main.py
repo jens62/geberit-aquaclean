@@ -82,6 +82,8 @@ class ServiceMode:
             "ble_connected_at": None,        # ISO timestamp string
             "ble_device_name": None,         # from client.Description
             "ble_device_address": None,      # BLE address from config
+            "last_connect_ms": None,         # duration of last BLE connect in ms
+            "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
         }
         self._reconnect_requested = asyncio.Event()
         self._connection_allowed = asyncio.Event()
@@ -156,7 +158,9 @@ class ServiceMode:
             await self._set_ble_status("connecting", device_address=device_id)
 
             try:
+                t0 = time.perf_counter()
                 await self.client.connect(device_id)
+                self.device_state["last_connect_ms"] = int((time.perf_counter() - t0) * 1000)
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
@@ -169,7 +173,7 @@ class ServiceMode:
 
                 # Run polling, reconnect-request watcher, and shutdown watcher
                 # concurrently; whichever finishes first wins.
-                polling_task   = asyncio.create_task(self.client.start_polling(interval))
+                polling_task   = asyncio.create_task(self.client.start_polling(interval, on_poll_done=self._on_poll_done))
                 reconnect_task = asyncio.create_task(self._reconnect_requested.wait())
                 shutdown_task  = asyncio.create_task(self._shutdown_event.wait())
 
@@ -251,6 +255,13 @@ class ServiceMode:
         elif status in ("disconnected", "error"):
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
+            self.device_state["last_connect_ms"] = None
+            self.device_state["last_poll_ms"] = None
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
+
+    async def _on_poll_done(self, millis: int):
+        self.device_state["last_poll_ms"] = millis
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -470,7 +481,9 @@ class ApiMode:
             await self.service.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
             await self.service._set_ble_status("connecting", device_address=device_id)
+            t0 = time.perf_counter()
             await client.connect(device_id)
+            self.service.device_state["last_connect_ms"] = int((time.perf_counter() - t0) * 1000)
             await self.service._set_ble_status(
                 "connected",
                 device_name=client.Description,
