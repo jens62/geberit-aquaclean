@@ -113,6 +113,7 @@ class ServiceMode:
             interval = float(config.get("POLL", "interval"))
         except Exception:
             interval = 2.5
+        self.device_state["poll_interval"] = interval
 
         # Subscribe MQTT handlers once — handlers reference self.client
         # which is updated each iteration of the recovery loop below
