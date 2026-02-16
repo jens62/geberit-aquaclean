@@ -316,8 +316,8 @@
 
     <h2>Actions</h2>
     <div class="controls">
-      <button onclick="sendPost('/reconnect', this)">
-        <span class="spinner"></span>Reconnect
+      <button id="connBtn" onclick="sendPost(connBtnUrl(), this)">
+        <span class="spinner"></span><span id="connBtnLabel">Reconnect</span>
       </button>
     </div>
 
@@ -373,6 +373,19 @@
       if (val)  val.textContent = (value === null || value === undefined) ? '—' : (value ? 'ON' : 'OFF');
     }
 
+    // --- Connection button ---
+    let _bleStatus = 'disconnected';
+
+    function connBtnUrl() {
+      return _bleStatus === 'connected' ? '/disconnect' : '/reconnect';
+    }
+
+    function updateConnBtn(status) {
+      _bleStatus = status;
+      const label = document.getElementById('connBtnLabel');
+      if (label) label.textContent = status === 'connected' ? 'Disconnect' : 'Reconnect';
+    }
+
     // --- Connection status ---
     function updateConnection(state) {
       const badge  = document.getElementById('connBadge');
@@ -382,6 +395,7 @@
       const status = state.ble_status || 'disconnected';
       badge.className = 'conn-badge ' + status;
       badge.textContent = status;
+      updateConnBtn(status);
 
       if (status === 'connected' && state.ble_device_name) {
         detail.textContent = state.ble_device_name + ' (' + (state.ble_device_address || '—') + ')';
