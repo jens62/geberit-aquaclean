@@ -114,24 +114,22 @@ class RestApiService:
         )
         server = uvicorn.Server(server_config)
 
-        # Run serve() as a task so we can monitor it from outside.
+        # Prevent uvicorn from installing its own SIGINT/SIGTERM handlers.
+        # aiorun is the outermost loop and must own signal handling so that
+        # ONE Ctrl+C cleanly cancels all subsystems (uvicorn, BLE, bleak).
+        server.install_signal_handlers = lambda: None
+
         serve_task = asyncio.create_task(server.serve())
 
-        # Wait for the server to finish its startup sequence.
-        while not server.started:
-            if serve_task.done():
-                break
-            await asyncio.sleep(0.05)
+        # When aiorun cancels this task on Ctrl+C, also tell uvicorn to
+        # skip its connection-draining wait (equivalent to a second Ctrl+C).
+        _original_cancel = serve_task.cancel
+        def _cancel_and_force_exit(*args, **kwargs):
+            server.should_exit = True
+            server.force_exit = True
+            return _original_cancel(*args, **kwargs)
+        serve_task.cancel = _cancel_and_force_exit
 
-        # Wait for uvicorn's SIGINT handler to signal a shutdown.
-        while not server.should_exit:
-            if serve_task.done():
-                break
-            await asyncio.sleep(0.05)
-
-        # Skip connection/task draining and cancel immediately.
-        server.force_exit = True
-        serve_task.cancel()
         try:
             await serve_task
         except asyncio.CancelledError:
