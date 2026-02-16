@@ -462,6 +462,8 @@ class ApiMode:
         device_id = config.get("BLE", "device_id")
         topic = self.service.mqttConfig['topic']
         connector = BluetoothLeConnector()
+        # Mirror persistent mode: let the connector publish "True, address, name"
+        connector.connection_status_changed_handlers += self.service.on_connection_status_changed
         factory = AquaCleanClientFactory(connector)
         client = factory.create_client()
         try:
@@ -469,8 +471,6 @@ class ApiMode:
                 f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
             await self.service._set_ble_status("connecting", device_address=device_id)
             await client.connect(device_id)
-            await self.service.mqtt_service.send_data_async(
-                f"{topic}/centralDevice/connected", str(True))
             await self.service._set_ble_status(
                 "connected",
                 device_name=client.Description,
