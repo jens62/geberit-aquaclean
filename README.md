@@ -235,6 +235,16 @@ A longer interval reduces the frequency of BLE requests to the AquaClean, which 
 
 Just run `python /path/to/aquaclean_console_app/main.py` and watch the result in your favorite MQTT Tool.
 
+The script can be invoked with an absolute path or relative to any working directory — `config.ini` is always resolved relative to the script itself:
+
+```
+# from the project root
+python ./aquaclean_console_app/main.py
+
+# or with an absolute path
+python /path/to/aquaclean_console_app/main.py
+```
+
 In log_level `DEBUG`, the output is very similar to [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s ['Geberit AquaClean Mera Library'](https://github.com/thomas-bingel/geberit-aquaclean "'Geberit AquaClean Mera Library'").
 
 #### Toggle lid position
