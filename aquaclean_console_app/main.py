@@ -295,10 +295,8 @@ class ApiMode:
                 await self.rest_api.start()
             finally:
                 service_task.cancel()
-                # Wait at most 3 s for the service to clean up; if it takes
-                # longer (e.g. a slow BLE disconnect) we move on and let the
-                # event loop stop handle the rest.
-                await asyncio.wait({service_task}, timeout=3.0)
+                # Wait at most 1 s for the service to clean up, then move on.
+                await asyncio.wait({service_task}, timeout=1.0)
         else:
             await self.rest_api.start()
 

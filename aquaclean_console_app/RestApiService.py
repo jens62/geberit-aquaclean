@@ -129,15 +129,10 @@ class RestApiService:
                 break
             await asyncio.sleep(0.05)
 
-        # Skip connection/task draining so serve() exits immediately.
+        # Skip connection/task draining and cancel immediately.
         server.force_exit = True
-
-        # Give serve() a moment to notice and return on its own.
+        serve_task.cancel()
         try:
-            await asyncio.wait_for(serve_task, timeout=2.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            serve_task.cancel()
-            try:
-                await serve_task
-            except asyncio.CancelledError:
-                pass
+            await serve_task
+        except asyncio.CancelledError:
+            pass
