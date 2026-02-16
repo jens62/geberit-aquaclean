@@ -228,16 +228,16 @@ class ServiceMode:
             except Exception as e:
                 await self.handle_exception(e)
             finally:
+                # On shutdown, publish disconnected status to MQTT BEFORE the
+                # slow BLE disconnect (which may be cancelled by ApiMode).
+                if self._shutdown_event.is_set():
+                    await self.mqtt_service.send_data_async(
+                        f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
                 try:
                     await self.client.disconnect()
                 except Exception:
                     pass
                 await self._set_ble_status("disconnected")
-
-        # Publish disconnected status before shutting MQTT down, so other
-        # applications relying on this topic see the device as offline.
-        await self.mqtt_service.send_data_async(
-            f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
 
         # Recovery loop exited — stop the MQTT background thread
         self.mqtt_service.stop()
@@ -372,8 +372,16 @@ class ApiMode:
             finally:
                 # Ensure the BLE loop also sees the shutdown event
                 self._shutdown_event.set()
-                service_task.cancel()
-                await asyncio.wait({service_task}, timeout=2.0)
+                # Let the service exit gracefully via the shutdown event —
+                # it needs to publish MQTT status before BLE disconnect.
+                # Only cancel as a last resort if it doesn't finish in time.
+                done, pending = await asyncio.wait({service_task}, timeout=5.0)
+                for t in pending:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
         else:
             await self.rest_api.start(self._shutdown_event)
 
