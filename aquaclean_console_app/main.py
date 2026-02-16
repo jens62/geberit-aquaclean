@@ -422,13 +422,6 @@ class ApiMode:
         else:
             return {"status": "success", "action": "no persistent connection to disconnect"}
 
-    async def do_reconnect(self):
-        if self.ble_connection == "persistent":
-            await self.service.request_reconnect()
-            return {"status": "success", "action": "reconnect requested"}
-        else:
-            return await self._on_demand(lambda client: self._fetch_info(client))
-
     # --- Helpers ---
 
     async def _on_demand(self, action):

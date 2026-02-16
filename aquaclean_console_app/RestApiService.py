@@ -100,10 +100,6 @@ class RestApiService:
         async def disconnect():
             return await self._api_mode.do_disconnect()
 
-        @app.post("/reconnect")
-        async def reconnect():
-            return await self._api_mode.do_reconnect()
-
     async def start(self, shutdown_event: asyncio.Event):
         server_config = uvicorn.Config(
             self.app,
