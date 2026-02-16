@@ -234,6 +234,11 @@ class ServiceMode:
                     pass
                 await self._set_ble_status("disconnected")
 
+        # Publish disconnected status before shutting MQTT down, so other
+        # applications relying on this topic see the device as offline.
+        await self.mqtt_service.send_data_async(
+            f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+
         # Recovery loop exited — stop the MQTT background thread
         self.mqtt_service.stop()
 
