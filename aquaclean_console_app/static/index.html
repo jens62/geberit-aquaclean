@@ -176,7 +176,7 @@
     .conn-badge.connecting   { background: rgba(255,193,7,0.2);   color: #ffc107; }
     .conn-badge.error        { background: rgba(244,67,54,0.2);   color: var(--error); }
 
-    .conn-detail { color: var(--text); }
+    .conn-detail { color: var(--text); word-break: break-word; }
     .conn-meta   { color: var(--muted); font-size: 0.8rem; }
 
     /* Controls */
@@ -653,6 +653,9 @@
         meta.textContent   = state.ble_connected_at ? 'Connected since ' + state.ble_connected_at : '';
       } else if (status === 'connecting') {
         detail.textContent = state.ble_device_address ? 'Connecting to ' + state.ble_device_address + '…' : '…';
+        meta.textContent   = '';
+      } else if (status === 'error' && state.ble_error) {
+        detail.textContent = state.ble_error;
         meta.textContent   = '';
       } else {
         detail.textContent = state.ble_device_address || '—';
