@@ -28,13 +28,12 @@ class RestApiService:
         for q in list(self._sse_queues):
             await q.put(data)
 
+    def _close_sse_connections(self):
+        for q in list(self._sse_queues):
+            q.put_nowait(None)  # sentinel: tells each generator to return
+
     def _register_routes(self):
         app = self.app
-
-        @app.on_event("shutdown")
-        async def _close_sse_connections():
-            for q in list(self._sse_queues):
-                q.put_nowait(None)  # sentinel: tells each generator to return
 
         @app.get("/")
         async def serve_ui():
@@ -112,6 +111,7 @@ class RestApiService:
             port=self.port,
             log_level="info",
             loop="none",
+            lifespan="off",
         )
         server = uvicorn.Server(server_config)
 
@@ -145,6 +145,7 @@ class RestApiService:
         # serve_task in case serve() doesn't return on its own.
         async def _shutdown_watcher():
             await shutdown_event.wait()
+            self._close_sse_connections()
             server.should_exit = True
             server.force_exit = True
             serve_task.cancel()
