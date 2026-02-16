@@ -42,10 +42,10 @@ class RestApiService:
 
         @app.get("/")
         async def serve_ui():
-            return FileResponse(os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "static", "index.html"
-            ))
+            return FileResponse(
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html"),
+                headers={"Cache-Control": "no-store"},
+            )
 
         @app.get("/events")
         async def sse():
