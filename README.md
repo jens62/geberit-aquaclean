@@ -294,6 +294,28 @@ Two types of errors can occur:
    ```
 
 
+## Automatic recovery
+
+The application detects when the AquaClean stops responding and attempts to recover automatically — no manual restart of the script is required.
+
+### How it works
+
+If the BLE peripheral sends no response within 5 seconds (normal request/response cycle is ~600 ms), a `BLEPeripheralTimeoutError` is raised containing the device name and BLE address as reported at connection time (e.g. `Geberit AC PRO / 38:AB:41:2A:0D:67`).
+
+The recovery sequence then proceeds as follows:
+
+1. The error is published to `Geberit/AquaClean/centralDevice/error`.
+2. The BLE connection is disconnected.
+3. **Phase 1 — wait for shutdown:** The application passively scans for the device every few seconds. Once the device disappears from the BLE scanner (confirming it has been powered off), `Geberit/AquaClean/centralDevice/connected` is updated to `Device offline. Waiting for it to power back on...`
+4. **Phase 2 — wait for reappearance:** The application continues scanning. Once the device is visible again, `centralDevice/connected` is updated to `Device detected (...). Reconnecting...` and the application reconnects automatically.
+
+### What you need to do
+
+Power cycle the AquaClean (disconnect and reconnect the power supply). The script will detect the restart and reconnect on its own.
+
+If you have your AquaClean on a smart switch with a daily automatic restart (e.g. via openHAB), no manual intervention is needed at all.
+
+
 ## MQTT topics
 
 The root node is configured in `config.ini`.
