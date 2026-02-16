@@ -478,6 +478,10 @@ async def main(args):
     elif args.mode == 'api':
         api = ApiMode()
         await shutdown_waits_for(api.run())
+        # Our signal handler replaced aiorun's, so aiorun won't stop the
+        # loop on its own.  Stopping it here lets aiorun enter its normal
+        # shutdown phase (cancel remaining tasks like bleak D-Bus, etc.).
+        asyncio.get_running_loop().stop()
     else:
         await run_cli(args)
         loop = asyncio.get_running_loop()
