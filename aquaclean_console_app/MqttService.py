@@ -22,6 +22,7 @@ class MqttService:
         self.mqttc.enable_logger()
 
         self.ToggleLidPosition = myEvent.EventHandler()
+        self.Reconnect = myEvent.EventHandler()
 
 
     async def start_async(self, aquaclean_loop, mqtt_initialized_wait_queue):
@@ -93,6 +94,7 @@ class MqttService:
         logger.trace("mqtt, on_connect, properties: %s", properties)
         logger.info("### CONNECTED WITH SERVER ###")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLidPosition")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/control/reconnect")
         logger.info("### SUBSCRIBED ###")
 
     def on_message(self, client, userdata, msg):
@@ -104,13 +106,21 @@ class MqttService:
 
         if msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLidPosition":
             self.handle_toggleLidPositionMessage()
+        elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/reconnect":
+            self.handle_reconnect_message()
 
 
     def handle_toggleLidPositionMessage(self):
         logger.trace("in handle_toggleLidPositionMessage")
-        
+
         for handler in self.ToggleLidPosition.get_handlers():
             # https://stackoverflow.com/questions/57329801/python-asyncio-runtimeerror-non-thread-safe-operation-invoked-on-an-event-loop
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_reconnect_message(self):
+        logger.trace("in handle_reconnect_message")
+        for handler in self.Reconnect.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
             _ = future.result()
 
