@@ -97,6 +97,22 @@ class RestApiService:
             await self._api_mode.run_command("toggle-anal")
             return {"status": "success", "command": "toggle-anal"}
 
+        @app.get("/data/system-parameters")
+        async def get_system_parameters():
+            return await self._api_mode.get_system_parameters()
+
+        @app.get("/data/soc-versions")
+        async def get_soc_versions():
+            return await self._api_mode.get_soc_versions()
+
+        @app.get("/data/initial-operation-date")
+        async def get_initial_operation_date():
+            return await self._api_mode.get_initial_operation_date()
+
+        @app.get("/data/identification")
+        async def get_identification():
+            return await self._api_mode.get_identification()
+
         @app.get("/config")
         async def get_config():
             return self._api_mode.get_config()
