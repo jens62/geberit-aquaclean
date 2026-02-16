@@ -244,11 +244,7 @@ async def main(args):
         loop.stop()
 
 class JsonArgumentParser(argparse.ArgumentParser):
-    """Custom parser that forces all output to JSON format."""
-    
-    def _print_message(self, message, file=None):
-        # Prevent any raw text from leaking to stdout/stderr
-        pass
+    """Custom parser that outputs argument errors as JSON; help uses standard text."""
 
     def error(self, message):
         """Called on invalid choices, missing arguments, or bad types."""
@@ -269,42 +265,31 @@ class JsonArgumentParser(argparse.ArgumentParser):
         sys.exit(status)
 
 if __name__ == "__main__":
-    parser = JsonArgumentParser(description="Geberit AquaClean Controller", add_help=False)
-
-    # Add --help manually if you want it to return JSON too
-    parser.add_argument('-h', '--help', action='store_true')
+    parser = JsonArgumentParser(
+        prog=os.path.basename(sys.argv[0]),
+        description="Geberit AquaClean Controller",
+        epilog=(
+            "examples:\n"
+            "  %(prog)s --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log\n"
+            "\n"
+            "  output:\n"
+            "  {\n"
+            '    "status": "success",\n'
+            '    "command": "toggle-lid",\n'
+            '    "device": "AquaClean Mera Comfort",\n'
+            '    "serial_number": "HB23XXEUXXXXXX",\n'
+            '    "data": { "action": "lid_toggled" },\n'
+            '    "message": "Command toggle-lid completed"\n'
+            "  }\n"
+            "\n"
+            "CLI results and errors are written to stdout as JSON.\n"
+            "Log output goes to stderr (redirect with 2>logfile)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument('--mode', choices=['service', 'cli'], default='service')
     parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'])
     parser.add_argument('--address')
 
     args = parser.parse_args()
-
-    if getattr(args, 'help', False):
-        help_data = {
-            "status": "help",
-            "description": parser.description,
-            "arguments": {}
-        }
-        
-        for action in parser._actions:
-            # Skip the help flag itself to keep the output clean
-            if 'help' in action.dest:
-                continue
-                
-            arg_info = {
-                "flags": action.option_strings,
-                "default": action.default if action.default != argparse.SUPPRESS else None,
-                "required": action.required
-            }
-            
-            # Dynamically capture choices for ANY argument (mode, command, etc.)
-            if action.choices:
-                arg_info["choices"] = list(action.choices)
-            
-            help_data["arguments"][action.dest] = arg_info
-
-        print(json.dumps(help_data, indent=2))
-        sys.exit(0)
-
-    # 3. Pass the parsed args into the async loop
     run(main(args))

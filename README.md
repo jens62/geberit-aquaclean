@@ -235,6 +235,55 @@ In log_level `DEBUG`, the output is very similar to [Thomas Bingel](https://gith
 
 Publish any value (payload is not evaluated) on the `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition` topic to change the lid position using MQTT.
 
+### CLI mode
+
+In addition to the long-running service mode, the application can be used as a one-shot CLI tool. Results and errors are always written to stdout as JSON; log output goes to stderr.
+
+```
+python /path/to/aquaclean_console_app/main.py --mode cli --command <command> [--address <ble-address>]
+```
+
+Available commands:
+
+| Command | Description |
+|---|---|
+| `toggle-lid` | Toggle the lid position |
+| `toggle-anal` | Toggle the anal shower |
+| `status` | Report connection status |
+
+If `--address` is omitted, the address from `config.ini` is used.
+
+Redirect stderr to keep stdout clean for machine parsing:
+
+```
+python /path/to/aquaclean_console_app/main.py --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log
+```
+
+Example output:
+
+```json
+{
+  "status": "success",
+  "command": "toggle-lid",
+  "device": "AquaClean Mera Comfort",
+  "serial_number": "HB23XXEUXXXXXX",
+  "data": {
+    "action": "lid_toggled"
+  },
+  "message": "Command toggle-lid completed"
+}
+```
+
+Errors are also returned as JSON, e.g. for an unsupported command:
+
+```json
+{
+  "status": "error",
+  "command": "invalid",
+  "message": "Argument Error: argument --command: invalid choice: 'foo' (choose from 'toggle-lid', 'toggle-anal', 'status')",
+  "data": {}
+}
+```
 
 
 ## Troubleshooting:
