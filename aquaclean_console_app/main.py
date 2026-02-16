@@ -86,7 +86,7 @@ class ServiceMode:
             self.client.DeviceIdentification += self.on_device_identification
             bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
 
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(None))
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", "No error")
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
 
             try:
