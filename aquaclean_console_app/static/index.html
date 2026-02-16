@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geberit AquaClean</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --accent: #007AC9;
+      --accent-glow: rgba(0, 122, 201, 0.35);
+      --text: #e0e0e0;
+      --muted: #888;
+      --success: #4caf50;
+      --error: #f44336;
+      --radius: 12px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--surface);
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    header h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .sse-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .sse-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--error);
+      transition: background 0.3s;
+      flex-shrink: 0;
+    }
+
+    .sse-dot.live { background: var(--success); }
+
+    main {
+      flex: 1;
+      padding: 1.5rem;
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    h2 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+      margin-top: 1.5rem;
+    }
+
+    h2:first-child { margin-top: 0; }
+
+    /* Status cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+    }
+
+    @media (max-width: 480px) {
+      .cards { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      border: 1px solid rgba(255,255,255,0.06);
+      transition: border-color 0.3s, box-shadow 0.3s, color 0.3s;
+      color: var(--muted);
+    }
+
+    .card.active {
+      color: var(--accent);
+      border-color: var(--accent);
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    .card svg {
+      width: 52px;
+      height: 52px;
+    }
+
+    .card-label {
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .card-value {
+      font-size: 0.75rem;
+      opacity: 0.6;
+    }
+
+    /* Device info */
+    .info-grid {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.5rem 1rem;
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 0.875rem;
+    }
+
+    .info-grid dt { color: var(--muted); white-space: nowrap; }
+    .info-grid dd { font-weight: 500; word-break: break-all; }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    button {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px;
+      padding: 0.6rem 1.2rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+      min-width: 130px;
+      justify-content: center;
+    }
+
+    button:hover { background: rgba(255,255,255,0.06); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.success { border-color: var(--success); color: var(--success); }
+    button.error   { border-color: var(--error);   color: var(--error);   }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      display: none;
+      flex-shrink: 0;
+    }
+
+    button.loading .spinner { display: block; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    footer {
+      padding: 1rem 1.5rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Geberit AquaClean</h1>
+    <div class="sse-indicator">
+      <div class="sse-dot" id="sseDot"></div>
+      <span id="sseLabel">disconnected</span>
+    </div>
+  </header>
+
+  <main>
+    <h2>Status</h2>
+    <div class="cards">
+
+      <div class="card" id="card-sitting">
+        <!-- Toilet / user sitting icon -->
+        <svg viewBox="0 0 133.33333 133.33333" xmlns="http://www.w3.org/2000/svg">
+          <g transform="translate(-35.999999,-13.097331)">
+            <path fill="currentColor" d="M 63.999999,49.333659 V 86.66569 h 25.333984 v 33.33398 L 98.14452,120.2023 98.347154,82.861003 90.30664,77.333659 H 73.333983 v -28 z m -28,13.332031 v 8.628907 c 4.223714,-0.07296 8.443362,-0.162331 12.666016,0.03906 l 0.178817,31.332033 h 24.489151 v 1.03711 l -0.202634,2.05028 -1.010266,2.4834 -2.833975,2.68409 -12.30028,0.008 0.177234,8.46338 c 0,0 7.937235,0.60852 11.704587,-0.41527 1.483955,-0.40327 3.536193,-0.61588 4.869621,-1.38186 1.442108,-0.82841 2.862307,-2.04869 4.057132,-3.20555 0.943257,-0.91328 1.641285,-1.79145 2.360837,-2.88966 0.719251,-1.09775 1.955569,-3.29296 1.955569,-3.29296 L 83.039062,93.333417 H 57.333983 V 62.66569 Z"/>
+            <circle fill="currentColor" cx="68.858162" cy="27.921038" r="13"/>
+          </g>
+        </svg>
+        <span class="card-label">User Sitting</span>
+        <span class="card-value" id="val-sitting">—</span>
+      </div>
+
+      <div class="card" id="card-anal">
+        <!-- Anal shower icon (water spray) -->
+        <svg viewBox="0 0 448 428" xmlns="http://www.w3.org/2000/svg">
+          <path fill="currentColor" d="m 203.79966,346.75 c -1.2022,-0.94954 -1.86226,-4.73531 -2.74608,-15.75 -2.35244,-29.31749 -8.0269,-57.79937 -15.0419,-75.5 -5.14961,-12.99377 -14.64006,-30.5059 -21.43725,-39.55685 -7.92285,-10.54982 -21.34352,-23.55048 -34.01426,-32.94974 -5.34752,-3.96684 -10.5963,-8.62566 -11.66396,-10.35292 C 114.16783,164.99087 119.21672,158 129.46974,158 c 9.71459,0 13.01754,1.92407 27.10548,15.78984 15.59354,15.34761 23.38411,26.07561 32.46808,44.71016 15.19349,31.16739 22.81312,65.09452 25.65008,114.2095 0.49238,8.5244 0.31497,10.62882 -1.07489,12.75 -1.85813,2.83587 -7.0057,3.51242 -9.81883,1.2905 z m 26.1686,-0.28825 c -1.65332,-1.99212 -0.7393,-30.78254 1.52265,-47.96175 4.60401,-34.9668 15.31839,-68.84 29.25853,-92.5 13.67864,-23.21617 31.51096,-40.40311 49.14183,-47.3633 5.22482,-2.06262 8.94673,-1.48534 13.13268,2.03691 7.30964,6.15066 0.95565,15.41269 -21.75846,31.7167 -2.87899,2.06651 -8.41851,7.21158 -12.31005,11.43349 -27.24729,29.56042 -43.97751,75.25114 -46.56711,127.1762 -0.74214,14.8809 -1.65073,17 -7.28894,17 -2.24886,0 -4.3863,-0.64077 -5.13113,-1.53825 z M 196.83705,188.94241 c -0.91462,-0.5194 -2.89004,-4.20642 -4.38983,-8.19338 -4.93955,-13.13107 -16.47411,-34.60916 -26.79296,-49.89024 -12.92478,-19.14018 -12.62209,-18.57323 -12.63952,-23.67453 -0.0192,-5.61132 1.23338,-7.786118 5.22758,-9.076642 4.05161,-1.309073 9.21727,-0.207076 14.97914,3.195522 7.12811,4.20941 10.69749,8.75555 14.0062,17.839 12.28698,33.73158 14.15964,41.3477 14.16806,57.62163 0.006,11.02386 -1.15092,14.11384 -4.55867,12.17864 z m 44.51221,-2.47463 c -1.21424,-3.16427 0.5892,-22.0002 3.07429,-32.10929 1.37118,-5.57783 4.35113,-15.19102 6.62211,-21.36265 2.27097,-6.17162 4.77218,-13.3868 5.55823,-16.03373 2.7412,-9.23062 15.55911,-18.971972 24.89611,-18.920538 6.48668,0.03573 9.5,3.623498 9.5,11.311028 0,3.8859 -0.61209,5.19535 -4.58822,9.81575 -8.56077,9.94786 -19.26894,27.27329 -27.39969,44.33165 -4.45661,9.35 -8.86999,18.575 -9.80751,20.5 -1.94223,3.98796 -6.69858,5.48218 -7.85532,2.46778 z m -22.21343,-44.80411 c -3.46918,-4.18012 -5.4889,-14.60323 -7.68575,-39.66367 -1.01432,-11.570737 -2.33871,-20.641874 -3.53591,-24.218455 -3.56475,-10.649449 -1.61447,-17.770994 5.85159,-21.367413 4.70772,-2.267722 13.25204,-2.287712 16.68396,-0.03904 6.42698,4.211123 6.91148,7.809436 3.7869,28.124903 -1.18429,7.7 -3.07776,23.000005 -4.20773,34.000005 -1.94402,18.92463 -2.19121,20.12097 -4.59745,22.25 -2.90444,2.56982 -4.70433,2.83104 -6.29561,0.91366 z"/>
+        </svg>
+        <span class="card-label">Anal Shower</span>
+        <span class="card-value" id="val-anal">—</span>
+      </div>
+
+      <div class="card" id="card-lady">
+        <!-- Lady wash icon -->
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path fill="currentColor" fill-rule="evenodd" d="M14.5884683 3.00672057C14.5884683 1.88957261 13.6510881 1 12.5013758 1C11.3493705 1 10.4147419 1.88957261 10.4147419 3.00672057C10.4147419 4.11196052 11.3493705 5.00814869 12.5013758 5.00814869C13.6510881 5.00814869 14.5884683 4.11196052 14.5884683 3.00672057M16.9250396 15.6248031L14.2426832 15.9908642L13.600642 21.6308516L13.5676228 21.6859813C13.5460685 21.870335 13.3828066 22 13.1869841 22L11.8226465 22C11.6309514 22 11.4704411 21.870335 11.4456766 21.6859813L10.8063871 15.9908642L8.12494789 15.6248031L10.8063871 9.49041269L10.8063871 9.46836081C10.8091387 9.44983724 10.8146419 9.41543631 10.8146419 9.37265568C10.8146419 9.28621233 10.7563996 9.19447653 10.6568832 9.14243411L10.4147419 8.99733277L10.4252898 9.0493752C10.4078629 9.0493752 10.3849329 9.04320067 10.3601684 9.04320067C10.2556074 9.04320067 10.1643459 9.11112045 10.1235304 9.19447653L8.50191779 12.8056915L8.47577754 12.8171585C8.42303844 12.9494697 8.28958559 13.0266513 8.15383974 13.0266513C8.09376303 13.0266513 8.06624698 13.0200357 7.99974985 12.9993069L7.23434503 12.6733802C7.10501959 12.6222199 7 12.4969652 7 12.3593615C7 12.3214323 7.00550321 12.2623333 7.03439506 12.2296965L9.90707079 6.05473065L9.83782206 6.10059855C10.007963 5.741153 10.3711749 5.50563898 10.7807054 5.50563898L14.2426832 5.56429697L14.2330526 5.51842907C14.6343284 5.51842907 15.0062536 5.741153 15.1681397 6.10059855L17.9426749 12.1895621L17.9701909 12.2296965C17.9889936 12.2623333 18 12.3068781 18 12.3593615C18 12.4912318 17.9206621 12.6222199 17.7959226 12.6733802L17.0502376 13.0487031L17.0016259 12.9993069C16.9635621 13.0200357 16.8938547 13.0266513 16.8626699 13.0266513C16.7195864 13.0266513 16.5907196 12.9494697 16.5375219 12.8171585L14.878304 9.24034443L14.878304 9.19447653C14.8480364 9.11112045 14.7379722 9.04320067 14.6444176 9.04320067C14.6315768 9.04320067 14.5994747 9.0493752 14.5747102 9.0493752L14.3733845 9.12302846L14.3403652 9.14243411C14.2426832 9.19447653 14.1789377 9.28621233 14.1789377 9.37265568C14.1789377 9.41543631 14.1991162 9.44983724 14.2087468 9.46836081L16.9250396 15.6248031"/>
+        </svg>
+        <span class="card-label">Lady Shower</span>
+        <span class="card-value" id="val-lady">—</span>
+      </div>
+
+      <div class="card" id="card-dryer">
+        <!-- Air dryer icon -->
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path fill="currentColor" fill-rule="evenodd" d="M21 2L21 6.0219159L13.7684665 6.0219159L13.8069428 7.0772757C13.8069428 9.88349134 11.6008054 12.1468179 8.89147879 12.1468179C8.72558126 12.1468179 8.57467447 12.1334133 8.40827724 12.1241331L8.40827724 12.1241331L8.34031921 12.1839386L7.10658123 18.5016616L6.26510097 18.2108834L6.238 18.201L5.41356569 22L4.6032257 21.5928465L5.278 17.882L4.60512625 17.6375761L5.42062256 10.6558064C4.50418859 9.7216042 4 8.41568022 4 7.0772757C4 4.29426045 6.20313924 2.02938716 8.89147879 2.02938716L8.89147879 2.02938716L8.91246583 2L21 2ZM8.89147879 4.23136162C7.37991241 4.23136162 6.13468152 5.51769416 6.13468152 7.0772757C6.13468152 8.64974634 7.37991241 9.93092324 8.89147879 9.93092324C10.4275301 9.93092324 11.666265 8.64974634 11.666265 7.0772757C11.666265 5.51769416 10.4275301 4.23136162 8.89147879 4.23136162Z"/>
+        </svg>
+        <span class="card-label">Dryer</span>
+        <span class="card-value" id="val-dryer">—</span>
+      </div>
+
+    </div>
+
+    <h2>Device Info</h2>
+    <dl class="info-grid">
+      <dt>Description</dt>     <dd id="info-description">—</dd>
+      <dt>Serial</dt>          <dd id="info-serial">—</dd>
+      <dt>SAP Number</dt>      <dd id="info-sap">—</dd>
+      <dt>Production Date</dt> <dd id="info-production">—</dd>
+      <dt>Initial Operation</dt><dd id="info-initial">—</dd>
+    </dl>
+
+    <h2>Commands</h2>
+    <div class="controls">
+      <button onclick="sendPost('/command/toggle-lid', this)">
+        <span class="spinner"></span>Toggle Lid
+      </button>
+      <button onclick="sendPost('/command/toggle-anal', this)">
+        <span class="spinner"></span>Toggle Anal
+      </button>
+    </div>
+
+    <h2>Connection</h2>
+    <div class="controls">
+      <button onclick="sendPost('/connect', this)">
+        <span class="spinner"></span>Connect
+      </button>
+      <button onclick="sendPost('/disconnect', this)">
+        <span class="spinner"></span>Disconnect
+      </button>
+      <button onclick="sendPost('/reconnect', this)">
+        <span class="spinner"></span>Reconnect
+      </button>
+    </div>
+
+  </main>
+
+  <footer>API: <span id="apiBase"></span></footer>
+
+  <script>
+    const apiBase = window.location.origin;
+    document.getElementById('apiBase').textContent = apiBase;
+
+    // --- SSE ---
+    const dot   = document.getElementById('sseDot');
+    const label = document.getElementById('sseLabel');
+
+    function connectSSE() {
+      const es = new EventSource(apiBase + '/events');
+
+      es.onopen = () => {
+        dot.classList.add('live');
+        label.textContent = 'live';
+      };
+
+      es.onerror = () => {
+        dot.classList.remove('live');
+        label.textContent = 'disconnected';
+        // browser automatically retries; close and let it reconnect
+      };
+
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'state') updateCards(data);
+        } catch (_) {}
+      };
+    }
+
+    connectSSE();
+
+    // --- Status cards ---
+    function updateCards(state) {
+      updateCard('sitting', state.is_user_sitting);
+      updateCard('anal',    state.is_anal_shower_running);
+      updateCard('lady',    state.is_lady_shower_running);
+      updateCard('dryer',   state.is_dryer_running);
+    }
+
+    function updateCard(key, value) {
+      const card = document.getElementById('card-' + key);
+      const val  = document.getElementById('val-'  + key);
+      if (card) card.classList.toggle('active', value === true);
+      if (val)  val.textContent = (value === null || value === undefined) ? '—' : (value ? 'ON' : 'OFF');
+    }
+
+    // --- Device info ---
+    fetch(apiBase + '/info')
+      .then(r => r.json())
+      .then(d => {
+        set('info-description', d.description);
+        set('info-serial',      d.serial_number);
+        set('info-sap',         d.sap_number);
+        set('info-production',  d.production_date);
+        set('info-initial',     d.initial_operation_date);
+      })
+      .catch(() => {});
+
+    function set(id, val) {
+      const el = document.getElementById(id);
+      if (el && val !== undefined && val !== null) el.textContent = val;
+    }
+
+    // --- Buttons ---
+    async function sendPost(url, btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.classList.remove('success', 'error');
+      try {
+        const r = await fetch(apiBase + url, { method: 'POST' });
+        btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        btn.classList.add('error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -74,6 +74,7 @@ class ServiceMode:
             "is_dryer_running": None,
         }
         self._reconnect_requested = asyncio.Event()
+        self.on_state_updated = None  # Optional async callback(state_dict)
 
         if mqtt_enabled:
             self.mqttConfig = dict(config.items('MQTT'))
@@ -216,6 +217,8 @@ class ServiceMode:
         if "IsDryerRunning" in args.__dict__ and args.IsDryerRunning is not None:
             self.device_state["is_dryer_running"] = args.IsDryerRunning
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(args.IsDryerRunning))
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
 
     async def on_device_identification(self, sender, args):
         topic = self.mqttConfig['topic']
@@ -270,6 +273,7 @@ class ApiMode:
 
     async def run(self):
         if self.ble_connection == "persistent":
+            self.service.on_state_updated = self.rest_api.broadcast_state
             await asyncio.gather(
                 self.service.run(),
                 self.rest_api.start(),
