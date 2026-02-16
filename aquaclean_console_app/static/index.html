@@ -291,11 +291,17 @@
     <div class="cards">
 
       <div class="card" id="card-sitting">
-        <!-- Toilet / user sitting icon -->
-        <svg viewBox="0 0 133.33333 133.33333" xmlns="http://www.w3.org/2000/svg">
+        <!-- is_user_sitting-on.svg: toilet + person -->
+        <svg id="svg-sitting-on" viewBox="0 0 133.33333 133.33333" xmlns="http://www.w3.org/2000/svg">
           <g transform="translate(-35.999999,-13.097331)">
             <path fill="currentColor" d="M 63.999999,49.333659 V 86.66569 h 25.333984 v 33.33398 L 98.14452,120.2023 98.347154,82.861003 90.30664,77.333659 H 73.333983 v -28 z m -28,13.332031 v 8.628907 c 4.223714,-0.07296 8.443362,-0.162331 12.666016,0.03906 l 0.178817,31.332033 h 24.489151 v 1.03711 l -0.202634,2.05028 -1.010266,2.4834 -2.833975,2.68409 -12.30028,0.008 0.177234,8.46338 c 0,0 7.937235,0.60852 11.704587,-0.41527 1.483955,-0.40327 3.536193,-0.61588 4.869621,-1.38186 1.442108,-0.82841 2.862307,-2.04869 4.057132,-3.20555 0.943257,-0.91328 1.641285,-1.79145 2.360837,-2.88966 0.719251,-1.09775 1.955569,-3.29296 1.955569,-3.29296 L 83.039062,93.333417 H 57.333983 V 62.66569 Z"/>
             <circle fill="currentColor" cx="68.858162" cy="27.921038" r="13"/>
+          </g>
+        </svg>
+        <!-- is_user_sitting-off.svg: toilet only -->
+        <svg id="svg-sitting-off" viewBox="0 0 133.33333 133.33333" xmlns="http://www.w3.org/2000/svg" style="display:none">
+          <g transform="translate(-35.999999,-13.097331)">
+            <path fill="currentColor" d="m 35.999999,62.66569 v 8.628907 c 4.223714,-0.07296 8.443362,-0.162331 12.666016,0.03906 l 0.178817,31.332033 h 24.489151 v 1.03711 l -0.202634,2.05028 -1.010266,2.4834 -2.833975,2.68409 -12.30028,0.008 0.177234,8.46338 c 0,0 7.937235,0.60852 11.704587,-0.41527 1.483955,-0.40327 3.536193,-0.61588 4.869621,-1.38186 1.442108,-0.82841 2.862307,-2.04869 4.057132,-3.20555 0.943257,-0.91328 1.641285,-1.79145 2.360837,-2.88966 0.719251,-1.09775 1.955569,-3.29296 1.955569,-3.29296 L 83.039062,93.333417 H 57.333983 V 62.66569 Z"/>
           </g>
         </svg>
         <span class="card-label">User Sitting</span>
@@ -347,7 +353,11 @@
     <h2>Commands</h2>
     <div class="controls">
       <button onclick="sendPost('/command/toggle-lid', this)">
-        <span class="spinner"></span>Toggle Lid
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" fill-rule="evenodd" d="M11.6472727 1.69018182L12.6098909 2.3744L5.453 20.4152324L22.9617455 20.4158545C23.1502545 20.4158545 23.3304727 20.4948364 23.4552727 20.6322909C23.5809455 20.7701818 23.6420364 20.9569455 23.6241455 21.1450182L23.6136727 21.2082909L23.1716364 23L22.3246545 22.7914182L22.6946909 21.2885818L1.87272727 21.2885818L1.87272727 22.8957091L1 22.8957091L1 21.1048727C1 20.7248 1.30894545 20.4158545 1.68901818 20.4158545L3.096 20.4152324L1.40669091 19.4453818C1.08901818 19.2621091 0.979054545 18.8554182 1.16145455 18.5381818L10.7165091 1.89352727C10.8077091 1.73512727 10.9608727 1.62254545 11.1362909 1.58370909C11.3121455 1.54530909 11.4980364 1.58414545 11.6472727 1.69018182ZM11.3474909 2.54763636L2.02196364 18.7925818L4.57687273 20.2592L11.5464727 2.68901818L11.3474909 2.54763636ZM22.9617455 19.0186182L22.9617455 19.8913455L6.19883636 19.8913455L6.19883636 19.0186182L22.9617455 19.0186182ZM15.2446545 5.34385455L15.7460364 7.67578182L13.5847273 8.68552727L13.2155636 7.89483636L14.2414545 7.41570909L11.9274182 6.26632727L12.3153455 5.4848L14.6293818 6.63418182L14.3911273 5.52756364L15.2446545 5.34385455ZM6.6112 1.59810909L7.0528 2.35083636L6.07665455 2.92421818L8.48843636 3.85149091L8.17556364 4.66618182L5.76378182 3.73890909L6.10501818 4.81847273L5.27243636 5.08116364L4.55418182 2.8064L6.6112 1.59810909Z"/>
+        </svg>
+        Toggle Lid
       </button>
     </div>
 
@@ -441,6 +451,13 @@
       const val  = document.getElementById('val-'  + key);
       if (card) card.classList.toggle('active', value === true);
       if (val)  val.textContent = (value === null || value === undefined) ? '—' : (value ? 'ON' : 'OFF');
+      // Switch on/off SVG variants where available
+      const svgOn  = document.getElementById('svg-' + key + '-on');
+      const svgOff = document.getElementById('svg-' + key + '-off');
+      if (svgOn && svgOff) {
+        svgOn.style.display  = value === true  ? '' : 'none';
+        svgOff.style.display = value === false ? '' : 'none';
+      }
     }
 
     // --- Poll countdown ---
@@ -463,7 +480,7 @@
         const elapsed   = (nowSec - _pollEpoch) % _pollInterval;
         const remaining = _pollInterval - elapsed;
         const pct       = (remaining / _pollInterval) * 100;
-        label.textContent = 'Next poll in ' + remaining.toFixed(1) + ' s';
+        label.textContent = 'Next poll in ' + Math.ceil(remaining) + ' s';
         bar.style.width = pct + '%';
       } else {
         const label = document.getElementById('pollLabel');
