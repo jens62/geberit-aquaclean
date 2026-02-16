@@ -371,7 +371,7 @@
       es.onerror = () => {
         dot.classList.remove('live');
         label.textContent = 'disconnected';
-        // browser automatically retries; close and let it reconnect
+        onServerLost();
       };
 
       es.onmessage = (e) => {
@@ -386,6 +386,22 @@
     }
 
     connectSSE();
+
+    // --- Server lost (SSE disconnected) ---
+    function onServerLost() {
+      // Stop the countdown
+      _pollEpoch = null;
+      const pollLabel = document.getElementById('pollLabel');
+      const pollBar   = document.getElementById('pollBar');
+      if (pollLabel) pollLabel.textContent = '—';
+      if (pollBar)   pollBar.style.width   = '0%';
+
+      // Grey out status cards
+      ['sitting', 'anal', 'lady', 'dryer'].forEach(k => updateCard(k, null));
+
+      // Reset connection panel
+      updateConnection({ ble_status: 'disconnected', ble_device_name: null, ble_device_address: null, ble_connected_at: null });
+    }
 
     // --- Status cards ---
     function updateCards(state) {
