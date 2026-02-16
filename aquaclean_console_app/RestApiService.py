@@ -105,7 +105,7 @@ class RestApiService:
         async def reconnect():
             return await self._api_mode.do_reconnect()
 
-    async def start(self):
+    async def start(self, shutdown_event: asyncio.Event):
         server_config = uvicorn.Config(
             self.app,
             host=self.host,
@@ -115,40 +115,50 @@ class RestApiService:
         )
         server = uvicorn.Server(server_config)
 
-        # Prevent uvicorn from installing its own signal handlers if the
-        # version supports this override (no-op on older versions).
+        # Prevent uvicorn from installing its own signal handlers —
+        # the caller (ApiMode) owns signal handling via the shared shutdown_event.
         server.install_signal_handlers = lambda: None
 
         serve_task = asyncio.create_task(server.serve())
 
-        # Wait for uvicorn to finish startup (it may install signal
-        # handlers directly in serve(), ignoring our override above).
+        # Wait for uvicorn to finish startup.
         while not server.started:
             if serve_task.done():
                 break
             await asyncio.sleep(0.05)
 
-        # Now replace whatever signal handler is active with our own.
-        # This ensures ONE Ctrl+C triggers a fast, clean shutdown:
-        #  - force_exit=True  → uvicorn skips connection draining
-        #  - serve_task.cancel() → CancelledError exits serve()
-        # After start() returns, aiorun's task-done callback takes over
-        # and cancels the remaining subsystems (BLE, bleak D-Bus, etc.).
+        # NOW override whatever signal handler uvicorn may have installed
+        # (even if our lambda trick didn't work on this version).
+        # A single Ctrl+C sets the shared shutdown event which all
+        # subsystems (BLE, MQTT, uvicorn) observe independently.
         loop = asyncio.get_running_loop()
 
-        def _on_shutdown_signal():
+        def _on_signal():
+            logger.info("Shutdown signal received — stopping all subsystems...")
+            shutdown_event.set()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _on_signal)
+
+        # Watch the shared shutdown event in a background task.
+        # When it fires, tell uvicorn to stop immediately.
+        async def _shutdown_watcher():
+            await shutdown_event.wait()
             server.should_exit = True
             server.force_exit = True
-            serve_task.cancel()
 
-        loop.add_signal_handler(signal.SIGINT, _on_shutdown_signal)
-        loop.add_signal_handler(signal.SIGTERM, _on_shutdown_signal)
+        watcher_task = asyncio.create_task(_shutdown_watcher())
 
         try:
             await serve_task
         except asyncio.CancelledError:
             pass
         finally:
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
             for sig in (signal.SIGINT, signal.SIGTERM):
                 try:
                     loop.remove_signal_handler(sig)

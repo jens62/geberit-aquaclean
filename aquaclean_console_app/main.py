@@ -65,7 +65,7 @@ class NullMqttService:
 
 
 class ServiceMode:
-    def __init__(self, mqtt_enabled=True):
+    def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None):
         self.client = None
         self.mqtt_initialized_wait_queue = Queue()
         self.device_state = {
@@ -75,6 +75,7 @@ class ServiceMode:
             "is_dryer_running": None,
         }
         self._reconnect_requested = asyncio.Event()
+        self._shutdown_event = shutdown_event or asyncio.Event()
         self.on_state_updated = None  # Optional async callback(state_dict)
 
         if mqtt_enabled:
@@ -109,7 +110,7 @@ class ServiceMode:
         self.mqtt_service.Reconnect += self.request_reconnect
 
         # --- Main Recovery Loop ---
-        while True:
+        while not self._shutdown_event.is_set():
             bluetooth_connector = BluetoothLeConnector()
             factory = AquaCleanClientFactory(bluetooth_connector)
             self.client = factory.create_client()
@@ -126,13 +127,14 @@ class ServiceMode:
             try:
                 await self.client.connect(device_id)
 
-                # Run polling and reconnect-request watcher concurrently;
-                # whichever finishes first wins.
+                # Run polling, reconnect-request watcher, and shutdown watcher
+                # concurrently; whichever finishes first wins.
                 polling_task = asyncio.create_task(self.client.start_polling(interval))
                 reconnect_task = asyncio.create_task(self._reconnect_requested.wait())
+                shutdown_task = asyncio.create_task(self._shutdown_event.wait())
 
                 done, pending = await asyncio.wait(
-                    [polling_task, reconnect_task],
+                    [polling_task, reconnect_task, shutdown_task],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for t in pending:
@@ -141,6 +143,9 @@ class ServiceMode:
                         await t
                     except asyncio.CancelledError:
                         pass
+
+                if shutdown_task in done:
+                    break  # exit recovery loop
 
                 if reconnect_task in done:
                     self._reconnect_requested.clear()
@@ -175,7 +180,10 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await asyncio.sleep(30)
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    pass
             except Exception as e:
                 await self.handle_exception(e)
             finally:
@@ -196,7 +204,7 @@ class ServiceMode:
         # Phase 1: wait for the user to power-cycle the device
         await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
         logger.info(f"Waiting for device {device_id} to drop off BLE scanner...")
-        while True:
+        while not self._shutdown_event.is_set():
             device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
             if device is None:
                 logger.info("Device shut down confirmed.")
@@ -206,7 +214,7 @@ class ServiceMode:
 
         # Phase 2: wait for it to boot back up
         logger.info(f"Waiting for device {device_id} to reappear...")
-        while True:
+        while not self._shutdown_event.is_set():
             device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
             if device is not None:
                 logger.info("Device back online.")
@@ -274,11 +282,13 @@ class ApiMode:
         api_host = config.get("API", "host", fallback="0.0.0.0")
         api_port = int(config.get("API", "port", fallback="8080"))
 
+        self._shutdown_event = asyncio.Event()
+
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
 
         if self.ble_connection == "persistent":
-            self.service = ServiceMode(mqtt_enabled=mqtt_enabled)
+            self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
         else:
             self.service = None
 
@@ -287,18 +297,16 @@ class ApiMode:
     async def run(self):
         if self.ble_connection == "persistent":
             self.service.on_state_updated = self.rest_api.broadcast_state
-            # Run the BLE service as a background task so that uvicorn (which
-            # installs its own SIGINT handler) acts as the foreground process.
-            # When uvicorn exits on Ctrl+C, the finally block cancels the service.
             service_task = asyncio.create_task(self.service.run())
             try:
-                await self.rest_api.start()
+                await self.rest_api.start(self._shutdown_event)
             finally:
+                # Ensure the BLE loop also sees the shutdown event
+                self._shutdown_event.set()
                 service_task.cancel()
-                # Wait at most 1 s for the service to clean up, then move on.
-                await asyncio.wait({service_task}, timeout=1.0)
+                await asyncio.wait({service_task}, timeout=2.0)
         else:
-            await self.rest_api.start()
+            await self.rest_api.start(self._shutdown_event)
 
     # --- REST endpoint implementations ---
 
