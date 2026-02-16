@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 
 import inspect
 
@@ -31,6 +32,11 @@ import pprint
 
 
 logger = logging.getLogger(__name__)
+
+
+class BLEPeripheralTimeoutError(Exception):
+    """Raised when the BLE peripheral stops responding to requests."""
+    pass
 
 
 class AquaCleanBaseClient:
@@ -441,6 +447,9 @@ class AquaCleanBaseClient:
 
         logger.trace(f"self.event_wait_queue.qsize(): {self.event_wait_queue.qsize()}")
         event_wait_queue_get_result = "No value yet"
+        # Normal request/response cycle is ~600 ms; 5 s is a generous safety margin.
+        timeout_seconds = 5.0
+        start_time = time.time()
         while True:
             try:
                 logger.trace(f"self.event_wait_queue.get()...")
@@ -450,6 +459,17 @@ class AquaCleanBaseClient:
             except Empty:
                 logger.trace(f"event_wait_queue_get_result - timeout")
                 logger.trace(f"event_wait_queue_get_result: {event_wait_queue_get_result}")
+                if time.time() - start_time > timeout_seconds:
+                    with self.lock:
+                        self.call_count -= 1
+                    error_msg = (
+                        f"No response from BLE peripheral "
+                        f"'{self.bluetooth_le_connector.device_name}' "
+                        f"({self.bluetooth_le_connector.device_address}). "
+                        f"Usually a restart of the BLE peripheral is required."
+                    )
+                    logger.error(error_msg)
+                    raise BLEPeripheralTimeoutError(error_msg)
             await asyncio.sleep(0.1)
 
         logger.trace(f"nach await self.frame_service.send_frame_async(frame)")
