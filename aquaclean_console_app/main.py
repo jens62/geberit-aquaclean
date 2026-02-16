@@ -558,7 +558,8 @@ class ApiMode:
                 device_name=client.Description,
                 device_address=device_id,
             )
-            return await action(client)
+            result = action(client)
+            return await result if asyncio.iscoroutine(result) else result
         finally:
             try:
                 await client.disconnect()
