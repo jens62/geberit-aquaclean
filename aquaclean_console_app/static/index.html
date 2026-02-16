@@ -644,6 +644,7 @@
       const meta   = document.getElementById('connMeta');
 
       const status = state.ble_status || 'disconnected';
+      const prevStatus = _bleStatus;
       badge.className = 'conn-badge ' + status;
       badge.textContent = status;
       updateConnBtn(status);
@@ -666,7 +667,7 @@
       set('connectMs', fmt(state.last_connect_ms));
       set('pollMs',    fmt(state.last_poll_ms));
 
-      if (status === 'connected') fetchDeviceInfo();
+      if (status === 'connected' && prevStatus !== 'connected' && state.ble_connection !== 'on-demand') fetchDeviceInfo();
     }
 
     // --- Device info ---
