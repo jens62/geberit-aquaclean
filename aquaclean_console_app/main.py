@@ -110,7 +110,7 @@ class ServiceMode:
 
     async def wait_for_device_restart(self, device_id):
         """Passively scans until the device drops off BLE, then waits for it to reappear."""
-        topic = f"{self.mqttConfig['topic']}/centralDevice/status"
+        topic = f"{self.mqttConfig['topic']}/centralDevice/connected"
 
         # Phase 1: wait for the user to power-cycle the device
         await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
