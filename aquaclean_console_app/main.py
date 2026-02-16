@@ -82,6 +82,7 @@ class ServiceMode:
             "ble_connected_at": None,        # ISO timestamp string
             "ble_device_name": None,         # from client.Description
             "ble_device_address": None,      # BLE address from config
+            "ble_error": None,               # error message when ble_status == "error"
             "last_connect_ms": None,         # duration of last BLE connect in ms
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
         }
@@ -224,7 +225,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error")
+                await self._set_ble_status("error", error_msg=msg)
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -246,17 +247,25 @@ class ServiceMode:
         # Recovery loop exited — stop the MQTT background thread
         self.mqtt_service.stop()
 
-    async def _set_ble_status(self, status: str, device_name=None, device_address=None):
+    async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None):
         self.device_state["ble_status"] = status
         if status == "connected":
             self.device_state["ble_connected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.device_state["ble_device_name"] = device_name
             self.device_state["ble_device_address"] = device_address
-        elif status in ("disconnected", "error"):
+            self.device_state["ble_error"] = None
+        elif status == "error":
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
+            self.device_state["ble_error"] = error_msg
+        elif status in ("disconnected", "connecting"):
+            self.device_state["ble_connected_at"] = None
+            self.device_state["poll_epoch"] = None
+            self.device_state["last_connect_ms"] = None
+            self.device_state["last_poll_ms"] = None
+            self.device_state["ble_error"] = None
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
