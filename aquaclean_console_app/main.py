@@ -83,6 +83,8 @@ class ServiceMode:
             "ble_device_address": None,      # BLE address from config
         }
         self._reconnect_requested = asyncio.Event()
+        self._connection_allowed = asyncio.Event()
+        self._connection_allowed.set()  # auto-connect on startup
         self._shutdown_event = shutdown_event or asyncio.Event()
         self.on_state_updated = None  # Optional async callback(state_dict)
 
@@ -119,6 +121,24 @@ class ServiceMode:
 
         # --- Main Recovery Loop ---
         while not self._shutdown_event.is_set():
+            # If disconnect was requested, wait here until reconnect is allowed.
+            if not self._connection_allowed.is_set():
+                allowed_task = asyncio.create_task(self._connection_allowed.wait())
+                shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+                await asyncio.wait(
+                    [allowed_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                allowed_task.cancel()
+                shutdown_task.cancel()
+                for t in (allowed_task, shutdown_task):
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                if self._shutdown_event.is_set():
+                    break
+
             bluetooth_connector = BluetoothLeConnector()
             factory = AquaCleanClientFactory(bluetooth_connector)
             self.client = factory.create_client()
@@ -225,6 +245,13 @@ class ServiceMode:
     async def request_reconnect(self):
         """Trigger a clean BLE reconnect (callable from MQTT or REST API)."""
         logger.info("Reconnect requested.")
+        self._connection_allowed.set()
+        self._reconnect_requested.set()
+
+    async def request_disconnect(self):
+        """Disconnect and stay disconnected until reconnect is requested."""
+        logger.info("Disconnect requested.")
+        self._connection_allowed.clear()
         self._reconnect_requested.set()
 
     async def wait_for_device_restart(self, device_id):
@@ -383,8 +410,8 @@ class ApiMode:
 
     async def do_disconnect(self):
         if self.ble_connection == "persistent":
-            await self.service.request_reconnect()
-            return {"status": "success", "action": "reconnect requested"}
+            await self.service.request_disconnect()
+            return {"status": "success", "action": "disconnect requested"}
         else:
             return {"status": "success", "action": "no persistent connection to disconnect"}
 
