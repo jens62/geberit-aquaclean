@@ -456,19 +456,35 @@ class ApiMode:
     # --- Helpers ---
 
     async def _on_demand(self, action):
-        """Connect, execute action, disconnect — for on-demand connection mode."""
+        """Connect, execute action, disconnect — for on-demand connection mode.
+        Publishes connecting/connected/disconnected to MQTT and SSE, mirroring
+        the persistent-mode behaviour."""
         device_id = config.get("BLE", "device_id")
+        topic = self.service.mqttConfig['topic']
         connector = BluetoothLeConnector()
         factory = AquaCleanClientFactory(connector)
         client = factory.create_client()
         try:
+            await self.service.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
+            await self.service._set_ble_status("connecting", device_address=device_id)
             await client.connect(device_id)
+            await self.service.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/connected", str(True))
+            await self.service._set_ble_status(
+                "connected",
+                device_name=client.Description,
+                device_address=device_id,
+            )
             return await action(client)
         finally:
             try:
                 await client.disconnect()
             except Exception:
                 pass
+            await self.service.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/connected", str(False))
+            await self.service._set_ble_status("disconnected")
 
     async def _fetch_state(self, client):
         from aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
