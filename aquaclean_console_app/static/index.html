@@ -393,16 +393,16 @@
     <h2 id="queriesHeading" style="display:none">Queries</h2>
     <div id="queriesSection" style="display:none">
       <div class="controls">
-        <button onclick="queryGet('/data/system-parameters', this, onSystemParameters)">
+        <button onclick="queryGet('/data/system-parameters',    this, clearSystemParameters, onSystemParameters)">
           <span class="spinner"></span>System Parameters
         </button>
-        <button onclick="queryGet('/data/identification', this, onIdentification)">
+        <button onclick="queryGet('/data/identification',        this, clearIdentification,    onIdentification)">
           <span class="spinner"></span>Identification
         </button>
-        <button onclick="queryGet('/data/initial-operation-date', this, onInitialOpDate)">
+        <button onclick="queryGet('/data/initial-operation-date',this, clearInitialOpDate,     onInitialOpDate)">
           <span class="spinner"></span>Initial Op Date
         </button>
-        <button onclick="queryGet('/data/soc-versions', this, onSocVersions)">
+        <button onclick="queryGet('/data/soc-versions',          this, clearSocVersions,       onSocVersions)">
           <span class="spinner"></span>SOC Versions
         </button>
       </div>
@@ -578,7 +578,8 @@
     }
 
     // --- Queries (on-demand mode) ---
-    async function queryGet(url, btn, onResult) {
+    async function queryGet(url, btn, onBefore, onResult) {
+      if (onBefore) onBefore();
       btn.disabled = true;
       btn.classList.add('loading');
       btn.classList.remove('success', 'error');
@@ -600,10 +601,18 @@
       }
     }
 
+    function clearSystemParameters() {
+      ['sitting', 'anal', 'lady', 'dryer'].forEach(k => updateCard(k, null));
+    }
     function onSystemParameters(data) {
       updateCards(data);
     }
 
+    function clearIdentification() {
+      ['info-description', 'info-serial', 'info-sap', 'info-production'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.textContent = '—';
+      });
+    }
     function onIdentification(data) {
       set('info-description', data.description);
       set('info-serial',      data.serial_number);
@@ -611,10 +620,16 @@
       set('info-production',  data.production_date);
     }
 
+    function clearInitialOpDate() {
+      const el = document.getElementById('info-initial'); if (el) el.textContent = '—';
+    }
     function onInitialOpDate(data) {
       set('info-initial', data.initial_operation_date);
     }
 
+    function clearSocVersions() {
+      const el = document.getElementById('info-soc-versions'); if (el) el.textContent = '—';
+    }
     function onSocVersions(data) {
       const el = document.getElementById('info-soc-versions');
       if (el) el.textContent = data.soc_versions || '—';
