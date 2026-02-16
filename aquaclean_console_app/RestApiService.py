@@ -7,6 +7,11 @@ import signal
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
+
+
+class BleConnectionUpdate(BaseModel):
+    value: str
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +52,7 @@ class RestApiService:
             queue: asyncio.Queue = asyncio.Queue()
             self._sse_queues.append(queue)
             try:
-                initial = await self._api_mode.get_status()
+                initial = self._api_mode.get_current_state()
                 await queue.put({"type": "state", **initial})
             except Exception:
                 pass
@@ -91,6 +96,14 @@ class RestApiService:
         async def toggle_anal():
             await self._api_mode.run_command("toggle-anal")
             return {"status": "success", "command": "toggle-anal"}
+
+        @app.get("/config")
+        async def get_config():
+            return self._api_mode.get_config()
+
+        @app.post("/config/ble-connection")
+        async def set_ble_connection(body: BleConnectionUpdate):
+            return await self._api_mode.set_ble_connection(body.value)
 
         @app.post("/connect")
         async def connect():
