@@ -467,58 +467,71 @@ class ApiMode:
     # --- Data query endpoints ---
 
     async def get_system_parameters(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
+            # fires DeviceStateChanged → on_device_state_changed → publishes to MQTT
             await self.service.client._state_changed_timer_elapsed()
             return self.service.device_state
         else:
-            return await self._on_demand(lambda client: self._fetch_state(client))
+            result = await self._on_demand(lambda client: self._fetch_state(client))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result["is_user_sitting"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result["is_dryer_running"]))
+            return result
 
     async def get_soc_versions(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
-            return {"soc_versions": str(self.service.client.soc_application_versions)}
+            result = {"soc_versions": str(self.service.client.soc_application_versions)}
         else:
-            async def _fetch(client):
-                return {"soc_versions": str(client.soc_application_versions)}
-            return await self._on_demand(_fetch)
+            result = await self._on_demand(lambda client: {"soc_versions": str(client.soc_application_versions)})
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
+        return result
 
     async def get_initial_operation_date(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
-            return {"initial_operation_date": str(self.service.client.InitialOperationDate)}
+            result = {"initial_operation_date": str(self.service.client.InitialOperationDate)}
         else:
-            async def _fetch(client):
-                return {"initial_operation_date": str(client.InitialOperationDate)}
-            return await self._on_demand(_fetch)
+            result = await self._on_demand(lambda client: {"initial_operation_date": str(client.InitialOperationDate)})
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate", result["initial_operation_date"])
+        return result
 
     async def get_identification(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
             c = self.service.client
-            return {
+            result = {
                 "sap_number": c.SapNumber,
                 "serial_number": c.SerialNumber,
                 "production_date": c.ProductionDate,
                 "description": c.Description,
             }
         else:
-            async def _fetch(client):
-                return {
-                    "sap_number": client.SapNumber,
-                    "serial_number": client.SerialNumber,
-                    "production_date": client.ProductionDate,
-                    "description": client.Description,
-                }
-            return await self._on_demand(_fetch)
+            result = await self._on_demand(lambda client: {
+                "sap_number": client.SapNumber,
+                "serial_number": client.SerialNumber,
+                "production_date": client.ProductionDate,
+                "description": client.Description,
+            })
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
+        return result
 
     # --- Helpers ---
 
