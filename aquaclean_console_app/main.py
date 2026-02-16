@@ -25,10 +25,10 @@ from aquaclean_utils                                          import utils
 from MqttService                                              import MqttService as Mqtt
 
 # --- Configuration & Logging Setup ---
-__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+__location__ = os.path.dirname(os.path.abspath(__file__))
 iniFile = os.path.join(__location__, 'config.ini')
 config = configparser.ConfigParser(allow_no_value=False)
-config.read(['config.ini', os.path.expanduser(iniFile)])
+config.read(iniFile)
 
 logs.add_logging_level('TRACE', logging.DEBUG - 5)
 logs.add_logging_level('SILLY', logging.DEBUG - 7)
