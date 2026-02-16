@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -114,23 +115,42 @@ class RestApiService:
         )
         server = uvicorn.Server(server_config)
 
-        # Prevent uvicorn from installing its own SIGINT/SIGTERM handlers.
-        # aiorun is the outermost loop and must own signal handling so that
-        # ONE Ctrl+C cleanly cancels all subsystems (uvicorn, BLE, bleak).
+        # Prevent uvicorn from installing its own signal handlers if the
+        # version supports this override (no-op on older versions).
         server.install_signal_handlers = lambda: None
 
         serve_task = asyncio.create_task(server.serve())
 
-        # When aiorun cancels this task on Ctrl+C, also tell uvicorn to
-        # skip its connection-draining wait (equivalent to a second Ctrl+C).
-        _original_cancel = serve_task.cancel
-        def _cancel_and_force_exit(*args, **kwargs):
+        # Wait for uvicorn to finish startup (it may install signal
+        # handlers directly in serve(), ignoring our override above).
+        while not server.started:
+            if serve_task.done():
+                break
+            await asyncio.sleep(0.05)
+
+        # Now replace whatever signal handler is active with our own.
+        # This ensures ONE Ctrl+C triggers a fast, clean shutdown:
+        #  - force_exit=True  → uvicorn skips connection draining
+        #  - serve_task.cancel() → CancelledError exits serve()
+        # After start() returns, aiorun's task-done callback takes over
+        # and cancels the remaining subsystems (BLE, bleak D-Bus, etc.).
+        loop = asyncio.get_running_loop()
+
+        def _on_shutdown_signal():
             server.should_exit = True
             server.force_exit = True
-            return _original_cancel(*args, **kwargs)
-        serve_task.cancel = _cancel_and_force_exit
+            serve_task.cancel()
+
+        loop.add_signal_handler(signal.SIGINT, _on_shutdown_signal)
+        loop.add_signal_handler(signal.SIGTERM, _on_shutdown_signal)
 
         try:
             await serve_task
         except asyncio.CancelledError:
             pass
+        finally:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.remove_signal_handler(sig)
+                except Exception:
+                    pass
