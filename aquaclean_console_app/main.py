@@ -10,15 +10,17 @@ from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
 from haggis import logs
 
+from bleak import BleakScanner
 from aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
-from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient       
-from aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory 
-from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification   
-from aquaclean_core.Message.MessageService                    import MessageService         
-from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector  
+from aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
+from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
+from aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
+from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
+from aquaclean_core.Message.MessageService                    import MessageService
+from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
 from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector
 from MqttService                                              import MqttService as Mqtt
-from myEvent                                                  import myEvent   
+from myEvent                                                  import myEvent
 from aquaclean_utils                                          import utils
 from MqttService                                              import MqttService as Mqtt
 
@@ -50,9 +52,9 @@ class ServiceMode:
         self.mqtt_initialized_wait_queue = Queue()
 
     async def run(self):
-        # 1. Initialize MQTT with wait queue (Original Logic)
+        # 1. Initialize MQTT with wait queue (once)
         await self.mqtt_service.start_async(asyncio.get_running_loop(), self.mqtt_initialized_wait_queue)
-        count = 50 
+        count = 50
         while count > 0:
             try:
                 self.mqtt_initialized_wait_queue.get(timeout=0.1)
@@ -62,35 +64,75 @@ class ServiceMode:
             count -= 1
             await asyncio.sleep(0.1)
 
-        # 2. Setup BLE Client
         device_id = config.get("BLE", "device_id")
         try:
             interval = float(config.get("POLL", "interval"))
         except Exception:
             interval = 2.5
 
-        bluetooth_connector = BluetoothLeConnector()
-        factory = AquaCleanClientFactory(bluetooth_connector)
-        self.client = factory.create_client()
-
-        # 3. Subscribe all original handlers
-        self.client.DeviceStateChanged += self.on_device_state_changed
-        self.client.SOCApplicationVersions += self.soc_application_versions
-        self.client.DeviceInitialOperationDate += self.device_initial_operation_date
-        self.client.DeviceIdentification += self.on_device_identification
-        bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
+        # Subscribe MQTT handler once — on_toggle_lid_message references self.client
+        # which is updated each iteration of the recovery loop below
         self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
 
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(None))
-        await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
+        # --- Main Recovery Loop ---
+        while True:
+            bluetooth_connector = BluetoothLeConnector()
+            factory = AquaCleanClientFactory(bluetooth_connector)
+            self.client = factory.create_client()
 
-        try:
-            await self.client.connect(device_id)
-            await self.client.start_polling(interval)
-        except Exception as e:
-            await self.handle_exception(e)
-        finally:
-            await self.client.disconnect()
+            self.client.DeviceStateChanged += self.on_device_state_changed
+            self.client.SOCApplicationVersions += self.soc_application_versions
+            self.client.DeviceInitialOperationDate += self.device_initial_operation_date
+            self.client.DeviceIdentification += self.on_device_identification
+            bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
+
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(None))
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
+
+            try:
+                await self.client.connect(device_id)
+                await self.client.start_polling(interval)
+            except BLEPeripheralTimeoutError as e:
+                logger.warning("BLE Timeout — initiating recovery protocol.")
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(e))
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                await self.wait_for_device_restart(device_id)
+            except Exception as e:
+                await self.handle_exception(e)
+            finally:
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+
+    async def wait_for_device_restart(self, device_id):
+        """Passively scans until the device drops off BLE, then waits for it to reappear."""
+        topic = f"{self.mqttConfig['topic']}/centralDevice/status"
+
+        # Phase 1: wait for the user to power-cycle the device
+        await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
+        logger.info(f"Waiting for device {device_id} to drop off BLE scanner...")
+        while True:
+            device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
+            if device is None:
+                logger.info("Device shut down confirmed.")
+                await self.mqtt_service.send_data_async(topic, "Device offline. Waiting for it to power back on...")
+                break
+            await asyncio.sleep(2)
+
+        # Phase 2: wait for it to boot back up
+        logger.info(f"Waiting for device {device_id} to reappear...")
+        while True:
+            device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
+            if device is not None:
+                logger.info("Device back online.")
+                await self.mqtt_service.send_data_async(topic, f"Device detected ({device.name} / {device.address}). Reconnecting...")
+                await asyncio.sleep(2)
+                break
+            await asyncio.sleep(2)
 
     # --- Restored Original Handlers (Verbatim) ---
     async def on_device_state_changed(self, sender, args):
