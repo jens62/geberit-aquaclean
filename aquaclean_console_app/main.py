@@ -482,8 +482,6 @@ class ApiMode:
                 await client.disconnect()
             except Exception:
                 pass
-            await self.service.mqtt_service.send_data_async(
-                f"{topic}/centralDevice/connected", str(False))
             await self.service._set_ble_status("disconnected")
 
     async def _fetch_state(self, client):
