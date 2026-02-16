@@ -249,6 +249,21 @@
       width: 100%;
     }
 
+    /* Server-offline banner */
+    .offline-banner {
+      display: none;
+      background: #7f1d1d;
+      color: #fca5a5;
+      text-align: center;
+      padding: 0.65rem 1rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border-bottom: 1px solid #b91c1c;
+      letter-spacing: 0.01em;
+    }
+
+    .offline-banner.visible { display: block; }
+
     footer {
       padding: 1rem 1.5rem;
       text-align: center;
@@ -266,6 +281,10 @@
       <span id="sseLabel">disconnected</span>
     </div>
   </header>
+
+  <div class="offline-banner" id="offlineBanner">
+    Server offline — start the service to reconnect
+  </div>
 
   <main>
     <h2>Status</h2>
@@ -366,6 +385,7 @@
       es.onopen = () => {
         dot.classList.add('live');
         label.textContent = 'live';
+        onServerRegained();
       };
 
       es.onerror = () => {
@@ -387,20 +407,24 @@
 
     connectSSE();
 
-    // --- Server lost (SSE disconnected) ---
+    // --- Server lost / regained (SSE disconnected / reconnected) ---
     function onServerLost() {
-      // Stop the countdown
+      document.getElementById('offlineBanner').classList.add('visible');
+      document.getElementById('connBtn').style.display = 'none';
+
       _pollEpoch = null;
       const pollLabel = document.getElementById('pollLabel');
       const pollBar   = document.getElementById('pollBar');
       if (pollLabel) pollLabel.textContent = '—';
       if (pollBar)   pollBar.style.width   = '0%';
 
-      // Grey out status cards
       ['sitting', 'anal', 'lady', 'dryer'].forEach(k => updateCard(k, null));
-
-      // Reset connection panel
       updateConnection({ ble_status: 'disconnected', ble_device_name: null, ble_device_address: null, ble_connected_at: null });
+    }
+
+    function onServerRegained() {
+      document.getElementById('offlineBanner').classList.remove('visible');
+      document.getElementById('connBtn').style.display = '';
     }
 
     // --- Status cards ---
