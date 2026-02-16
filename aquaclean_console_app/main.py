@@ -274,10 +274,18 @@ class ApiMode:
     async def run(self):
         if self.ble_connection == "persistent":
             self.service.on_state_updated = self.rest_api.broadcast_state
-            await asyncio.gather(
-                self.service.run(),
-                self.rest_api.start(),
-            )
+            # Run the BLE service as a background task so that uvicorn (which
+            # installs its own SIGINT handler) acts as the foreground process.
+            # When uvicorn exits on Ctrl+C, the finally block cancels the service.
+            service_task = asyncio.create_task(self.service.run())
+            try:
+                await self.rest_api.start()
+            finally:
+                service_task.cancel()
+                try:
+                    await service_task
+                except asyncio.CancelledError:
+                    pass
         else:
             await self.rest_api.start()
 
