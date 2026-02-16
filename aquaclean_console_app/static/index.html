@@ -223,6 +223,32 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* Poll countdown */
+    .poll-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.6rem;
+    }
+
+    .poll-bar-wrap {
+      flex: 1;
+      height: 3px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .poll-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 99px;
+      transition: width 0.1s linear;
+      width: 100%;
+    }
+
     footer {
       padding: 1rem 1.5rem;
       text-align: center;
@@ -285,6 +311,10 @@
       </div>
 
     </div>
+    <div class="poll-row">
+      <span id="pollLabel">—</span>
+      <div class="poll-bar-wrap"><div class="poll-bar" id="pollBar"></div></div>
+    </div>
 
     <h2>Device Info</h2>
     <dl class="info-grid">
@@ -299,9 +329,6 @@
     <div class="controls">
       <button onclick="sendPost('/command/toggle-lid', this)">
         <span class="spinner"></span>Toggle Lid
-      </button>
-      <button onclick="sendPost('/command/toggle-anal', this)">
-        <span class="spinner"></span>Toggle Anal
       </button>
     </div>
 
@@ -350,7 +377,10 @@
       es.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.type === 'state') updateCards(data);
+          if (data.type === 'state') {
+            updateCards(data);
+            onStateReceived(data.poll_interval);
+          }
         } catch (_) {}
       };
     }
@@ -372,6 +402,32 @@
       if (card) card.classList.toggle('active', value === true);
       if (val)  val.textContent = (value === null || value === undefined) ? '—' : (value ? 'ON' : 'OFF');
     }
+
+    // --- Poll countdown ---
+    let _lastUpdateAt = null;
+    let _pollInterval = null;
+
+    function onStateReceived(interval) {
+      _lastUpdateAt = Date.now();
+      if (interval) _pollInterval = interval;
+    }
+
+    (function tickCountdown() {
+      const label = document.getElementById('pollLabel');
+      const bar   = document.getElementById('pollBar');
+      if (_lastUpdateAt !== null && _pollInterval !== null) {
+        const elapsed   = (Date.now() - _lastUpdateAt) / 1000;
+        const remaining = Math.max(0, _pollInterval - elapsed);
+        const pct       = Math.max(0, (remaining / _pollInterval) * 100);
+        if (remaining > 0) {
+          label.textContent = 'Next update in ' + remaining.toFixed(1) + ' s';
+        } else {
+          label.textContent = 'Updating…';
+        }
+        bar.style.width = pct + '%';
+      }
+      setTimeout(tickCountdown, 100);
+    })();
 
     // --- Connection button ---
     let _bleStatus = 'disconnected';
