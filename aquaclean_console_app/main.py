@@ -63,6 +63,9 @@ class NullMqttService:
     async def send_data_async(self, topic, value):
         pass
 
+    def stop(self):
+        pass
+
 
 class ServiceMode:
     def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None):
@@ -191,6 +194,9 @@ class ServiceMode:
                     await self.client.disconnect()
                 except Exception:
                     pass
+
+        # Recovery loop exited — stop the MQTT background thread
+        self.mqtt_service.stop()
 
     async def request_reconnect(self):
         """Trigger a clean BLE reconnect (callable from MQTT or REST API)."""

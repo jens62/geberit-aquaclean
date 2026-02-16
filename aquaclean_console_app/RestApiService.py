@@ -141,11 +141,13 @@ class RestApiService:
             loop.add_signal_handler(sig, _on_signal)
 
         # Watch the shared shutdown event in a background task.
-        # When it fires, tell uvicorn to stop immediately.
+        # When it fires, tell uvicorn to stop immediately and cancel
+        # serve_task in case serve() doesn't return on its own.
         async def _shutdown_watcher():
             await shutdown_event.wait()
             server.should_exit = True
             server.force_exit = True
+            serve_task.cancel()
 
         watcher_task = asyncio.create_task(_shutdown_watcher())
 
