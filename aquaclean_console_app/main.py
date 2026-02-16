@@ -356,42 +356,60 @@ class ApiMode:
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
 
-        if self.ble_connection == "persistent":
-            self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
-        else:
-            self.service = None
+        # Always create ServiceMode so ble_connection can be toggled at runtime.
+        self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
+        self.service.device_state["ble_connection"] = self.ble_connection
+        if self.ble_connection != "persistent":
+            # Start in standby — loop waits on _connection_allowed until switched
+            self.service._connection_allowed.clear()
 
         logger.info(f"API mode: ble_connection={self.ble_connection}, mqtt_enabled={mqtt_enabled}, {api_host}:{api_port}")
 
     async def run(self):
-        if self.ble_connection == "persistent":
-            self.service.on_state_updated = self.rest_api.broadcast_state
-            service_task = asyncio.create_task(self.service.run())
-            try:
-                await self.rest_api.start(self._shutdown_event)
-            finally:
-                # Ensure the BLE loop also sees the shutdown event
-                self._shutdown_event.set()
-                # Let the service exit gracefully via the shutdown event —
-                # it needs to publish MQTT status before BLE disconnect.
-                # Only cancel as a last resort if it doesn't finish in time.
-                done, pending = await asyncio.wait({service_task}, timeout=5.0)
-                for t in pending:
-                    t.cancel()
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
-        else:
+        self.service.on_state_updated = self.rest_api.broadcast_state
+        service_task = asyncio.create_task(self.service.run())
+        try:
             await self.rest_api.start(self._shutdown_event)
+        finally:
+            # Ensure the BLE loop also sees the shutdown event
+            self._shutdown_event.set()
+            # Let the service exit gracefully via the shutdown event —
+            # it needs to publish MQTT status before BLE disconnect.
+            # Only cancel as a last resort if it doesn't finish in time.
+            done, pending = await asyncio.wait({service_task}, timeout=5.0)
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+    # --- Config endpoints ---
+
+    def get_current_state(self) -> dict:
+        """In-memory state snapshot — sync, no BLE connection (safe for SSE initial push)."""
+        return dict(self.service.device_state)
+
+    def get_config(self) -> dict:
+        return {"ble_connection": self.ble_connection}
+
+    async def set_ble_connection(self, value: str) -> dict:
+        if value not in ("persistent", "on-demand"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"Invalid value {value!r}. Use 'persistent' or 'on-demand'.")
+        self.ble_connection = value
+        self.service.device_state["ble_connection"] = value
+        if value == "persistent":
+            await self.service.request_reconnect()
+        else:
+            await self.service.request_disconnect()
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "ble_connection": value}
 
     # --- REST endpoint implementations ---
 
     async def get_status(self):
         if self.ble_connection == "persistent":
-            if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
             return self.service.device_state
         else:
             return await self._on_demand(lambda client: self._fetch_state(client))

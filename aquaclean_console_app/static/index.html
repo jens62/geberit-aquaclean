@@ -368,12 +368,19 @@
         <span class="conn-detail" id="connDetail">—</span>
       </div>
       <div class="conn-meta" id="connMeta"></div>
+      <div class="conn-row" style="margin-top:0.25rem">
+        <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">BLE mode:</span>
+        <span id="bleConnModeLabel" style="font-size:0.8rem;font-weight:500">—</span>
+      </div>
     </div>
 
     <h2>Actions</h2>
     <div class="controls">
       <button id="connBtn" onclick="sendPost(connBtnUrl(), this)">
         <span class="spinner"></span><span id="connBtnLabel">Reconnect</span>
+      </button>
+      <button id="bleConnModeBtn" onclick="toggleBleConnectionMode(this)">
+        <span class="spinner"></span><span id="bleConnModeBtnLabel">—</span>
       </button>
     </div>
 
@@ -421,6 +428,7 @@
     function onServerLost() {
       document.getElementById('offlineBanner').classList.add('visible');
       document.getElementById('connBtn').style.display = 'none';
+      document.getElementById('bleConnModeBtn').style.display = 'none';
 
       _pollEpoch = null;
       const pollLabel = document.getElementById('pollLabel');
@@ -435,6 +443,7 @@
     function onServerRegained() {
       document.getElementById('offlineBanner').classList.remove('visible');
       document.getElementById('connBtn').style.display = '';
+      document.getElementById('bleConnModeBtn').style.display = '';
     }
 
     // --- Status cards ---
@@ -470,6 +479,7 @@
     function onStateReceived(state) {
       if (state.poll_interval) _pollInterval = state.poll_interval;
       if (state.poll_epoch !== undefined) _pollEpoch = state.poll_epoch;
+      if (state.ble_connection !== undefined) updateBleConnectionMode(state.ble_connection);
     }
 
     (function tickCountdown() {
@@ -500,6 +510,39 @@
       _bleStatus = status;
       const label = document.getElementById('connBtnLabel');
       if (label) label.textContent = status === 'connected' ? 'Disconnect' : 'Reconnect';
+    }
+
+    // --- BLE connection mode toggle ---
+    let _bleConnection = null;
+
+    function updateBleConnectionMode(mode) {
+      _bleConnection = mode;
+      const modeLabel = document.getElementById('bleConnModeLabel');
+      if (modeLabel) modeLabel.textContent = mode === 'persistent' ? 'Persistent' : 'On-Demand';
+      const btnLabel = document.getElementById('bleConnModeBtnLabel');
+      if (btnLabel) btnLabel.textContent = mode === 'persistent' ? 'Switch to On-Demand' : 'Switch to Persistent';
+    }
+
+    async function toggleBleConnectionMode(btn) {
+      if (_bleConnection === null) return;
+      const newMode = _bleConnection === 'persistent' ? 'on-demand' : 'persistent';
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.classList.remove('success', 'error');
+      try {
+        const r = await fetch(apiBase + '/config/ble-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: newMode }),
+        });
+        btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        btn.classList.add('error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
     }
 
     // --- Connection status ---
