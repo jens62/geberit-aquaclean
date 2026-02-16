@@ -141,6 +141,44 @@
     .info-grid dt { color: var(--muted); white-space: nowrap; }
     .info-grid dd { font-weight: 500; word-break: break-all; }
 
+    /* Connection status badge */
+    .conn-panel {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 0.875rem;
+    }
+
+    .conn-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .conn-badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 99px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      background: rgba(136,136,136,0.15);
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .conn-badge.connected    { background: rgba(76,175,80,0.2);   color: var(--success); }
+    .conn-badge.connecting   { background: rgba(255,193,7,0.2);   color: #ffc107; }
+    .conn-badge.error        { background: rgba(244,67,54,0.2);   color: var(--error); }
+
+    .conn-detail { color: var(--text); }
+    .conn-meta   { color: var(--muted); font-size: 0.8rem; }
+
     /* Controls */
     .controls {
       display: flex;
@@ -268,13 +306,16 @@
     </div>
 
     <h2>Connection</h2>
+    <div class="conn-panel">
+      <div class="conn-row">
+        <span class="conn-badge" id="connBadge">—</span>
+        <span class="conn-detail" id="connDetail">—</span>
+      </div>
+      <div class="conn-meta" id="connMeta"></div>
+    </div>
+
+    <h2>Actions</h2>
     <div class="controls">
-      <button onclick="sendPost('/connect', this)">
-        <span class="spinner"></span>Connect
-      </button>
-      <button onclick="sendPost('/disconnect', this)">
-        <span class="spinner"></span>Disconnect
-      </button>
       <button onclick="sendPost('/reconnect', this)">
         <span class="spinner"></span>Reconnect
       </button>
@@ -322,6 +363,7 @@
       updateCard('anal',    state.is_anal_shower_running);
       updateCard('lady',    state.is_lady_shower_running);
       updateCard('dryer',   state.is_dryer_running);
+      if ('ble_status' in state) updateConnection(state);
     }
 
     function updateCard(key, value) {
@@ -329,6 +371,28 @@
       const val  = document.getElementById('val-'  + key);
       if (card) card.classList.toggle('active', value === true);
       if (val)  val.textContent = (value === null || value === undefined) ? '—' : (value ? 'ON' : 'OFF');
+    }
+
+    // --- Connection status ---
+    function updateConnection(state) {
+      const badge  = document.getElementById('connBadge');
+      const detail = document.getElementById('connDetail');
+      const meta   = document.getElementById('connMeta');
+
+      const status = state.ble_status || 'disconnected';
+      badge.className = 'conn-badge ' + status;
+      badge.textContent = status;
+
+      if (status === 'connected' && state.ble_device_name) {
+        detail.textContent = state.ble_device_name + ' (' + (state.ble_device_address || '—') + ')';
+        meta.textContent   = state.ble_connected_at ? 'Connected since ' + state.ble_connected_at : '';
+      } else if (status === 'connecting') {
+        detail.textContent = state.ble_device_address ? 'Connecting to ' + state.ble_device_address + '…' : '…';
+        meta.textContent   = '';
+      } else {
+        detail.textContent = state.ble_device_address || '—';
+        meta.textContent   = '';
+      }
     }
 
     // --- Device info ---

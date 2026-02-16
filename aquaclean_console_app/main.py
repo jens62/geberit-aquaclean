@@ -6,6 +6,7 @@ import configparser
 import argparse
 import traceback
 import sys
+from datetime import datetime
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
 from haggis import logs
@@ -76,6 +77,10 @@ class ServiceMode:
             "is_anal_shower_running": None,
             "is_lady_shower_running": None,
             "is_dryer_running": None,
+            "ble_status": "disconnected",   # connecting | connected | disconnected | error
+            "ble_connected_at": None,        # ISO timestamp string
+            "ble_device_name": None,         # from client.Description
+            "ble_device_address": None,      # BLE address from config
         }
         self._reconnect_requested = asyncio.Event()
         self._shutdown_event = shutdown_event or asyncio.Event()
@@ -126,9 +131,15 @@ class ServiceMode:
 
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", "No error")
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
+            await self._set_ble_status("connecting", device_address=device_id)
 
             try:
                 await self.client.connect(device_id)
+                await self._set_ble_status(
+                    "connected",
+                    device_name=self.client.Description,
+                    device_address=device_id,
+                )
 
                 # Run polling, reconnect-request watcher, and shutdown watcher
                 # concurrently; whichever finishes first wins.
@@ -183,6 +194,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await self._set_ble_status("error")
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -194,9 +206,21 @@ class ServiceMode:
                     await self.client.disconnect()
                 except Exception:
                     pass
+                await self._set_ble_status("disconnected")
 
         # Recovery loop exited — stop the MQTT background thread
         self.mqtt_service.stop()
+
+    async def _set_ble_status(self, status: str, device_name=None, device_address=None):
+        self.device_state["ble_status"] = status
+        if status == "connected":
+            self.device_state["ble_connected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.device_state["ble_device_name"] = device_name
+            self.device_state["ble_device_address"] = device_address
+        elif status in ("disconnected", "error"):
+            self.device_state["ble_connected_at"] = None
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
 
     async def request_reconnect(self):
         """Trigger a clean BLE reconnect (callable from MQTT or REST API)."""
