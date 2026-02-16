@@ -379,7 +379,7 @@
           const data = JSON.parse(e.data);
           if (data.type === 'state') {
             updateCards(data);
-            onStateReceived(data.poll_interval);
+            onStateReceived(data);
           }
         } catch (_) {}
       };
@@ -404,38 +404,30 @@
     }
 
     // --- Poll countdown ---
-    // The countdown runs independently once poll_interval is known.
-    // It self-resets every interval seconds (matching the server poll cadence).
-    // Actual SSE state events re-sync it when they arrive (state changes).
+    // Uses poll_epoch (Unix time of when polling started) and poll_interval
+    // from the SSE state. Any client connecting at any time computes the same
+    // deterministic countdown: elapsed = (now - epoch) % interval.
+    let _pollEpoch    = null;
     let _pollInterval = null;
-    let _nextPollAt   = null;
 
-    function onStateReceived(interval) {
-      if (interval && _pollInterval === null) {
-        // First time: learn the interval and start the cyclic timer
-        _pollInterval = interval;
-        _nextPollAt   = Date.now() + interval * 1000;
-      } else if (_nextPollAt !== null) {
-        // Re-sync on real state-change events
-        _nextPollAt = Date.now() + _pollInterval * 1000;
-      }
+    function onStateReceived(state) {
+      if (state.poll_interval) _pollInterval = state.poll_interval;
+      if (state.poll_epoch !== undefined) _pollEpoch = state.poll_epoch;
     }
 
     (function tickCountdown() {
       const label = document.getElementById('pollLabel');
       const bar   = document.getElementById('pollBar');
-      if (_nextPollAt !== null && _pollInterval !== null) {
-        const remaining = (_nextPollAt - Date.now()) / 1000;
-        if (remaining <= 0) {
-          // Interval elapsed — advance to next cycle
-          _nextPollAt += _pollInterval * 1000;
-          label.textContent = 'Polling…';
-          bar.style.width = '100%';
-        } else {
-          const pct = (remaining / _pollInterval) * 100;
-          label.textContent = 'Next poll in ' + remaining.toFixed(1) + ' s';
-          bar.style.width = pct + '%';
-        }
+      if (_pollEpoch !== null && _pollInterval !== null) {
+        const nowSec    = Date.now() / 1000;
+        const elapsed   = (nowSec - _pollEpoch) % _pollInterval;
+        const remaining = _pollInterval - elapsed;
+        const pct       = (remaining / _pollInterval) * 100;
+        label.textContent = 'Next poll in ' + remaining.toFixed(1) + ' s';
+        bar.style.width = pct + '%';
+      } else {
+        const label = document.getElementById('pollLabel');
+        if (label) label.textContent = '—';
       }
       setTimeout(tickCountdown, 100);
     })();

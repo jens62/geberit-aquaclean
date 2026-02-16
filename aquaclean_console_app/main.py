@@ -6,6 +6,7 @@ import configparser
 import argparse
 import traceback
 import sys
+import time
 from datetime import datetime
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
@@ -162,6 +163,10 @@ class ServiceMode:
                     device_address=device_id,
                 )
 
+                # Record when polling starts so clients can compute a
+                # deterministic countdown regardless of when they connect.
+                self.device_state["poll_epoch"] = time.time()
+
                 # Run polling, reconnect-request watcher, and shutdown watcher
                 # concurrently; whichever finishes first wins.
                 polling_task   = asyncio.create_task(self.client.start_polling(interval))
@@ -240,6 +245,7 @@ class ServiceMode:
             self.device_state["ble_device_address"] = device_address
         elif status in ("disconnected", "error"):
             self.device_state["ble_connected_at"] = None
+            self.device_state["poll_epoch"] = None
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
