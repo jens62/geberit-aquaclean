@@ -372,6 +372,12 @@
         <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">BLE mode:</span>
         <span id="bleConnModeLabel" style="font-size:0.8rem;font-weight:500">—</span>
       </div>
+      <div class="conn-row">
+        <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
+        <span id="connectMs" style="font-size:0.8rem;font-weight:500">—</span>
+        <span style="color:var(--muted);font-size:0.8rem;margin-left:1.5rem;white-space:nowrap">Poll:</span>
+        <span id="pollMs" style="font-size:0.8rem;font-weight:500">—</span>
+      </div>
     </div>
 
     <h2>Actions</h2>
@@ -566,6 +572,10 @@
         detail.textContent = state.ble_device_address || '—';
         meta.textContent   = '';
       }
+
+      const fmt = ms => ms != null ? ms + ' ms' : '—';
+      set('connectMs', fmt(state.last_connect_ms));
+      set('pollMs',    fmt(state.last_poll_ms));
     }
 
     // --- Device info ---
