@@ -662,19 +662,24 @@
       const fmt = ms => ms != null ? ms + ' ms' : '—';
       set('connectMs', fmt(state.last_connect_ms));
       set('pollMs',    fmt(state.last_poll_ms));
+
+      if (status === 'connected') fetchDeviceInfo();
     }
 
     // --- Device info ---
-    fetch(apiBase + '/info')
-      .then(r => r.json())
-      .then(d => {
-        set('info-description', d.description);
-        set('info-serial',      d.serial_number);
-        set('info-sap',         d.sap_number);
-        set('info-production',  d.production_date);
-        set('info-initial',     d.initial_operation_date);
-      })
-      .catch(() => {});
+    function fetchDeviceInfo() {
+      fetch(apiBase + '/info')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(d => {
+          set('info-description', d.description);
+          set('info-serial',      d.serial_number);
+          set('info-sap',         d.sap_number);
+          set('info-production',  d.production_date);
+          set('info-initial',     d.initial_operation_date);
+        })
+        .catch(() => {});
+    }
+    fetchDeviceInfo();
 
     function set(id, val) {
       const el = document.getElementById(id);
