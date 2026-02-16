@@ -30,6 +30,11 @@ class RestApiService:
     def _register_routes(self):
         app = self.app
 
+        @app.on_event("shutdown")
+        async def _close_sse_connections():
+            for q in list(self._sse_queues):
+                q.put_nowait(None)  # sentinel: tells each generator to return
+
         @app.get("/")
         async def serve_ui():
             return FileResponse(os.path.join(
@@ -52,6 +57,8 @@ class RestApiService:
                     while True:
                         try:
                             data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                            if data is None:  # shutdown sentinel
+                                return
                             yield f"data: {json.dumps(data)}\n\n"
                         except asyncio.TimeoutError:
                             yield ": heartbeat\n\n"
