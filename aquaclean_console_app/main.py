@@ -164,9 +164,9 @@ class ServiceMode:
 
                 # Run polling, reconnect-request watcher, and shutdown watcher
                 # concurrently; whichever finishes first wins.
-                polling_task = asyncio.create_task(self.client.start_polling(interval))
+                polling_task   = asyncio.create_task(self.client.start_polling(interval))
                 reconnect_task = asyncio.create_task(self._reconnect_requested.wait())
-                shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+                shutdown_task  = asyncio.create_task(self._shutdown_event.wait())
 
                 done, pending = await asyncio.wait(
                     [polling_task, reconnect_task, shutdown_task],

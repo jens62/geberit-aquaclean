@@ -404,27 +404,38 @@
     }
 
     // --- Poll countdown ---
-    let _lastUpdateAt = null;
+    // The countdown runs independently once poll_interval is known.
+    // It self-resets every interval seconds (matching the server poll cadence).
+    // Actual SSE state events re-sync it when they arrive (state changes).
     let _pollInterval = null;
+    let _nextPollAt   = null;
 
     function onStateReceived(interval) {
-      _lastUpdateAt = Date.now();
-      if (interval) _pollInterval = interval;
+      if (interval && _pollInterval === null) {
+        // First time: learn the interval and start the cyclic timer
+        _pollInterval = interval;
+        _nextPollAt   = Date.now() + interval * 1000;
+      } else if (_nextPollAt !== null) {
+        // Re-sync on real state-change events
+        _nextPollAt = Date.now() + _pollInterval * 1000;
+      }
     }
 
     (function tickCountdown() {
       const label = document.getElementById('pollLabel');
       const bar   = document.getElementById('pollBar');
-      if (_lastUpdateAt !== null && _pollInterval !== null) {
-        const elapsed   = (Date.now() - _lastUpdateAt) / 1000;
-        const remaining = Math.max(0, _pollInterval - elapsed);
-        const pct       = Math.max(0, (remaining / _pollInterval) * 100);
-        if (remaining > 0) {
-          label.textContent = 'Next update in ' + remaining.toFixed(1) + ' s';
+      if (_nextPollAt !== null && _pollInterval !== null) {
+        const remaining = (_nextPollAt - Date.now()) / 1000;
+        if (remaining <= 0) {
+          // Interval elapsed — advance to next cycle
+          _nextPollAt += _pollInterval * 1000;
+          label.textContent = 'Polling…';
+          bar.style.width = '100%';
         } else {
-          label.textContent = 'Updating…';
+          const pct = (remaining / _pollInterval) * 100;
+          label.textContent = 'Next poll in ' + remaining.toFixed(1) + ' s';
+          bar.style.width = pct + '%';
         }
-        bar.style.width = pct + '%';
       }
       setTimeout(tickCountdown, 100);
     })();
