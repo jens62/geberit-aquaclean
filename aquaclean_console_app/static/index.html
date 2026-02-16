@@ -406,6 +406,12 @@
           <span class="spinner"></span>SOC Versions
         </button>
       </div>
+      <div class="conn-row" id="queryTimingRow" style="display:none;margin-top:0.5rem">
+        <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
+        <span id="queryConnectMs" style="font-size:0.8rem;font-weight:500">—</span>
+        <span style="color:var(--muted);font-size:0.8rem;margin-left:1.5rem;white-space:nowrap">Query:</span>
+        <span id="queryMs" style="font-size:0.8rem;font-weight:500">—</span>
+      </div>
       <dl class="info-grid" id="socVersionsGrid" style="display:none;margin-top:0.75rem">
         <dt>SOC Versions</dt><dd id="info-soc-versions">—</dd>
       </dl>
@@ -588,6 +594,11 @@
         if (r.ok) {
           const data = await r.json();
           if (onResult) onResult(data);
+          if (data._connect_ms !== undefined || data._query_ms !== undefined) {
+            set('queryConnectMs', fmt(data._connect_ms));
+            set('queryMs', fmt(data._query_ms));
+            document.getElementById('queryTimingRow').style.display = '';
+          }
           btn.classList.add('success');
         } else {
           btn.classList.add('error');

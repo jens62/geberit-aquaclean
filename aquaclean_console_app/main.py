@@ -561,9 +561,15 @@ class ApiMode:
             await self.service._set_ble_status("connecting", device_address=device_id)
             t0 = time.perf_counter()
             await client.connect(device_id)
-            self.service.device_state["last_connect_ms"] = int((time.perf_counter() - t0) * 1000)
+            connect_ms = int((time.perf_counter() - t0) * 1000)
+            self.service.device_state["last_connect_ms"] = connect_ms
+            t1 = time.perf_counter()
             result = action(client)
-            return await result if asyncio.iscoroutine(result) else result
+            result = await result if asyncio.iscoroutine(result) else result
+            query_ms = int((time.perf_counter() - t1) * 1000)
+            if isinstance(result, dict):
+                result = {**result, "_connect_ms": connect_ms, "_query_ms": query_ms}
+            return result
         finally:
             try:
                 await client.disconnect()
