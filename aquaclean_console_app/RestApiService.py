@@ -1,7 +1,11 @@
+import asyncio
+import json
 import logging
+import os
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -12,13 +16,56 @@ class RestApiService:
         self.port = int(port)
         self.app = FastAPI(title="Geberit AquaClean REST API")
         self._api_mode = None
+        self._sse_queues: list[asyncio.Queue] = []
         self._register_routes()
 
     def set_api_mode(self, api_mode):
         self._api_mode = api_mode
 
+    async def broadcast_state(self, state: dict):
+        data = {"type": "state", **state}
+        for q in list(self._sse_queues):
+            await q.put(data)
+
     def _register_routes(self):
         app = self.app
+
+        @app.get("/")
+        async def serve_ui():
+            return FileResponse(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "static", "index.html"
+            ))
+
+        @app.get("/events")
+        async def sse():
+            queue: asyncio.Queue = asyncio.Queue()
+            self._sse_queues.append(queue)
+            try:
+                initial = await self._api_mode.get_status()
+                await queue.put({"type": "state", **initial})
+            except Exception:
+                pass
+
+            async def generate():
+                try:
+                    while True:
+                        try:
+                            data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                            yield f"data: {json.dumps(data)}\n\n"
+                        except asyncio.TimeoutError:
+                            yield ": heartbeat\n\n"
+                except (asyncio.CancelledError, GeneratorExit):
+                    pass
+                finally:
+                    if queue in self._sse_queues:
+                        self._sse_queues.remove(queue)
+
+            return StreamingResponse(
+                generate(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
         @app.get("/status")
         async def get_status():
