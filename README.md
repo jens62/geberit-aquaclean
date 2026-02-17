@@ -3,6 +3,7 @@
 Python bridge between a [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/) smart toilet and your home automation system.
 
 Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean) library to Python, extended with MQTT, REST API, web UI, and CLI.
+**Key enhancement:** the original library holds a permanent BLE connection, which causes the device to stop responding after a few days. This port introduces **on-demand BLE** — connecting only for the duration of each request and releasing immediately — eliminating the instability entirely.
 
 <table>
   <tr>
