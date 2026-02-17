@@ -7,7 +7,9 @@ import sys
 currentFuncName = lambda n=0: sys._getframe(n + 1).f_code.co_name
 
 # https://stackoverflow.com/questions/62985573/how-to-get-the-name-of-the-calling-class-in-python
-currentClassName = lambda n=0: sys._getframe(n + 1).f_locals["self"].__class__.__name__
+def currentClassName(n=0):
+    self_obj = sys._getframe(n + 1).f_locals.get("self")
+    return self_obj.__class__.__name__ if self_obj is not None else "<module>"
 
 
 # see also https://stackoverflow.com/a/13514318
