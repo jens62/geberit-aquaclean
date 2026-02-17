@@ -370,8 +370,13 @@ class ApiMode:
         self.ble_connection = config.get("SERVICE", "ble_connection", fallback="persistent")
         api_host = config.get("API", "host", fallback="0.0.0.0")
         api_port = int(config.get("API", "port", fallback="8080"))
+        try:
+            self._poll_interval = float(config.get("POLL", "interval"))
+        except Exception:
+            self._poll_interval = 0.0
 
         self._shutdown_event = asyncio.Event()
+        self._on_demand_lock = asyncio.Lock()
 
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
@@ -388,6 +393,7 @@ class ApiMode:
     async def run(self):
         self.service.on_state_updated = self.rest_api.broadcast_state
         service_task = asyncio.create_task(self.service.run())
+        poll_task = asyncio.create_task(self._polling_loop()) if self._poll_interval > 0 else None
         try:
             await self.rest_api.start(self._shutdown_event)
         finally:
@@ -396,7 +402,10 @@ class ApiMode:
             # Let the service exit gracefully via the shutdown event —
             # it needs to publish MQTT status before BLE disconnect.
             # Only cancel as a last resort if it doesn't finish in time.
-            done, pending = await asyncio.wait({service_task}, timeout=5.0)
+            tasks = {service_task}
+            if poll_task:
+                tasks.add(poll_task)
+            done, pending = await asyncio.wait(tasks, timeout=5.0)
             for t in pending:
                 t.cancel()
                 try:
@@ -647,6 +656,10 @@ class ApiMode:
         """Connect, execute action, disconnect — for on-demand connection mode.
         Publishes connecting/connected/disconnected to MQTT and SSE, mirroring
         the persistent-mode behaviour."""
+        async with self._on_demand_lock:
+            return await self._on_demand_inner(action)
+
+    async def _on_demand_inner(self, action):
         device_id = config.get("BLE", "device_id")
         topic = self.service.mqttConfig['topic']
         connector = BluetoothLeConnector()
@@ -679,14 +692,47 @@ class ApiMode:
                 pass
             await self.service._set_ble_status("disconnected")
 
+    async def _polling_loop(self):
+        """Background poll: query GetSystemParameterList every interval seconds
+        when running in on-demand mode. Skips silently in persistent mode
+        (ServiceMode handles its own polling loop there).
+        interval = 0 in config disables polling entirely."""
+        if self._poll_interval <= 0:
+            return
+        logger.info(f"On-demand poll loop started (interval={self._poll_interval}s)")
+        topic = self.service.mqttConfig['topic']
+        while True:
+            try:
+                await asyncio.sleep(self._poll_interval)
+            except asyncio.CancelledError:
+                return
+            if self._shutdown_event.is_set():
+                return
+            if self.ble_connection != "on-demand":
+                continue  # persistent mode handles its own polling
+            try:
+                result = await self._on_demand(self._fetch_state)
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+            except Exception as e:
+                logger.warning(f"On-demand poll failed: {e}")
+
     async def _fetch_state(self, client):
         from aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
         result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 7, 9])
+        # Update device_state before _on_demand's finally fires so the
+        # "disconnected" SSE broadcast carries fresh values.
+        self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
+        self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
+        self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
+        self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
         return {
-            "is_user_sitting": result.data_array[0] != 0,
-            "is_anal_shower_running": result.data_array[1] != 0,
-            "is_lady_shower_running": result.data_array[2] != 0,
-            "is_dryer_running": result.data_array[3] != 0,
+            "is_user_sitting":        self.service.device_state["is_user_sitting"],
+            "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
+            "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
+            "is_dryer_running":       self.service.device_state["is_dryer_running"],
         }
 
     async def _fetch_info(self, client):
