@@ -405,6 +405,9 @@
         <button onclick="queryGet('/data/soc-versions',          this, clearSocVersions,       onSocVersions)">
           <span class="spinner"></span>SOC Versions
         </button>
+        <button onclick="queryGet('/data/anal-shower-state',    this, clearAnalShowerState,   onAnalShowerState)">
+          <span class="spinner"></span>Anal Shower State
+        </button>
       </div>
       <div class="conn-row" id="queryTimingRow" style="display:none;margin-top:0.5rem">
         <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
@@ -646,6 +649,13 @@
       if (el) el.textContent = data.soc_versions || '—';
       const grid = document.getElementById('socVersionsGrid');
       if (grid) grid.style.display = '';
+    }
+
+    function clearAnalShowerState() {
+      updateCard('anal', null);
+    }
+    function onAnalShowerState(data) {
+      updateCard('anal', data.is_anal_shower_running);
     }
 
     // --- Connection status ---

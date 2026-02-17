@@ -113,6 +113,10 @@ class RestApiService:
         async def get_identification():
             return await self._api_mode.get_identification()
 
+        @app.get("/data/anal-shower-state")
+        async def get_anal_shower_state():
+            return await self._api_mode.get_anal_shower_state()
+
         @app.get("/config")
         async def get_config():
             return self._api_mode.get_config()

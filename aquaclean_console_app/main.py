@@ -500,7 +500,7 @@ class ApiMode:
                 raise HTTPException(status_code=503, detail="BLE client not connected")
             result = {"soc_versions": str(self.service.client.soc_application_versions)}
         else:
-            result = await self._on_demand(lambda client: {"soc_versions": str(client.soc_application_versions)})
+            result = await self._on_demand(self._fetch_soc_versions)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
         return result
 
@@ -512,7 +512,7 @@ class ApiMode:
                 raise HTTPException(status_code=503, detail="BLE client not connected")
             result = {"initial_operation_date": str(self.service.client.InitialOperationDate)}
         else:
-            result = await self._on_demand(lambda client: {"initial_operation_date": str(client.InitialOperationDate)})
+            result = await self._on_demand(self._fetch_initial_op_date)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate", result["initial_operation_date"])
         return result
 
@@ -530,19 +530,44 @@ class ApiMode:
                 "description": c.Description,
             }
         else:
-            result = await self._on_demand(lambda client: {
-                "sap_number": client.SapNumber,
-                "serial_number": client.SerialNumber,
-                "production_date": client.ProductionDate,
-                "description": client.Description,
-            })
+            result = await self._on_demand(self._fetch_identification)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
         return result
 
+    async def get_anal_shower_state(self):
+        async def _fetch(client):
+            result = await client.base_client.get_system_parameter_list_async([1])
+            return {"is_anal_shower_running": result.data_array[0] != 0}
+
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            return await _fetch(self.service.client)
+        else:
+            return await self._on_demand(_fetch)
+
     # --- Helpers ---
+
+    async def _fetch_soc_versions(self, client):
+        versions = await client.base_client.get_soc_application_versions_async()
+        return {"soc_versions": str(versions)}
+
+    async def _fetch_initial_op_date(self, client):
+        date = await client.base_client.get_device_initial_operation_date()
+        return {"initial_operation_date": str(date)}
+
+    async def _fetch_identification(self, client):
+        ident = await client.base_client.get_device_identification_async(0)
+        return {
+            "sap_number": ident.sap_number,
+            "serial_number": ident.serial_number,
+            "production_date": ident.production_date,
+            "description": ident.description,
+        }
 
     async def _on_demand(self, action):
         """Connect, execute action, disconnect — for on-demand connection mode.
@@ -560,7 +585,7 @@ class ApiMode:
                 f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
             await self.service._set_ble_status("connecting", device_address=device_id)
             t0 = time.perf_counter()
-            await client.connect(device_id)
+            await client.connect_ble_only(device_id)
             connect_ms = int((time.perf_counter() - t0) * 1000)
             self.service.device_state["last_connect_ms"] = connect_ms
             t1 = time.perf_counter()
@@ -591,12 +616,14 @@ class ApiMode:
         }
 
     async def _fetch_info(self, client):
+        ident = await client.base_client.get_device_identification_async(0)
+        initial_op_date = await client.base_client.get_device_initial_operation_date()
         return {
-            "sap_number": client.SapNumber,
-            "serial_number": client.SerialNumber,
-            "production_date": client.ProductionDate,
-            "description": client.Description,
-            "initial_operation_date": client.InitialOperationDate,
+            "sap_number": ident.sap_number,
+            "serial_number": ident.serial_number,
+            "production_date": ident.production_date,
+            "description": ident.description,
+            "initial_operation_date": str(initial_op_date),
         }
 
     async def _execute_command(self, client, command: str):
