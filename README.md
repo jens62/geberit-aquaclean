@@ -91,6 +91,44 @@ AquaClean (BLE) ←→ Raspberry Pi ←→ MQTT broker ←→ Home Assistant / o
 
 ---
 
+## Key improvements over the original C# port
+
+The original [Thomas Bingel](https://github.com/thomas-bingel) library (and the initial Python port) keeps a **permanent BLE connection** to the device.  In practice this causes the AquaClean to stop responding after a few days of continuous use — a known limitation of the device firmware.
+
+This project introduces an **on-demand BLE connection mode** that eliminates the problem:
+
+| | Persistent (original) | On-demand (new) |
+|-|----------------------|----------------|
+| BLE connection | Kept open permanently | Connected per request, then released |
+| Long-term stability | Device stops responding after a few days | No long-term connection held — device stays healthy |
+| Latency | Instant (always connected) | ~1–2 s per request (connect + query + disconnect) |
+| Use case | Continuous monitoring, service mode | REST API, scripting, integrations that poll occasionally |
+
+On-demand mode is selected in `config.ini`:
+
+```ini
+[SERVICE]
+ble_connection = on-demand
+```
+
+Or switched at runtime with no restart needed:
+
+```bash
+# via REST API
+curl -X POST http://localhost:8080/config/ble-connection \
+     -H "Content-Type: application/json" \
+     -d '{"value": "on-demand"}'
+
+# via MQTT
+mosquitto_pub -h YOUR_BROKER \
+  -t "Geberit/AquaClean/centralDevice/config/bleConnection" \
+  -m "on-demand"
+```
+
+The web UI also has a one-click toggle button.  See [docs/modes.md](docs/modes.md) for a full comparison.
+
+---
+
 ## Credits
 
 Original C# library by [Thomas Bingel](https://github.com/thomas-bingel).
