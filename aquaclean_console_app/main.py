@@ -817,6 +817,229 @@ class ApiMode:
             raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
 
 
+def get_ha_discovery_configs(topic_prefix: str) -> list:
+    """
+    Return Home Assistant MQTT Discovery configurations for all AquaClean entities.
+
+    The topic_prefix comes from config.ini [MQTT] topic, so it always matches the
+    topics the running application actually publishes.
+
+    HOW TO KEEP THIS IN SYNC: when you add a new send_data_async() call elsewhere
+    in this file, add the corresponding HA entity here.  Both live in main.py, so
+    they're easy to find and update together.
+    """
+    DEVICE = {
+        "identifiers": ["geberit_aquaclean"],
+        "name": "Geberit AquaClean",
+        "model": "Mera Comfort",
+        "manufacturer": "Geberit",
+    }
+    HA = "homeassistant"
+    t = topic_prefix
+
+    return [
+        # --- Binary Sensors: monitor state (ServiceMode.on_device_state_changed) ---
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/user_sitting/config",
+            "payload": {
+                "name": "User Sitting",
+                "unique_id": "geberit_aquaclean_user_sitting",
+                "state_topic": f"{t}/peripheralDevice/monitor/isUserSitting",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:seat",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/anal_shower_running/config",
+            "payload": {
+                "name": "Anal Shower Running",
+                "unique_id": "geberit_aquaclean_anal_shower_running",
+                "state_topic": f"{t}/peripheralDevice/monitor/isAnalShowerRunning",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:shower",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/lady_shower_running/config",
+            "payload": {
+                "name": "Lady Shower Running",
+                "unique_id": "geberit_aquaclean_lady_shower_running",
+                "state_topic": f"{t}/peripheralDevice/monitor/isLadyShowerRunning",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:shower",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/dryer_running/config",
+            "payload": {
+                "name": "Dryer Running",
+                "unique_id": "geberit_aquaclean_dryer_running",
+                "state_topic": f"{t}/peripheralDevice/monitor/isDryerRunning",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:air-filter",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: device identification (ServiceMode.on_device_identification) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/sap_number/config",
+            "payload": {
+                "name": "SAP Number",
+                "unique_id": "geberit_aquaclean_sap_number",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/SapNumber",
+                "icon": "mdi:identifier",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/serial_number/config",
+            "payload": {
+                "name": "Serial Number",
+                "unique_id": "geberit_aquaclean_serial_number",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/SerialNumber",
+                "icon": "mdi:barcode",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/production_date/config",
+            "payload": {
+                "name": "Production Date",
+                "unique_id": "geberit_aquaclean_production_date",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/ProductionDate",
+                "icon": "mdi:calendar",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/description/config",
+            "payload": {
+                "name": "Description",
+                "unique_id": "geberit_aquaclean_description",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/Description",
+                "icon": "mdi:information",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensor: initial operation date (ServiceMode.device_initial_operation_date) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/initial_operation_date/config",
+            "payload": {
+                "name": "Initial Operation Date",
+                "unique_id": "geberit_aquaclean_initial_operation_date",
+                "state_topic": f"{t}/peripheralDevice/information/initialOperationDate",
+                "icon": "mdi:calendar-clock",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: connection status (ServiceMode.run / on_connection_status_changed) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/connected/config",
+            "payload": {
+                "name": "Connected",
+                "unique_id": "geberit_aquaclean_connected",
+                "state_topic": f"{t}/centralDevice/connected",
+                "icon": "mdi:bluetooth-connect",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/error/config",
+            "payload": {
+                "name": "Error",
+                "unique_id": "geberit_aquaclean_error",
+                "state_topic": f"{t}/centralDevice/error",
+                "icon": "mdi:alert-circle",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Switches: device control (MqttService subscriptions) ---
+        {
+            "topic": f"{HA}/switch/geberit_aquaclean/toggle_lid/config",
+            "payload": {
+                "name": "Toggle Lid",
+                "unique_id": "geberit_aquaclean_toggle_lid",
+                "command_topic": f"{t}/peripheralDevice/control/toggleLidPosition",
+                "payload_on": "true", "payload_off": "false",
+                "icon": "mdi:toilet",
+                "optimistic": True,
+                "retain": False,
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/switch/geberit_aquaclean/toggle_anal/config",
+            "payload": {
+                "name": "Toggle Anal Shower",
+                "unique_id": "geberit_aquaclean_toggle_anal",
+                "command_topic": f"{t}/peripheralDevice/control/toggleAnal",
+                "payload_on": "true", "payload_off": "false",
+                "icon": "mdi:shower-head",
+                "optimistic": True,
+                "retain": False,
+                "device": DEVICE,
+            },
+        },
+    ]
+
+
+def run_ha_discovery(remove: bool = False) -> dict:
+    """
+    Publish or remove Home Assistant MQTT discovery messages.
+    Reads broker connection settings from config.ini — no BLE connection needed.
+    Returns a dict with 'published' and 'failed' lists.
+    """
+    import paho.mqtt.client as mqtt
+
+    mqtt_cfg = dict(config.items('MQTT'))
+    topic_prefix = mqtt_cfg.get('topic', 'Geberit/AquaClean')
+    host = mqtt_cfg.get('server', 'localhost')
+    port = int(mqtt_cfg.get('port', 1883))
+    username = mqtt_cfg.get('username') or None
+    password = mqtt_cfg.get('password') or None
+
+    try:
+        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    except AttributeError:
+        client = mqtt.Client()
+
+    if username:
+        client.username_pw_set(username, password)
+
+    client.connect(host, port, 60)
+
+    configs = get_ha_discovery_configs(topic_prefix)
+    published = []
+    failed = []
+
+    for cfg in configs:
+        topic = cfg["topic"]
+        if remove:
+            res = client.publish(topic, payload=None, retain=True)
+            label = topic.split("/")[-2]
+        else:
+            res = client.publish(topic, payload=json.dumps(cfg["payload"]), retain=True)
+            label = cfg["payload"]["name"]
+
+        if res.rc == mqtt.MQTT_ERR_SUCCESS:
+            published.append(label)
+        else:
+            failed.append(topic)
+
+    client.disconnect()
+    return {"topic_prefix": topic_prefix, "broker": f"{host}:{port}", "published": published, "failed": failed}
+
+
 async def run_cli(args):
     """Executes the CLI logic and ensures JSON is always printed."""
     result = {
@@ -845,6 +1068,27 @@ async def run_cli(args):
         }
         result["status"] = "success"
         result["message"] = "Config read from config.ini"
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command in ('publish-ha-discovery', 'remove-ha-discovery'):
+        remove = args.command == 'remove-ha-discovery'
+        try:
+            data = run_ha_discovery(remove=remove)
+            result["data"] = data
+            if data["failed"]:
+                result["status"] = "error"
+                result["message"] = f"{len(data['failed'])} message(s) failed to publish"
+            else:
+                result["status"] = "success"
+                result["message"] = (
+                    f"Removed {len(data['published'])} HA discovery entities"
+                    if remove else
+                    f"Published {len(data['published'])} HA discovery entities to {data['broker']}"
+                )
+        except Exception as e:
+            result["status"] = "error"
+            result["message"] = str(e)
         print(json.dumps(result, indent=2))
         return
 
@@ -987,8 +1231,10 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command toggle-lid\n"
             "  %(prog)s --mode cli --command toggle-anal\n"
             "\n"
-            "app config (no BLE required):\n"
+            "app config / home assistant (no BLE required):\n"
             "  %(prog)s --mode cli --command get-config\n"
+            "  %(prog)s --mode cli --command publish-ha-discovery\n"
+            "  %(prog)s --mode cli --command remove-ha-discovery\n"
             "\n"
             "options:\n"
             "  --address 38:AB:XX:XX:ZZ:67   override BLE device address from config.ini\n"
@@ -1007,8 +1253,8 @@ if __name__ == "__main__":
         'info', 'identification', 'initial-operation-date', 'soc-versions',
         # device commands
         'toggle-lid', 'toggle-anal',
-        # app config (no BLE required)
-        'get-config',
+        # app config / home assistant (no BLE required)
+        'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
     ])
     parser.add_argument('--address')
 
