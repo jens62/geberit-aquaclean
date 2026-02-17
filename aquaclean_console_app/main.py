@@ -538,19 +538,19 @@ class ApiMode:
         return result
 
     async def get_anal_shower_state(self):
-        async def _fetch(client):
-            result = await client.base_client.get_system_parameter_list_async([1])
-            return {"is_anal_shower_running": result.data_array[0] != 0}
-
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
-            return await _fetch(self.service.client)
+            return await self._fetch_anal_shower_state(self.service.client)
         else:
-            return await self._on_demand(_fetch)
+            return await self._on_demand(self._fetch_anal_shower_state)
 
     # --- Helpers ---
+
+    async def _fetch_anal_shower_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([1])
+        return {"is_anal_shower_running": result.data_array[0] != 0}
 
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
