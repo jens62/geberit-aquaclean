@@ -457,7 +457,7 @@ class ApiMode:
                 raise HTTPException(status_code=503, detail="BLE client not connected")
             await self._execute_command(self.service.client, command)
         else:
-            await self._on_demand(lambda client: self._execute_command(client, command))
+            return await self._on_demand(lambda client: self._execute_command(client, command))
 
     async def do_connect(self):
         if self.ble_connection == "persistent":
@@ -567,8 +567,11 @@ class ApiMode:
             result = action(client)
             result = await result if asyncio.iscoroutine(result) else result
             query_ms = int((time.perf_counter() - t1) * 1000)
+            timing = {"_connect_ms": connect_ms, "_query_ms": query_ms}
             if isinstance(result, dict):
-                result = {**result, "_connect_ms": connect_ms, "_query_ms": query_ms}
+                result = {**result, **timing}
+            else:
+                result = timing
             return result
         finally:
             try:
