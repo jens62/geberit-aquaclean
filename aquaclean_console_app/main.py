@@ -260,26 +260,12 @@ class ServiceMode:
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = error_msg
-        elif status == "connecting":
+        elif status in ("disconnected", "connecting"):
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = None
-            # No live data yet — clear status tiles so the webapp shows '—'
-            self.device_state["is_user_sitting"] = None
-            self.device_state["is_anal_shower_running"] = None
-            self.device_state["is_lady_shower_running"] = None
-            self.device_state["is_dryer_running"] = None
-        elif status == "disconnected":
-            self.device_state["ble_connected_at"] = None
-            self.device_state["poll_epoch"] = None
-            self.device_state["last_connect_ms"] = None
-            self.device_state["last_poll_ms"] = None
-            self.device_state["ble_error"] = None
-            # Note: status fields are NOT cleared here — on-demand results
-            # stored in device_state persist so the "disconnected" SSE
-            # broadcast carries the fresh value, not null.
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -558,17 +544,17 @@ class ApiMode:
                 raise HTTPException(status_code=503, detail="BLE client not connected")
             return await self._fetch_anal_shower_state(self.service.client)
         else:
-            result = await self._on_demand(self._fetch_anal_shower_state)
-            # Store in device_state so the subsequent "disconnected" SSE broadcast
-            # carries the fresh value instead of null.
-            self.service.device_state["is_anal_shower_running"] = result.get("is_anal_shower_running")
-            return result
+            return await self._on_demand(self._fetch_anal_shower_state)
 
     # --- Helpers ---
 
     async def _fetch_anal_shower_state(self, client):
         result = await client.base_client.get_system_parameter_list_async([1])
-        return {"is_anal_shower_running": result.data_array[0] != 0}
+        val = result.data_array[1] != 0
+        # Update device_state here — before _on_demand's finally block fires —
+        # so the "disconnected" SSE broadcast carries the fresh value, not null.
+        self.service.device_state["is_anal_shower_running"] = val
+        return {"is_anal_shower_running": val}
 
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
