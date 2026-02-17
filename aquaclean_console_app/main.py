@@ -429,18 +429,25 @@ class ApiMode:
     # --- REST endpoint implementations ---
 
     async def get_status(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
-            return self.service.device_state
+            result = self.service.device_state
         else:
-            return await self._on_demand(lambda client: self._fetch_state(client))
+            result = await self._on_demand(lambda client: self._fetch_state(client))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+        return result
 
     async def get_info(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
             c = self.service.client
-            return {
+            result = {
                 "sap_number": c.SapNumber,
                 "serial_number": c.SerialNumber,
                 "production_date": c.ProductionDate,
@@ -448,7 +455,13 @@ class ApiMode:
                 "initial_operation_date": c.InitialOperationDate,
             }
         else:
-            return await self._on_demand(lambda client: self._fetch_info(client))
+            result = await self._on_demand(lambda client: self._fetch_info(client))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate",          str(result["initial_operation_date"]))
+        return result
 
     async def run_command(self, command: str):
         if self.ble_connection == "persistent":
@@ -538,13 +551,16 @@ class ApiMode:
         return result
 
     async def get_anal_shower_state(self):
+        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=503, detail="BLE client not connected")
-            return await self._fetch_anal_shower_state(self.service.client)
+            result = await self._fetch_anal_shower_state(self.service.client)
         else:
-            return await self._on_demand(self._fetch_anal_shower_state)
+            result = await self._on_demand(self._fetch_anal_shower_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
+        return result
 
     # --- Helpers ---
 
