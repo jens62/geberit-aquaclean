@@ -2,8 +2,16 @@
 
 Python bridge between a [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/) smart toilet and your home automation system.
 
-Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean) library to Python, extended with MQTT, REST API, web UI, and CLI.
-**Key enhancement:** the original library holds a permanent BLE connection, which causes the device to stop responding after a few days. This port introduces **on-demand BLE** — connecting only for the duration of each request and releasing immediately — eliminating the instability entirely.
+Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean) library to Python.
+
+**Key enhancements over the original:**
+- **Non-blocking, on-demand BLE** — connects only for the duration of each request, then releases the connection immediately. The original holds BLE permanently, causing the device to stop responding after a few days. On-demand mode eliminates this entirely.
+- **MQTT** — publishes device state in real time; accepts control and configuration commands
+- **REST API + web UI** — live dashboard, per-request queries, runtime configuration without restart
+- **CLI** — one-shot commands for scripting, diagnostics, and automation
+- **Home Assistant** — automatic entity creation via MQTT Discovery, no manual YAML required
+- **openHAB** — integrates via MQTT; subscribe to device topics and publish control commands
+- **Voice control** — trigger commands by voice via Home Assistant or openHAB (e.g. Amazon Alexa, Google Assistant, Apple Siri)
 
 <table>
   <tr>
