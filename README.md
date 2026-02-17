@@ -36,6 +36,7 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 - **CLI** — one-shot commands for scripting and diagnostics
 - **Home Assistant** — automatic entity creation via MQTT Discovery
 - **openHAB** — integrates via MQTT; subscribe to device topics and publish control commands
+- **Use cases** — greet, play music, dismiss, time sessions, control lights, voice commands — see [docs/use-cases.md](docs/use-cases.md)
 
 ---
 
