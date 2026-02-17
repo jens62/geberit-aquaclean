@@ -35,6 +35,7 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 - **REST API + web UI** — live dashboard, on-demand queries, runtime config
 - **CLI** — one-shot commands for scripting and diagnostics
 - **Home Assistant** — automatic entity creation via MQTT Discovery
+- **openHAB** — integrates via MQTT; subscribe to device topics and publish control commands
 
 ---
 
