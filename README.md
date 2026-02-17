@@ -82,6 +82,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 
 | Topic | File |
 |-------|------|
+| Use cases | [docs/use-cases.md](docs/use-cases.md) |
 | On-demand BLE connection | [docs/on-demand-ble.md](docs/on-demand-ble.md) |
 | BLE coexistence (bridge vs Geberit Home app) | [docs/ble-coexistence.md](docs/ble-coexistence.md) |
 | Operating modes | [docs/modes.md](docs/modes.md) |
