@@ -163,6 +163,7 @@ You have **two options** for configuring the entities in Home Assistant:
    cp /path/to/geberit-aquaclean/graphics/ladywash.svg /config/www/custom_icons/geberit/
    cp /path/to/geberit-aquaclean/graphics/dryer_to_the_right-on.svg /config/www/custom_icons/geberit/
    cp /path/to/geberit-aquaclean/graphics/dryer_to_the_right-off.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/adjustabletoiletseat.svg /config/www/custom_icons/geberit/
    ```
 
    **Note:** Replace `/path/to/geberit-aquaclean` with the actual path where you cloned this repository. The required SVG files are available in the [`graphics/`](https://github.com/jens62/geberit-aquaclean/tree/main/graphics) folder of this project.
@@ -186,6 +187,7 @@ The following icon files are included in the project's [`graphics/`](https://git
 - **Anal Shower**: Single icon (`analshower.svg`) - brightness adjusted for on/off states
 - **Lady Shower**: Single icon (`ladywash.svg`) - brightness adjusted for on/off states
 - **Dryer**: Two states (`dryer_to_the_right-on.svg`, `dryer_to_the_right-off.svg`)
+- **Toggle Lid**: Single icon (`adjustabletoiletseat.svg`) - brightness adjusted for on/off states
 
 ## Dashboard Cards
 
