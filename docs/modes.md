@@ -42,6 +42,41 @@ Web UI available at `http://<host>:<port>/` (default: `http://0.0.0.0:8080/`).
 
 See [rest-api.md](rest-api.md) and [webapp.md](webapp.md) for details.
 
+### On-demand mode — why it matters
+
+The original C# library and the initial Python port keep a **permanent BLE connection** to the AquaClean.  In practice, the device firmware stops responding after a few days of continuous use under a persistent connection — a known hardware/firmware limitation.
+
+**On-demand mode** is a non-blocking alternative: BLE is connected only for the duration of a single request, then released.  This avoids holding a long-lived connection and keeps the device stable indefinitely.
+
+```
+Each REST or MQTT request:
+  connect → query → disconnect   (~1–2 s round-trip)
+```
+
+A background polling loop (interval configured in `[POLL]`) still runs on the same on-demand pattern to keep MQTT topics and SSE state current between explicit requests.
+
+**Trade-off summary:**
+
+| | Persistent | On-demand |
+|-|-----------|----------|
+| Long-term stability | Degrades after a few days | Stable indefinitely |
+| Request latency | Instant (always connected) | ~1–2 s (connect overhead) |
+| Best for | Continuous high-frequency monitoring | REST integrations, occasional polling |
+
+Switch modes without restart:
+
+```bash
+# via REST API
+curl -X POST http://localhost:8080/config/ble-connection \
+     -H "Content-Type: application/json" -d '{"value": "on-demand"}'
+
+# via MQTT
+mosquitto_pub -h YOUR_BROKER \
+  -t "Geberit/AquaClean/centralDevice/config/bleConnection" -m "on-demand"
+```
+
+Or use the toggle button in the web UI.
+
 ## `cli`
 
 A one-shot tool that connects to the device, runs a single command, prints JSON to stdout, and exits.  Log output goes to stderr.
