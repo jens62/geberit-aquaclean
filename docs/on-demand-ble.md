@@ -1,5 +1,32 @@
 # On-Demand BLE Connection
 
+## Upgrading from a previous version
+
+If you are running an older version of this software, add the following sections to your `config.ini` — they did not exist before:
+
+```ini
+[SERVICE]
+; mqtt_enabled: publish status to MQTT broker (true/false)
+mqtt_enabled = true
+; ble_connection: persistent = keep BLE connected with polling loop
+;                 on-demand  = connect/disconnect per REST request (api mode only)
+ble_connection = on-demand
+
+[API]
+host = 0.0.0.0
+port = 8080
+```
+
+Then start in API mode:
+
+```bash
+python main.py --mode api
+```
+
+Open `http://<your-host>:8080/` in a browser to verify everything works — the web UI is the quickest way to confirm the BLE connection comes up, queries return data, and the on-demand timing fields (`_connect_ms`, `_query_ms`) appear below the query buttons.
+
+---
+
 ## Background — why this was needed
 
 A long-standing problem with the original C# library and early Python port is that they hold a **permanent BLE connection** to the AquaClean.  The device firmware does not cope well with a persistent connection over several days: after 2–5 days of continuous use the device stops responding and must be power-cycled.
