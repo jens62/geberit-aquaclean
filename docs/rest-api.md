@@ -60,11 +60,7 @@ Each endpoint queries only the relevant parameter from the device.
 curl http://localhost:8080/data/user-sitting-state
 ```
 ```json
-{
-  "is_user_sitting": false,
-  "_connect_ms": 843,
-  "_query_ms": 198
-}
+{"is_user_sitting":false,"_connect_ms":4311,"_query_ms":306}
 ```
 
 ### Query all system parameters
@@ -89,12 +85,7 @@ curl http://localhost:8080/data/system-parameters
 curl -X POST http://localhost:8080/command/toggle-lid
 ```
 ```json
-{
-  "status": "success",
-  "command": "toggle-lid",
-  "_connect_ms": 831,
-  "_query_ms": 54
-}
+{"status":"success","command":"toggle-lid","_connect_ms":4388,"_query_ms":1316}
 ```
 
 ### Switch to on-demand mode
