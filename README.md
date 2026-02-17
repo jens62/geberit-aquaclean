@@ -7,7 +7,7 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 <table>
   <tr>
     <td align="center">
-      <img src="homeassistant/webapp-masked.png" width="380"/><br/>
+      <img src="docs/webapp-masked.png" width="380"/><br/>
       <em>Web UI — live status, on-demand queries, runtime config</em>
     </td>
     <td align="center">
