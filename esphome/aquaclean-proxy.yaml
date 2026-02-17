@@ -1,0 +1,62 @@
+esphome:
+  name: aquaclean-proxy
+  friendly_name: Geberit AquaClean BLE Proxy
+
+esp32:
+  board: esp32-poe-iso
+  framework:
+    type: esp-idf   # required — Arduino framework has insufficient memory for a reliable proxy
+
+# ---------------------------------------------------------------------------
+# Ethernet (Olimex ESP32-POE-ISO pin mapping)
+# Powered by PoE — no separate power supply needed.
+# ---------------------------------------------------------------------------
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO17_OUT
+  phy_addr: 0
+  power_pin: GPIO12
+
+# ---------------------------------------------------------------------------
+# ESPHome native API
+# The Python bridge connects to this port (default 6053) to reach the BLE proxy.
+# Set a password here and mirror it in config.ini [ESPHOME] password.
+# ---------------------------------------------------------------------------
+api:
+  password: !secret api_password
+
+# ---------------------------------------------------------------------------
+# BLE Proxy
+# active: true  — enables full two-way GATT connections, required for AquaClean.
+# connection_slots: 2 — one for AquaClean, one spare. Increase only if needed.
+# ---------------------------------------------------------------------------
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 1100ms
+    window: 1100ms
+
+bluetooth_proxy:
+  active: true
+  connection_slots: 2
+
+# ---------------------------------------------------------------------------
+# OTA updates
+# ---------------------------------------------------------------------------
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# ---------------------------------------------------------------------------
+# Logging — set to INFO for normal use, DEBUG when troubleshooting
+# ---------------------------------------------------------------------------
+logger:
+  level: INFO
+
+# ---------------------------------------------------------------------------
+# Optional: simple web interface on port 80 for status and logs
+# ---------------------------------------------------------------------------
+web_server:
+  port: 80
