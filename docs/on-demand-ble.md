@@ -125,3 +125,7 @@ The web UI displays these timings below the Queries buttons in on-demand mode.
 | Long-term stability | Degrades after a few days | Stable indefinitely |
 | Request latency | Instant | ~1–2 s (connect overhead) |
 | Best for | Continuous high-frequency monitoring | REST API, scripting, occasional polling |
+
+---
+
+See also [ble-coexistence.md](ble-coexistence.md) for how the bridge behaves alongside the Geberit Home app and what to do after a stale connection.

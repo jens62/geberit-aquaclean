@@ -83,6 +83,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 | Topic | File |
 |-------|------|
 | On-demand BLE connection | [docs/on-demand-ble.md](docs/on-demand-ble.md) |
+| BLE coexistence (bridge vs Geberit Home app) | [docs/ble-coexistence.md](docs/ble-coexistence.md) |
 | Operating modes | [docs/modes.md](docs/modes.md) |
 | Configuration reference | [docs/configuration.md](docs/configuration.md) |
 | REST API | [docs/rest-api.md](docs/rest-api.md) |
