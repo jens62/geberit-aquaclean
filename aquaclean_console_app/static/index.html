@@ -485,9 +485,11 @@
     }
 
     // --- Status cards ---
+    let _analQueryActive = false;
+
     function updateCards(state) {
       updateCard('sitting', state.is_user_sitting);
-      updateCard('anal',    state.is_anal_shower_running);
+      if (!_analQueryActive) updateCard('anal', state.is_anal_shower_running);
       updateCard('lady',    state.is_lady_shower_running);
       updateCard('dryer',   state.is_dryer_running);
       if ('ble_status' in state) updateConnection(state);
@@ -588,7 +590,7 @@
 
     // --- Queries (on-demand mode) ---
     async function queryGet(url, btn, onBefore, onResult) {
-      if (onBefore) onBefore();
+      const cleanup = onBefore ? onBefore() : null;
       btn.disabled = true;
       btn.classList.add('loading');
       btn.classList.remove('success', 'error');
@@ -605,9 +607,11 @@
           btn.classList.add('success');
         } else {
           btn.classList.add('error');
+          if (cleanup) cleanup();
         }
       } catch (_) {
         btn.classList.add('error');
+        if (cleanup) cleanup();
       } finally {
         btn.disabled = false;
         btn.classList.remove('loading');
@@ -652,9 +656,12 @@
     }
 
     function clearAnalShowerState() {
+      _analQueryActive = true;
       updateCard('anal', null);
+      return () => { _analQueryActive = false; };
     }
     function onAnalShowerState(data) {
+      _analQueryActive = false;
       updateCard('anal', data.is_anal_shower_running);
     }
 
