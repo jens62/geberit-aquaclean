@@ -47,8 +47,15 @@ class AquaCleanClient(IAquaCleanClient):
         self.InitialOperationDate = await self.base_client.get_device_initial_operation_date()
         await self.DeviceInitialOperationDate.invoke_async(self, self.InitialOperationDate)
 
-    async def start_polling(self, interval: float):
-        """The infinite loop logic from your original connect method."""
+    async def connect_ble_only(self, device_id: str):
+        """Pure BLE handshake — no data fetching. For on-demand mode so that
+        query_ms captures only the actual data request, not eager pre-fetches."""
+        logger.trace(f"BLE-only connect to {device_id}...")
+        await self.base_client.connect_async(device_id)
+
+    async def start_polling(self, interval: float, on_poll_done=None):
+        """The infinite loop logic from your original connect method.
+        on_poll_done: optional async callable(millis: int) called after each poll."""
         logger.info(f"Starting status polling loop (interval: {interval}s)")
         while True:
             start = datetime.datetime.now()
@@ -56,6 +63,8 @@ class AquaCleanClient(IAquaCleanClient):
             delta = datetime.datetime.now() - start
             millis = int(delta.total_seconds() * 1000)
             logger.trace(f"getting the device changes took {millis} milliseconds")
+            if on_poll_done:
+                await on_poll_done(millis)
 
             await asyncio.sleep(interval)
 

@@ -2,7 +2,7 @@
 
 This guide provides complete setup instructions for integrating a Geberit AquaClean smart toilet with Home Assistant via MQTT.
 
-![Geberit AquaClean in Home Assistant](./geberit_aquaclean_in_homeassistant.png)
+![Geberit AquaClean in Home Assistant](./button-card-masked.png)
 
 
 ## Table of Contents
@@ -88,30 +88,30 @@ You have **two options** for configuring the entities in Home Assistant:
 ### Option 1: MQTT Discovery (Recommended) ⭐
 
 **Pros:** Automatic entity creation, no manual YAML editing, entities grouped as a device, easier updates
-**Cons:** Requires running a script once
+**Cons:** Requires running a command once
 
 **Steps:**
 
-1. **Run the discovery script** from the `homeassistant/` directory:
+1. **Run the built-in CLI command** (reads broker settings from `config.ini`):
    ```bash
-   python publish_discovery.py --host YOUR_MQTT_BROKER_IP
+   python main.py --mode cli --command publish-ha-discovery
    ```
 
-   With authentication:
+   To remove all entities later:
    ```bash
-   python publish_discovery.py --host 192.168.1.100 --username admin --password secret
+   python main.py --mode cli --command remove-ha-discovery
    ```
 
 2. **Verify in Home Assistant**:
    - Go to **Settings** → **Devices & Services** → **MQTT**
    - You should see **"Geberit AquaClean"** device
-   - Click on it to see all 12 entities grouped together
+   - Click on it to see all 13 entities grouped together
    - All entities are automatically created - no configuration.yaml editing needed!
 
    ![MQTT Discovery Result](./mqtt_discovery_result.png)
 
 **Important Notes:**
-- The script publishes discovery messages to your MQTT broker
+- The command publishes discovery messages to your MQTT broker (broker address read from `config.ini`)
 - Home Assistant (connected to the same MQTT broker) automatically detects and creates the entities
 - Works alongside any existing manual MQTT configuration in `configuration.yaml`
 - Binary sensors use `payload_on: "True"` and `payload_off: "False"` (capitalized)
@@ -163,6 +163,7 @@ You have **two options** for configuring the entities in Home Assistant:
    cp /path/to/geberit-aquaclean/graphics/ladywash.svg /config/www/custom_icons/geberit/
    cp /path/to/geberit-aquaclean/graphics/dryer_to_the_right-on.svg /config/www/custom_icons/geberit/
    cp /path/to/geberit-aquaclean/graphics/dryer_to_the_right-off.svg /config/www/custom_icons/geberit/
+   cp /path/to/geberit-aquaclean/graphics/adjustabletoiletseat.svg /config/www/custom_icons/geberit/
    ```
 
    **Note:** Replace `/path/to/geberit-aquaclean` with the actual path where you cloned this repository. The required SVG files are available in the [`graphics/`](https://github.com/jens62/geberit-aquaclean/tree/main/graphics) folder of this project.
@@ -186,6 +187,7 @@ The following icon files are included in the project's [`graphics/`](https://git
 - **Anal Shower**: Single icon (`analshower.svg`) - brightness adjusted for on/off states
 - **Lady Shower**: Single icon (`ladywash.svg`) - brightness adjusted for on/off states
 - **Dryer**: Two states (`dryer_to_the_right-on.svg`, `dryer_to_the_right-off.svg`)
+- **Toggle Lid**: Single icon (`adjustabletoiletseat.svg`) - brightness adjusted for on/off states
 
 ## Dashboard Cards
 

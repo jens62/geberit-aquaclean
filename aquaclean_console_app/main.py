@@ -1,4 +1,4 @@
-﻿import json
+import json
 import asyncio
 import logging
 import os
@@ -6,11 +6,14 @@ import configparser
 import argparse
 import traceback
 import sys
+import time
+from datetime import datetime
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
 from haggis import logs
 
 from bleak import BleakScanner
+from bleak.exc import BleakError
 from aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
 from aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
 from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
@@ -20,9 +23,9 @@ from aquaclean_core.Message.MessageService                    import MessageServ
 from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
 from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector
 from MqttService                                              import MqttService as Mqtt
+from RestApiService                                           import RestApiService
 from myEvent                                                  import myEvent
 from aquaclean_utils                                          import utils
-from MqttService                                              import MqttService as Mqtt
 
 # --- Configuration & Logging Setup ---
 __location__ = os.path.dirname(os.path.abspath(__file__))
@@ -37,19 +40,68 @@ log_level = config.get("LOGGING", "log_level")
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+
 def get_full_class_name(obj):
     module = obj.__class__.__module__
     if module is None or module == str.__class__.__module__:
         return obj.__class__.__name__
     return module + '.' + obj.__class__.__name__
 
-class ServiceMode:
-    """Restores the full logic of your original MainPage class."""
+
+class ManualReconnectRequested(Exception):
+    """Raised to trigger a clean BLE reconnect without the timeout recovery protocol."""
+    pass
+
+
+class NullMqttService:
+    """Drop-in replacement for MqttService when MQTT is disabled."""
     def __init__(self):
-        self.mqttConfig = dict(config.items('MQTT'))
-        self.mqtt_service = Mqtt(self.mqttConfig)
+        self.ToggleLidPosition = myEvent.EventHandler()
+        self.Connect           = myEvent.EventHandler()
+        self.ToggleAnal        = myEvent.EventHandler()
+        self.SetBleConnection  = myEvent.EventHandler()
+        self.SetPollInterval   = myEvent.EventHandler()
+        self.Disconnect        = myEvent.EventHandler()
+
+    async def start_async(self, loop, queue):
+        queue.put("initialized")
+
+    async def send_data_async(self, topic, value):
+        pass
+
+    def stop(self):
+        pass
+
+
+class ServiceMode:
+    def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None):
         self.client = None
         self.mqtt_initialized_wait_queue = Queue()
+        self.device_state = {
+            "is_user_sitting": None,
+            "is_anal_shower_running": None,
+            "is_lady_shower_running": None,
+            "is_dryer_running": None,
+            "ble_status": "disconnected",   # connecting | connected | disconnected | error
+            "ble_connected_at": None,        # ISO timestamp string
+            "ble_device_name": None,         # from client.Description
+            "ble_device_address": None,      # BLE address from config
+            "ble_error": None,               # error message when ble_status == "error"
+            "last_connect_ms": None,         # duration of last BLE connect in ms
+            "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
+        }
+        self._reconnect_requested = asyncio.Event()
+        self._connection_allowed = asyncio.Event()
+        self._connection_allowed.set()  # auto-connect on startup
+        self._shutdown_event = shutdown_event or asyncio.Event()
+        self.on_state_updated = None  # Optional async callback(state_dict)
+
+        if mqtt_enabled:
+            self.mqttConfig = dict(config.items('MQTT'))
+            self.mqtt_service = Mqtt(self.mqttConfig)
+        else:
+            self.mqttConfig = {"topic": config.get("MQTT", "topic", fallback="Geberit/AquaClean")}
+            self.mqtt_service = NullMqttService()
 
     async def run(self):
         # 1. Initialize MQTT with wait queue (once)
@@ -69,13 +121,33 @@ class ServiceMode:
             interval = float(config.get("POLL", "interval"))
         except Exception:
             interval = 2.5
+        self.device_state["poll_interval"] = interval
 
-        # Subscribe MQTT handler once — on_toggle_lid_message references self.client
+        # Subscribe MQTT handlers once — handlers reference self.client
         # which is updated each iteration of the recovery loop below
         self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
+        self.mqtt_service.Connect += self.request_reconnect
 
         # --- Main Recovery Loop ---
-        while True:
+        while not self._shutdown_event.is_set():
+            # If disconnect was requested, wait here until reconnect is allowed.
+            if not self._connection_allowed.is_set():
+                allowed_task = asyncio.create_task(self._connection_allowed.wait())
+                shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+                await asyncio.wait(
+                    [allowed_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                allowed_task.cancel()
+                shutdown_task.cancel()
+                for t in (allowed_task, shutdown_task):
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                if self._shutdown_event.is_set():
+                    break
+
             bluetooth_connector = BluetoothLeConnector()
             factory = AquaCleanClientFactory(bluetooth_connector)
             self.client = factory.create_client()
@@ -88,10 +160,56 @@ class ServiceMode:
 
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", "No error")
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
+            await self._set_ble_status("connecting", device_address=device_id)
 
             try:
+                t0 = time.perf_counter()
                 await self.client.connect(device_id)
-                await self.client.start_polling(interval)
+                self.device_state["last_connect_ms"] = int((time.perf_counter() - t0) * 1000)
+                await self._set_ble_status(
+                    "connected",
+                    device_name=self.client.Description,
+                    device_address=device_id,
+                )
+
+                # Record when polling starts so clients can compute a
+                # deterministic countdown regardless of when they connect.
+                self.device_state["poll_epoch"] = time.time()
+
+                # Run polling, reconnect-request watcher, and shutdown watcher
+                # concurrently; whichever finishes first wins.
+                polling_task   = asyncio.create_task(self.client.start_polling(interval, on_poll_done=self._on_poll_done))
+                reconnect_task = asyncio.create_task(self._reconnect_requested.wait())
+                shutdown_task  = asyncio.create_task(self._shutdown_event.wait())
+
+                done, pending = await asyncio.wait(
+                    [polling_task, reconnect_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+
+                if shutdown_task in done:
+                    break  # exit recovery loop
+
+                if reconnect_task in done:
+                    self._reconnect_requested.clear()
+                    raise ManualReconnectRequested()
+
+                # polling_task finished — re-raise its exception if any
+                exc = polling_task.exception() if not polling_task.cancelled() else None
+                if exc:
+                    raise exc
+
+            except ManualReconnectRequested:
+                logger.info("Manual reconnect requested — reconnecting...")
+                await self.mqtt_service.send_data_async(
+                    f"{self.mqttConfig['topic']}/centralDevice/connected", "Reconnecting..."
+                )
             except BLEPeripheralTimeoutError as e:
                 logger.warning("BLE Timeout — initiating recovery protocol.")
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(e))
@@ -100,13 +218,77 @@ class ServiceMode:
                 except Exception:
                     pass
                 await self.wait_for_device_restart(device_id)
+            except BleakError as e:
+                msg = (
+                    f"{e} — "
+                    "Try in order: "
+                    "1) Power cycle the Geberit. "
+                    "2) Restart the Bluetooth service on the host machine. "
+                    "3) Restart the host machine."
+                )
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await self._set_ble_status("error", error_msg=msg)
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    pass
             except Exception as e:
                 await self.handle_exception(e)
             finally:
+                # On shutdown, publish disconnected status to MQTT BEFORE the
+                # slow BLE disconnect (which may be cancelled by ApiMode).
+                if self._shutdown_event.is_set():
+                    await self.mqtt_service.send_data_async(
+                        f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
                 try:
                     await self.client.disconnect()
                 except Exception:
                     pass
+                await self._set_ble_status("disconnected")
+
+        # Recovery loop exited — stop the MQTT background thread
+        self.mqtt_service.stop()
+
+    async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None):
+        self.device_state["ble_status"] = status
+        if status == "connected":
+            self.device_state["ble_connected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.device_state["ble_device_name"] = device_name
+            self.device_state["ble_device_address"] = device_address
+            self.device_state["ble_error"] = None
+        elif status == "error":
+            self.device_state["ble_connected_at"] = None
+            self.device_state["poll_epoch"] = None
+            self.device_state["last_connect_ms"] = None
+            self.device_state["last_poll_ms"] = None
+            self.device_state["ble_error"] = error_msg
+        elif status in ("disconnected", "connecting"):
+            self.device_state["ble_connected_at"] = None
+            self.device_state["poll_epoch"] = None
+            self.device_state["last_connect_ms"] = None
+            self.device_state["last_poll_ms"] = None
+            self.device_state["ble_error"] = None
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
+
+    async def _on_poll_done(self, millis: int):
+        self.device_state["last_poll_ms"] = millis
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
+
+    async def request_reconnect(self):
+        """Trigger a clean BLE reconnect (callable from MQTT or REST API)."""
+        logger.info("Reconnect requested.")
+        self._connection_allowed.set()
+        self._reconnect_requested.set()
+
+    async def request_disconnect(self):
+        """Disconnect and stay disconnected until reconnect is requested."""
+        logger.info("Disconnect requested.")
+        self._connection_allowed.clear()
+        self._reconnect_requested.set()
 
     async def wait_for_device_restart(self, device_id):
         """Passively scans until the device drops off BLE, then waits for it to reappear."""
@@ -115,7 +297,7 @@ class ServiceMode:
         # Phase 1: wait for the user to power-cycle the device
         await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
         logger.info(f"Waiting for device {device_id} to drop off BLE scanner...")
-        while True:
+        while not self._shutdown_event.is_set():
             device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
             if device is None:
                 logger.info("Device shut down confirmed.")
@@ -125,7 +307,7 @@ class ServiceMode:
 
         # Phase 2: wait for it to boot back up
         logger.info(f"Waiting for device {device_id} to reappear...")
-        while True:
+        while not self._shutdown_event.is_set():
             device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
             if device is not None:
                 logger.info("Device back online.")
@@ -134,17 +316,23 @@ class ServiceMode:
                 break
             await asyncio.sleep(2)
 
-    # --- Restored Original Handlers (Verbatim) ---
+    # --- Event Handlers ---
     async def on_device_state_changed(self, sender, args):
         topic = self.mqttConfig['topic']
         if "IsUserSitting" in args.__dict__ and args.IsUserSitting is not None:
+            self.device_state["is_user_sitting"] = args.IsUserSitting
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting", str(args.IsUserSitting))
         if "IsAnalShowerRunning" in args.__dict__ and args.IsAnalShowerRunning is not None:
+            self.device_state["is_anal_shower_running"] = args.IsAnalShowerRunning
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(args.IsAnalShowerRunning))
         if "IsLadyShowerRunning" in args.__dict__ and args.IsLadyShowerRunning is not None:
+            self.device_state["is_lady_shower_running"] = args.IsLadyShowerRunning
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(args.IsLadyShowerRunning))
         if "IsDryerRunning" in args.__dict__ and args.IsDryerRunning is not None:
+            self.device_state["is_dryer_running"] = args.IsDryerRunning
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(args.IsDryerRunning))
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
 
     async def on_device_identification(self, sender, args):
         topic = self.mqttConfig['topic']
@@ -177,6 +365,681 @@ class ServiceMode:
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
             sys.exit(1)
 
+
+class ApiMode:
+    """REST API mode: persistent BLE + polling loop, or on-demand per-request connections."""
+
+    def __init__(self):
+        mqtt_enabled = config.getboolean("SERVICE", "mqtt_enabled", fallback=True)
+        self.ble_connection = config.get("SERVICE", "ble_connection", fallback="persistent")
+        api_host = config.get("API", "host", fallback="0.0.0.0")
+        api_port = int(config.get("API", "port", fallback="8080"))
+        try:
+            self._poll_interval = float(config.get("POLL", "interval"))
+        except Exception:
+            self._poll_interval = 0.0
+
+        self._shutdown_event = asyncio.Event()
+        self._on_demand_lock = asyncio.Lock()
+        self._poll_wakeup    = asyncio.Event()
+
+        self.rest_api = RestApiService(api_host, api_port)
+        self.rest_api.set_api_mode(self)
+
+        # Always create ServiceMode so ble_connection can be toggled at runtime.
+        self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
+        self.service.device_state["ble_connection"] = self.ble_connection
+        self.service.device_state["poll_interval"]  = self._poll_interval
+        if self.ble_connection != "persistent":
+            # Start in standby — loop waits on _connection_allowed until switched
+            self.service._connection_allowed.clear()
+
+        logger.info(f"API mode: ble_connection={self.ble_connection}, mqtt_enabled={mqtt_enabled}, {api_host}:{api_port}")
+
+    async def run(self):
+        self.service.on_state_updated = self.rest_api.broadcast_state
+        # Wire MQTT inbound control topics → ApiMode handlers
+        self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
+        self.service.mqtt_service.SetBleConnection += self._on_mqtt_set_ble_connection
+        self.service.mqtt_service.SetPollInterval  += self._on_mqtt_set_poll_interval
+        self.service.mqtt_service.Disconnect       += self._on_mqtt_disconnect
+        service_task = asyncio.create_task(self.service.run())
+        poll_task = asyncio.create_task(self._polling_loop())
+        try:
+            await self.rest_api.start(self._shutdown_event)
+        finally:
+            # Ensure the BLE loop also sees the shutdown event
+            self._shutdown_event.set()
+            # Let the service exit gracefully via the shutdown event —
+            # it needs to publish MQTT status before BLE disconnect.
+            # Only cancel as a last resort if it doesn't finish in time.
+            tasks = {service_task, poll_task}
+            done, pending = await asyncio.wait(tasks, timeout=5.0)
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+    # --- Config endpoints ---
+
+    def get_current_state(self) -> dict:
+        """In-memory state snapshot — sync, no BLE connection (safe for SSE initial push)."""
+        return dict(self.service.device_state)
+
+    def get_config(self) -> dict:
+        return {"ble_connection": self.ble_connection, "poll_interval": self._poll_interval}
+
+    async def set_ble_connection(self, value: str) -> dict:
+        if value not in ("persistent", "on-demand"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"Invalid value {value!r}. Use 'persistent' or 'on-demand'.")
+        self.ble_connection = value
+        self.service.device_state["ble_connection"] = value
+        if value == "persistent":
+            await self.service.request_reconnect()
+        else:
+            await self.service.request_disconnect()
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "ble_connection": value}
+
+    async def set_poll_interval(self, value: float) -> dict:
+        if value < 0:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="poll_interval must be >= 0 (0 = disabled)")
+        self._poll_interval = value
+        self.service.device_state["poll_interval"] = value
+        self._poll_wakeup.set()   # wake the poll loop so it picks up the new interval immediately
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "poll_interval": value}
+
+    # --- MQTT inbound handlers ---
+
+    async def _on_mqtt_toggle_anal(self):
+        try:
+            await self.run_command("toggle-anal")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-anal failed: {e}")
+
+    async def _on_mqtt_set_ble_connection(self, value: str):
+        try:
+            await self.set_ble_connection(value)
+        except Exception as e:
+            logger.warning(f"MQTT set_ble_connection({value!r}) failed: {e}")
+
+    async def _on_mqtt_set_poll_interval(self, value: float):
+        try:
+            await self.set_poll_interval(value)
+        except Exception as e:
+            logger.warning(f"MQTT set_poll_interval({value}) failed: {e}")
+
+    async def _on_mqtt_disconnect(self):
+        try:
+            await self.do_disconnect()
+        except Exception as e:
+            logger.warning(f"MQTT disconnect failed: {e}")
+
+    # --- REST endpoint implementations ---
+
+    async def get_status(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            result = self.service.device_state
+        else:
+            result = await self._on_demand(lambda client: self._fetch_state(client))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+        return result
+
+    async def get_info(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            c = self.service.client
+            result = {
+                "sap_number": c.SapNumber,
+                "serial_number": c.SerialNumber,
+                "production_date": c.ProductionDate,
+                "description": c.Description,
+                "initial_operation_date": c.InitialOperationDate,
+            }
+        else:
+            result = await self._on_demand(lambda client: self._fetch_info(client))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate",          str(result["initial_operation_date"]))
+        return result
+
+    async def run_command(self, command: str):
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            await self._execute_command(self.service.client, command)
+        else:
+            return await self._on_demand(lambda client: self._execute_command(client, command))
+
+    async def do_connect(self):
+        if self.ble_connection == "persistent":
+            await self.service.request_reconnect()
+            return {"status": "success", "action": "reconnect requested"}
+        else:
+            return await self._on_demand(lambda client: self._fetch_info(client))
+
+    async def do_disconnect(self):
+        if self.ble_connection == "persistent":
+            await self.service.request_disconnect()
+            return {"status": "success", "action": "disconnect requested"}
+        else:
+            return {"status": "success", "action": "no persistent connection to disconnect"}
+
+    # --- Data query endpoints ---
+
+    async def get_system_parameters(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            # fires DeviceStateChanged → on_device_state_changed → publishes to MQTT
+            await self.service.client._state_changed_timer_elapsed()
+            return self.service.device_state
+        else:
+            result = await self._on_demand(lambda client: self._fetch_state(client))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result["is_user_sitting"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result["is_dryer_running"]))
+            return result
+
+    async def get_soc_versions(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = {"soc_versions": str(self.service.client.soc_application_versions)}
+        else:
+            result = await self._on_demand(self._fetch_soc_versions)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
+        return result
+
+    async def get_initial_operation_date(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = {"initial_operation_date": str(self.service.client.InitialOperationDate)}
+        else:
+            result = await self._on_demand(self._fetch_initial_op_date)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate", result["initial_operation_date"])
+        return result
+
+    async def get_identification(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            c = self.service.client
+            result = {
+                "sap_number": c.SapNumber,
+                "serial_number": c.SerialNumber,
+                "production_date": c.ProductionDate,
+                "description": c.Description,
+            }
+        else:
+            result = await self._on_demand(self._fetch_identification)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
+        return result
+
+    async def get_anal_shower_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_anal_shower_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_anal_shower_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
+        return result
+
+    async def get_user_sitting_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_user_sitting_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_user_sitting_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting", str(result["is_user_sitting"]))
+        return result
+
+    async def get_lady_shower_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_lady_shower_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_lady_shower_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
+        return result
+
+    async def get_dryer_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_dryer_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_dryer_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(result["is_dryer_running"]))
+        return result
+
+    # --- Helpers ---
+
+    async def _fetch_anal_shower_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([1])
+        val = result.data_array[1] != 0
+        # Update device_state here — before _on_demand's finally block fires —
+        # so the "disconnected" SSE broadcast carries the fresh value, not null.
+        self.service.device_state["is_anal_shower_running"] = val
+        return {"is_anal_shower_running": val}
+
+    async def _fetch_user_sitting_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([0])
+        val = result.data_array[0] != 0
+        self.service.device_state["is_user_sitting"] = val
+        return {"is_user_sitting": val}
+
+    async def _fetch_lady_shower_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([2])
+        val = result.data_array[2] != 0
+        self.service.device_state["is_lady_shower_running"] = val
+        return {"is_lady_shower_running": val}
+
+    async def _fetch_dryer_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([3])
+        val = result.data_array[3] != 0
+        self.service.device_state["is_dryer_running"] = val
+        return {"is_dryer_running": val}
+
+    async def _fetch_soc_versions(self, client):
+        versions = await client.base_client.get_soc_application_versions_async()
+        return {"soc_versions": str(versions)}
+
+    async def _fetch_initial_op_date(self, client):
+        date = await client.base_client.get_device_initial_operation_date()
+        return {"initial_operation_date": str(date)}
+
+    async def _fetch_identification(self, client):
+        ident = await client.base_client.get_device_identification_async(0)
+        return {
+            "sap_number": ident.sap_number,
+            "serial_number": ident.serial_number,
+            "production_date": ident.production_date,
+            "description": ident.description,
+        }
+
+    async def _on_demand(self, action):
+        """Connect, execute action, disconnect — for on-demand connection mode.
+        Publishes connecting/connected/disconnected to MQTT and SSE, mirroring
+        the persistent-mode behaviour."""
+        async with self._on_demand_lock:
+            return await self._on_demand_inner(action)
+
+    async def _on_demand_inner(self, action):
+        device_id = config.get("BLE", "device_id")
+        topic = self.service.mqttConfig['topic']
+        connector = BluetoothLeConnector()
+        # Mirror persistent mode: let the connector publish "True, address, name"
+        connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+        factory = AquaCleanClientFactory(connector)
+        client = factory.create_client()
+        try:
+            await self.service.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
+            await self.service._set_ble_status("connecting", device_address=device_id)
+            t0 = time.perf_counter()
+            await client.connect_ble_only(device_id)
+            connect_ms = int((time.perf_counter() - t0) * 1000)
+            self.service.device_state["last_connect_ms"] = connect_ms
+            await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
+            t1 = time.perf_counter()
+            result = action(client)
+            result = await result if asyncio.iscoroutine(result) else result
+            query_ms = int((time.perf_counter() - t1) * 1000)
+            self.service.device_state["last_poll_ms"] = query_ms
+            timing = {"_connect_ms": connect_ms, "_query_ms": query_ms}
+            if isinstance(result, dict):
+                result = {**result, **timing}
+            else:
+                result = timing
+            return result
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            await self.service._set_ble_status("disconnected")
+
+    async def _polling_loop(self):
+        """Background poll: query GetSystemParameterList every _poll_interval seconds
+        when running in on-demand mode. Skips silently in persistent mode.
+        interval=0 pauses polling. _poll_wakeup lets the loop react immediately
+        when the interval is changed at runtime via set_poll_interval()."""
+        logger.info(f"Poll loop started (interval={self._poll_interval}s)")
+        topic = self.service.mqttConfig['topic']
+        while True:
+            # Sleep for the current interval; _poll_wakeup interrupts early on change.
+            try:
+                if self._poll_interval > 0:
+                    await asyncio.wait_for(self._poll_wakeup.wait(), timeout=self._poll_interval)
+                else:
+                    await self._poll_wakeup.wait()   # interval=0: wait until re-enabled
+                # Woken by set_poll_interval — restart sleep with the new value.
+                self._poll_wakeup.clear()
+                continue
+            except asyncio.TimeoutError:
+                pass   # normal path: interval elapsed
+            except asyncio.CancelledError:
+                return
+
+            if self._shutdown_event.is_set():
+                return
+            if self.ble_connection != "on-demand":
+                continue  # persistent mode handles its own polling
+            try:
+                result = await self._on_demand(self._fetch_state)
+                # _set_ble_status("disconnected") cleared timing and poll_epoch;
+                # restore them so the webapp gets accurate values.
+                self.service.device_state["last_connect_ms"] = result.get("_connect_ms")
+                self.service.device_state["last_poll_ms"]    = result.get("_query_ms")
+                self.service.device_state["poll_epoch"]      = time.time()
+                await self.rest_api.broadcast_state(self.service.device_state.copy())
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+            except Exception as e:
+                logger.warning(f"On-demand poll failed: {e}")
+
+    async def _fetch_state(self, client):
+        from aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
+        result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 7, 9])
+        # Update device_state before _on_demand's finally fires so the
+        # "disconnected" SSE broadcast carries fresh values.
+        self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
+        self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
+        self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
+        self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
+        return {
+            "is_user_sitting":        self.service.device_state["is_user_sitting"],
+            "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
+            "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
+            "is_dryer_running":       self.service.device_state["is_dryer_running"],
+        }
+
+    async def _fetch_info(self, client):
+        ident = await client.base_client.get_device_identification_async(0)
+        initial_op_date = await client.base_client.get_device_initial_operation_date()
+        return {
+            "sap_number": ident.sap_number,
+            "serial_number": ident.serial_number,
+            "production_date": ident.production_date,
+            "description": ident.description,
+            "initial_operation_date": str(initial_op_date),
+        }
+
+    async def _execute_command(self, client, command: str):
+        if command == "toggle-lid":
+            await client.toggle_lid_position()
+        elif command == "toggle-anal":
+            await client.toggle_anal_shower()
+        else:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
+
+
+def get_ha_discovery_configs(topic_prefix: str) -> list:
+    """
+    Return Home Assistant MQTT Discovery configurations for all AquaClean entities.
+
+    The topic_prefix comes from config.ini [MQTT] topic, so it always matches the
+    topics the running application actually publishes.
+
+    HOW TO KEEP THIS IN SYNC: when you add a new send_data_async() call elsewhere
+    in this file, add the corresponding HA entity here.  Both live in main.py, so
+    they're easy to find and update together.
+    """
+    DEVICE = {
+        "identifiers": ["geberit_aquaclean"],
+        "name": "Geberit AquaClean",
+        "model": "Mera Comfort",
+        "manufacturer": "Geberit",
+    }
+    HA = "homeassistant"
+    t = topic_prefix
+
+    return [
+        # --- Binary Sensors: monitor state (ServiceMode.on_device_state_changed) ---
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/user_sitting/config",
+            "payload": {
+                "name": "User Sitting",
+                "unique_id": "geberit_aquaclean_user_sitting",
+                "state_topic": f"{t}/peripheralDevice/monitor/isUserSitting",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:seat",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/anal_shower_running/config",
+            "payload": {
+                "name": "Anal Shower Running",
+                "unique_id": "geberit_aquaclean_anal_shower_running",
+                "state_topic": f"{t}/peripheralDevice/monitor/isAnalShowerRunning",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:shower",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/lady_shower_running/config",
+            "payload": {
+                "name": "Lady Shower Running",
+                "unique_id": "geberit_aquaclean_lady_shower_running",
+                "state_topic": f"{t}/peripheralDevice/monitor/isLadyShowerRunning",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:shower",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/dryer_running/config",
+            "payload": {
+                "name": "Dryer Running",
+                "unique_id": "geberit_aquaclean_dryer_running",
+                "state_topic": f"{t}/peripheralDevice/monitor/isDryerRunning",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:air-filter",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: device identification (ServiceMode.on_device_identification) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/sap_number/config",
+            "payload": {
+                "name": "SAP Number",
+                "unique_id": "geberit_aquaclean_sap_number",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/SapNumber",
+                "icon": "mdi:identifier",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/serial_number/config",
+            "payload": {
+                "name": "Serial Number",
+                "unique_id": "geberit_aquaclean_serial_number",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/SerialNumber",
+                "icon": "mdi:barcode",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/production_date/config",
+            "payload": {
+                "name": "Production Date",
+                "unique_id": "geberit_aquaclean_production_date",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/ProductionDate",
+                "icon": "mdi:calendar",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/description/config",
+            "payload": {
+                "name": "Description",
+                "unique_id": "geberit_aquaclean_description",
+                "state_topic": f"{t}/peripheralDevice/information/Identification/Description",
+                "icon": "mdi:information",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensor: initial operation date (ServiceMode.device_initial_operation_date) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/initial_operation_date/config",
+            "payload": {
+                "name": "Initial Operation Date",
+                "unique_id": "geberit_aquaclean_initial_operation_date",
+                "state_topic": f"{t}/peripheralDevice/information/initialOperationDate",
+                "icon": "mdi:calendar-clock",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: connection status (ServiceMode.run / on_connection_status_changed) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/connected/config",
+            "payload": {
+                "name": "Connected",
+                "unique_id": "geberit_aquaclean_connected",
+                "state_topic": f"{t}/centralDevice/connected",
+                "icon": "mdi:bluetooth-connect",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/error/config",
+            "payload": {
+                "name": "Error",
+                "unique_id": "geberit_aquaclean_error",
+                "state_topic": f"{t}/centralDevice/error",
+                "icon": "mdi:alert-circle",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Switches: device control (MqttService subscriptions) ---
+        {
+            "topic": f"{HA}/switch/geberit_aquaclean/toggle_lid/config",
+            "payload": {
+                "name": "Toggle Lid",
+                "unique_id": "geberit_aquaclean_toggle_lid",
+                "command_topic": f"{t}/peripheralDevice/control/toggleLidPosition",
+                "payload_on": "true", "payload_off": "false",
+                "icon": "mdi:toilet",
+                "optimistic": True,
+                "retain": False,
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/switch/geberit_aquaclean/toggle_anal/config",
+            "payload": {
+                "name": "Toggle Anal Shower",
+                "unique_id": "geberit_aquaclean_toggle_anal",
+                "command_topic": f"{t}/peripheralDevice/control/toggleAnal",
+                "payload_on": "true", "payload_off": "false",
+                "icon": "mdi:shower-head",
+                "optimistic": True,
+                "retain": False,
+                "device": DEVICE,
+            },
+        },
+    ]
+
+
+def run_ha_discovery(remove: bool = False) -> dict:
+    """
+    Publish or remove Home Assistant MQTT discovery messages.
+    Reads broker connection settings from config.ini — no BLE connection needed.
+    Returns a dict with 'published' and 'failed' lists.
+    """
+    import paho.mqtt.client as mqtt
+
+    mqtt_cfg = dict(config.items('MQTT'))
+    topic_prefix = mqtt_cfg.get('topic', 'Geberit/AquaClean')
+    host = mqtt_cfg.get('server', 'localhost')
+    port = int(mqtt_cfg.get('port', 1883))
+    username = mqtt_cfg.get('username') or None
+    password = mqtt_cfg.get('password') or None
+
+    try:
+        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    except AttributeError:
+        client = mqtt.Client()
+
+    if username:
+        client.username_pw_set(username, password)
+
+    client.connect(host, port, 60)
+
+    configs = get_ha_discovery_configs(topic_prefix)
+    published = []
+    failed = []
+
+    for cfg in configs:
+        topic = cfg["topic"]
+        if remove:
+            res = client.publish(topic, payload=None, retain=True)
+            label = topic.split("/")[-2]
+        else:
+            res = client.publish(topic, payload=json.dumps(cfg["payload"]), retain=True)
+            label = cfg["payload"]["name"]
+
+        if res.rc == mqtt.MQTT_ERR_SUCCESS:
+            published.append(label)
+        else:
+            failed.append(topic)
+
+    client.disconnect()
+    return {"topic_prefix": topic_prefix, "broker": f"{host}:{port}", "published": published, "failed": failed}
+
+
 async def run_cli(args):
     """Executes the CLI logic and ensures JSON is always printed."""
     result = {
@@ -188,13 +1051,50 @@ async def run_cli(args):
         "message": "Unknown error"
     }
 
+    if not args.command:
+        result["message"] = "CLI mode requires --command"
+        print(json.dumps(result, indent=2))
+        return
+
+    # --- Commands that don't need a BLE connection ---
+    if args.command == 'get-config':
+        result["data"] = {
+            "ble_connection":  config.get("SERVICE", "ble_connection", fallback="persistent"),
+            "poll_interval":   float(config.get("POLL", "interval", fallback="0")),
+            "mqtt_enabled":    config.getboolean("SERVICE", "mqtt_enabled", fallback=True),
+            "device_id":       config.get("BLE", "device_id"),
+            "api_host":        config.get("API", "host", fallback="0.0.0.0"),
+            "api_port":        int(config.get("API", "port", fallback="8080")),
+        }
+        result["status"] = "success"
+        result["message"] = "Config read from config.ini"
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command in ('publish-ha-discovery', 'remove-ha-discovery'):
+        remove = args.command == 'remove-ha-discovery'
+        try:
+            data = run_ha_discovery(remove=remove)
+            result["data"] = data
+            if data["failed"]:
+                result["status"] = "error"
+                result["message"] = f"{len(data['failed'])} message(s) failed to publish"
+            else:
+                result["status"] = "success"
+                result["message"] = (
+                    f"Removed {len(data['published'])} HA discovery entities"
+                    if remove else
+                    f"Published {len(data['published'])} HA discovery entities to {data['broker']}"
+                )
+        except Exception as e:
+            result["status"] = "error"
+            result["message"] = str(e)
+        print(json.dumps(result, indent=2))
+        return
+
+    # --- Commands that require a BLE connection ---
     client = None
     try:
-        # 1. Internal Validation
-        if not args.command:
-            raise ValueError("CLI mode requires --command (e.g., --command status)")
-
-        # 2. Resource Initialization
         device_id = args.address or config.get("BLE", "device_id")
         connector = BluetoothLeConnector()
         factory = AquaCleanClientFactory(connector)
@@ -202,27 +1102,66 @@ async def run_cli(args):
 
         logger.info(f"Connecting to {device_id}...")
         await client.connect(device_id)
-        
-        # Populate metadata
-        result["device"] = client.Description
+
+        result["device"]        = client.Description
         result["serial_number"] = client.SerialNumber
 
-        # 3. Command Execution
-        if args.command == 'status':
-            result["data"]["connection"] = "active"
-            # Add more status data here if available
+        if args.command in ('status', 'system-parameters'):
+            r = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
+            result["data"] = {
+                "is_user_sitting":        r.data_array[0] != 0,
+                "is_anal_shower_running": r.data_array[1] != 0,
+                "is_lady_shower_running": r.data_array[2] != 0,
+                "is_dryer_running":       r.data_array[3] != 0,
+            }
+        elif args.command == 'info':
+            ident           = await client.base_client.get_device_identification_async(0)
+            initial_op_date = await client.base_client.get_device_initial_operation_date()
+            result["data"] = {
+                "sap_number":             ident.sap_number,
+                "serial_number":          ident.serial_number,
+                "production_date":        ident.production_date,
+                "description":            ident.description,
+                "initial_operation_date": str(initial_op_date),
+            }
+        elif args.command == 'user-sitting-state':
+            r = await client.base_client.get_system_parameter_list_async([0])
+            result["data"] = {"is_user_sitting": r.data_array[0] != 0}
+        elif args.command == 'anal-shower-state':
+            r = await client.base_client.get_system_parameter_list_async([1])
+            result["data"] = {"is_anal_shower_running": r.data_array[1] != 0}
+        elif args.command == 'lady-shower-state':
+            r = await client.base_client.get_system_parameter_list_async([2])
+            result["data"] = {"is_lady_shower_running": r.data_array[2] != 0}
+        elif args.command == 'dryer-state':
+            r = await client.base_client.get_system_parameter_list_async([3])
+            result["data"] = {"is_dryer_running": r.data_array[3] != 0}
+        elif args.command == 'identification':
+            ident = await client.base_client.get_device_identification_async(0)
+            result["data"] = {
+                "sap_number":      ident.sap_number,
+                "serial_number":   ident.serial_number,
+                "production_date": ident.production_date,
+                "description":     ident.description,
+            }
+        elif args.command == 'initial-operation-date':
+            date = await client.base_client.get_device_initial_operation_date()
+            result["data"] = {"initial_operation_date": str(date)}
+        elif args.command == 'soc-versions':
+            versions = await client.base_client.get_soc_application_versions_async()
+            result["data"] = {"soc_versions": str(versions)}
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
-            result["data"]["action"] = "lid_toggled"
+            result["data"] = {"action": "lid_toggled"}
         elif args.command == 'toggle-anal':
             await client.toggle_anal_shower()
-            result["data"]["action"] = "anal_shower_toggled"
-        
-        result["status"] = "success"
+            result["data"] = {"action": "anal_shower_toggled"}
+
+        result["status"]  = "success"
         result["message"] = f"Command {args.command} completed"
 
     except Exception as e:
-        result["status"] = "error"
+        result["status"]  = "error"
         result["message"] = str(e)
         logger.error(f"CLI Error: {e}")
     finally:
@@ -231,17 +1170,23 @@ async def run_cli(args):
         # The ONLY thing sent to stdout
         print(json.dumps(result, indent=2))
 
+
 async def main(args):
     if args.mode == 'service':
         service = ServiceMode()
-        # Service mode uses shutdown_waits_for to run indefinitely
         await shutdown_waits_for(service.run())
-    else:            
-        # Execute the command
+    elif args.mode == 'api':
+        api = ApiMode()
+        await shutdown_waits_for(api.run())
+        # Our signal handler replaced aiorun's, so aiorun won't stop the
+        # loop on its own.  Stopping it here lets aiorun enter its normal
+        # shutdown phase (cancel remaining tasks like bleak D-Bus, etc.).
+        asyncio.get_running_loop().stop()
+    else:
         await run_cli(args)
-        
         loop = asyncio.get_running_loop()
         loop.stop()
+
 
 class JsonArgumentParser(argparse.ArgumentParser):
     """Custom parser that outputs argument errors as JSON; help uses standard text."""
@@ -254,41 +1199,63 @@ class JsonArgumentParser(argparse.ArgumentParser):
             "message": f"Argument Error: {message}",
             "data": {}
         }
-        # Print JSON to stdout for machine parsing
         print(json.dumps(result, indent=2))
-        sys.exit(0) 
+        sys.exit(0)
 
     def exit(self, status=0, message=None):
-        # Override exit to prevent standard text printing
         if message:
             self.error(message)
         sys.exit(status)
+
 
 if __name__ == "__main__":
     parser = JsonArgumentParser(
         prog=os.path.basename(sys.argv[0]),
         description="Geberit AquaClean Controller",
         epilog=(
-            "examples:\n"
-            "  %(prog)s --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log\n"
+            "device state queries (require BLE):\n"
+            "  %(prog)s --mode cli --command status\n"
+            "  %(prog)s --mode cli --command system-parameters\n"
+            "  %(prog)s --mode cli --command user-sitting-state\n"
+            "  %(prog)s --mode cli --command anal-shower-state\n"
+            "  %(prog)s --mode cli --command lady-shower-state\n"
+            "  %(prog)s --mode cli --command dryer-state\n"
             "\n"
-            "  output:\n"
-            "  {\n"
-            '    "status": "success",\n'
-            '    "command": "toggle-lid",\n'
-            '    "device": "AquaClean Mera Comfort",\n'
-            '    "serial_number": "HB23XXEUXXXXXX",\n'
-            '    "data": { "action": "lid_toggled" },\n'
-            '    "message": "Command toggle-lid completed"\n'
-            "  }\n"
+            "device info queries (require BLE):\n"
+            "  %(prog)s --mode cli --command info\n"
+            "  %(prog)s --mode cli --command identification\n"
+            "  %(prog)s --mode cli --command initial-operation-date\n"
+            "  %(prog)s --mode cli --command soc-versions\n"
+            "\n"
+            "device commands (require BLE):\n"
+            "  %(prog)s --mode cli --command toggle-lid\n"
+            "  %(prog)s --mode cli --command toggle-anal\n"
+            "\n"
+            "app config / home assistant (no BLE required):\n"
+            "  %(prog)s --mode cli --command get-config\n"
+            "  %(prog)s --mode cli --command publish-ha-discovery\n"
+            "  %(prog)s --mode cli --command remove-ha-discovery\n"
+            "\n"
+            "options:\n"
+            "  --address 38:AB:XX:XX:ZZ:67   override BLE device address from config.ini\n"
             "\n"
             "CLI results and errors are written to stdout as JSON.\n"
             "Log output goes to stderr (redirect with 2>logfile)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--mode', choices=['service', 'cli'], default='service')
-    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'])
+    parser.add_argument('--mode', choices=['service', 'cli', 'api'], default='service')
+    parser.add_argument('--command', choices=[
+        # device state queries
+        'status', 'system-parameters',
+        'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
+        # device info queries
+        'info', 'identification', 'initial-operation-date', 'soc-versions',
+        # device commands
+        'toggle-lid', 'toggle-anal',
+        # app config / home assistant (no BLE required)
+        'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
+    ])
     parser.add_argument('--address')
 
     args = parser.parse_args()
