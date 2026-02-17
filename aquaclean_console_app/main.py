@@ -675,7 +675,7 @@ class ApiMode:
             await client.connect_ble_only(device_id)
             connect_ms = int((time.perf_counter() - t0) * 1000)
             self.service.device_state["last_connect_ms"] = connect_ms
-            await self.service._set_ble_status("connected", device_address=device_id)
+            await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             t1 = time.perf_counter()
             result = action(client)
             result = await result if asyncio.iscoroutine(result) else result
