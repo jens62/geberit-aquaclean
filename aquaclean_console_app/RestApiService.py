@@ -89,13 +89,13 @@ class RestApiService:
 
         @app.post("/command/toggle-lid")
         async def toggle_lid():
-            await self._api_mode.run_command("toggle-lid")
-            return {"status": "success", "command": "toggle-lid"}
+            result = await self._api_mode.run_command("toggle-lid") or {}
+            return {"status": "success", "command": "toggle-lid", **result}
 
         @app.post("/command/toggle-anal")
         async def toggle_anal():
-            await self._api_mode.run_command("toggle-anal")
-            return {"status": "success", "command": "toggle-anal"}
+            result = await self._api_mode.run_command("toggle-anal") or {}
+            return {"status": "success", "command": "toggle-anal", **result}
 
         @app.get("/data/system-parameters")
         async def get_system_parameters():

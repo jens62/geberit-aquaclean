@@ -709,7 +709,19 @@
       btn.classList.remove('success', 'error');
       try {
         const r = await fetch(apiBase + url, { method: 'POST' });
-        btn.classList.add(r.ok ? 'success' : 'error');
+        if (r.ok) {
+          try {
+            const data = await r.json();
+            if (data._connect_ms !== undefined || data._query_ms !== undefined) {
+              set('queryConnectMs', fmt(data._connect_ms));
+              set('queryMs', fmt(data._query_ms));
+              document.getElementById('queryTimingRow').style.display = '';
+            }
+          } catch (_) {}
+          btn.classList.add('success');
+        } else {
+          btn.classList.add('error');
+        }
       } catch (_) {
         btn.classList.add('error');
       } finally {
