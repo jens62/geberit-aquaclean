@@ -88,30 +88,30 @@ You have **two options** for configuring the entities in Home Assistant:
 ### Option 1: MQTT Discovery (Recommended) ⭐
 
 **Pros:** Automatic entity creation, no manual YAML editing, entities grouped as a device, easier updates
-**Cons:** Requires running a script once
+**Cons:** Requires running a command once
 
 **Steps:**
 
-1. **Run the discovery script** from the `homeassistant/` directory:
+1. **Run the built-in CLI command** (reads broker settings from `config.ini`):
    ```bash
-   python publish_discovery.py --host YOUR_MQTT_BROKER_IP
+   python main.py --mode cli --command publish-ha-discovery
    ```
 
-   With authentication:
+   To remove all entities later:
    ```bash
-   python publish_discovery.py --host 192.168.1.100 --username admin --password secret
+   python main.py --mode cli --command remove-ha-discovery
    ```
 
 2. **Verify in Home Assistant**:
    - Go to **Settings** → **Devices & Services** → **MQTT**
    - You should see **"Geberit AquaClean"** device
-   - Click on it to see all 12 entities grouped together
+   - Click on it to see all 13 entities grouped together
    - All entities are automatically created - no configuration.yaml editing needed!
 
    ![MQTT Discovery Result](./mqtt_discovery_result.png)
 
 **Important Notes:**
-- The script publishes discovery messages to your MQTT broker
+- The command publishes discovery messages to your MQTT broker (broker address read from `config.ini`)
 - Home Assistant (connected to the same MQTT broker) automatically detects and creates the entities
 - Works alongside any existing manual MQTT configuration in `configuration.yaml`
 - Binary sensors use `payload_on: "True"` and `payload_off: "False"` (capitalized)

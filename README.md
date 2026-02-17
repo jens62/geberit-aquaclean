@@ -1,583 +1,96 @@
 # geberit-aquaclean
-Python library to connect to the [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") Mera toilet ( port from Thomas Bingels C#  library)
 
-This is a port of [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s great [geberit-aquaclean project](https://github.com/thomas-bingel/geberit-aquaclean "geberit-aquaclean project") from C# to Python.
-It connects to the Geberit AquaClean Mera toilet and works fine for basic controlling of the toilet.
+Python bridge between a [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/) smart toilet and your home automation system.
 
-## Use cases
+Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean) library to Python, extended with MQTT, REST API, web UI, and CLI.
 
-- Connect [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") to the home automation software of your choice via [MQTT](http://mqtt.org/ "MQTT") broker, e.g. [openHAB](https://www.openhab.org "openHAB") (see [Geberit AquaClean with openHAB - Basic UI](./operation_support/Geberit%20AquaClean%20with%20openHAB%20-%20Basic%20UI.png)) or [Home Assistant](https://www.home-assistant.io "Home Assistant").
+---
 
-- Control [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") via e.g. Apple Homekit and your home automation software by voice. (Voice control Geberit AquaClean)
+## Features
 
-- Greet the user appropriately as they take their seat. ("*Schön, dass Du Platz genommen hast.*")
+- **BLE bridge** — connects to the toilet over Bluetooth LE
+- **MQTT** — publishes device state and accepts control commands
+- **REST API + web UI** — live dashboard, on-demand queries, runtime config
+- **CLI** — one-shot commands for scripting and diagnostics
+- **Home Assistant** — automatic entity creation via MQTT Discovery
 
-- Play music to minimise noise during a session. (Active Noise Cancellation, ANC for [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean")). E.g. *Die schöne Müllerin, Op. 25, D. 795: Wohin? - Ich hört ein Bächlein rauschen · Fritz Wunderlich · Franz Schubert*
+---
 
-- Dismiss the user when they leave the toilet. ("*Prima, dass wir ins Geschäft gekommen waren.*")
+## Quick start
 
-- Inform the user of the duration of their session. ("*Wir hatten für 3 Minuten und 19 Sekunden das Vergnügen.*")
+### 1. Install dependencies
 
-
-
-
-## Personal motivation
-
-I have been involved in smart home since 1999.
-The term didn't exist at that time.
-
-Now the task was to integrate a [Geberit AquaClean](https://www.geberit.de/badezimmerprodukte/wcs-urinale/dusch-wcs-geberit-aquaclean/produkte/ "Geberit AquaClean") Mera Comfort into the SmartHome ecosystem.
-As the appliance comes with a remote control and an app, there had to be interfaces.
-During my research I came across [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s ['Geberit AquaClean Mera Library'](https://github.com/thomas-bingel/geberit-aquaclean "'Geberit AquaClean Mera Library'") project.
-
-I managed to compile my very first C# project.
-After
- - adapting the addresses (BLE address of the AquaClean, address of the mqtt server) and 
- - allowing access to the private network ( see [Universal Windows project - HttpClient exception](https://stackoverflow.com/questions/33235131/universal-windows-project-httpclient-exception "Universal Windows project - HttpClient exception"): `Double-click the Package.appxmanifest file in your project. Click on the Capabilities tab. Add the Private Networks capability to your project.`)
-
-Success right away.
-Much respect and thanks to [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")!
-
-However, I wanted to run the application headless as a service in the background on a Raspberry.
-
-After further research, a Python application seemed the way to go - even though I had never written a Python application before.
-
-The beginning was very tedious until I discovered Copilot as a supporter.
-In the end, Copilot took over the porting of [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s C# application to Python.
-
-I added a configuration option via file to the application.
-
-In my case, the application runs smoothly on a Raspberry 5 (which I happened to have at hand) running Kali Linux 2024.4 (Ubuntu and Debian should also work).
-The AquaClean has firmware version: RS28.0 TS199.
-
-
-The application shows status changes in MQTT Explorer for
-
-- userIsSitting
-- analShowerIsRunnin
-- ladyShowerIsRunning
-- dryerIsRunning
-
-I can control the AquaClean lid using `publish toggleLidPosition`.
-
-My main goal was to use the proximity sensor to control other lights (in addition to the AquaClean's orientation light).
-Unfortunately this did not work. `OrientationLightState` always stays at `0`, which was also the case in [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s application.
-
-## Tested runtime enviroment
-
-### AquaClean toilet
-AquaClean firmware version: RS28.0 TS199
-
-### Central device (machine the script is running on)
-
-#### MacBookAir6,2, Dual-Core Intel Core i5
-with
-
-```
-  Virtualization: oracle
-Operating System: Ubuntu 24.04.1 LTS              
-          Kernel: Linux 6.8.0-51-generic
-    Architecture: x86-64
-  Hardware Model: VirtualBox
-```
-and
-
-SABRENT USB Bluetooth 4.0 Mikro Adapter
-and Python 3.12.3
-
-#### Raspberry Pi 5 Model B Rev 1.0
-
-with
-```
-Operating System: Kali GNU/Linux Rolling
-         Version: 2024.4   
-          Kernel: Linux 6.1.64-v8+
-    Architecture: arm64
-```
-and Python 3.12.8
-
-#### Python 3.13
-
-<ins>**Warning:**</ins> With Python 3.13 `haggis/logs.py` broke.
-See [AttributeError: module 'logging' has no attribute '_acquireLock' when calling add_trace_level – Potential Python 3.13 Compatibility Issue](https://gitlab.com/madphysicist/haggis/-/issues/2)
-
-I added [workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561) in the [issue](https://gitlab.com/madphysicist/haggis/-/issues/2) mentioned above.
-
-After applying the described [workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561), no further problems occurred with Python 3.13.2.
-
-
-## Installation
-
-For now, just download and unpack the folder `aquaclean_console_app`.
-Not very pythonic, but it fits the whole project ;)
-
-### Dependencies
-
-
-
-| Package                                                                   | Version   | Purpose                   |
-| ------------------------------------------------------------------------- |-----------| --------------------------|
-| [bleak](https://github.com/hbldh/bleak "bleak")                           | 0.22.3    | connect to BLE devices |
-| [paho-mqtt](https://github.com/eclipse-paho/paho.mqtt.python "paho-mqtt") | 2.0.0     | connect to a [MQTT](http://mqtt.org/ "MQTT") broker |
-| [aiorun](https://github.com/cjrh/aiorun "aiorun")                         | v2024.8.1 | handle shutdown sequence |
-| [haggis](https://gitlab.com/madphysicist/haggis "haggis")                 | 0.14.1    | extend the logging framework |
-| [fastapi](https://fastapi.tiangolo.com "FastAPI")                         | ≥0.110    | REST API framework (API mode only) |
-| [uvicorn](https://www.uvicorn.org "uvicorn")                              | ≥0.29     | ASGI server (API mode only) |
-
-
-
-
-## Usage
-### check for Bluetooth Low Energy (BLE) connectivity
-
-On Linux the bleak package (for handling the BLE stuff) is based on the `BlueZ DBUS API`.
-It is recommended to check the connectivity to the Geberit AquaClen toilet on OS level first by using the same technology stack.
-
-#### On Linux
-
-Check whether the Bluetooth service is up:
-
-
-`systemctl status bluetooth`
-
-Output should be similar to 
-```
-● bluetooth.service - Bluetooth service
-     Loaded: loaded (/usr/lib/systemd/system/bluetooth.service; enabled; preset: disabled)
-     Active: active (running) since Thu 2024-12-19 10:12:55 CET; 1 day 8h ago
- Invocation: a19fb71d3ac54c55966ae8c3001c2611
-       Docs: man:bluetoothd(8)
-   Main PID: 494 (bluetoothd)
-     Status: "Running"
-      Tasks: 1 (limit: 9453)
-        CPU: 50.093s
-     CGroup: /system.slice/bluetooth.service
-             └─494 /usr/libexec/bluetooth/bluetoothd
-
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: src/plugin.c:init_plugin() System does not support mcp plugin
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: src/plugin.c:init_plugin() System does not support vcp plugin
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: profiles/audio/micp.c:micp_init() D-Bus experimental not enabled
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: src/plugin.c:init_plugin() System does not support micp plugin
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: src/plugin.c:init_plugin() System does not support ccp plugin
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: src/plugin.c:init_plugin() System does not support csip plugin
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: src/plugin.c:init_plugin() System does not support asha plugin
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: Bluetooth management interface 1.22 initialized
-Dec 19 10:12:55 raspi-5 bluetoothd[494]: Battery Provider Manager created
-Dec 19 10:25:04 raspi-5 bluetoothd[494]: Battery Provider Manager created
+```bash
+pip install bleak paho-mqtt aiorun haggis fastapi uvicorn
 ```
 
-Check whether the Geberit AquaClean toilet is visible using the  *Bluetooth Control Command Line Tool* `bluetoothctl`
+> **Python 3.13 note:** `haggis` requires a [one-line workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561) for a logging compatibility issue.
 
-Once `bluetoothctl` is started use the command `scan on` to start the discovery. Use `scan off` to stop the discovery and `quit` to leave `bluetoothctl`
+### 2. Find the BLE address
 
-The discovery includes `[bluetooth]# [NEW] Device XX:XX:XX:XX:XX:XX Geberit AC PRO` in case of success:
-
-```
-└─$ bluetoothctl              
-[bluetooth]# hci0 new_settings: powered bondable ssp br/edr le secure-conn 
-[bluetooth]# hci1 new_settings: powered bondable ssp br/edr le secure-conn 
-[bluetooth]# Agent registered
-[bluetooth]# [CHG] Controller D8:3A:DD:D6:52:8F Pairable: yes
-[bluetooth]# [CHG] Controller 00:1A:7D:DA:71:13 Pairable: yes
-[bluetooth]# scan on
-[bluetooth]# SetDiscoveryFilter success
-[bluetooth]# Discovery started
-[bluetooth]# [CHG] Controller 00:1A:7D:DA:71:13 Discovering: yes
-[bluetooth]# [NEW] Device 7D:E1:81:42:4B:11 7D-E1-81-42-4B-11
-[bluetooth]# [NEW] Device 65:4B:75:36:91:25 65-4B-75-36-91-25
-[bluetooth]# [NEW] Device 52:C1:4E:1D:C0:35 52-C1-4E-1D-C0-35
-[bluetooth]# [NEW] Device 58:3F:40:8F:C7:74 58-3F-40-8F-C7-74
-[bluetooth]# [NEW] Device 38:AB:41:2A:0D:67 Geberit AC PRO
-[bluetooth]# [NEW] Device 5B:9F:B4:E4:89:77 5B-9F-B4-E4-89-77
-[bluetooth]# [NEW] Device 43:B4:93:D6:4F:5E 43-B4-93-D6-4F-5E
-[bluetooth]# scan off[CHG] Device 5B:9F:B4:E4:89:77 RSSI: 0xffffffad (-83)
-[bluetooth]# scan off
-[bluetooth]# Discovery stopped
-[bluetooth]# quit
+```bash
+bluetoothctl scan on
+# Look for: [NEW] Device XX:XX:XX:XX:XX:XX Geberit AC PRO
 ```
 
+### 3. Edit config.ini
 
-To gain further knowledge, see the command  in  and he modules are useful .
-
-For more information, see the `connect` command in `bluetoothctl` or use the [discover.py](https://github.com/hbldh/bleak/blob/develop/examples/discover.py "discover.py") and [service_explorer.py](https://github.com/hbldh/bleak/blob/develop/examples/service_explorer.py "service_explorer.py") modules from [bleak](https://github.com/hbldh/bleak "bleak").
-
-
-
-
-
-### Configuration
-
-#### BLE address
-
-The device address found above must be entered as `device_id` in the `BLE` section of the `config.ini` file:
-
-```
+```ini
 [BLE]
-device_id = XX:XX:XX:XX:XX:XX
+device_id = XX:XX:XX:XX:XX:XX   # from step 2
+
+[MQTT]
+server = 192.168.0.xxx           # your MQTT broker IP
 ```
 
-The *nRF Connect for Mobile* app developed by Nordic Semiconductor ASA can also help you find the BLE address.
+Full config reference: [docs/configuration.md](docs/configuration.md)
 
-#### MQTT Server address
+### 4. Run
 
-Modify at least the `server` address in the `MQTT` section of the `config.ini` file as appropriate.
+| Goal | Command |
+|------|---------|
+| Background service (MQTT only) | `python main.py` |
+| REST API + web UI + MQTT | `python main.py --mode api` |
+| One-off CLI command | `python main.py --mode cli --command <cmd>` |
 
-#### Polling interval
+---
 
-The interval at which the device status is polled can be configured in the `POLL` section of `config.ini` (value in seconds):
+## Documentation
 
-```
-[POLL]
-interval = 10.5
-```
+| Topic | File |
+|-------|------|
+| Operating modes | [docs/modes.md](docs/modes.md) |
+| Configuration reference | [docs/configuration.md](docs/configuration.md) |
+| REST API | [docs/rest-api.md](docs/rest-api.md) |
+| Web UI | [docs/webapp.md](docs/webapp.md) |
+| CLI commands | [docs/cli.md](docs/cli.md) |
+| MQTT topics | [docs/mqtt.md](docs/mqtt.md) |
+| Home Assistant setup | [docs/home-assistant.md](docs/home-assistant.md) |
+| HA full setup guide | [homeassistant/SETUP_GUIDE.md](homeassistant/SETUP_GUIDE.md) |
 
-A longer interval reduces the frequency of BLE requests to the AquaClean, which may help extend the connection lifetime and avoid the issue where the device stops responding after a few days.
+---
 
-#### Service options
+## Tested environments
 
-The `[SERVICE]` section controls optional features:
+| Hardware | OS | Python |
+|----------|----|--------|
+| Raspberry Pi 5 | Kali Linux 2024.4 (arm64) | 3.12.8 |
+| MacBookAir + VirtualBox | Ubuntu 24.04 (x86-64) | 3.12.3 |
 
-```
-[SERVICE]
-; mqtt_enabled: publish status to MQTT broker (true/false)
-mqtt_enabled = true
-; ble_connection: persistent = keep BLE connected with polling loop
-;                 on-demand  = connect/disconnect per REST request (api mode only)
-ble_connection = persistent
-```
+AquaClean firmware: RS28.0 TS199
 
-#### REST API options
+---
 
-The `[API]` section configures the REST API server (used when `--mode api`):
-
-```
-[API]
-host = 0.0.0.0
-port = 8080
-```
-
-### run the console application
-
-Just run `python /path/to/aquaclean_console_app/main.py` and watch the result in your favorite MQTT Tool.
-
-The script can be invoked with an absolute path or relative to any working directory — `config.ini` is always resolved relative to the script itself:
+## Architecture
 
 ```
-# from the project root
-python ./aquaclean_console_app/main.py
-
-# or with an absolute path
-python /path/to/aquaclean_console_app/main.py
+AquaClean (BLE) ←→ Raspberry Pi ←→ MQTT broker ←→ Home Assistant / openHAB / …
+                         ↕
+                    REST API / Web UI
 ```
 
-In log_level `DEBUG`, the output is very similar to [Thomas Bingel](https://github.com/thomas-bingel "Thomas Bingel")'s ['Geberit AquaClean Mera Library'](https://github.com/thomas-bingel/geberit-aquaclean "'Geberit AquaClean Mera Library'").
+---
 
-#### Toggle lid position
+## Credits
 
-Publish any value (payload is not evaluated) on the `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition` topic to change the lid position using MQTT.
-
-### CLI mode
-
-In addition to the long-running service mode, the application can be used as a one-shot CLI tool. Results and errors are always written to stdout as JSON; log output goes to stderr.
-
-```
-python /path/to/aquaclean_console_app/main.py --mode cli --command <command> [--address <ble-address>]
-```
-
-Available commands:
-
-| Command | Description |
-|---|---|
-| `toggle-lid` | Toggle the lid position |
-| `toggle-anal` | Toggle the anal shower |
-| `status` | Report connection status |
-
-If `--address` is omitted, the address from `config.ini` is used.
-
-Redirect stderr to keep stdout clean for machine parsing:
-
-```
-python /path/to/aquaclean_console_app/main.py --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log
-```
-
-Example output:
-
-```json
-{
-  "status": "success",
-  "command": "toggle-lid",
-  "device": "AquaClean Mera Comfort",
-  "serial_number": "HB23XXEUXXXXXX",
-  "data": {
-    "action": "lid_toggled"
-  },
-  "message": "Command toggle-lid completed"
-}
-```
-
-Errors are also returned as JSON, e.g. for an unsupported command:
-
-```json
-{
-  "status": "error",
-  "command": "invalid",
-  "message": "Argument Error: argument --command: invalid choice: 'foo' (choose from 'toggle-lid', 'toggle-anal', 'status')",
-  "data": {}
-}
-```
-
-
-### REST API mode
-
-In addition to the long-running service mode, the application can expose a REST API. This is useful for integrating the AquaClean into home automation systems that prefer HTTP over MQTT, or for scripting one-off commands from other services.
-
-```
-python /path/to/aquaclean_console_app/main.py --mode api
-```
-
-The server starts on the host/port configured in the `[API]` section of `config.ini` (default: `0.0.0.0:8080`). An interactive API reference (Swagger UI) is available at `http://<host>:<port>/docs`.
-
-#### BLE connection modes
-
-Configured via `ble_connection` in `[SERVICE]`:
-
-| Value | Behaviour |
-|---|---|
-| `persistent` | BLE stays connected with a background polling loop, just like service mode. State is always available immediately. |
-| `on-demand` | BLE is connected, queried, and disconnected for each request. Higher latency, lower resource usage. |
-
-MQTT publishing can be enabled or disabled independently via `mqtt_enabled`.
-
-#### Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/status` | Current device state (user sitting, showers, dryer) |
-| `GET` | `/info` | Device identification (serial number, SAP number, etc.) |
-| `POST` | `/command/toggle-lid` | Toggle the lid position |
-| `POST` | `/command/toggle-anal` | Toggle the anal shower |
-| `POST` | `/connect` | Trigger a BLE reconnect (persistent mode) or connect + return info (on-demand) |
-| `POST` | `/disconnect` | Trigger a BLE reconnect (persistent mode) or no-op (on-demand) |
-| `POST` | `/reconnect` | Trigger a BLE reconnect (persistent mode) or connect + return info (on-demand) |
-
-Example:
-
-```
-curl -s http://localhost:8080/status
-```
-
-```json
-{
-  "is_user_sitting": false,
-  "is_anal_shower_running": false,
-  "is_lady_shower_running": false,
-  "is_dryer_running": false
-}
-```
-
-#### Reconnect via MQTT (service mode)
-
-In service mode, a reconnect can also be triggered by publishing any value to:
-
-```
-Geberit/AquaClean/centralDevice/control/reconnect
-```
-
-This is equivalent to the `/reconnect` REST endpoint.
-
-## Troubleshooting:
-
-Two types of errors can occur:
-
-1. **Cannot connect to the AquaClean**
-
-   If the AquaClean receives an 'unintelligible' request, it can happen that the BLE connection is broken and the application terminates.
-   When the application is restarted, it hangs with an exception similar to
-
-   ```
-   ...
-   exception bleak.exc.BleakError: AquaClean device with address 38:AB:41:2A:0D:xx not found.
-
-   __main__ YY ERROR: Check address or restart peripheral device (Geberit AquaClean) and wait a little while.
-   ...
-   ```
-
-   **Solution**
-
-   If the BLE address is correct, disconnect the AquaClean from the power supply for a few seconds and then reconnected it (i.e. forced a *restart*).
-
-   Otherwise, correct BLE address. 
-
-
-2. `retry due to le-connection-abort-by-local` **Output similar to**
-    ```
-    # ...
-    bleak.backends.bluezdbus.client 211 DEBUG: Connectingto BlueZ path /org/bluez/hci0/dev_38_AB_41_2A_0D_67
-    bleak.backends.bluezdbus.manager 872 DEBUG: receivedD-Bus signal: org.freedesktop.DBus.PropertiesPropertiesChanged (/org/bluez/hci0/dev_38_AB_41_2A_0D_67: ['org.bluez.Device1', {'Connected': <dbus_fastsignature.Variant ('b', True)>}, []]
-    bleak.backends.bluezdbus.client 235 DEBUG: retry due to le-connection-abort-by-local
-    ...
-    __main__ YY ERROR: TimeoutError:
-    ...
-    ```
-
-   **Solution**
-
-   This error is not application related. It occurs when the connection cannot be established at Bluetooth level. This is recorded with bleak and also occurs independently of bleak. 
-
-   Make sure there are no other Bluetooth or Wifi devices near the toilet and the computer running the script when you start the application.
-
-   Restart the computer (and preferably the toilet) and wait a minute and 
-   This should fix the problem.
-
-   Run the script again.
-
-   See [client.py @ bleak](https://github.com/hbldh/bleak/blob/e01e2640994b99066552b6161f84799712c396fa/bleak/backends/bluezdbus/client.py#L226 "client.py @ bleak"):
-
-
-   ```
-   # This error is often caused by RF interference
-   # from other Bluetooth or Wi-Fi devices. In many
-   # cases, retrying will connect successfully.
-   # Note: this error was added in BlueZ 6.62.
-   ```
-
-
-## Automatic recovery
-
-The application detects when the AquaClean stops responding and attempts to recover automatically — no manual restart of the script is required.
-
-### How it works
-
-If the BLE peripheral sends no response within 5 seconds (normal request/response cycle is ~600 ms), a `BLEPeripheralTimeoutError` is raised containing the device name and BLE address as reported at connection time (e.g. `Geberit AC PRO / 38:AB:41:2A:0D:67`).
-
-The recovery sequence then proceeds as follows:
-
-1. The error is published to `Geberit/AquaClean/centralDevice/error`.
-2. The BLE connection is disconnected.
-3. **Phase 1 — wait for shutdown:** The application passively scans for the device every few seconds. Once the device disappears from the BLE scanner (confirming it has been powered off), `Geberit/AquaClean/centralDevice/connected` is updated to `Device offline. Waiting for it to power back on...`
-4. **Phase 2 — wait for reappearance:** The application continues scanning. Once the device is visible again, `centralDevice/connected` is updated to `Device detected (...). Reconnecting...` and the application reconnects automatically.
-
-### What you need to do
-
-Power cycle the AquaClean (disconnect and reconnect the power supply). The script will detect the restart and reconnect on its own.
-
-If you have your AquaClean on a smart switch with a daily automatic restart (e.g. via openHAB), no manual intervention is needed at all.
-
-
-## MQTT topics
-
-The root node is configured in `config.ini`.
-
-Default: `topic = Geberit/AquaClean`
-
-The following topics are used:
-
-**Published by the application (subscribe to these):**
-
-- `Geberit/AquaClean/centralDevice/error                                       `
-- `Geberit/AquaClean/centralDevice/connected                                   `
-- `Geberit/AquaClean/peripheralDevice/information/Identification/SapNumber     `
-- `Geberit/AquaClean/peripheralDevice/information/Identification/SerialNumber  `
-- `Geberit/AquaClean/peripheralDevice/information/Identification/ProductionDate`
-- `Geberit/AquaClean/peripheralDevice/information/Identification/Description   `
-- `Geberit/AquaClean/peripheralDevice/information/initialOperationDate         `
-- `Geberit/AquaClean/peripheralDevice/monitor/isUserSitting                    `
-- `Geberit/AquaClean/peripheralDevice/monitor/isAnalShowerRunning              `
-- `Geberit/AquaClean/peripheralDevice/monitor/isLadyShowerRunning              `
-- `Geberit/AquaClean/peripheralDevice/monitor/isDryerRunning                   `
-
-**Subscribed to by the application (publish to these to send commands):**
-
-- `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition                ` — toggle lid (any payload)
-- `Geberit/AquaClean/centralDevice/control/reconnect                           ` — trigger BLE reconnect (any payload)
-
-See [MQTT Explorer.png](https://github.com/jens62/geberit-aquaclean/blob/main/operation_support/MQTT%20Explorer.png)
-
-
-## Home Assistant Integration
-
-This project includes a complete Home Assistant integration via MQTT. The integration allows you to monitor your Geberit AquaClean toilet status and control the lid position directly from Home Assistant.
-
-![Geberit AquaClean in Home Assistant](./homeassistant/geberit_aquaclean_in_homeassistant.png)
-
-
-### Features
-
-- **Binary Sensors**: Monitor user sitting, anal shower, lady shower, and dryer status
-- **Sensors**: View device information (SAP number, serial number, production date, etc.)
-- **Switch**: Control the toilet lid position
-- **Dashboard Cards**: Two ready-to-use dashboard options (simple and advanced with custom icons)
-- **Custom Icons**: Support for custom SVG icons to visualize toilet states
-
-### Quick Start
-
-1. Ensure the AquaClean console application is running and publishing to your MQTT broker
-2. Navigate to the [`homeassistant/`](./homeassistant/) directory
-3. Follow the complete setup instructions in [`homeassistant/SETUP_GUIDE.md`](./homeassistant/SETUP_GUIDE.md)
-
-### Available Files
-
-All Home Assistant integration files are located in the [`homeassistant/`](./homeassistant/) directory:
-
-- **[SETUP_GUIDE.md](./homeassistant/SETUP_GUIDE.md)** - Complete installation and configuration guide with troubleshooting
-- **[configuration_mqtt.yaml](./homeassistant/configuration_mqtt.yaml)** - MQTT entities configuration for `configuration.yaml`
-- **[dashboard_simple_card.yaml](./homeassistant/dashboard_simple_card.yaml)** - Basic dashboard card (no custom components required)
-- **[dashboard_button_card.yaml](./homeassistant/dashboard_button_card.yaml)** - Advanced dashboard with custom icons (requires Custom Button Card from HACS)
-
-### Prerequisites
-
-- Home Assistant with MQTT integration configured
-- MQTT broker running and accessible
-- This AquaClean console application running and connected to the MQTT broker
-- (Optional) Custom Button Card from HACS for the advanced dashboard
-
-For detailed setup instructions, troubleshooting, and customization options, see the complete guide: [`homeassistant/SETUP_GUIDE.md`](./homeassistant/SETUP_GUIDE.md)
-
-
-## How does ist work?
-
-If you are interested in the process, you can set the 
-
-`log_level = TRACE` in `config.ini` and take a closer look to the output of
-
-`
-   python /path/to/aquaclean_console_app/main.py | grep ' called from '`
-.
-
-### A rough overview
-
-A connection is established from the Python script (central device) to the AquaClean toilet (peripheral device) via Bluetooth Low Energy (BLE).
-If the connection is successful, the AquaClean toilet sends a few (10?) so-called `InfoFrames`, which are ignored.
-Subsequently *requests* are assembled from the Python script (see `AquaCleanClient.py`) and sent to the AquaClean toilet.
-The *response* comes asynchronously and can consist of several chunks, so-called *frames*.
-These response frames are collected (see `FrameCollector.py`), assembled into one transaction-response, deserialised/decoded and then published via mqtt.
-
-The request to query the device status (`get_system_parameter_list_async`, e.g. `userIsSitting`, ...) is repeated at a configurable interval (see `[POLL] interval` in `config.ini`; default: 10.5 seconds).
-The request/response cycle for this is approximately 600 ms.
-
-Set `log_level = TRACE` in `config.ini` and run
-
-`python /path/to/aquaclean_console_app/main.py | grep 'getting the device changes took '`
-
-to get the elapsed time for the request/response cycles.
-
-
-The application has subscribed to the `Geberit/AquaClean/peripheralDevice/control/toggleLidPosition` topic via mqtt and triggers a corresponding request to the AquaClean toilet on according message.
-
-## TODO
-
-- brush up main.py
-  - Double check shutdown process
-  - Double check exception handling
-  - Consolidate function to publish to mqtt
-  - Make `orientationLightState` work
-- Following [PEP 8 – Style Guide for Python Code](https://peps.python.org/pep-0008/ "PEP 8 – Style Guide for Python Code")'s guidelines, revise the programme.
-
-
-
-
-## Ressources
-
-[Bluetooth Low Energy in JavaScript und Node.js](https://entwickler.de/iot/wir-mussen-reden-002 "Bluetooth Low Energy in JavaScript und Node.js")
-
-
+Original C# library by [Thomas Bingel](https://github.com/thomas-bingel).
