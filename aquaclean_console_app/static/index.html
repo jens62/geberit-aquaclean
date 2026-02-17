@@ -408,6 +408,15 @@
         <button onclick="queryGet('/data/anal-shower-state',    this, clearAnalShowerState,   onAnalShowerState)">
           <span class="spinner"></span>Anal Shower State
         </button>
+        <button onclick="queryGet('/data/user-sitting-state',   this, clearUserSittingState,  onUserSittingState)">
+          <span class="spinner"></span>User Sitting State
+        </button>
+        <button onclick="queryGet('/data/lady-shower-state',    this, clearLadyShowerState,   onLadyShowerState)">
+          <span class="spinner"></span>Lady Shower State
+        </button>
+        <button onclick="queryGet('/data/dryer-state',          this, clearDryerState,        onDryerState)">
+          <span class="spinner"></span>Dryer State
+        </button>
       </div>
       <div class="conn-row" id="queryTimingRow" style="display:none;margin-top:0.5rem">
         <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
@@ -485,13 +494,16 @@
     }
 
     // --- Status cards ---
-    let _analQueryActive = false;
+    let _analQueryActive    = false;
+    let _sittingQueryActive = false;
+    let _ladyQueryActive    = false;
+    let _dryerQueryActive   = false;
 
     function updateCards(state) {
-      updateCard('sitting', state.is_user_sitting);
-      if (!_analQueryActive) updateCard('anal', state.is_anal_shower_running);
-      updateCard('lady',    state.is_lady_shower_running);
-      updateCard('dryer',   state.is_dryer_running);
+      if (!_sittingQueryActive) updateCard('sitting', state.is_user_sitting);
+      if (!_analQueryActive)    updateCard('anal',    state.is_anal_shower_running);
+      if (!_ladyQueryActive)    updateCard('lady',    state.is_lady_shower_running);
+      if (!_dryerQueryActive)   updateCard('dryer',   state.is_dryer_running);
       if ('ble_status' in state) updateConnection(state);
     }
 
@@ -663,6 +675,36 @@
     function onAnalShowerState(data) {
       _analQueryActive = false;
       updateCard('anal', data.is_anal_shower_running);
+    }
+
+    function clearUserSittingState() {
+      _sittingQueryActive = true;
+      updateCard('sitting', null);
+      return () => { _sittingQueryActive = false; };
+    }
+    function onUserSittingState(data) {
+      _sittingQueryActive = false;
+      updateCard('sitting', data.is_user_sitting);
+    }
+
+    function clearLadyShowerState() {
+      _ladyQueryActive = true;
+      updateCard('lady', null);
+      return () => { _ladyQueryActive = false; };
+    }
+    function onLadyShowerState(data) {
+      _ladyQueryActive = false;
+      updateCard('lady', data.is_lady_shower_running);
+    }
+
+    function clearDryerState() {
+      _dryerQueryActive = true;
+      updateCard('dryer', null);
+      return () => { _dryerQueryActive = false; };
+    }
+    function onDryerState(data) {
+      _dryerQueryActive = false;
+      updateCard('dryer', data.is_dryer_running);
     }
 
     // --- Connection status ---

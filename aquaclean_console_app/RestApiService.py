@@ -117,6 +117,18 @@ class RestApiService:
         async def get_anal_shower_state():
             return await self._api_mode.get_anal_shower_state()
 
+        @app.get("/data/user-sitting-state")
+        async def get_user_sitting_state():
+            return await self._api_mode.get_user_sitting_state()
+
+        @app.get("/data/lady-shower-state")
+        async def get_lady_shower_state():
+            return await self._api_mode.get_lady_shower_state()
+
+        @app.get("/data/dryer-state")
+        async def get_dryer_state():
+            return await self._api_mode.get_dryer_state()
+
         @app.get("/config")
         async def get_config():
             return self._api_mode.get_config()

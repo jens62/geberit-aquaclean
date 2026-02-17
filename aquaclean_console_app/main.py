@@ -562,6 +562,42 @@ class ApiMode:
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
         return result
 
+    async def get_user_sitting_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_user_sitting_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_user_sitting_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting", str(result["is_user_sitting"]))
+        return result
+
+    async def get_lady_shower_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_lady_shower_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_lady_shower_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
+        return result
+
+    async def get_dryer_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=503, detail="BLE client not connected")
+            result = await self._fetch_dryer_state(self.service.client)
+        else:
+            result = await self._on_demand(self._fetch_dryer_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(result["is_dryer_running"]))
+        return result
+
     # --- Helpers ---
 
     async def _fetch_anal_shower_state(self, client):
@@ -571,6 +607,24 @@ class ApiMode:
         # so the "disconnected" SSE broadcast carries the fresh value, not null.
         self.service.device_state["is_anal_shower_running"] = val
         return {"is_anal_shower_running": val}
+
+    async def _fetch_user_sitting_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([0])
+        val = result.data_array[0] != 0
+        self.service.device_state["is_user_sitting"] = val
+        return {"is_user_sitting": val}
+
+    async def _fetch_lady_shower_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([2])
+        val = result.data_array[2] != 0
+        self.service.device_state["is_lady_shower_running"] = val
+        return {"is_lady_shower_running": val}
+
+    async def _fetch_dryer_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([3])
+        val = result.data_array[3] != 0
+        self.service.device_state["is_dryer_running"] = val
+        return {"is_dryer_running": val}
 
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
