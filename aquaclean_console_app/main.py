@@ -828,13 +828,29 @@ async def run_cli(args):
         "message": "Unknown error"
     }
 
+    if not args.command:
+        result["message"] = "CLI mode requires --command"
+        print(json.dumps(result, indent=2))
+        return
+
+    # --- Commands that don't need a BLE connection ---
+    if args.command == 'get-config':
+        result["data"] = {
+            "ble_connection":  config.get("SERVICE", "ble_connection", fallback="persistent"),
+            "poll_interval":   float(config.get("POLL", "interval", fallback="0")),
+            "mqtt_enabled":    config.getboolean("SERVICE", "mqtt_enabled", fallback=True),
+            "device_id":       config.get("BLE", "device_id"),
+            "api_host":        config.get("API", "host", fallback="0.0.0.0"),
+            "api_port":        int(config.get("API", "port", fallback="8080")),
+        }
+        result["status"] = "success"
+        result["message"] = "Config read from config.ini"
+        print(json.dumps(result, indent=2))
+        return
+
+    # --- Commands that require a BLE connection ---
     client = None
     try:
-        # 1. Internal Validation
-        if not args.command:
-            raise ValueError("CLI mode requires --command (e.g., --command status)")
-
-        # 2. Resource Initialization
         device_id = args.address or config.get("BLE", "device_id")
         connector = BluetoothLeConnector()
         factory = AquaCleanClientFactory(connector)
@@ -843,25 +859,65 @@ async def run_cli(args):
         logger.info(f"Connecting to {device_id}...")
         await client.connect(device_id)
 
-        # Populate metadata
-        result["device"] = client.Description
+        result["device"]        = client.Description
         result["serial_number"] = client.SerialNumber
 
-        # 3. Command Execution
-        if args.command == 'status':
-            result["data"]["connection"] = "active"
+        if args.command in ('status', 'system-parameters'):
+            r = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
+            result["data"] = {
+                "is_user_sitting":        r.data_array[0] != 0,
+                "is_anal_shower_running": r.data_array[1] != 0,
+                "is_lady_shower_running": r.data_array[2] != 0,
+                "is_dryer_running":       r.data_array[3] != 0,
+            }
+        elif args.command == 'info':
+            ident           = await client.base_client.get_device_identification_async(0)
+            initial_op_date = await client.base_client.get_device_initial_operation_date()
+            result["data"] = {
+                "sap_number":             ident.sap_number,
+                "serial_number":          ident.serial_number,
+                "production_date":        ident.production_date,
+                "description":            ident.description,
+                "initial_operation_date": str(initial_op_date),
+            }
+        elif args.command == 'user-sitting-state':
+            r = await client.base_client.get_system_parameter_list_async([0])
+            result["data"] = {"is_user_sitting": r.data_array[0] != 0}
+        elif args.command == 'anal-shower-state':
+            r = await client.base_client.get_system_parameter_list_async([1])
+            result["data"] = {"is_anal_shower_running": r.data_array[1] != 0}
+        elif args.command == 'lady-shower-state':
+            r = await client.base_client.get_system_parameter_list_async([2])
+            result["data"] = {"is_lady_shower_running": r.data_array[2] != 0}
+        elif args.command == 'dryer-state':
+            r = await client.base_client.get_system_parameter_list_async([3])
+            result["data"] = {"is_dryer_running": r.data_array[3] != 0}
+        elif args.command == 'identification':
+            ident = await client.base_client.get_device_identification_async(0)
+            result["data"] = {
+                "sap_number":      ident.sap_number,
+                "serial_number":   ident.serial_number,
+                "production_date": ident.production_date,
+                "description":     ident.description,
+            }
+        elif args.command == 'initial-operation-date':
+            date = await client.base_client.get_device_initial_operation_date()
+            result["data"] = {"initial_operation_date": str(date)}
+        elif args.command == 'soc-versions':
+            versions = await client.base_client.get_soc_application_versions_async()
+            result["data"] = {"soc_versions": str(versions)}
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
-            result["data"]["action"] = "lid_toggled"
+            result["data"] = {"action": "lid_toggled"}
         elif args.command == 'toggle-anal':
             await client.toggle_anal_shower()
-            result["data"]["action"] = "anal_shower_toggled"
+            result["data"] = {"action": "anal_shower_toggled"}
 
-        result["status"] = "success"
+        result["status"]  = "success"
         result["message"] = f"Command {args.command} completed"
 
     except Exception as e:
-        result["status"] = "error"
+        result["status"]  = "error"
         result["message"] = str(e)
         logger.error(f"CLI Error: {e}")
     finally:
@@ -913,18 +969,29 @@ if __name__ == "__main__":
         prog=os.path.basename(sys.argv[0]),
         description="Geberit AquaClean Controller",
         epilog=(
-            "examples:\n"
-            "  %(prog)s --mode cli --command toggle-lid 2>aquaclean_console_app_cli.log\n"
+            "device state queries (require BLE):\n"
+            "  %(prog)s --mode cli --command status\n"
+            "  %(prog)s --mode cli --command system-parameters\n"
+            "  %(prog)s --mode cli --command user-sitting-state\n"
+            "  %(prog)s --mode cli --command anal-shower-state\n"
+            "  %(prog)s --mode cli --command lady-shower-state\n"
+            "  %(prog)s --mode cli --command dryer-state\n"
             "\n"
-            "  output:\n"
-            "  {\n"
-            '    "status": "success",\n'
-            '    "command": "toggle-lid",\n'
-            '    "device": "AquaClean Mera Comfort",\n'
-            '    "serial_number": "HB23XXEUXXXXXX",\n'
-            '    "data": { "action": "lid_toggled" },\n'
-            '    "message": "Command toggle-lid completed"\n'
-            "  }\n"
+            "device info queries (require BLE):\n"
+            "  %(prog)s --mode cli --command info\n"
+            "  %(prog)s --mode cli --command identification\n"
+            "  %(prog)s --mode cli --command initial-operation-date\n"
+            "  %(prog)s --mode cli --command soc-versions\n"
+            "\n"
+            "device commands (require BLE):\n"
+            "  %(prog)s --mode cli --command toggle-lid\n"
+            "  %(prog)s --mode cli --command toggle-anal\n"
+            "\n"
+            "app config (no BLE required):\n"
+            "  %(prog)s --mode cli --command get-config\n"
+            "\n"
+            "options:\n"
+            "  --address 38:AB:XX:XX:ZZ:67   override BLE device address from config.ini\n"
             "\n"
             "CLI results and errors are written to stdout as JSON.\n"
             "Log output goes to stderr (redirect with 2>logfile)."
@@ -932,7 +999,17 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--mode', choices=['service', 'cli', 'api'], default='service')
-    parser.add_argument('--command', choices=['toggle-lid', 'toggle-anal', 'status'])
+    parser.add_argument('--command', choices=[
+        # device state queries
+        'status', 'system-parameters',
+        'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
+        # device info queries
+        'info', 'identification', 'initial-operation-date', 'soc-versions',
+        # device commands
+        'toggle-lid', 'toggle-anal',
+        # app config (no BLE required)
+        'get-config',
+    ])
     parser.add_argument('--address')
 
     args = parser.parse_args()
