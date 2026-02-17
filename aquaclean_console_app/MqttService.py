@@ -22,7 +22,11 @@ class MqttService:
         self.mqttc.enable_logger()
 
         self.ToggleLidPosition = myEvent.EventHandler()
-        self.Reconnect = myEvent.EventHandler()
+        self.Connect           = myEvent.EventHandler()
+        self.ToggleAnal        = myEvent.EventHandler()
+        self.SetBleConnection  = myEvent.EventHandler()
+        self.SetPollInterval   = myEvent.EventHandler()
+        self.Disconnect        = myEvent.EventHandler()
 
 
     async def start_async(self, aquaclean_loop, mqtt_initialized_wait_queue):
@@ -94,7 +98,11 @@ class MqttService:
         logger.trace("mqtt, on_connect, properties: %s", properties)
         logger.info("### CONNECTED WITH SERVER ###")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLidPosition")
-        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/control/reconnect")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleAnal")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/control/connect")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/control/disconnect")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/config/bleConnection")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/config/pollInterval")
         logger.info("### SUBSCRIBED ###")
 
     def on_message(self, client, userdata, msg):
@@ -106,8 +114,16 @@ class MqttService:
 
         if msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLidPosition":
             self.handle_toggleLidPositionMessage()
-        elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/reconnect":
-            self.handle_reconnect_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleAnal":
+            self.handle_toggle_anal_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/connect":
+            self.handle_connect_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/disconnect":
+            self.handle_disconnect_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/config/bleConnection":
+            self.handle_set_ble_connection_message(msg.payload.decode().strip())
+        elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/config/pollInterval":
+            self.handle_set_poll_interval_message(msg.payload.decode().strip())
 
 
     def handle_toggleLidPositionMessage(self):
@@ -118,10 +134,39 @@ class MqttService:
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
             _ = future.result()
 
-    def handle_reconnect_message(self):
-        logger.trace("in handle_reconnect_message")
-        for handler in self.Reconnect.get_handlers():
+    def handle_connect_message(self):
+        logger.trace("in handle_connect_message")
+        for handler in self.Connect.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_toggle_anal_message(self):
+        logger.trace("in handle_toggle_anal_message")
+        for handler in self.ToggleAnal.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_disconnect_message(self):
+        logger.trace("in handle_disconnect_message")
+        for handler in self.Disconnect.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_set_ble_connection_message(self, value: str):
+        logger.trace(f"in handle_set_ble_connection_message: {value!r}")
+        for handler in self.SetBleConnection.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(value), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_set_poll_interval_message(self, value: str):
+        logger.trace(f"in handle_set_poll_interval_message: {value!r}")
+        try:
+            interval = float(value)
+        except ValueError:
+            logger.warning(f"Invalid poll interval from MQTT: {value!r}")
+            return
+        for handler in self.SetPollInterval.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(interval), self.aquaclean_loop)
             _ = future.result()
 
 

@@ -57,7 +57,11 @@ class NullMqttService:
     """Drop-in replacement for MqttService when MQTT is disabled."""
     def __init__(self):
         self.ToggleLidPosition = myEvent.EventHandler()
-        self.Reconnect = myEvent.EventHandler()
+        self.Connect           = myEvent.EventHandler()
+        self.ToggleAnal        = myEvent.EventHandler()
+        self.SetBleConnection  = myEvent.EventHandler()
+        self.SetPollInterval   = myEvent.EventHandler()
+        self.Disconnect        = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
@@ -122,7 +126,7 @@ class ServiceMode:
         # Subscribe MQTT handlers once — handlers reference self.client
         # which is updated each iteration of the recovery loop below
         self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
-        self.mqtt_service.Reconnect += self.request_reconnect
+        self.mqtt_service.Connect += self.request_reconnect
 
         # --- Main Recovery Loop ---
         while not self._shutdown_event.is_set():
@@ -394,6 +398,11 @@ class ApiMode:
 
     async def run(self):
         self.service.on_state_updated = self.rest_api.broadcast_state
+        # Wire MQTT inbound control topics → ApiMode handlers
+        self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
+        self.service.mqtt_service.SetBleConnection += self._on_mqtt_set_ble_connection
+        self.service.mqtt_service.SetPollInterval  += self._on_mqtt_set_poll_interval
+        self.service.mqtt_service.Disconnect       += self._on_mqtt_disconnect
         service_task = asyncio.create_task(self.service.run())
         poll_task = asyncio.create_task(self._polling_loop())
         try:
@@ -444,6 +453,32 @@ class ApiMode:
         self._poll_wakeup.set()   # wake the poll loop so it picks up the new interval immediately
         await self.rest_api.broadcast_state(self.service.device_state.copy())
         return {"status": "success", "poll_interval": value}
+
+    # --- MQTT inbound handlers ---
+
+    async def _on_mqtt_toggle_anal(self):
+        try:
+            await self.run_command("toggle-anal")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-anal failed: {e}")
+
+    async def _on_mqtt_set_ble_connection(self, value: str):
+        try:
+            await self.set_ble_connection(value)
+        except Exception as e:
+            logger.warning(f"MQTT set_ble_connection({value!r}) failed: {e}")
+
+    async def _on_mqtt_set_poll_interval(self, value: float):
+        try:
+            await self.set_poll_interval(value)
+        except Exception as e:
+            logger.warning(f"MQTT set_poll_interval({value}) failed: {e}")
+
+    async def _on_mqtt_disconnect(self):
+        try:
+            await self.do_disconnect()
+        except Exception as e:
+            logger.warning(f"MQTT disconnect failed: {e}")
 
     # --- REST endpoint implementations ---
 
