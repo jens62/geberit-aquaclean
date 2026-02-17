@@ -9,11 +9,28 @@ cards:
       ## Geberit AquaClean Mera Comfort
       ### 1. OG, Toilette im Master-Bad
   
-  - type: entities
-    title: Control
-    entities:
-      - entity: switch.geberit_aquaclean_toggle_lid
-        name: Toggle Lid Position
+  - type: custom:button-card
+    entity: switch.geberit_aquaclean_toggle_lid
+    name: Toggle Lid
+    show_state: true
+    show_icon: false
+    show_entity_picture: true
+    entity_picture: /local/custom_icons/geberit/adjustabletoiletseat.svg
+    state:
+      - value: "on"
+        styles:
+          entity_picture:
+            - filter: brightness(1)
+      - value: "off"
+        styles:
+          entity_picture:
+            - filter: brightness(0.5)
+    styles:
+      card:
+        - height: 130px
+      entity_picture:
+        - width: 50px
+        - height: 50px
   
   - type: grid
     title: Monitor
