@@ -4,6 +4,19 @@ Python bridge between a [Geberit AquaClean](https://www.geberit.de/badezimmerpro
 
 Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean) library to Python, extended with MQTT, REST API, web UI, and CLI.
 
+<table>
+  <tr>
+    <td align="center">
+      <img src="local-assets/webapp-masked.png" width="380"/><br/>
+      <em>Web UI — live status, on-demand queries, runtime config</em>
+    </td>
+    <td align="center">
+      <img src="homeassistant/button-card-masked.png" width="380"/><br/>
+      <em>Home Assistant — auto-created entities via MQTT Discovery</em>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Features
