@@ -48,7 +48,16 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 pip install bleak paho-mqtt aiorun haggis fastapi uvicorn
 ```
 
-> **Python 3.13 note:** `haggis` requires a [one-line workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561) for a logging compatibility issue.
+| Package | Version | Purpose |
+|---------|---------|---------|
+| [bleak](https://github.com/hbldh/bleak) | ≥ 0.22 | BLE connectivity (BlueZ on Linux, CoreBluetooth on macOS) |
+| [paho-mqtt](https://github.com/eclipse-paho/paho.mqtt.python) | ≥ 2.0 | MQTT broker client |
+| [aiorun](https://github.com/cjrh/aiorun) | ≥ 2024.8 | Asyncio run loop with clean shutdown handling |
+| [haggis](https://gitlab.com/madphysicist/haggis) | ≥ 0.14 | Adds `TRACE` and `SILLY` log levels to the Python logging framework |
+| [fastapi](https://fastapi.tiangolo.com) | ≥ 0.110 | REST API framework — api mode only |
+| [uvicorn](https://www.uvicorn.org) | ≥ 0.29 | ASGI server for FastAPI — api mode only |
+
+> **Python 3.13 note:** `haggis` requires a [one-line workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561) for a logging compatibility issue. No further problems occur after applying it.
 
 ### 2. Find the BLE address
 
