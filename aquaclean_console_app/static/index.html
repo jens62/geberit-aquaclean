@@ -596,7 +596,7 @@
           if (onResult) onResult(data);
           if (data._connect_ms !== undefined || data._query_ms !== undefined) {
             set('queryConnectMs', fmt(data._connect_ms));
-            set('queryMs', fmt(data._query_ms));
+            set('queryMs', data._query_ms === 0 ? '0 ms (cached)' : fmt(data._query_ms));
             document.getElementById('queryTimingRow').style.display = '';
           }
           btn.classList.add('success');
@@ -714,7 +714,7 @@
             const data = await r.json();
             if (data._connect_ms !== undefined || data._query_ms !== undefined) {
               set('queryConnectMs', fmt(data._connect_ms));
-              set('queryMs', fmt(data._query_ms));
+              set('queryMs', data._query_ms === 0 ? '0 ms (cached)' : fmt(data._query_ms));
               document.getElementById('queryTimingRow').style.display = '';
             }
           } catch (_) {}
