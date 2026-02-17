@@ -675,10 +675,12 @@ class ApiMode:
             await client.connect_ble_only(device_id)
             connect_ms = int((time.perf_counter() - t0) * 1000)
             self.service.device_state["last_connect_ms"] = connect_ms
+            await self.service._set_ble_status("connected", device_address=device_id)
             t1 = time.perf_counter()
             result = action(client)
             result = await result if asyncio.iscoroutine(result) else result
             query_ms = int((time.perf_counter() - t1) * 1000)
+            self.service.device_state["last_poll_ms"] = query_ms
             timing = {"_connect_ms": connect_ms, "_query_ms": query_ms}
             if isinstance(result, dict):
                 result = {**result, **timing}
@@ -712,6 +714,13 @@ class ApiMode:
                 continue  # persistent mode handles its own polling
             try:
                 result = await self._on_demand(self._fetch_state)
+                # _set_ble_status("disconnected") cleared last_connect_ms, last_poll_ms,
+                # and poll_epoch.  Restore them and broadcast one more SSE so the webapp
+                # shows accurate timing and a working countdown.
+                self.service.device_state["last_connect_ms"] = result.get("_connect_ms")
+                self.service.device_state["last_poll_ms"]    = result.get("_query_ms")
+                self.service.device_state["poll_epoch"]      = time.time()
+                await self.rest_api.broadcast_state(self.service.device_state.copy())
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
