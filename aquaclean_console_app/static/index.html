@@ -373,6 +373,10 @@
         <span id="bleConnModeLabel" style="font-size:0.8rem;font-weight:500">—</span>
       </div>
       <div class="conn-row">
+        <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Poll interval:</span>
+        <span id="pollIntervalLabel" style="font-size:0.8rem;font-weight:500">—</span>
+      </div>
+      <div class="conn-row">
         <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
         <span id="connectMs" style="font-size:0.8rem;font-weight:500">—</span>
         <span style="color:var(--muted);font-size:0.8rem;margin-left:1.5rem;white-space:nowrap">Poll:</span>
@@ -388,6 +392,14 @@
       <button id="bleConnModeBtn" onclick="toggleBleConnectionMode(this)">
         <span class="spinner"></span><span id="bleConnModeBtnLabel">—</span>
       </button>
+      <div style="display:flex;align-items:center;gap:0.4rem">
+        <input id="pollIntervalInput" type="number" min="0" step="0.5"
+               style="width:5rem;padding:0.35rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.85rem"
+               placeholder="s">
+        <button onclick="setPollInterval(this)">
+          <span class="spinner"></span>Set Interval
+        </button>
+      </div>
     </div>
 
     <h2 id="queriesHeading" style="display:none">Queries</h2>
@@ -529,7 +541,13 @@
     let _pollInterval = null;
 
     function onStateReceived(state) {
-      if (state.poll_interval) _pollInterval = state.poll_interval;
+      if (state.poll_interval !== undefined) {
+        _pollInterval = state.poll_interval || null;
+        const lbl = document.getElementById('pollIntervalLabel');
+        if (lbl) lbl.textContent = state.poll_interval > 0 ? state.poll_interval + ' s' : 'disabled';
+        const inp = document.getElementById('pollIntervalInput');
+        if (inp && inp !== document.activeElement) inp.value = state.poll_interval;
+      }
       if (state.poll_epoch !== undefined) _pollEpoch = state.poll_epoch;
       if (state.ble_connection !== undefined) updateBleConnectionMode(state.ble_connection);
     }
@@ -576,6 +594,29 @@
       const show = mode === 'on-demand';
       document.getElementById('queriesHeading').style.display = show ? '' : 'none';
       document.getElementById('queriesSection').style.display = show ? '' : 'none';
+    }
+
+    async function setPollInterval(btn) {
+      const inp = document.getElementById('pollIntervalInput');
+      const val = parseFloat(inp.value);
+      if (isNaN(val) || val < 0) { inp.classList.add('error'); return; }
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.classList.remove('success', 'error');
+      try {
+        const r = await fetch(apiBase + '/config/poll-interval', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: val }),
+        });
+        btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        btn.classList.add('error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
     }
 
     async function toggleBleConnectionMode(btn) {

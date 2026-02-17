@@ -13,6 +13,10 @@ from pydantic import BaseModel
 class BleConnectionUpdate(BaseModel):
     value: str
 
+
+class PollIntervalUpdate(BaseModel):
+    value: float
+
 logger = logging.getLogger(__name__)
 
 
@@ -136,6 +140,10 @@ class RestApiService:
         @app.post("/config/ble-connection")
         async def set_ble_connection(body: BleConnectionUpdate):
             return await self._api_mode.set_ble_connection(body.value)
+
+        @app.post("/config/poll-interval")
+        async def set_poll_interval(body: PollIntervalUpdate):
+            return await self._api_mode.set_poll_interval(body.value)
 
         @app.post("/connect")
         async def connect():
