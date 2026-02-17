@@ -377,6 +377,7 @@ class ApiMode:
 
         self._shutdown_event = asyncio.Event()
         self._on_demand_lock = asyncio.Lock()
+        self._poll_wakeup    = asyncio.Event()
 
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
@@ -384,6 +385,7 @@ class ApiMode:
         # Always create ServiceMode so ble_connection can be toggled at runtime.
         self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
         self.service.device_state["ble_connection"] = self.ble_connection
+        self.service.device_state["poll_interval"]  = self._poll_interval
         if self.ble_connection != "persistent":
             # Start in standby — loop waits on _connection_allowed until switched
             self.service._connection_allowed.clear()
@@ -393,7 +395,7 @@ class ApiMode:
     async def run(self):
         self.service.on_state_updated = self.rest_api.broadcast_state
         service_task = asyncio.create_task(self.service.run())
-        poll_task = asyncio.create_task(self._polling_loop()) if self._poll_interval > 0 else None
+        poll_task = asyncio.create_task(self._polling_loop())
         try:
             await self.rest_api.start(self._shutdown_event)
         finally:
@@ -402,9 +404,7 @@ class ApiMode:
             # Let the service exit gracefully via the shutdown event —
             # it needs to publish MQTT status before BLE disconnect.
             # Only cancel as a last resort if it doesn't finish in time.
-            tasks = {service_task}
-            if poll_task:
-                tasks.add(poll_task)
+            tasks = {service_task, poll_task}
             done, pending = await asyncio.wait(tasks, timeout=5.0)
             for t in pending:
                 t.cancel()
@@ -420,7 +420,7 @@ class ApiMode:
         return dict(self.service.device_state)
 
     def get_config(self) -> dict:
-        return {"ble_connection": self.ble_connection}
+        return {"ble_connection": self.ble_connection, "poll_interval": self._poll_interval}
 
     async def set_ble_connection(self, value: str) -> dict:
         if value not in ("persistent", "on-demand"):
@@ -434,6 +434,16 @@ class ApiMode:
             await self.service.request_disconnect()
         await self.rest_api.broadcast_state(self.service.device_state.copy())
         return {"status": "success", "ble_connection": value}
+
+    async def set_poll_interval(self, value: float) -> dict:
+        if value < 0:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="poll_interval must be >= 0 (0 = disabled)")
+        self._poll_interval = value
+        self.service.device_state["poll_interval"] = value
+        self._poll_wakeup.set()   # wake the poll loop so it picks up the new interval immediately
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "poll_interval": value}
 
     # --- REST endpoint implementations ---
 
@@ -695,28 +705,35 @@ class ApiMode:
             await self.service._set_ble_status("disconnected")
 
     async def _polling_loop(self):
-        """Background poll: query GetSystemParameterList every interval seconds
-        when running in on-demand mode. Skips silently in persistent mode
-        (ServiceMode handles its own polling loop there).
-        interval = 0 in config disables polling entirely."""
-        if self._poll_interval <= 0:
-            return
-        logger.info(f"On-demand poll loop started (interval={self._poll_interval}s)")
+        """Background poll: query GetSystemParameterList every _poll_interval seconds
+        when running in on-demand mode. Skips silently in persistent mode.
+        interval=0 pauses polling. _poll_wakeup lets the loop react immediately
+        when the interval is changed at runtime via set_poll_interval()."""
+        logger.info(f"Poll loop started (interval={self._poll_interval}s)")
         topic = self.service.mqttConfig['topic']
         while True:
+            # Sleep for the current interval; _poll_wakeup interrupts early on change.
             try:
-                await asyncio.sleep(self._poll_interval)
+                if self._poll_interval > 0:
+                    await asyncio.wait_for(self._poll_wakeup.wait(), timeout=self._poll_interval)
+                else:
+                    await self._poll_wakeup.wait()   # interval=0: wait until re-enabled
+                # Woken by set_poll_interval — restart sleep with the new value.
+                self._poll_wakeup.clear()
+                continue
+            except asyncio.TimeoutError:
+                pass   # normal path: interval elapsed
             except asyncio.CancelledError:
                 return
+
             if self._shutdown_event.is_set():
                 return
             if self.ble_connection != "on-demand":
                 continue  # persistent mode handles its own polling
             try:
                 result = await self._on_demand(self._fetch_state)
-                # _set_ble_status("disconnected") cleared last_connect_ms, last_poll_ms,
-                # and poll_epoch.  Restore them and broadcast one more SSE so the webapp
-                # shows accurate timing and a working countdown.
+                # _set_ble_status("disconnected") cleared timing and poll_epoch;
+                # restore them so the webapp gets accurate values.
                 self.service.device_state["last_connect_ms"] = result.get("_connect_ms")
                 self.service.device_state["last_poll_ms"]    = result.get("_query_ms")
                 self.service.device_state["poll_epoch"]      = time.time()
