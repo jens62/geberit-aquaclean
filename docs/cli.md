@@ -11,7 +11,19 @@ python main.py --mode cli --command <command> [--address <ble-mac>]
 Redirect stderr to suppress log noise:
 
 ```bash
-python main.py --mode cli --command user-sitting-state 2>aquaclean.log
+python aquaclean_console_app/main.py --mode cli --command user-sitting-state 2>aquaclean.log
+```
+```json
+{
+  "status": "success",
+  "command": "user-sitting-state",
+  "device": "AquaClean Mera Comfort",
+  "serial_number": "HB23XXEUXXXXXX",
+  "data": {
+    "is_user_sitting": false
+  },
+  "message": "Command user-sitting-state completed"
+}
 ```
 
 ---
