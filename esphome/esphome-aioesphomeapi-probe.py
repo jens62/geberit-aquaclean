@@ -61,28 +61,6 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
         if not seen:
             print("Warning: target not seen in adverts. It may not be advertising or is connected elsewhere.")
 
-        # Try connect with retries, RANDOM address type, longer timeout
-        for attempt in range(3):
-            try:
-                print(f"Connect attempt {attempt+1}")
-                cancel_connection = await client.bluetooth_device_connect(
-                    mac_int,
-                    on_bluetooth_connection_state,
-                    timeout=60.0,
-                    disconnect_timeout=10.0,
-                    feature_flags=device_feature_flags,
-                    has_cache=False,
-                    address_type=1,  # try RANDOM
-                )
-                # wait for connected_future in your existing code
-                break
-            except Exception as e:
-                print(f"Connect attempt {attempt+1} failed: {e}")
-                await asyncio.sleep(2.0)
-        else:
-            raise RuntimeError("All connect attempts failed")
-
-
         # If the object has a features attribute, print it
         if hasattr(info, "features"):
             print("device_info.features:", info.features)
