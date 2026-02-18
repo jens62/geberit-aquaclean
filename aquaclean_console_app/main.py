@@ -30,7 +30,7 @@ from aquaclean_utils                                          import utils
 # --- Configuration & Logging Setup ---
 __location__ = os.path.dirname(os.path.abspath(__file__))
 iniFile = os.path.join(__location__, 'config.ini')
-config = configparser.ConfigParser(allow_no_value=False)
+config = configparser.ConfigParser(allow_no_value=False, inline_comment_prefixes=('#',))
 config.read(iniFile)
 
 logs.add_logging_level('TRACE', logging.DEBUG - 5)
@@ -39,7 +39,7 @@ logs.add_logging_level('SILLY', logging.DEBUG - 7)
 log_level        = config.get("LOGGING",  "log_level",  fallback="DEBUG")
 esphome_host     = config.get("ESPHOME",  "host",       fallback=None) or None
 esphome_port     = int(config.get("ESPHOME", "port",    fallback="6053"))
-esphome_password = config.get("ESPHOME",  "password",   fallback=None) or None
+esphome_noise_psk = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class ServiceMode:
                 if self._shutdown_event.is_set():
                     break
 
-            bluetooth_connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_password)
+            bluetooth_connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
             factory = AquaCleanClientFactory(bluetooth_connector)
             self.client = factory.create_client()
 
@@ -710,7 +710,7 @@ class ApiMode:
     async def _on_demand_inner(self, action):
         device_id = config.get("BLE", "device_id")
         topic = self.service.mqttConfig['topic']
-        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_password)
+        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
         # Mirror persistent mode: let the connector publish "True, address, name"
         connector.connection_status_changed_handlers += self.service.on_connection_status_changed
         factory = AquaCleanClientFactory(connector)
@@ -1099,7 +1099,7 @@ async def run_cli(args):
     client = None
     try:
         device_id = args.address or config.get("BLE", "device_id")
-        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_password)
+        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
         factory = AquaCleanClientFactory(connector)
         client = factory.create_client()
 
