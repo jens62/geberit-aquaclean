@@ -104,6 +104,7 @@ class ESPHomeAPIClient:
 
         def on_bluetooth_connection_state(connected: bool, mtu: int, error: int) -> None:
             """Handle connection state changes from ESP32 proxy."""
+            logger.trace(f"[ESPHomeAPIClient] on_bluetooth_connection_state called: connected={connected}, mtu={mtu}, error={error}, future_done={connected_future.done()}")
             if not connected_future.done():
                 if error:
                     logger.error(f"[ESPHomeAPIClient] Connection error: {error}")
@@ -130,6 +131,8 @@ class ESPHomeAPIClient:
         logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}, feature_flags={self._feature_flags}")
         logger.trace(f"[ESPHomeAPIClient] Connection parameters: has_cache=False, disconnect_timeout=10.0, timeout={timeout}")
 
+        logger.trace(f"[ESPHomeAPIClient] About to call bluetooth_device_connect")
+
         self._cancel_connection = await self._api.bluetooth_device_connect(
             self._mac_int,
             on_bluetooth_connection_state,
@@ -140,7 +143,8 @@ class ESPHomeAPIClient:
             timeout=timeout
         )
 
-        logger.trace(f"[ESPHomeAPIClient] bluetooth_device_connect returned, waiting for connection state callback")
+        logger.trace(f"[ESPHomeAPIClient] bluetooth_device_connect returned successfully, cancel_connection={self._cancel_connection is not None}")
+        logger.trace(f"[ESPHomeAPIClient] Waiting for connection state callback")
 
         try:
             # Wait for connection to complete
