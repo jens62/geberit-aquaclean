@@ -56,9 +56,9 @@ pip install bleak paho-mqtt aiorun haggis fastapi uvicorn
 | [haggis](https://gitlab.com/madphysicist/haggis) | ≥ 0.14 | Adds `TRACE` and `SILLY` log levels to the Python logging framework |
 | [fastapi](https://fastapi.tiangolo.com) | ≥ 0.110 | REST API framework — api mode only |
 | [uvicorn](https://www.uvicorn.org) | ≥ 0.29 | ASGI server for FastAPI — api mode only |
-| [bleak-esphome](https://github.com/Bluetooth-Devices/bleak-esphome) | ≥ 1.0 | ESPHome Bluetooth proxy backend — optional, only needed when using an ESP32 as a BLE bridge |
+| [aioesphomeapi](https://github.com/esphome/aioesphomeapi) | ≥ 24.0 | ESPHome Bluetooth proxy backend — optional, only needed when using an ESP32 as a BLE bridge |
 
-> **ESPHome proxy (optional):** If you use an ESP32 as a remote BLE antenna, install `bleak-esphome` separately: `pip install bleak-esphome`
+> **ESPHome proxy (optional):** If you use an ESP32 as a remote BLE antenna, install `aioesphomeapi` separately: `pip install aioesphomeapi`
 
 > **Python 3.13 note:** `haggis` requires a [one-line workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561) for a logging compatibility issue. No further problems occur after applying it.
 
@@ -107,6 +107,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 | Home Assistant setup | [docs/home-assistant.md](docs/home-assistant.md) |
 | HA full setup guide | [homeassistant/SETUP_GUIDE.md](homeassistant/SETUP_GUIDE.md) |
 | ESPHome Bluetooth Proxy | [docs/esphome.md](docs/esphome.md) |
+| ESPHome troubleshooting | [docs/esphome-troubleshooting.md](docs/esphome-troubleshooting.md) |
 
 ---
 
