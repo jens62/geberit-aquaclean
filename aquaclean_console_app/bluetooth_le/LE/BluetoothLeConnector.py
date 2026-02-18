@@ -45,6 +45,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.esphome_noise_psk = esphome_noise_psk
         self._esphome_api      = None  # Persistent ESP32 API connection
         self._esphome_feature_flags = None  # Cached ESP32 feature flags
+        self._esphome_unsub_adv = None  # Deferred advertisement unsubscription
 
 
     async def connect_async(self, device_id):
@@ -194,9 +195,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, self._esphome_feature_flags)
                 await self.client.connect()
                 logger.info(f"BLE connection successful with address_type={addr_type}")
-                # Now safe to unsubscribe from advertisements
-                unsub_adv()
-                logger.trace(f"Unsubscribed from advertisements after successful BLE connection")
+                # Do NOT unsubscribe from advertisements — unsubscribing clears
+                # api_connection_ on the ESP32 which causes loop() to disconnect
+                # ALL active BLE connections. Keep subscription alive; the ESP32
+                # stops scanning automatically while a BLE connection is active.
+                self._esphome_unsub_adv = unsub_adv
                 break
             except Exception as e:
                 last_error = e
@@ -288,4 +291,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             await self.client.disconnect()
         else:
             logger.trace(f"not self.client, no need to disconnect.")
+        # Now safe to unsubscribe from advertisements after BLE is disconnected
+        if self._esphome_unsub_adv:
+            try:
+                self._esphome_unsub_adv()
+                logger.trace("Unsubscribed from advertisements after BLE disconnect")
+            except Exception:
+                pass
+            self._esphome_unsub_adv = None
 
