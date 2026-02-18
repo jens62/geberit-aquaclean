@@ -117,11 +117,23 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
     async def _connect_via_esphome(self, device_id):
         from bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
+        from aioesphomeapi import APIClient
 
         logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
 
-        # Ensure ESP32 API connection (reuses existing or creates new)
-        api = await self._ensure_esphome_api_connected()
+        # TEMPORARY: Create fresh API connection like probe script (don't reuse)
+        logger.debug(f"Creating fresh ESP32 API connection to {self.esphome_host}:{self.esphome_port}")
+        api = APIClient(
+            address=self.esphome_host,
+            port=self.esphome_port,
+            password="",
+            noise_psk=self.esphome_noise_psk
+        )
+        await asyncio.wait_for(api.connect(login=True), timeout=10.0)
+        device_info = await asyncio.wait_for(api.device_info(), timeout=10.0)
+        feature_flags = getattr(device_info, "bluetooth_proxy_feature_flags", 0)
+        logger.debug(f"Fresh API connection established, feature_flags={feature_flags}")
+        self._esphome_feature_flags = feature_flags
 
         # Scan for BLE device using raw advertisements
         mac_int = int(device_id.replace(":", ""), 16)
