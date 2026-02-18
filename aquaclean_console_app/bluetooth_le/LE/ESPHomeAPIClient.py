@@ -95,6 +95,15 @@ class ESPHomeAPIClient:
         """
         logger.trace(f"[ESPHomeAPIClient] Connecting to BLE device {self._mac_address} via ESP32 proxy")
 
+        # Fetch device info to get bluetooth_proxy_feature_flags
+        try:
+            device_info = await self._api.device_info()
+            feature_flags = getattr(device_info, "bluetooth_proxy_feature_flags", 0)
+            logger.debug(f"[ESPHomeAPIClient] ESP32 bluetooth_proxy_feature_flags: {feature_flags}")
+        except Exception as e:
+            logger.warning(f"[ESPHomeAPIClient] Failed to get device info, using default feature_flags=0: {e}")
+            feature_flags = 0
+
         # Create future to track connection state
         connected_future = asyncio.get_running_loop().create_future()
 
@@ -122,12 +131,15 @@ class ESPHomeAPIClient:
                         except Exception as e:
                             logger.error(f"[ESPHomeAPIClient] Error in disconnected callback: {e}")
 
-        # Initiate connection
-        logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}")
+        # Initiate connection with feature flags
+        logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}, feature_flags={feature_flags}")
         self._cancel_connection = await self._api.bluetooth_device_connect(
             self._mac_int,
             on_bluetooth_connection_state,
             address_type=self._address_type,
+            feature_flags=feature_flags,  # Pass ESP32's advertised features
+            has_cache=False,              # Disable client-side caching
+            disconnect_timeout=10.0,      # Allow graceful disconnect
             timeout=timeout
         )
 
