@@ -42,9 +42,10 @@ esphome_port     = int(config.get("ESPHOME", "port",    fallback="6053"))
 esphome_noise_psk = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 
-# Suppress verbose external library logging
-logging.getLogger("aioesphomeapi.connection").setLevel(logging.INFO)
-logging.getLogger("aioesphomeapi._frame_helper.base").setLevel(logging.INFO)
+# Suppress verbose external library logging (but not when explicitly debugging at TRACE/SILLY)
+if log_level not in ('TRACE', 'SILLY'):
+    logging.getLogger("aioesphomeapi.connection").setLevel(logging.INFO)
+    logging.getLogger("aioesphomeapi._frame_helper.base").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
