@@ -94,19 +94,23 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         mac_int = int(device_id.replace(":", ""), 16)
         found_event = asyncio.Event()
         device_name = ""
+        address_type = 0  # Default to PUBLIC (0) if not specified
 
         def on_raw_advertisements(resp):
-            nonlocal device_name
+            nonlocal device_name, address_type
             for adv in resp.advertisements:
                 if adv.address == mac_int:
                     device_name = self._parse_local_name(bytes(adv.data))
+                    # Capture address_type from advertisement (0=PUBLIC, 1=RANDOM)
+                    # If not present in advertisement, defaults to 0 (PUBLIC)
+                    address_type = getattr(adv, 'address_type', 0)
                     found_event.set()
 
         logger.trace(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
         unsub = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
         try:
             await asyncio.wait_for(found_event.wait(), timeout=30.0)
-            logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}")
+            logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
         except asyncio.TimeoutError:
             raise BleakError(f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}")
         finally:
@@ -117,7 +121,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.device_name = device_name or "Unknown"
         logger.debug(f"Creating ESPHomeAPIClient for {device_id}")
 
-        self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected)
+        self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, address_type)
         await self.client.connect()
 
         await self._post_connect()
