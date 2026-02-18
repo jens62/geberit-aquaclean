@@ -43,6 +43,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.esphome_host      = esphome_host
         self.esphome_port      = esphome_port
         self.esphome_noise_psk = esphome_noise_psk
+        self._esphome_api      = None  # Persistent ESP32 API connection
+        self._esphome_feature_flags = None  # Cached ESP32 feature flags
 
 
     async def connect_async(self, device_id):
@@ -67,13 +69,24 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         await self._post_connect()
 
 
-    async def _connect_via_esphome(self, device_id):
+    async def _ensure_esphome_api_connected(self):
+        """Ensure ESP32 API connection is established and reuse it."""
         from aioesphomeapi import APIClient
-        from bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
 
-        logger.debug(f"BluetoothLeConnector: connecting to ESPHome proxy at {self.esphome_host}:{self.esphome_port}")
+        if self._esphome_api is not None:
+            # Check if connection is still alive
+            try:
+                if self._esphome_api._connection and self._esphome_api._connection.is_connected:
+                    logger.trace("Reusing existing ESP32 API connection")
+                    return self._esphome_api
+            except Exception:
+                pass
+            # Connection dead, will reconnect below
+            logger.debug("ESP32 API connection lost, reconnecting")
+            self._esphome_api = None
 
-        # Connect to ESP32 proxy
+        # Create new connection
+        logger.debug(f"Establishing persistent ESP32 API connection to {self.esphome_host}:{self.esphome_port}")
         api = APIClient(
             address=self.esphome_host,
             port=self.esphome_port,
@@ -82,13 +95,33 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         )
 
         try:
-            logger.trace(f"Connecting to ESP32 proxy at {self.esphome_host}:{self.esphome_port}")
             await asyncio.wait_for(api.connect(login=True), timeout=10.0)
-            logger.debug("Connected to ESP32 proxy")
+            logger.debug("ESP32 API connection established")
+
+            # Fetch device info to get bluetooth_proxy_feature_flags (once per API connection)
+            try:
+                device_info = await asyncio.wait_for(api.device_info(), timeout=10.0)
+                self._esphome_feature_flags = getattr(device_info, "bluetooth_proxy_feature_flags", 0)
+                logger.debug(f"ESP32 bluetooth_proxy_feature_flags: {self._esphome_feature_flags}")
+            except Exception as e:
+                logger.warning(f"Failed to get device info, using default feature_flags=0: {e}")
+                self._esphome_feature_flags = 0
+
+            self._esphome_api = api
+            return api
         except asyncio.TimeoutError:
             raise BleakError(f"Timeout connecting to ESPHome proxy at {self.esphome_host}:{self.esphome_port}")
         except Exception as e:
             raise BleakError(f"Failed to connect to ESPHome proxy at {self.esphome_host}: {e}")
+
+
+    async def _connect_via_esphome(self, device_id):
+        from bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
+
+        logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
+
+        # Ensure ESP32 API connection (reuses existing or creates new)
+        api = await self._ensure_esphome_api_connected()
 
         # Scan for BLE device using raw advertisements
         mac_int = int(device_id.replace(":", ""), 16)
@@ -121,7 +154,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.device_name = device_name or "Unknown"
         logger.debug(f"Creating ESPHomeAPIClient for {device_id}")
 
-        self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, address_type)
+        self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, address_type, self._esphome_feature_flags)
         await self.client.connect()
 
         await self._post_connect()
