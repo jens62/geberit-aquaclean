@@ -154,8 +154,26 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.device_name = device_name or "Unknown"
         logger.debug(f"Creating ESPHomeAPIClient for {device_id}")
 
-        self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, address_type, self._esphome_feature_flags)
-        await self.client.connect()
+        # Try connecting with detected address_type, fallback to alternate if timeout
+        # Probe script showed RANDOM (1) works, but advertisement may indicate PUBLIC (0)
+        address_types_to_try = [address_type, 1 - address_type]  # Try detected, then alternate
+        last_error = None
+
+        for attempt, addr_type in enumerate(address_types_to_try, 1):
+            try:
+                logger.debug(f"BLE connection attempt {attempt}/2 with address_type={addr_type} ({'RANDOM' if addr_type == 1 else 'PUBLIC'})")
+                self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, self._esphome_feature_flags)
+                await self.client.connect()
+                logger.info(f"BLE connection successful with address_type={addr_type}")
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning(f"BLE connection attempt {attempt}/2 failed with address_type={addr_type}: {e}")
+                if attempt < len(address_types_to_try):
+                    logger.debug(f"Retrying with alternate address_type")
+                else:
+                    logger.error(f"All BLE connection attempts failed")
+                    raise last_error
 
         await self._post_connect()
 

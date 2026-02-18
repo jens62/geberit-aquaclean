@@ -128,6 +128,8 @@ class ESPHomeAPIClient:
 
         # Initiate connection with feature flags
         logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}, feature_flags={self._feature_flags}")
+        logger.trace(f"[ESPHomeAPIClient] Connection parameters: has_cache=False, disconnect_timeout=10.0, timeout={timeout}")
+
         self._cancel_connection = await self._api.bluetooth_device_connect(
             self._mac_int,
             on_bluetooth_connection_state,
@@ -138,8 +140,11 @@ class ESPHomeAPIClient:
             timeout=timeout
         )
 
+        logger.trace(f"[ESPHomeAPIClient] bluetooth_device_connect returned, waiting for connection state callback")
+
         try:
             # Wait for connection to complete
+            logger.trace(f"[ESPHomeAPIClient] Waiting for BLE connection (timeout={timeout}s)")
             mtu = await asyncio.wait_for(connected_future, timeout=timeout)
             logger.info(f"[ESPHomeAPIClient] Successfully connected to {self._mac_address} (MTU: {mtu})")
 
@@ -163,10 +168,11 @@ class ESPHomeAPIClient:
 
     async def _fetch_services(self):
         """Fetch GATT services and build UUID↔handle mappings."""
-        logger.trace("[ESPHomeAPIClient] Fetching GATT services")
+        logger.trace(f"[ESPHomeAPIClient] Fetching GATT services for mac_int={self._mac_int}")
 
         try:
             resp = await self._api.bluetooth_gatt_get_services(self._mac_int)
+            logger.trace(f"[ESPHomeAPIClient] Received {len(resp.services)} services from ESP32")
             services = []
 
             for svc in resp.services:
