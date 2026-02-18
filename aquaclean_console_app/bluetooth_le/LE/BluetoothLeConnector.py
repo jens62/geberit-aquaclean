@@ -171,10 +171,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.device_name = device_name or "Unknown"
         logger.debug(f"Creating ESPHomeAPIClient for {device_id}")
 
-        # Try connecting with detected address_type, fallback to alternate if timeout
-        # Probe script proved RANDOM (1) works for AquaClean, try that first
-        # Advertisement may not include address_type or may indicate wrong type
-        address_types_to_try = [1, 0]  # Try RANDOM first (works for AquaClean), then PUBLIC
+        # Try connecting with PUBLIC first, fallback to RANDOM
+        # AquaClean "Geberit AC PRO" uses PUBLIC (0) addressing
+        # RANDOM (1) fails with error 256 for this device
+        address_types_to_try = [0, 1]  # Try PUBLIC first (works for AquaClean), then RANDOM
         last_error = None
 
         for attempt, addr_type in enumerate(address_types_to_try, 1):

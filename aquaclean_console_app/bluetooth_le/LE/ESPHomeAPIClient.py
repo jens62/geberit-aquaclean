@@ -327,7 +327,7 @@ class ESPHomeAPIClient:
             await self._api.bluetooth_gatt_write(
                 self._mac_int,
                 handle,
-                data,
+                bytes(data),  # aioesphomeapi requires bytes, not bytearray
                 response=response
             )
             logger.debug(f"[ESPHomeAPIClient] Write successful: {uuid_str} (handle=0x{handle:04x})")
