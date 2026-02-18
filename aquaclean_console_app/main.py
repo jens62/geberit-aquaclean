@@ -41,6 +41,11 @@ esphome_host     = config.get("ESPHOME",  "host",       fallback=None) or None
 esphome_port     = int(config.get("ESPHOME", "port",    fallback="6053"))
 esphome_noise_psk = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
+
+# Suppress verbose external library logging
+logging.getLogger("aioesphomeapi.connection").setLevel(logging.INFO)
+logging.getLogger("aioesphomeapi._frame_helper.base").setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 
