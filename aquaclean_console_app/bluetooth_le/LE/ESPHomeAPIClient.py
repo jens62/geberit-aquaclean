@@ -41,7 +41,8 @@ class ESPHomeAPIClient:
         self,
         api_client: APIClient,
         mac_address: str,
-        disconnected_callback: Callable = None
+        disconnected_callback: Callable = None,
+        address_type: int = 0
     ):
         """
         Initialize the ESPHome API client wrapper.
@@ -50,10 +51,12 @@ class ESPHomeAPIClient:
             api_client: Connected aioesphomeapi.APIClient instance
             mac_address: BLE device MAC address (format: "AA:BB:CC:DD:EE:FF")
             disconnected_callback: Callback invoked on disconnection (callback(client))
+            address_type: BLE address type (0=PUBLIC, 1=RANDOM, default=0)
         """
         self._api = api_client
         self._mac_address = mac_address
         self._mac_int = int(mac_address.replace(":", ""), 16)
+        self._address_type = address_type
         self._disconnected_callback = disconnected_callback
         self._is_connected = False
         self._services = None
@@ -62,7 +65,7 @@ class ESPHomeAPIClient:
         self._notify_callbacks: Dict[int, Callable] = {}
         self._cancel_connection = None
 
-        logger.trace(f"[ESPHomeAPIClient] Initialized for device {mac_address} (int: {self._mac_int})")
+        logger.trace(f"[ESPHomeAPIClient] Initialized for device {mac_address} (int: {self._mac_int}, address_type: {address_type})")
 
     @property
     def is_connected(self) -> bool:
@@ -120,10 +123,11 @@ class ESPHomeAPIClient:
                             logger.error(f"[ESPHomeAPIClient] Error in disconnected callback: {e}")
 
         # Initiate connection
-        logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}")
+        logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}")
         self._cancel_connection = await self._api.bluetooth_device_connect(
             self._mac_int,
             on_bluetooth_connection_state,
+            address_type=self._address_type,
             timeout=timeout
         )
 
