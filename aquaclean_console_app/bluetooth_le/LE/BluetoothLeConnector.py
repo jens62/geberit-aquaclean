@@ -162,6 +162,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         for attempt, addr_type in enumerate(address_types_to_try, 1):
             try:
                 logger.debug(f"BLE connection attempt {attempt}/2 with address_type={addr_type} ({'RANDOM' if addr_type == 1 else 'PUBLIC'})")
+
+                # Ensure previous attempt is fully cleaned up before starting new one
+                if self.client is not None:
+                    logger.trace(f"Cleaning up previous connection attempt before retry")
+                    try:
+                        await self.client.disconnect()
+                    except Exception as cleanup_error:
+                        logger.trace(f"Cleanup error (expected): {cleanup_error}")
+                    self.client = None
+                    # Give ESP32 a moment to fully process the disconnect
+                    await asyncio.sleep(0.5)
+
                 self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, self._esphome_feature_flags)
                 await self.client.connect()
                 logger.info(f"BLE connection successful with address_type={addr_type}")
