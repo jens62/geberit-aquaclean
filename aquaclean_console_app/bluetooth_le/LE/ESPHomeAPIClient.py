@@ -68,6 +68,8 @@ class ESPHomeAPIClient:
         self._cccd_handles: Dict[int, int] = {}  # char_handle → CCCD descriptor handle
         self._notify_callbacks: Dict[int, Callable] = {}
         self._notify_unsubs: list = []  # unsubscribe functions from start_notify
+        self._notify_queue: asyncio.Queue = asyncio.Queue()
+        self._notify_worker_task = None
         self._cancel_connection = None
 
         logger.trace(f"[ESPHomeAPIClient] Initialized for device {mac_address} (int: {self._mac_int}, address_type: {address_type}, feature_flags: {feature_flags})")
@@ -157,6 +159,11 @@ class ESPHomeAPIClient:
             # Fetch GATT services and build UUID↔handle mappings
             await self._fetch_services()
 
+            # Start notification worker to serialize processing
+            # (FrameCollector uses threading.Lock across await points,
+            # so concurrent notification tasks would deadlock)
+            self._notify_worker_task = asyncio.create_task(self._notification_worker())
+
             return True
 
         except asyncio.TimeoutError:
@@ -171,6 +178,19 @@ class ESPHomeAPIClient:
             if self._cancel_connection:
                 self._cancel_connection()
             raise
+
+    async def _notification_worker(self):
+        """Process notifications sequentially to avoid FrameCollector deadlock."""
+        while self._is_connected:
+            try:
+                callback_fn, char_wrapper, data = await self._notify_queue.get()
+                result = callback_fn(char_wrapper, data)
+                if asyncio.iscoroutine(result):
+                    await result
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[ESPHomeAPIClient] Error in notification worker: {e}")
 
     async def _fetch_services(self):
         """Fetch GATT services and build UUID↔handle mappings."""
@@ -278,15 +298,11 @@ class ESPHomeAPIClient:
 
             callback_fn = self._notify_callbacks.get(handle)
             if callback_fn:
-                try:
-                    # Create a characteristic wrapper for the callback (bleak compatibility)
-                    char_wrapper = ESPHomeGATTCharacteristic(uuid=uuid, handle=handle, properties=0x10)
-                    # Invoke the callback asynchronously if it's a coroutine
-                    result = callback_fn(char_wrapper, data)
-                    if asyncio.iscoroutine(result):
-                        asyncio.create_task(result)
-                except Exception as e:
-                    logger.error(f"[ESPHomeAPIClient] Error in notification callback: {e}")
+                # Enqueue for sequential processing by the notification worker.
+                # FrameCollector uses threading.Lock across await points, so
+                # concurrent notification tasks would deadlock.
+                char_wrapper = ESPHomeGATTCharacteristic(uuid=uuid, handle=handle, properties=0x10)
+                self._notify_queue.put_nowait((callback_fn, char_wrapper, data))
             else:
                 logger.warning(f"[ESPHomeAPIClient] No callback registered for handle 0x{handle:04x}")
 
@@ -376,6 +392,11 @@ class ESPHomeAPIClient:
             return
 
         try:
+            # Stop notification worker
+            if self._notify_worker_task:
+                self._notify_worker_task.cancel()
+                self._notify_worker_task = None
+
             # Disconnect from BLE device
             await self._api.bluetooth_device_disconnect(self._mac_int)
             logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address}")
