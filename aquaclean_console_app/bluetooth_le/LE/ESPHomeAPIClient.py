@@ -72,7 +72,7 @@ class ESPHomeAPIClient:
         self._notify_worker_task = None
         self._cancel_connection = None
 
-        logger.trace(f"[ESPHomeAPIClient] Initialized for device {mac_address} (int: {self._mac_int}, address_type: {address_type}, feature_flags: {feature_flags})")
+        logger.silly(f"[ESPHomeAPIClient] Initialized for device {mac_address} (int: {self._mac_int}, address_type: {address_type}, feature_flags: {feature_flags})")
 
     @property
     def is_connected(self) -> bool:
@@ -100,15 +100,15 @@ class ESPHomeAPIClient:
         Raises:
             Exception: On connection failure or timeout
         """
-        logger.trace(f"[ESPHomeAPIClient] Connecting to BLE device {self._mac_address} via ESP32 proxy")
-        logger.debug(f"[ESPHomeAPIClient] Using feature_flags: {self._feature_flags}")
+        logger.debug(f"[ESPHomeAPIClient] Connecting to BLE device {self._mac_address} via ESP32 proxy")
+        logger.silly(f"[ESPHomeAPIClient] Using feature_flags: {self._feature_flags}")
 
         # Create future to track connection state
         connected_future = asyncio.get_running_loop().create_future()
 
         def on_bluetooth_connection_state(connected: bool, mtu: int, error: int) -> None:
             """Handle connection state changes from ESP32 proxy."""
-            logger.trace(f"[ESPHomeAPIClient] on_bluetooth_connection_state called: connected={connected}, mtu={mtu}, error={error}, future_done={connected_future.done()}")
+            logger.silly(f"[ESPHomeAPIClient] on_bluetooth_connection_state called: connected={connected}, mtu={mtu}, error={error}, future_done={connected_future.done()}")
             if not connected_future.done():
                 if error:
                     logger.error(f"[ESPHomeAPIClient] Connection error: {error}")
@@ -132,10 +132,10 @@ class ESPHomeAPIClient:
                             logger.error(f"[ESPHomeAPIClient] Error in disconnected callback: {e}")
 
         # Initiate connection with feature flags
-        logger.trace(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}, feature_flags={self._feature_flags}")
-        logger.trace(f"[ESPHomeAPIClient] Connection parameters: has_cache=False, disconnect_timeout=10.0, timeout={timeout}")
+        logger.silly(f"[ESPHomeAPIClient] Calling bluetooth_device_connect for mac_int={self._mac_int}, address_type={self._address_type}, feature_flags={self._feature_flags}")
+        logger.silly(f"[ESPHomeAPIClient] Connection parameters: has_cache=False, disconnect_timeout=10.0, timeout={timeout}")
 
-        logger.trace(f"[ESPHomeAPIClient] About to call bluetooth_device_connect")
+        logger.silly(f"[ESPHomeAPIClient] About to call bluetooth_device_connect")
 
         self._cancel_connection = await self._api.bluetooth_device_connect(
             self._mac_int,
@@ -147,12 +147,12 @@ class ESPHomeAPIClient:
             timeout=timeout
         )
 
-        logger.trace(f"[ESPHomeAPIClient] bluetooth_device_connect returned successfully, cancel_connection={self._cancel_connection is not None}")
-        logger.trace(f"[ESPHomeAPIClient] Waiting for connection state callback")
+        logger.silly(f"[ESPHomeAPIClient] bluetooth_device_connect returned successfully, cancel_connection={self._cancel_connection is not None}")
+        logger.silly(f"[ESPHomeAPIClient] Waiting for connection state callback")
 
         try:
             # Wait for connection to complete
-            logger.trace(f"[ESPHomeAPIClient] Waiting for BLE connection (timeout={timeout}s)")
+            logger.silly(f"[ESPHomeAPIClient] Waiting for BLE connection (timeout={timeout}s)")
             mtu = await asyncio.wait_for(connected_future, timeout=timeout)
             logger.info(f"[ESPHomeAPIClient] Successfully connected to {self._mac_address} (MTU: {mtu})")
 
@@ -194,15 +194,15 @@ class ESPHomeAPIClient:
 
     async def _fetch_services(self):
         """Fetch GATT services and build UUID↔handle mappings."""
-        logger.trace(f"[ESPHomeAPIClient] Fetching GATT services for mac_int={self._mac_int}")
+        logger.silly(f"[ESPHomeAPIClient] Fetching GATT services for mac_int={self._mac_int}")
 
         try:
             resp = await self._api.bluetooth_gatt_get_services(self._mac_int)
-            logger.trace(f"[ESPHomeAPIClient] Received {len(resp.services)} services from ESP32")
+            logger.silly(f"[ESPHomeAPIClient] Received {len(resp.services)} services from ESP32")
             services = []
 
             for svc in resp.services:
-                logger.debug(f"[ESPHomeAPIClient] Service: {svc.uuid}")
+                logger.trace(f"[ESPHomeAPIClient] Service: {svc.uuid}")
                 characteristics = []
 
                 for char in svc.characteristics:
@@ -219,11 +219,11 @@ class ESPHomeAPIClient:
                     for desc in char.descriptors:
                         if desc.uuid.lower() == cccd_uuid:
                             self._cccd_handles[handle] = desc.handle
-                            logger.debug(
+                            logger.trace(
                                 f"[ESPHomeAPIClient]   CCCD descriptor: char 0x{handle:04x} → cccd 0x{desc.handle:04x}"
                             )
 
-                    logger.debug(
+                    logger.trace(
                         f"[ESPHomeAPIClient]   Characteristic: {uuid_str} → handle=0x{handle:04x} "
                         f"properties=0x{char.properties:02x}"
                     )
@@ -244,7 +244,7 @@ class ESPHomeAPIClient:
                 )
 
             self._services = ESPHomeGATTServiceCollection(services)
-            logger.trace(
+            logger.debug(
                 f"[ESPHomeAPIClient] Service discovery complete: "
                 f"{len(services)} services, {len(self._uuid_to_handle)} characteristics"
             )
@@ -282,7 +282,7 @@ class ESPHomeAPIClient:
             logger.error(f"[ESPHomeAPIClient] UUID {uuid_str} not found in services")
             raise ValueError(f"Characteristic UUID {uuid_str} not found in device services")
 
-        logger.trace(f"[ESPHomeAPIClient] Registering notification: {uuid_str} (handle=0x{handle:04x})")
+        logger.silly(f"[ESPHomeAPIClient] Registering notification: {uuid_str} (handle=0x{handle:04x})")
 
         # Store callback for this handle
         self._notify_callbacks[handle] = callback
@@ -291,7 +291,7 @@ class ESPHomeAPIClient:
         def on_notify(handle: int, data: bytes) -> None:
             """Route notification from handle to UUID-based callback."""
             uuid = self._handle_to_uuid.get(handle)
-            logger.trace(
+            logger.silly(
                 f"[ESPHomeAPIClient] Notification received: handle=0x{handle:04x} uuid={uuid} "
                 f"len={len(data)} data={data.hex()[:40]}{'...' if len(data) > 20 else ''}"
             )
@@ -312,7 +312,7 @@ class ESPHomeAPIClient:
                 self._mac_int, handle, on_notify
             )
             self._notify_unsubs.append((stop_notify, remove_cb))
-            logger.debug(f"[ESPHomeAPIClient] Notification registered for {uuid_str} (handle=0x{handle:04x})")
+            logger.silly(f"[ESPHomeAPIClient] Notification registered for {uuid_str} (handle=0x{handle:04x})")
 
             # V3 connections require the CLIENT to write the CCCD descriptor
             # to actually enable notifications on the remote BLE device.
@@ -322,7 +322,7 @@ class ESPHomeAPIClient:
                 await self._api.bluetooth_gatt_write_descriptor(
                     self._mac_int, cccd_handle, b"\x01\x00"
                 )
-                logger.debug(
+                logger.silly(
                     f"[ESPHomeAPIClient] CCCD written for {uuid_str} "
                     f"(cccd_handle=0x{cccd_handle:04x})"
                 )
@@ -366,7 +366,7 @@ class ESPHomeAPIClient:
             logger.error(f"[ESPHomeAPIClient] UUID {uuid_str} not found in services")
             raise ValueError(f"Characteristic UUID {uuid_str} not found in device services")
 
-        logger.trace(
+        logger.silly(
             f"[ESPHomeAPIClient] Write characteristic: {uuid_str} (handle=0x{handle:04x}) "
             f"len={len(data)} data={data.hex()[:40]}{'...' if len(data) > 20 else ''}"
         )
@@ -378,17 +378,17 @@ class ESPHomeAPIClient:
                 bytes(data),  # aioesphomeapi requires bytes, not bytearray
                 response=response
             )
-            logger.debug(f"[ESPHomeAPIClient] Write successful: {uuid_str} (handle=0x{handle:04x})")
+            logger.silly(f"[ESPHomeAPIClient] Write successful: {uuid_str} (handle=0x{handle:04x})")
         except Exception as e:
             logger.error(f"[ESPHomeAPIClient] Write failed for {uuid_str}: {e}")
             raise
 
     async def disconnect(self):
         """Disconnect from the BLE device."""
-        logger.trace(f"[ESPHomeAPIClient] Disconnecting from {self._mac_address}")
+        logger.debug(f"[ESPHomeAPIClient] Disconnecting from {self._mac_address}")
 
         if not self._is_connected:
-            logger.trace("[ESPHomeAPIClient] Already disconnected")
+            logger.silly("[ESPHomeAPIClient] Already disconnected")
             return
 
         try:

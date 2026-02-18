@@ -49,7 +49,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
 
     async def connect_async(self, device_id):
-        logger.trace("BluetoothLeConnector: connect")
+        logger.silly("BluetoothLeConnector: connect")
         if self.esphome_host:
             await self._connect_via_esphome(device_id)
         else:
@@ -63,7 +63,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         self.device_address = device.address
         self.device_name = device.name
-        logger.trace(f"device.address: {device.address}, device.name: {device.name}")
+        logger.debug(f"device.address: {device.address}, device.name: {device.name}")
 
         self.client = BleakClient(address_or_ble_device=device, disconnected_callback=self._on_disconnected)
         await self.client.connect()
@@ -78,7 +78,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             # Check if connection is still alive
             try:
                 if self._esphome_api._connection and self._esphome_api._connection.is_connected:
-                    logger.trace("Reusing existing ESP32 API connection")
+                    logger.silly("Reusing existing ESP32 API connection")
                     return self._esphome_api
             except Exception:
                 pass
@@ -152,7 +152,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     address_type = getattr(adv, 'address_type', 0)
                     found_event.set()
 
-        logger.trace(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
+        logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
         unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
         try:
             await asyncio.wait_for(found_event.wait(), timeout=30.0)
@@ -183,11 +183,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
                 # Ensure previous attempt is fully cleaned up before starting new one
                 if self.client is not None:
-                    logger.trace(f"Cleaning up previous connection attempt before retry")
+                    logger.silly(f"Cleaning up previous connection attempt before retry")
                     try:
                         await self.client.disconnect()
                     except Exception as cleanup_error:
-                        logger.trace(f"Cleanup error (expected): {cleanup_error}")
+                        logger.silly(f"Cleanup error (expected): {cleanup_error}")
                     self.client = None
                     # Give ESP32 a moment to fully process the disconnect
                     await asyncio.sleep(0.5)
@@ -239,63 +239,63 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             self.BULK_CHAR_BULK_READ_2_UUID: self.data_received,
             self.BULK_CHAR_BULK_READ_3_UUID: self.data_received
         }
-        logger.trace(f"self.read_characteristics: {self.read_characteristics}")
+        logger.silly(f"self.read_characteristics: {self.read_characteristics}")
         await self._list_services()
         self.connection_status_changed_handlers(self, True, self.device_address, self.device_name)
 
 
     async def _list_services(self):
-        logger.trace("BluetoothLeConnector: _list_services")
+        logger.silly("BluetoothLeConnector: _list_services")
 
         if not self.client.is_connected:
-            logger.trace('1. Error. Client not connected.')
+            logger.silly('1. Error. Client not connected.')
             await self.client.connect()
         else:
-            logger.trace('1. in subscribe 1: connected.')
+            logger.silly('1. in subscribe 1: connected.')
 
         for service in self.client.services:
             if service.uuid == str(self.SERVICE_UUID):
                 for characteristic in service.characteristics:
-                    logger.trace(f"got characteristic.uuid {characteristic.uuid}")
+                    logger.silly(f"got characteristic.uuid {characteristic.uuid}")
                     if characteristic.uuid in str(self.read_characteristics):
-                        logger.trace(f"Registering characteristic {characteristic.uuid} for notification.")
+                        logger.silly(f"Registering characteristic {characteristic.uuid} for notification.")
                         await self.client.start_notify(characteristic, self._on_data_received)
 
 
     async def _on_data_received(self, sender, data):
-        logger.trace("BluetoothLeConnector: _on_data_received")
-        logger.debug(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
+        logger.silly("BluetoothLeConnector: _on_data_received")
+        logger.silly(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
 
         await self.data_received_handlers.invoke_async(data)
 
 
     def _on_disconnected(self, client):
-        logger.trace("BluetoothLeConnector: _on_disconnected")
+        logger.silly("BluetoothLeConnector: _on_disconnected")
         self.connection_status_changed_handlers(self, False)
 
 
     async def send_message(self, data):
-        logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
+        logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         # 13:03:18:989	18.11.2024 13:03:18: Sending data to characteristic 3334429d-90f3-4c41-a02d-5cb3a13e0000 data: 700008000F000000000000000000000000000000
-        logger.debug(f"Sending data to characteristic {self.BULK_CHAR_BULK_WRITE_0_UUID} data: {''.join(f'{b:02X}' for b in data)}")
+        logger.silly(f"Sending data to characteristic {self.BULK_CHAR_BULK_WRITE_0_UUID} data: {''.join(f'{b:02X}' for b in data)}")
         # result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
         result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
 
-        logger.trace(f"result: {result}")
+        logger.silly(f"result: {result}")
 
 
     async def disconnect(self):
-        logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
+        logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         if self.client:
-            logger.trace(f"before asyncio.create_task(self.client.disconnect())")
+            logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             await self.client.disconnect()
         else:
-            logger.trace(f"not self.client, no need to disconnect.")
+            logger.silly(f"not self.client, no need to disconnect.")
         # Now safe to unsubscribe from advertisements after BLE is disconnected
         if self._esphome_unsub_adv:
             try:
                 self._esphome_unsub_adv()
-                logger.trace("Unsubscribed from advertisements after BLE disconnect")
+                logger.silly("Unsubscribed from advertisements after BLE disconnect")
             except Exception:
                 pass
             self._esphome_unsub_adv = None
