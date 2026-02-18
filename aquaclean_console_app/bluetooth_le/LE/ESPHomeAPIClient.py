@@ -65,7 +65,9 @@ class ESPHomeAPIClient:
         self._services = None
         self._uuid_to_handle: Dict[str, int] = {}
         self._handle_to_uuid: Dict[int, str] = {}
+        self._cccd_handles: Dict[int, int] = {}  # char_handle → CCCD descriptor handle
         self._notify_callbacks: Dict[int, Callable] = {}
+        self._notify_unsubs: list = []  # unsubscribe functions from start_notify
         self._cancel_connection = None
 
         logger.trace(f"[ESPHomeAPIClient] Initialized for device {mac_address} (int: {self._mac_int}, address_type: {address_type}, feature_flags: {feature_flags})")
@@ -192,6 +194,15 @@ class ESPHomeAPIClient:
                     self._uuid_to_handle[uuid_str] = handle
                     self._handle_to_uuid[handle] = uuid_str
 
+                    # Find CCCD descriptor (UUID 00002902-...) for notification enable
+                    cccd_uuid = "00002902-0000-1000-8000-00805f9b34fb"
+                    for desc in char.descriptors:
+                        if desc.uuid.lower() == cccd_uuid:
+                            self._cccd_handles[handle] = desc.handle
+                            logger.debug(
+                                f"[ESPHomeAPIClient]   CCCD descriptor: char 0x{handle:04x} → cccd 0x{desc.handle:04x}"
+                            )
+
                     logger.debug(
                         f"[ESPHomeAPIClient]   Characteristic: {uuid_str} → handle=0x{handle:04x} "
                         f"properties=0x{char.properties:02x}"
@@ -281,8 +292,29 @@ class ESPHomeAPIClient:
 
         # Subscribe to notifications via ESP32 proxy
         try:
-            await self._api.bluetooth_gatt_start_notify(self._mac_int, handle, on_notify)
-            logger.debug(f"[ESPHomeAPIClient] Notification enabled for {uuid_str} (handle=0x{handle:04x})")
+            stop_notify, remove_cb = await self._api.bluetooth_gatt_start_notify(
+                self._mac_int, handle, on_notify
+            )
+            self._notify_unsubs.append((stop_notify, remove_cb))
+            logger.debug(f"[ESPHomeAPIClient] Notification registered for {uuid_str} (handle=0x{handle:04x})")
+
+            # V3 connections require the CLIENT to write the CCCD descriptor
+            # to actually enable notifications on the remote BLE device.
+            # Without this, the ESP32 listens locally but the device never sends data.
+            cccd_handle = self._cccd_handles.get(handle)
+            if cccd_handle is not None:
+                await self._api.bluetooth_gatt_write_descriptor(
+                    self._mac_int, cccd_handle, b"\x01\x00"
+                )
+                logger.debug(
+                    f"[ESPHomeAPIClient] CCCD written for {uuid_str} "
+                    f"(cccd_handle=0x{cccd_handle:04x})"
+                )
+            else:
+                logger.warning(
+                    f"[ESPHomeAPIClient] No CCCD descriptor found for {uuid_str} "
+                    f"(handle=0x{handle:04x}), notifications may not work"
+                )
         except Exception as e:
             logger.error(f"[ESPHomeAPIClient] Failed to start notifications for {uuid_str}: {e}")
             raise
