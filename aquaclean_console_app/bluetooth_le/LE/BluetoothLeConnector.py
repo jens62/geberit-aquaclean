@@ -155,8 +155,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.debug(f"Creating ESPHomeAPIClient for {device_id}")
 
         # Try connecting with detected address_type, fallback to alternate if timeout
-        # Probe script showed RANDOM (1) works, but advertisement may indicate PUBLIC (0)
-        address_types_to_try = [address_type, 1 - address_type]  # Try detected, then alternate
+        # Probe script proved RANDOM (1) works for AquaClean, try that first
+        # Advertisement may not include address_type or may indicate wrong type
+        address_types_to_try = [1, 0]  # Try RANDOM first (works for AquaClean), then PUBLIC
         last_error = None
 
         for attempt, addr_type in enumerate(address_types_to_try, 1):
