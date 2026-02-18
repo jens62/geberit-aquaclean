@@ -152,14 +152,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     found_event.set()
 
         logger.trace(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
-        unsub = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
+        unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
         try:
             await asyncio.wait_for(found_event.wait(), timeout=30.0)
             logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
         except asyncio.TimeoutError:
+            unsub_adv()
             raise BleakError(f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}")
-        finally:
-            unsub()
+        # NOTE: Do NOT unsubscribe from advertisements here!
+        # Unsubscribing sends UnsubscribeBluetoothLEAdvertisementsRequest which
+        # clears api_connection_ on the ESP32. The ESP32 loop() then disconnects
+        # ALL active BLE connections when api_connection_ is nullptr.
+        # We defer unsubscription until after BLE connection is established.
 
         # Create wrapper client and connect to BLE device
         self.device_address = device_id
@@ -190,6 +194,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, self._esphome_feature_flags)
                 await self.client.connect()
                 logger.info(f"BLE connection successful with address_type={addr_type}")
+                # Now safe to unsubscribe from advertisements
+                unsub_adv()
+                logger.trace(f"Unsubscribed from advertisements after successful BLE connection")
                 break
             except Exception as e:
                 last_error = e
@@ -198,6 +205,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     logger.debug(f"Retrying with alternate address_type")
                 else:
                     logger.error(f"All BLE connection attempts failed")
+                    unsub_adv()
                     raise last_error
 
         await self._post_connect()
