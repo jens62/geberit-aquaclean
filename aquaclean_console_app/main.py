@@ -504,13 +504,17 @@ class ServiceMode:
         from aioesphomeapi import LogLevel
 
         # log_entry is a structured object with .level and .message attributes
-        # message format: "\033[0;36m[D][component:line]: message\033[0m"
+        # message format: b"\033[0;36m[D][component:line]: message\033[0m" (bytes!)
         try:
             # Extract message and level from log_entry object
             if hasattr(log_entry, 'message'):
                 raw_message = log_entry.message
             else:
                 raw_message = str(log_entry)
+
+            # Decode bytes to string if needed
+            if isinstance(raw_message, bytes):
+                raw_message = raw_message.decode('utf-8', errors='replace')
 
             # Strip ANSI escape codes (color codes like \x1b[0;36m or \033[0;36m)
             ansi_escape = re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
