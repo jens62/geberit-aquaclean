@@ -185,6 +185,59 @@ When `host` is set the bridge automatically routes all BLE traffic through the E
 
 ---
 
+## Log Streaming (Optional)
+
+The Python bridge can stream live logs from the ESP32 device and integrate them into the console app logging — useful for debugging proxy issues, BLE scanner problems, or correlation between ESP32 events and app behavior.
+
+**When to enable:**
+- Troubleshooting BLE connection issues
+- Debugging ESP32 proxy behavior
+- Diagnosing WiFi/network problems on the ESP32
+- Development and testing
+
+**When to disable (default):**
+- Production use — very verbose, generates constant log traffic
+- Normal operation — ESP32 logs system events unrelated to the AquaClean
+
+### Configuration
+
+Add to the `[ESPHOME]` section in `config.ini`:
+
+```ini
+[ESPHOME]
+host = 192.168.0.xxx
+port = 6053
+noise_psk = base64key==
+log_streaming = false      # Enable log streaming (true/false)
+log_level = INFO           # Log level: ERROR | WARN | INFO | DEBUG | VERBOSE
+```
+
+**Log levels:**
+
+| Level | What you see |
+|-------|--------------|
+| `ERROR` | Errors only |
+| `WARN` | Warnings and errors |
+| `INFO` | Normal operations (recommended for debugging) |
+| `DEBUG` | Detailed BLE operations, scanner activity |
+| `VERBOSE` | Everything — very chatty |
+
+### Output Format
+
+ESP32 logs are prefixed with `[ESP32:tag]` where `tag` is the ESPHome component (e.g., `bluetooth_proxy`, `wifi`, `esp32_ble_tracker`):
+
+```
+2026-02-19 10:30:15 INFO: ESPHome log streaming enabled (level=INFO)
+2026-02-19 10:30:16 INFO: [ESP32:bluetooth_proxy] Connecting v3 without cache
+2026-02-19 10:30:16 DEBUG: [ESP32:esp32_ble_tracker] Setting coexistence to Bluetooth
+2026-02-19 10:30:16 INFO: [ESP32:esp32_ble_client] Connection open (MTU: 517)
+2026-02-19 10:30:17 WARNING: [ESP32:wifi] WiFi signal weak: -78 dBm
+```
+
+**Performance note:** Log streaming uses a persistent API connection separate from BLE operations.  At `INFO` level the overhead is minimal.  At `DEBUG` or `VERBOSE` the ESP32 can log hundreds of messages per minute — keep disabled unless actively debugging.
+
+---
+
 ## How it works internally
 
 The Python bridge uses [aioesphomeapi](https://github.com/esphome/aioesphomeapi), the official ESPHome API client library, to communicate directly with the ESP32 over the **ESPHome native API** (TCP port 6053).  A bleak-compatible wrapper (`ESPHomeAPIClient`) translates between bleak's UUID-based interface and aioesphomeapi's handle-based protocol.
