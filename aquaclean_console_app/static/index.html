@@ -384,6 +384,15 @@
       </div>
     </div>
 
+    <h2>ESPHome Proxy</h2>
+    <div class="conn-panel" id="esphomeProxyPanel" style="display:none">
+      <div class="conn-row">
+        <span class="conn-badge" id="esphomeProxyBadge">—</span>
+        <span class="conn-detail" id="esphomeProxyDetail">—</span>
+      </div>
+      <div class="conn-meta" id="esphomeProxyMeta"></div>
+    </div>
+
     <h2>Actions</h2>
     <div class="controls">
       <button id="connBtn" onclick="sendPost(connBtnUrl(), this)">
@@ -517,6 +526,7 @@
       if (!_ladyQueryActive)    updateCard('lady',    state.is_lady_shower_running);
       if (!_dryerQueryActive)   updateCard('dryer',   state.is_dryer_running);
       if ('ble_status' in state) updateConnection(state);
+      if ('esphome_proxy_enabled' in state) updateESPHomeProxy(state);
     }
 
     function updateCard(key, value) {
@@ -778,6 +788,40 @@
       set('pollMs',    fmt(state.last_poll_ms));
 
       if (status === 'connected' && prevStatus !== 'connected' && state.ble_connection !== 'on-demand') fetchDeviceInfo();
+    }
+
+    // --- ESPHome Proxy status ---
+    function updateESPHomeProxy(state) {
+      const panel  = document.getElementById('esphomeProxyPanel');
+      const badge  = document.getElementById('esphomeProxyBadge');
+      const detail = document.getElementById('esphomeProxyDetail');
+      const meta   = document.getElementById('esphomeProxyMeta');
+
+      const enabled = state.esphome_proxy_enabled || false;
+      const connected = state.esphome_proxy_connected || false;
+      const name = state.esphome_proxy_name || '';
+      const host = state.esphome_proxy_host || '';
+      const port = state.esphome_proxy_port || '';
+      const error = state.esphome_proxy_error || '';
+
+      // Show/hide panel based on enabled status
+      if (enabled) {
+        panel.style.display = '';
+
+        if (connected && name) {
+          badge.className = 'conn-badge connected';
+          badge.textContent = 'connected';
+          detail.textContent = name + ' (' + host + ':' + port + ')';
+          meta.textContent = error !== 'No error' ? error : '';
+        } else {
+          badge.className = 'conn-badge disconnected';
+          badge.textContent = 'disconnected';
+          detail.textContent = host ? host + ':' + port : '—';
+          meta.textContent = error !== 'No error' ? error : '';
+        }
+      } else {
+        panel.style.display = 'none';
+      }
     }
 
     // --- Device info ---

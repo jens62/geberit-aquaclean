@@ -323,6 +323,18 @@ class ServiceMode:
         if error is not None:
             self.esphome_proxy_state["error"] = error
         await self._publish_esphome_proxy_status()
+        # Broadcast state change to SSE clients (webapp)
+        if self.on_state_updated:
+            state = dict(self.device_state)
+            state.update({
+                "esphome_proxy_enabled": self.esphome_proxy_state["enabled"],
+                "esphome_proxy_connected": self.esphome_proxy_state["connected"],
+                "esphome_proxy_name": self.esphome_proxy_state["name"],
+                "esphome_proxy_host": self.esphome_proxy_state["host"],
+                "esphome_proxy_port": self.esphome_proxy_state["port"],
+                "esphome_proxy_error": self.esphome_proxy_state["error"],
+            })
+            await self.on_state_updated(state)
 
     async def _publish_esphome_proxy_status(self):
         """Publish ESPHome proxy status to MQTT."""
@@ -660,7 +672,17 @@ class ApiMode:
 
     def get_current_state(self) -> dict:
         """In-memory state snapshot — sync, no BLE connection (safe for SSE initial push)."""
-        return dict(self.service.device_state)
+        state = dict(self.service.device_state)
+        # Include ESPHome proxy state
+        state.update({
+            "esphome_proxy_enabled": self.service.esphome_proxy_state["enabled"],
+            "esphome_proxy_connected": self.service.esphome_proxy_state["connected"],
+            "esphome_proxy_name": self.service.esphome_proxy_state["name"],
+            "esphome_proxy_host": self.service.esphome_proxy_state["host"],
+            "esphome_proxy_port": self.service.esphome_proxy_state["port"],
+            "esphome_proxy_error": self.service.esphome_proxy_state["error"],
+        })
+        return state
 
     def get_config(self) -> dict:
         return {"ble_connection": self.ble_connection, "poll_interval": self._poll_interval}
