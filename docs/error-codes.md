@@ -20,7 +20,8 @@ E[Category][Number]
 
 | Category | Code Range | Description |
 |----------|------------|-------------|
-| **BLE Connection** | E0xxx | Bluetooth LE connection and communication errors |
+| **Success** | E0000 | Success state - no error occurred |
+| **BLE Connection** | E0001-E0999 | Bluetooth LE connection and communication errors |
 | **ESP32 Proxy** | E1xxx | ESPHome Bluetooth Proxy connection and operation errors |
 | **Recovery Protocol** | E2xxx | Automatic recovery protocol errors and timeouts |
 | **Command Execution** | E3xxx | Command processing and MQTT command errors |
