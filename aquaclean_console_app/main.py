@@ -303,6 +303,83 @@ class ServiceMode:
         """Passively scans until the device drops off BLE, then waits for it to reappear."""
         topic = f"{self.mqttConfig['topic']}/centralDevice/connected"
 
+        if esphome_host:
+            await self._wait_for_device_restart_via_esphome(device_id, topic)
+        else:
+            await self._wait_for_device_restart_local(device_id, topic)
+
+    async def _wait_for_device_restart_via_esphome(self, device_id, topic):
+        """Wait for device restart using ESP32 proxy scanning."""
+        from aioesphomeapi import APIClient
+
+        logger.info(f"Using ESP32 proxy at {esphome_host}:{esphome_port} for recovery protocol")
+
+        # Connect to ESP32 proxy
+        api = APIClient(address=esphome_host, port=esphome_port, password="", noise_psk=esphome_noise_psk)
+        try:
+            await asyncio.wait_for(api.connect(login=True), timeout=10.0)
+            logger.debug("Connected to ESP32 proxy for recovery scanning")
+        except Exception as e:
+            logger.error(f"Failed to connect to ESP32 proxy for recovery: {e}")
+            logger.warning("Falling back to local BLE scanning")
+            await self._wait_for_device_restart_local(device_id, topic)
+            return
+
+        try:
+            mac_int = int(device_id.replace(":", ""), 16)
+
+            # Phase 1: wait for device to disappear
+            await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
+            logger.info(f"Waiting for device {device_id} to drop off ESP32 proxy scanner...")
+
+            while not self._shutdown_event.is_set():
+                found = await self._check_device_via_esphome(api, mac_int)
+                if not found:
+                    logger.info("Device shut down confirmed (via ESP32 proxy).")
+                    await self.mqtt_service.send_data_async(topic, "Device offline. Waiting for it to power back on...")
+                    break
+                await asyncio.sleep(2)
+
+            # Phase 2: wait for device to reappear
+            logger.info(f"Waiting for device {device_id} to reappear on ESP32 proxy...")
+            while not self._shutdown_event.is_set():
+                found = await self._check_device_via_esphome(api, mac_int)
+                if found:
+                    logger.info("Device back online (via ESP32 proxy).")
+                    await self.mqtt_service.send_data_async(topic, f"Device detected ({device_id}). Reconnecting...")
+                    await asyncio.sleep(2)
+                    break
+                await asyncio.sleep(2)
+        finally:
+            # Disconnect from ESP32 API
+            try:
+                await api.disconnect()
+                logger.debug("Disconnected from ESP32 proxy after recovery scanning")
+            except Exception:
+                pass
+
+    async def _check_device_via_esphome(self, api, mac_int) -> bool:
+        """Check if device is visible via ESP32 proxy. Returns True if found."""
+        found_event = asyncio.Event()
+
+        def on_raw_advertisements(resp):
+            for adv in resp.advertisements:
+                if adv.address == mac_int:
+                    found_event.set()
+
+        unsub = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
+        try:
+            await asyncio.wait_for(found_event.wait(), timeout=3.0)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            unsub()
+
+    async def _wait_for_device_restart_local(self, device_id, topic):
+        """Wait for device restart using local BLE scanning."""
+        logger.info("Using local BLE for recovery protocol")
+
         # Phase 1: wait for the user to power-cycle the device
         await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
         logger.info(f"Waiting for device {device_id} to drop off BLE scanner...")
