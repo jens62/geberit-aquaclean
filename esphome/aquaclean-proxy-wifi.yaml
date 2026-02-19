@@ -1,0 +1,66 @@
+esphome:
+  name: aquaclean-proxy
+  friendly_name: Geberit AquaClean BLE Proxy
+
+esp32:
+  board: esp32-poe-iso
+  framework:
+    type: esp-idf   # required — Arduino framework has insufficient memory for a reliable proxy
+
+# ---------------------------------------------------------------------------
+# WiFi
+# Credentials are stored in secrets.yaml (wifi_ssid / wifi_password).
+# ---------------------------------------------------------------------------
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# ---------------------------------------------------------------------------
+# ESPHome native API
+# The Python bridge connects to this port (default 6053) to reach the BLE proxy.
+# No authentication — safe on a trusted home LAN.
+# To add encryption later:
+#   api:
+#     encryption:
+#       key: !secret api_encryption_key   # generate: openssl rand -base64 32
+# ---------------------------------------------------------------------------
+api:
+
+# ---------------------------------------------------------------------------
+# BLE Proxy
+# active: true  — enables full two-way GATT connections, required for AquaClean.
+# connection_slots: 2 — one for AquaClean, one spare. Increase only if needed.
+#
+# interval/window: WiFi and BLE share the same 2.4 GHz radio on ESP32.
+# Shorter scan windows reduce interference with WiFi; 320/200 ms is a safe
+# starting point.  If BLE range or responsiveness is poor, try 1100/1100.
+# ---------------------------------------------------------------------------
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 320ms
+    window: 200ms
+
+bluetooth_proxy:
+  active: true
+  connection_slots: 2
+
+# ---------------------------------------------------------------------------
+# OTA updates
+# Password disabled for initial flash — uncomment after first boot if needed
+# ---------------------------------------------------------------------------
+ota:
+  - platform: esphome
+    # password: !secret ota_password
+
+# ---------------------------------------------------------------------------
+# Logging — set to INFO for normal use, DEBUG when troubleshooting
+# ---------------------------------------------------------------------------
+logger:
+  level: INFO
+
+# ---------------------------------------------------------------------------
+# Optional: simple web interface on port 80 for status and logs
+# ---------------------------------------------------------------------------
+web_server:
+  port: 80
