@@ -3,6 +3,9 @@ readme.txt
 aiorun.py
 haggis/
 
+# Claude Code configuration
+.clauderc
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
