@@ -500,32 +500,48 @@ class ServiceMode:
 
     def _on_esphome_log_message(self, log_entry):
         """Handle incoming log messages from ESPHome device."""
-        from aioesphomeapi import LogLevel
+        import re
 
-        # Extract attributes safely - aioesphomeapi uses different names
+        # log_entry is raw bytes from ESPHome with ANSI color codes
+        # Format: b'\x1b[0;36m[D][component:line]: message\x1b[0m'
         try:
-            # Try different possible attribute names
-            tag = getattr(log_entry, 'tag', getattr(log_entry, 'name', 'esphome'))
-            message = getattr(log_entry, 'message', str(log_entry))
-            level = getattr(log_entry, 'level', LogLevel.LOG_LEVEL_INFO)
-        except Exception as e:
-            logger.debug(f"Error parsing log entry: {e}, entry={log_entry}")
-            return
+            # Decode bytes to string
+            if isinstance(log_entry, bytes):
+                raw = log_entry.decode('utf-8', errors='replace')
+            else:
+                raw = str(log_entry)
 
-        # Map ESP32 log level to Python log level and forward
-        prefix = f"[ESP32:{tag}]"
-        if level == LogLevel.LOG_LEVEL_ERROR:
-            logger.error(f"{prefix} {message}")
-        elif level == LogLevel.LOG_LEVEL_WARN:
-            logger.warning(f"{prefix} {message}")
-        elif level == LogLevel.LOG_LEVEL_INFO:
-            logger.info(f"{prefix} {message}")
-        elif level == LogLevel.LOG_LEVEL_DEBUG:
-            logger.debug(f"{prefix} {message}")
-        elif level == LogLevel.LOG_LEVEL_VERBOSE:
-            logger.trace(f"{prefix} {message}")
-        else:
-            logger.silly(f"{prefix} {message}")
+            # Strip ANSI escape codes (color codes like \x1b[0;36m)
+            ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+            clean = ansi_escape.sub('', raw)
+
+            # Parse ESPHome log format: [LEVEL][component:line]: message
+            # Example: [D][esp32_ble_tracker:141]: connecting: 0, discovered: 1
+            match = re.match(r'^\[([DEWIVT])\]\[([^\]]+?)(?::\d+)?\]:\s*(.+)$', clean)
+            if not match:
+                # Fallback: log as-is if format doesn't match
+                logger.debug(f"[ESP32:raw] {clean}")
+                return
+
+            level_char, component, message = match.groups()
+
+            # Map ESPHome log level characters to Python log levels
+            level_map = {
+                'E': 'error',      # Error
+                'W': 'warning',    # Warning
+                'I': 'info',       # Info
+                'D': 'debug',      # Debug
+                'V': 'trace',      # Verbose
+                'T': 'trace',      # Trace (very verbose)
+            }
+            log_method = getattr(logger, level_map.get(level_char, 'debug'))
+
+            # Log with clean component tag
+            prefix = f"[ESP32:{component}]"
+            log_method(f"{prefix} {message}")
+
+        except Exception as e:
+            logger.debug(f"Error parsing ESPHome log entry: {e}, entry={log_entry!r}")
 
     async def _stop_esphome_log_streaming(self):
         """Unsubscribe from ESPHome device logs."""
