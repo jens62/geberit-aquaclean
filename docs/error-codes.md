@@ -31,13 +31,20 @@ E[Category][Number]
 
 ---
 
+## Success Code
+
+| Code | Message | Description |
+|------|---------|-------------|
+| **E0000** | No error | Success state - no error has occurred. Published when errors are cleared or operations complete successfully. |
+
+---
+
 ## E0xxx - BLE Connection Errors
 
 Errors related to Bluetooth LE connectivity with the AquaClean device.
 
 | Code | Message | Cause | Solution |
 |------|---------|-------|----------|
-| **E0000** | No error | Success state | N/A - informational only |
 | **E0001** | BLE device not found (local adapter) | Device not in range or not advertising | Move closer to device; check device is powered on; verify MAC address in config |
 | **E0002** | BLE device not found (ESP32 proxy) | ESP32 cannot see the device | Move ESP32 closer to toilet; check ESP32 is scanning (`esphome logs`) |
 | **E0003** | BLE connection timeout | Connection attempt exceeded timeout | Check device is powered on; reduce distance; check for interference |

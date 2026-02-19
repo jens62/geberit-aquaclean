@@ -31,10 +31,14 @@ class ErrorCode(NamedTuple):
 
 
 # ============================================================================
-# E0xxx - BLE Connection Errors
+# E0000 - Success Code
 # ============================================================================
 
 E0000 = ErrorCode("E0000", "No error", "BLE", "INFO")
+
+# ============================================================================
+# E0xxx - BLE Connection Errors (E0001-E0999)
+# ============================================================================
 E0001 = ErrorCode("E0001", "BLE device not found (local adapter)", "BLE", "ERROR")
 E0002 = ErrorCode("E0002", "BLE device not found (ESP32 proxy)", "BLE", "ERROR")
 E0003 = ErrorCode("E0003", "BLE connection timeout", "BLE", "ERROR")
