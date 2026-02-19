@@ -27,8 +27,8 @@ from RestApiService                                           import RestApiServ
 from myEvent                                                  import myEvent
 from aquaclean_utils                                          import utils
 from ErrorCodes                                               import (
-    ErrorManager, E0000, E0003, E2001, E2002, E2003, E2004, E2005,
-    E3002, E4001, E4002, E4003, E7002
+    ErrorManager, E0000, E0001, E0002, E0003, E2001, E2002, E2003, E2004, E2005,
+    E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
 
 # --- Configuration & Logging Setup ---
@@ -1483,6 +1483,7 @@ async def run_cli(args):
         "device": None,
         "serial_number": None,
         "data": {},
+        "error_code": None,
         "message": "Unknown error"
     }
 
@@ -1595,10 +1596,29 @@ async def run_cli(args):
         result["status"]  = "success"
         result["message"] = f"Command {args.command} completed"
 
+    except BLEPeripheralTimeoutError as e:
+        # BLE connection timeout
+        result["status"] = "error"
+        result["error_code"] = E0003.code
+        result["message"] = E0003.message + f": {str(e)}"
+        logger.error(ErrorManager.to_cli(E0003, str(e)))
+    except BleakError as e:
+        # BLE errors (device not found, GATT errors, etc.)
+        error_str = str(e).lower()
+        if "not found" in error_str:
+            error_code = E0001 if "local" in error_str or "esphome" not in error_str else E0002
+        else:
+            error_code = E0003  # Generic BLE error
+        result["status"] = "error"
+        result["error_code"] = error_code.code
+        result["message"] = error_code.message + f": {str(e)}"
+        logger.error(ErrorManager.to_cli(error_code, str(e)))
     except Exception as e:
-        result["status"]  = "error"
+        # Generic errors
+        result["status"] = "error"
+        result["error_code"] = E7004.code if "command" not in str(e).lower() else E3003.code
         result["message"] = str(e)
-        logger.error(f"CLI Error: {e}")
+        logger.error(ErrorManager.to_cli(E7004, str(e)))
     finally:
         if client:
             await client.disconnect()
