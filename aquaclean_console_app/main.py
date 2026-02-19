@@ -99,6 +99,14 @@ class ServiceMode:
             "last_connect_ms": None,         # duration of last BLE connect in ms
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
         }
+        self.esphome_proxy_state = {
+            "enabled": esphome_host is not None,
+            "connected": False,
+            "name": "",
+            "host": esphome_host or "",
+            "port": esphome_port if esphome_host else "",
+            "error": "No error"
+        }
         self._reconnect_requested = asyncio.Event()
         self._connection_allowed = asyncio.Event()
         self._connection_allowed.set()  # auto-connect on startup
@@ -136,6 +144,11 @@ class ServiceMode:
         # which is updated each iteration of the recovery loop below
         self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
         self.mqtt_service.Connect += self.request_reconnect
+
+        # Publish initial ESPHome proxy status and Home Assistant discovery
+        await self._publish_esphome_proxy_status()
+        await self._publish_esphome_proxy_discovery()
+        logger.debug(f"ESPHome proxy mode: enabled={self.esphome_proxy_state['enabled']}, host={self.esphome_proxy_state['host']}")
 
         # --- Main Recovery Loop ---
         while not self._shutdown_event.is_set():
@@ -180,6 +193,14 @@ class ServiceMode:
                     device_name=self.client.Description,
                     device_address=device_id,
                 )
+
+                # Update ESPHome proxy status if connected via ESP32
+                if bluetooth_connector.esphome_proxy_connected:
+                    await self._update_esphome_proxy_state(
+                        connected=True,
+                        name=bluetooth_connector.esphome_proxy_name,
+                        error="No error"
+                    )
 
                 # Record when polling starts so clients can compute a
                 # deterministic countdown regardless of when they connect.
@@ -239,6 +260,9 @@ class ServiceMode:
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
                 await self._set_ble_status("error", error_msg=msg)
+                # Update ESP32 proxy error if ESP32 mode is enabled
+                if esphome_host:
+                    await self._update_esphome_proxy_state(connected=False, error=str(e))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -256,6 +280,9 @@ class ServiceMode:
                 except Exception:
                     pass
                 await self._set_ble_status("disconnected")
+                # Update ESP32 proxy disconnected state
+                if esphome_host:
+                    await self._update_esphome_proxy_state(connected=False, error="No error")
 
         # Recovery loop exited — stop the MQTT background thread
         self.mqtt_service.stop()
@@ -286,6 +313,121 @@ class ServiceMode:
         self.device_state["last_poll_ms"] = millis
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
+
+    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None):
+        """Update ESPHome proxy state and publish to MQTT."""
+        if connected is not None:
+            self.esphome_proxy_state["connected"] = connected
+        if name is not None:
+            self.esphome_proxy_state["name"] = name
+        if error is not None:
+            self.esphome_proxy_state["error"] = error
+        await self._publish_esphome_proxy_status()
+
+    async def _publish_esphome_proxy_status(self):
+        """Publish ESPHome proxy status to MQTT."""
+        topic = self.mqttConfig['topic']
+
+        # Publish enabled status
+        await self.mqtt_service.send_data_async(
+            f"{topic}/esphomeProxy/enabled",
+            str(self.esphome_proxy_state["enabled"]).lower()
+        )
+
+        # Publish connected status
+        if self.esphome_proxy_state["enabled"]:
+            if self.esphome_proxy_state["connected"] and self.esphome_proxy_state["name"]:
+                conn_str = f"{self.esphome_proxy_state['name']} ({self.esphome_proxy_state['host']}:{self.esphome_proxy_state['port']})"
+            else:
+                conn_str = "false"
+            await self.mqtt_service.send_data_async(
+                f"{topic}/esphomeProxy/connected",
+                conn_str
+            )
+        else:
+            await self.mqtt_service.send_data_async(
+                f"{topic}/esphomeProxy/connected",
+                "false"
+            )
+
+        # Publish error status
+        await self.mqtt_service.send_data_async(
+            f"{topic}/esphomeProxy/error",
+            self.esphome_proxy_state["error"]
+        )
+
+    async def _publish_esphome_proxy_discovery(self):
+        """Publish Home Assistant MQTT discovery for ESPHome proxy entities."""
+        import json
+        topic = self.mqttConfig['topic']
+        device_id = config.get("BLE", "device_id").replace(":", "").lower()
+
+        # Device information shared across all entities
+        device_config = {
+            "identifiers": [f"aquaclean_{device_id}"],
+            "name": "Geberit AquaClean",
+            "manufacturer": "Geberit",
+            "model": "AquaClean Console"
+        }
+
+        # Binary sensor: ESPHome proxy enabled
+        enabled_config = {
+            "name": "ESPHome Proxy Enabled",
+            "unique_id": f"aquaclean_{device_id}_esphome_proxy_enabled",
+            "state_topic": f"{topic}/esphomeProxy/enabled",
+            "payload_on": "true",
+            "payload_off": "false",
+            "device_class": "connectivity",
+            "entity_category": "diagnostic",
+            "device": device_config
+        }
+        await self.mqtt_service.send_data_async(
+            f"homeassistant/binary_sensor/aquaclean_{device_id}/esphome_proxy_enabled/config",
+            json.dumps(enabled_config)
+        )
+
+        # Binary sensor: ESPHome proxy connected
+        connected_config = {
+            "name": "ESPHome Proxy Connected",
+            "unique_id": f"aquaclean_{device_id}_esphome_proxy_connected",
+            "state_topic": f"{topic}/esphomeProxy/connected",
+            "value_template": "{{{{ 'ON' if value != 'false' else 'OFF' }}}}",
+            "device_class": "connectivity",
+            "entity_category": "diagnostic",
+            "device": device_config
+        }
+        await self.mqtt_service.send_data_async(
+            f"homeassistant/binary_sensor/aquaclean_{device_id}/esphome_proxy_connected/config",
+            json.dumps(connected_config)
+        )
+
+        # Sensor: ESPHome proxy connection string
+        connection_config = {
+            "name": "ESPHome Proxy Connection",
+            "unique_id": f"aquaclean_{device_id}_esphome_proxy_connection",
+            "state_topic": f"{topic}/esphomeProxy/connected",
+            "entity_category": "diagnostic",
+            "icon": "mdi:bluetooth-connect",
+            "device": device_config
+        }
+        await self.mqtt_service.send_data_async(
+            f"homeassistant/sensor/aquaclean_{device_id}/esphome_proxy_connection/config",
+            json.dumps(connection_config)
+        )
+
+        # Sensor: ESPHome proxy error
+        error_config = {
+            "name": "ESPHome Proxy Error",
+            "unique_id": f"aquaclean_{device_id}_esphome_proxy_error",
+            "state_topic": f"{topic}/esphomeProxy/error",
+            "entity_category": "diagnostic",
+            "icon": "mdi:alert-circle",
+            "device": device_config
+        }
+        await self.mqtt_service.send_data_async(
+            f"homeassistant/sensor/aquaclean_{device_id}/esphome_proxy_error/config",
+            json.dumps(error_config)
+        )
 
     async def request_reconnect(self):
         """Trigger a clean BLE reconnect (callable from MQTT or REST API)."""
@@ -318,10 +460,16 @@ class ServiceMode:
         api = APIClient(address=esphome_host, port=esphome_port, password="", noise_psk=esphome_noise_psk)
         try:
             await asyncio.wait_for(api.connect(login=True), timeout=10.0)
-            logger.debug("Connected to ESP32 proxy for recovery scanning")
+            device_info = await asyncio.wait_for(api.device_info(), timeout=10.0)
+            proxy_name = getattr(device_info, "name", "unknown")
+            logger.debug(f"Connected to ESP32 proxy {proxy_name} for recovery scanning")
+            # Publish ESP32 proxy connected status
+            await self._update_esphome_proxy_state(connected=True, name=proxy_name, error="No error")
         except Exception as e:
             logger.error(f"Failed to connect to ESP32 proxy for recovery: {e}")
             logger.warning("Falling back to local BLE scanning")
+            # Publish ESP32 proxy error
+            await self._update_esphome_proxy_state(connected=False, error=f"Recovery connection failed: {e}")
             await self._wait_for_device_restart_local(device_id, topic)
             return
 
