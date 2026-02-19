@@ -384,7 +384,7 @@ class ESPHomeAPIClient:
             raise
 
     async def disconnect(self):
-        """Disconnect from the BLE device."""
+        """Disconnect from the BLE device and ESP32 API."""
         logger.debug(f"[ESPHomeAPIClient] Disconnecting from {self._mac_address}")
 
         if not self._is_connected:
@@ -401,7 +401,7 @@ class ESPHomeAPIClient:
             await self._api.bluetooth_device_disconnect(self._mac_int)
             logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address}")
         except Exception as e:
-            logger.warning(f"[ESPHomeAPIClient] Error during disconnect: {e}")
+            logger.warning(f"[ESPHomeAPIClient] Error during BLE disconnect: {e}")
         finally:
             # Unsubscribe from connection state updates
             if self._cancel_connection:
@@ -409,6 +409,13 @@ class ESPHomeAPIClient:
                 self._cancel_connection = None
 
             self._is_connected = False
+
+            # Disconnect from ESP32 API to close TCP connection
+            try:
+                await self._api.disconnect()
+                logger.debug("[ESPHomeAPIClient] Disconnected from ESP32 API")
+            except Exception as e:
+                logger.debug(f"[ESPHomeAPIClient] ESP32 API disconnect: {e}")
 
             # Invoke disconnected callback
             if self._disconnected_callback:
