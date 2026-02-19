@@ -501,19 +501,20 @@ class ServiceMode:
     def _on_esphome_log_message(self, log_entry):
         """Handle incoming log messages from ESPHome device."""
         import re
+        from aioesphomeapi import LogLevel
 
-        # log_entry is raw bytes from ESPHome with ANSI color codes
-        # Format: b'\x1b[0;36m[D][component:line]: message\x1b[0m'
+        # log_entry is a structured object with .level and .message attributes
+        # message format: "\033[0;36m[D][component:line]: message\033[0m"
         try:
-            # Decode bytes to string
-            if isinstance(log_entry, bytes):
-                raw = log_entry.decode('utf-8', errors='replace')
+            # Extract message and level from log_entry object
+            if hasattr(log_entry, 'message'):
+                raw_message = log_entry.message
             else:
-                raw = str(log_entry)
+                raw_message = str(log_entry)
 
-            # Strip ANSI escape codes (color codes like \x1b[0;36m)
-            ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
-            clean = ansi_escape.sub('', raw)
+            # Strip ANSI escape codes (color codes like \x1b[0;36m or \033[0;36m)
+            ansi_escape = re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
+            clean = ansi_escape.sub('', raw_message)
 
             # Parse ESPHome log format: [LEVEL][component:line]: message
             # Example: [D][esp32_ble_tracker:141]: connecting: 0, discovered: 1
