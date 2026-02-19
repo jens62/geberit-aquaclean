@@ -954,11 +954,8 @@ class ApiMode:
             }
         else:
             result = await self._on_demand(lambda client: self._fetch_info(client))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate",          str(result["initial_operation_date"]))
+        # Note: MQTT publishing is handled by event handlers (on_device_identification, device_initial_operation_date)
+        # to avoid duplicate publishing when /info endpoint is called
         return result
 
     async def run_command(self, command: str):
@@ -1037,10 +1034,8 @@ class ApiMode:
             }
         else:
             result = await self._on_demand(self._fetch_identification)
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SapNumber",     str(result["sap_number"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/SerialNumber",   str(result["serial_number"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(result["production_date"]))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/Identification/Description",    str(result["description"]))
+        # Note: MQTT publishing is handled by on_device_identification event handler
+        # to avoid duplicate publishing when /identification endpoint is called
         return result
 
     async def get_anal_shower_state(self):
