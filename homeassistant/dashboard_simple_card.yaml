@@ -48,3 +48,15 @@ cards:
         name: Connected
       - entity: sensor.geberit_aquaclean_error
         name: Error
+
+  - type: entities
+    title: ESPHome Proxy Status
+    entities:
+      - entity: binary_sensor.geberit_aquaclean_esphome_proxy_enabled
+        name: Proxy Enabled
+      - entity: binary_sensor.geberit_aquaclean_esphome_proxy_connected
+        name: Proxy Connected
+      - entity: sensor.geberit_aquaclean_esphome_proxy_connection
+        name: ESP32 Device
+      - entity: sensor.geberit_aquaclean_esphome_proxy_error
+        name: Proxy Error

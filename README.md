@@ -6,6 +6,7 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 
 **Key enhancements over the original:**
 - **Non-blocking, on-demand BLE** — connects only for the duration of each request, then releases the connection immediately. The original holds BLE permanently, causing the device to stop responding after a few days. On-demand mode eliminates this entirely.
+- **ESPHome Bluetooth Proxy** — use an ESP32 as a remote BLE-to-IP bridge, eliminating the need for local Bluetooth hardware; run the bridge anywhere on your network
 - **MQTT** — publishes device state in real time; accepts control and configuration commands
 - **REST API + web UI** — live dashboard, per-request queries, runtime configuration without restart
 - **CLI** — one-shot commands for scripting, diagnostics, and automation
@@ -108,6 +109,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 | HA full setup guide | [homeassistant/SETUP_GUIDE.md](homeassistant/SETUP_GUIDE.md) |
 | ESPHome Bluetooth Proxy | [docs/esphome.md](docs/esphome.md) |
 | ESPHome troubleshooting | [docs/esphome-troubleshooting.md](docs/esphome-troubleshooting.md) |
+| ESPHome developer notes | [docs/esphome-developer-notes.md](docs/esphome-developer-notes.md) |
 
 ---
 
@@ -125,9 +127,15 @@ AquaClean firmware: RS28.0 TS199
 ## Architecture
 
 ```
-AquaClean (BLE) ←→ Raspberry Pi ←→ MQTT broker ←→ Home Assistant / openHAB / …
-                         ↕
-                    REST API / Web UI
+# Option 1: Local Bluetooth adapter
+AquaClean (BLE) ←→ Raspberry Pi / server ←→ MQTT broker ←→ Home Assistant / openHAB / …
+                            ↕
+                       REST API / Web UI
+
+# Option 2: ESPHome Bluetooth Proxy (ESP32 as remote BLE antenna)
+AquaClean (BLE) ←→ ESP32-POE-ISO ←→ [Ethernet/IP] ←→ Raspberry Pi / server ←→ MQTT broker ←→ HA / openHAB
+                   [ESPHome proxy]     port 6053              ↕
+                                                         REST API / Web UI
 ```
 
 ---
