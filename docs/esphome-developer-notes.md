@@ -24,7 +24,7 @@ RuntimeError: BluetoothManager has not been set
 - ✅ Official, well-maintained library
 - ✅ Already proven with `ble-scan.py` and probe scripts
 - ✅ Direct control over the ESPHome native API
-- ❌ Requires a wrapper to match bleak's UUID-based interface
+- ✅ Clean wrapper pattern maintains bleak compatibility with minimal code changes
 
 ---
 
