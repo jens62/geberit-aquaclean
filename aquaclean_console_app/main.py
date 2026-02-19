@@ -112,7 +112,8 @@ class ServiceMode:
             "name": "",
             "host": esphome_host or "",
             "port": esphome_port if esphome_host else "",
-            "error": "No error"
+            "error": "No error",
+            "error_code": "E0000"
         }
         self._reconnect_requested = asyncio.Event()
         self._connection_allowed = asyncio.Event()
@@ -275,7 +276,7 @@ class ServiceMode:
                 await self._set_ble_status("error", error_msg=msg)
                 # Update ESP32 proxy error if ESP32 mode is enabled
                 if esphome_host:
-                    await self._update_esphome_proxy_state(connected=False, error=str(e))
+                    await self._update_esphome_proxy_state(connected=False, error=str(e), error_code="E1003")
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -295,7 +296,7 @@ class ServiceMode:
                 await self._set_ble_status("disconnected")
                 # Update ESP32 proxy disconnected state
                 if esphome_host:
-                    await self._update_esphome_proxy_state(connected=False, error="No error")
+                    await self._update_esphome_proxy_state(connected=False, error="No error", error_code="E0000")
 
         # Recovery loop exited — stop log streaming and MQTT background thread
         await self._stop_esphome_log_streaming()
@@ -337,7 +338,7 @@ class ServiceMode:
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
-    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None):
+    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None):
         """Update ESPHome proxy state and publish to MQTT."""
         if connected is not None:
             self.esphome_proxy_state["connected"] = connected
@@ -345,6 +346,8 @@ class ServiceMode:
             self.esphome_proxy_state["name"] = name
         if error is not None:
             self.esphome_proxy_state["error"] = error
+        if error_code is not None:
+            self.esphome_proxy_state["error_code"] = error_code
         await self._publish_esphome_proxy_status()
         # Broadcast state change to SSE clients (webapp)
         if self.on_state_updated:
@@ -356,6 +359,7 @@ class ServiceMode:
                 "esphome_proxy_host": self.esphome_proxy_state["host"],
                 "esphome_proxy_port": self.esphome_proxy_state["port"],
                 "esphome_proxy_error": self.esphome_proxy_state["error"],
+                "esphome_proxy_error_code": self.esphome_proxy_state["error_code"],
             })
             await self.on_state_updated(state)
 
@@ -385,10 +389,19 @@ class ServiceMode:
                 "false"
             )
 
-        # Publish error status
+        # Publish error status (JSON format matching centralDevice/error)
+        error_code = self.esphome_proxy_state["error_code"]
+        error_msg = self.esphome_proxy_state["error"]
+        if error_code == "E0000":
+            error_json = ErrorManager.clear_error()
+        else:
+            # Create temporary ErrorCode for JSON formatting
+            from ErrorCodes import ErrorCode
+            temp_error = ErrorCode(error_code, error_msg, "ESP32", "ERROR")
+            error_json = ErrorManager.to_json(temp_error, include_timestamp=True)
         await self.mqtt_service.send_data_async(
             f"{topic}/esphomeProxy/error",
-            self.esphome_proxy_state["error"]
+            error_json
         )
 
     async def _publish_esphome_proxy_discovery(self):
@@ -616,12 +629,12 @@ class ServiceMode:
             proxy_name = getattr(device_info, "name", "unknown")
             logger.debug(f"Connected to ESP32 proxy {proxy_name} for recovery scanning")
             # Publish ESP32 proxy connected status
-            await self._update_esphome_proxy_state(connected=True, name=proxy_name, error="No error")
+            await self._update_esphome_proxy_state(connected=True, name=proxy_name, error="No error", error_code="E0000")
         except Exception as e:
             logger.error(f"Failed to connect to ESP32 proxy for recovery: {e}")
             logger.warning("Falling back to local BLE scanning")
             # Publish ESP32 proxy error
-            await self._update_esphome_proxy_state(connected=False, error=f"Recovery connection failed: {e}")
+            await self._update_esphome_proxy_state(connected=False, error=f"Recovery connection failed: {e}", error_code="E2005")
             await self.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E2005, str(e)))
             await self._wait_for_device_restart_local(device_id, topic)
             return
@@ -768,7 +781,7 @@ class ServiceMode:
             logger.error("OK on shutdown")
         else:
             print(traceback.format_exc())
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", f'{exc_name}: {e}')
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E7004, f'{exc_name}: {e}'))
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
             sys.exit(1)
 
