@@ -46,6 +46,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._esphome_api      = None  # Persistent ESP32 API connection
         self._esphome_feature_flags = None  # Cached ESP32 feature flags
         self._esphome_unsub_adv = None  # Deferred advertisement unsubscription
+        self.esphome_proxy_name = None  # ESP32 device name from device_info
+        self.esphome_proxy_connected = False  # True when ESP32 API is connected
 
 
     async def connect_async(self, device_id):
@@ -135,6 +137,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         feature_flags = getattr(device_info, "bluetooth_proxy_feature_flags", 0)
         logger.debug(f"Fresh API connection established, feature_flags={feature_flags}")
         self._esphome_feature_flags = feature_flags
+
+        # Capture ESP32 proxy name and connection status
+        self.esphome_proxy_name = getattr(device_info, "name", "unknown")
+        self.esphome_proxy_connected = True
+        logger.debug(f"ESP32 proxy connected: {self.esphome_proxy_name}")
 
         # Scan for BLE device using raw advertisements
         mac_int = int(device_id.replace(":", ""), 16)
@@ -299,4 +306,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             except Exception:
                 pass
             self._esphome_unsub_adv = None
+
+        # Reset ESP32 proxy connection state
+        if self.esphome_host:
+            self.esphome_proxy_connected = False
 
