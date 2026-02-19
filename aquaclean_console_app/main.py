@@ -26,6 +26,7 @@ from MqttService                                              import MqttService
 from RestApiService                                           import RestApiService
 from myEvent                                                  import myEvent
 from aquaclean_utils                                          import utils
+from ErrorCodes                                               import ErrorManager, E0000, E0003, E1001, E1002, E2001, E2002, E2003, E2004, E2005, E7002
 
 # --- Configuration & Logging Setup ---
 __location__ = os.path.dirname(os.path.abspath(__file__))
@@ -98,6 +99,7 @@ class ServiceMode:
             "ble_device_name": None,         # from client.Description
             "ble_device_address": None,      # BLE address from config
             "ble_error": None,               # error message when ble_status == "error"
+            "ble_error_code": None,          # error code (E0001-E7999) when ble_status == "error"
             "last_connect_ms": None,         # duration of last BLE connect in ms
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
         }
@@ -187,7 +189,7 @@ class ServiceMode:
             self.client.DeviceIdentification += self.on_device_identification
             bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
 
-            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", "No error")
+            await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.clear_error())
             await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", f"Connecting to {device_id} ...")
             await self._set_ble_status("connecting", device_address=device_id)
 
@@ -249,7 +251,7 @@ class ServiceMode:
                 )
             except BLEPeripheralTimeoutError as e:
                 logger.warning("BLE Timeout — initiating recovery protocol.")
-                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", str(e))
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, str(e)))
                 try:
                     await self.client.disconnect()
                 except Exception:
@@ -264,7 +266,8 @@ class ServiceMode:
                     "3) Restart the host machine."
                 )
                 logger.warning(msg)
-                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", msg)
+                # BleakError could be E0001, E0002, E0004, etc. - use generic BLE error with details
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
                 await self._set_ble_status("error", error_msg=msg)
                 # Update ESP32 proxy error if ESP32 mode is enabled
@@ -295,19 +298,21 @@ class ServiceMode:
         await self._stop_esphome_log_streaming()
         self.mqtt_service.stop()
 
-    async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None):
+    async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None, error_code=None):
         self.device_state["ble_status"] = status
         if status == "connected":
             self.device_state["ble_connected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.device_state["ble_device_name"] = device_name
             self.device_state["ble_device_address"] = device_address
             self.device_state["ble_error"] = None
+            self.device_state["ble_error_code"] = None
         elif status == "error":
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = error_msg
+            self.device_state["ble_error_code"] = error_code
             # Clear device info to prevent stale data display
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
@@ -317,6 +322,7 @@ class ServiceMode:
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = None
+            self.device_state["ble_error_code"] = None
             # Clear device info to prevent stale data display
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
@@ -613,6 +619,7 @@ class ServiceMode:
             logger.warning("Falling back to local BLE scanning")
             # Publish ESP32 proxy error
             await self._update_esphome_proxy_state(connected=False, error=f"Recovery connection failed: {e}")
+            await self.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E2005, str(e)))
             await self._wait_for_device_restart_local(device_id, topic)
             return
 
@@ -634,6 +641,7 @@ class ServiceMode:
             else:
                 if time.time() >= timeout:
                     logger.warning("Timeout waiting for device to disappear from ESP32 scanner. Device may still be advertising. Skipping to reconnection phase...")
+                    await self.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E2001, "Device still advertising after 2 minutes"))
 
             # Phase 2: wait for device to reappear (max 2 minutes)
             logger.info(f"Waiting for device {device_id} to reappear on ESP32 proxy...")
@@ -649,6 +657,7 @@ class ServiceMode:
             else:
                 if time.time() >= timeout:
                     logger.error("Timeout waiting for device to reappear on ESP32 scanner. Giving up on recovery. Please check device power and BLE advertising.")
+                    await self.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E2002, "Device not detected after 2 minutes"))
         finally:
             # Disconnect from ESP32 API
             try:
@@ -693,6 +702,7 @@ class ServiceMode:
         else:
             if time.time() >= timeout:
                 logger.warning("Timeout waiting for device to disappear from BLE scanner. Device may still be advertising. Skipping to reconnection phase...")
+                await self.mqtt_service.send_data_async(topic, ErrorManager.to_json(E2003, "Device still advertising after 2 minutes"))
 
         # Phase 2: wait for it to boot back up (max 2 minutes)
         logger.info(f"Waiting for device {device_id} to reappear...")
@@ -708,6 +718,7 @@ class ServiceMode:
         else:
             if time.time() >= timeout:
                 logger.error("Timeout waiting for device to reappear on BLE scanner. Giving up on recovery. Please check device power and BLE advertising.")
+                await self.mqtt_service.send_data_async(topic, ErrorManager.to_json(E2004, "Device not detected after 2 minutes"))
 
     # --- Event Handlers ---
     async def on_device_state_changed(self, sender, args):
@@ -1182,6 +1193,7 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
             except Exception as e:
                 logger.warning(f"On-demand poll failed: {e}")
+                await self.service.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E7002, str(e)))
 
     async def _fetch_state(self, client):
         from aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
