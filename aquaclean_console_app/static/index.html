@@ -787,7 +787,8 @@
         detail.textContent = state.ble_device_address ? 'Connecting to ' + state.ble_device_address + '…' : '…';
         meta.textContent   = '';
       } else if (status === 'error' && state.ble_error) {
-        detail.textContent = state.ble_error;
+        const errorCode = state.ble_error_code ? `[${state.ble_error_code}] ` : '';
+        detail.textContent = errorCode + state.ble_error;
         meta.textContent   = '';
       } else {
         detail.textContent = state.ble_device_address || '—';
