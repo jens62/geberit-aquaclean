@@ -26,7 +26,10 @@ from MqttService                                              import MqttService
 from RestApiService                                           import RestApiService
 from myEvent                                                  import myEvent
 from aquaclean_utils                                          import utils
-from ErrorCodes                                               import ErrorManager, E0000, E0003, E1001, E1002, E2001, E2002, E2003, E2004, E2005, E7002
+from ErrorCodes                                               import (
+    ErrorManager, E0000, E0003, E2001, E2002, E2003, E2004, E2005,
+    E3002, E4001, E4002, E4003, E7002
+)
 
 # --- Configuration & Logging Setup ---
 __location__ = os.path.dirname(os.path.abspath(__file__))
@@ -800,6 +803,36 @@ class ApiMode:
 
         logger.info(f"API mode: ble_connection={self.ble_connection}, mqtt_enabled={mqtt_enabled}, {api_host}:{api_port}")
 
+    @staticmethod
+    def _http_error(status_code: int, error_code, details: str = None):
+        """
+        Raise HTTPException with structured error response.
+
+        Args:
+            status_code: HTTP status code (400, 503, etc.)
+            error_code: ErrorCode instance (E4001, E4003, etc.)
+            details: Optional additional error details
+
+        Returns:
+            HTTPException with detail as structured dict:
+            {
+                "status": "error",
+                "error": {
+                    "code": "E4001",
+                    "message": "Invalid BLE connection mode"
+                }
+            }
+        """
+        from fastapi import HTTPException
+        error_dict = ErrorManager.to_dict(error_code, details)
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "status": "error",
+                "error": error_dict
+            }
+        )
+
     async def run(self):
         self.service.on_state_updated = self.rest_api.broadcast_state
         # Wire MQTT inbound control topics → ApiMode handlers
@@ -847,8 +880,7 @@ class ApiMode:
 
     async def set_ble_connection(self, value: str) -> dict:
         if value not in ("persistent", "on-demand"):
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Invalid value {value!r}. Use 'persistent' or 'on-demand'.")
+            self._http_error(400, E4001, f"Invalid value {value!r}. Use 'persistent' or 'on-demand'.")
         self.ble_connection = value
         self.service.device_state["ble_connection"] = value
         if value == "persistent":
@@ -860,8 +892,7 @@ class ApiMode:
 
     async def set_poll_interval(self, value: float) -> dict:
         if value < 0:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail="poll_interval must be >= 0 (0 = disabled)")
+            self._http_error(400, E4002, f"Value {value} is invalid. Must be >= 0 (0 = disabled)")
         self._poll_interval = value
         self.service.device_state["poll_interval"] = value
         self._poll_wakeup.set()   # wake the poll loop so it picks up the new interval immediately
@@ -912,8 +943,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             c = self.service.client
             result = {
                 "sap_number": c.SapNumber,
@@ -934,8 +964,7 @@ class ApiMode:
     async def run_command(self, command: str):
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             await self._execute_command(self.service.client, command)
         else:
             return await self._on_demand(lambda client: self._execute_command(client, command))
@@ -960,8 +989,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             # fires DeviceStateChanged → on_device_state_changed → publishes to MQTT
             await self.service.client._state_changed_timer_elapsed()
             return self.service.device_state
@@ -977,8 +1005,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             result = {"soc_versions": str(self.service.client.soc_application_versions)}
         else:
             result = await self._on_demand(self._fetch_soc_versions)
@@ -989,8 +1016,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             result = {"initial_operation_date": str(self.service.client.InitialOperationDate)}
         else:
             result = await self._on_demand(self._fetch_initial_op_date)
@@ -1001,8 +1027,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             c = self.service.client
             result = {
                 "sap_number": c.SapNumber,
@@ -1022,8 +1047,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             result = await self._fetch_anal_shower_state(self.service.client)
         else:
             result = await self._on_demand(self._fetch_anal_shower_state)
@@ -1034,8 +1058,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             result = await self._fetch_user_sitting_state(self.service.client)
         else:
             result = await self._on_demand(self._fetch_user_sitting_state)
@@ -1046,8 +1069,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             result = await self._fetch_lady_shower_state(self.service.client)
         else:
             result = await self._on_demand(self._fetch_lady_shower_state)
@@ -1058,8 +1080,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=503, detail="BLE client not connected")
+                self._http_error(503, E4003)
             result = await self._fetch_dryer_state(self.service.client)
         else:
             result = await self._on_demand(self._fetch_dryer_state)
@@ -1228,8 +1249,7 @@ class ApiMode:
         elif command == "toggle-anal":
             await client.toggle_anal_shower()
         else:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
+            self._http_error(400, E3002, f"Command '{command}' not recognized")
 
 
 def get_ha_discovery_configs(topic_prefix: str) -> list:
