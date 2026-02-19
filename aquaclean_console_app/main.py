@@ -36,10 +36,12 @@ config.read(iniFile)
 logs.add_logging_level('TRACE', logging.DEBUG - 5)
 logs.add_logging_level('SILLY', logging.DEBUG - 7)
 
-log_level        = config.get("LOGGING",  "log_level",  fallback="DEBUG")
-esphome_host     = config.get("ESPHOME",  "host",       fallback=None) or None
-esphome_port     = int(config.get("ESPHOME", "port",    fallback="6053"))
-esphome_noise_psk = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
+log_level              = config.get("LOGGING",  "log_level",  fallback="DEBUG")
+esphome_host           = config.get("ESPHOME",  "host",       fallback=None) or None
+esphome_port           = int(config.get("ESPHOME", "port",    fallback="6053"))
+esphome_noise_psk      = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
+esphome_log_streaming  = config.getboolean("ESPHOME", "log_streaming", fallback=False)
+esphome_log_level      = config.get("ESPHOME", "log_level", fallback="INFO")
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 
 # Suppress verbose external library logging (but not when explicitly debugging at TRACE/SILLY)
@@ -112,6 +114,8 @@ class ServiceMode:
         self._connection_allowed.set()  # auto-connect on startup
         self._shutdown_event = shutdown_event or asyncio.Event()
         self.on_state_updated = None  # Optional async callback(state_dict)
+        self._esphome_log_api = None  # Persistent API connection for log streaming
+        self._esphome_log_unsub = None  # Log unsubscribe function
 
         if mqtt_enabled:
             self.mqttConfig = dict(config.items('MQTT'))
@@ -149,6 +153,9 @@ class ServiceMode:
         await self._publish_esphome_proxy_status()
         await self._publish_esphome_proxy_discovery()
         logger.debug(f"ESPHome proxy mode: enabled={self.esphome_proxy_state['enabled']}, host={self.esphome_proxy_state['host']}")
+
+        # Start ESPHome log streaming if enabled
+        await self._start_esphome_log_streaming()
 
         # --- Main Recovery Loop ---
         while not self._shutdown_event.is_set():
@@ -284,7 +291,8 @@ class ServiceMode:
                 if esphome_host:
                     await self._update_esphome_proxy_state(connected=False, error="No error")
 
-        # Recovery loop exited — stop the MQTT background thread
+        # Recovery loop exited — stop log streaming and MQTT background thread
+        await self._stop_esphome_log_streaming()
         self.mqtt_service.stop()
 
     async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None):
@@ -440,6 +448,89 @@ class ServiceMode:
             f"homeassistant/sensor/aquaclean_{device_id}/esphome_proxy_error/config",
             json.dumps(error_config)
         )
+
+    async def _start_esphome_log_streaming(self):
+        """Subscribe to ESPHome device logs if log streaming is enabled."""
+        if not esphome_log_streaming or not esphome_host:
+            return
+
+        from aioesphomeapi import APIClient, LogLevel
+
+        # Map config log level string to aioesphomeapi LogLevel
+        level_map = {
+            "ERROR": LogLevel.LOG_LEVEL_ERROR,
+            "WARN": LogLevel.LOG_LEVEL_WARN,
+            "WARNING": LogLevel.LOG_LEVEL_WARN,
+            "INFO": LogLevel.LOG_LEVEL_INFO,
+            "DEBUG": LogLevel.LOG_LEVEL_DEBUG,
+            "VERBOSE": LogLevel.LOG_LEVEL_VERBOSE,
+        }
+        log_level = level_map.get(esphome_log_level.upper(), LogLevel.LOG_LEVEL_INFO)
+
+        try:
+            logger.info(f"Starting ESPHome log streaming from {esphome_host}:{esphome_port} (level={esphome_log_level})")
+
+            # Create persistent API connection for log streaming
+            self._esphome_log_api = APIClient(
+                address=esphome_host,
+                port=esphome_port,
+                password="",
+                noise_psk=esphome_noise_psk
+            )
+            await asyncio.wait_for(self._esphome_log_api.connect(login=True), timeout=10.0)
+
+            # Subscribe to logs
+            self._esphome_log_unsub = await self._esphome_log_api.subscribe_logs(
+                self._on_esphome_log_message,
+                log_level=log_level
+            )
+            logger.info("ESPHome log streaming started successfully")
+
+        except Exception as e:
+            logger.warning(f"Failed to start ESPHome log streaming: {e}")
+            self._esphome_log_api = None
+            self._esphome_log_unsub = None
+
+    def _on_esphome_log_message(self, log_entry):
+        """Handle incoming log messages from ESPHome device."""
+        from aioesphomeapi import LogLevel
+
+        tag = log_entry.tag
+        message = log_entry.message
+        level = log_entry.level
+
+        # Map ESP32 log level to Python log level and forward
+        prefix = f"[ESP32:{tag}]"
+        if level == LogLevel.LOG_LEVEL_ERROR:
+            logger.error(f"{prefix} {message}")
+        elif level == LogLevel.LOG_LEVEL_WARN:
+            logger.warning(f"{prefix} {message}")
+        elif level == LogLevel.LOG_LEVEL_INFO:
+            logger.info(f"{prefix} {message}")
+        elif level == LogLevel.LOG_LEVEL_DEBUG:
+            logger.debug(f"{prefix} {message}")
+        elif level == LogLevel.LOG_LEVEL_VERBOSE:
+            logger.trace(f"{prefix} {message}")
+        else:
+            logger.silly(f"{prefix} {message}")
+
+    async def _stop_esphome_log_streaming(self):
+        """Unsubscribe from ESPHome device logs."""
+        if self._esphome_log_unsub:
+            try:
+                self._esphome_log_unsub()
+                logger.debug("Unsubscribed from ESPHome log streaming")
+            except Exception as e:
+                logger.debug(f"Error unsubscribing from logs: {e}")
+            self._esphome_log_unsub = None
+
+        if self._esphome_log_api:
+            try:
+                await self._esphome_log_api.disconnect()
+                logger.debug("Disconnected ESPHome log streaming API")
+            except Exception as e:
+                logger.debug(f"Error disconnecting log API: {e}")
+            self._esphome_log_api = None
 
     async def request_reconnect(self):
         """Trigger a clean BLE reconnect (callable from MQTT or REST API)."""
