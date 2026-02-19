@@ -480,11 +480,14 @@
       es.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
+          console.log('[SSE] Received:', data);
           if (data.type === 'state') {
             updateCards(data);
             onStateReceived(data);
           }
-        } catch (_) {}
+        } catch (err) {
+          console.error('[SSE] Parse error:', err, 'Raw data:', e.data);
+        }
       };
     }
 
@@ -521,11 +524,17 @@
     let _dryerQueryActive   = false;
 
     function updateCards(state) {
+      console.log('[updateCards] Processing state:', state);
       if (!_sittingQueryActive) updateCard('sitting', state.is_user_sitting);
       if (!_analQueryActive)    updateCard('anal',    state.is_anal_shower_running);
       if (!_ladyQueryActive)    updateCard('lady',    state.is_lady_shower_running);
       if (!_dryerQueryActive)   updateCard('dryer',   state.is_dryer_running);
-      if ('ble_status' in state) updateConnection(state);
+      if ('ble_status' in state) {
+        console.log('[updateCards] ble_status found in state, calling updateConnection');
+        updateConnection(state);
+      } else {
+        console.warn('[updateCards] ble_status NOT in state!');
+      }
       if ('esphome_proxy_enabled' in state) updateESPHomeProxy(state);
     }
 
@@ -766,6 +775,7 @@
 
       const status = state.ble_status || 'disconnected';
       const prevStatus = _bleStatus;
+      console.log('[updateConnection] status:', status, 'prevStatus:', prevStatus, 'state:', state);
       badge.className = 'conn-badge ' + status;
       badge.textContent = status;
       updateConnBtn(status);

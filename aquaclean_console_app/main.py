@@ -308,12 +308,18 @@ class ServiceMode:
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = error_msg
+            # Clear device info to prevent stale data display
+            self.device_state["ble_device_name"] = None
+            self.device_state["ble_device_address"] = None
         elif status in ("disconnected", "connecting"):
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
             self.device_state["last_connect_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = None
+            # Clear device info to prevent stale data display
+            self.device_state["ble_device_name"] = None
+            self.device_state["ble_device_address"] = None
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -613,21 +619,26 @@ class ServiceMode:
         try:
             mac_int = int(device_id.replace(":", ""), 16)
 
-            # Phase 1: wait for device to disappear
+            # Phase 1: wait for device to disappear (max 2 minutes)
             await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
             logger.info(f"Waiting for device {device_id} to drop off ESP32 proxy scanner...")
 
-            while not self._shutdown_event.is_set():
+            timeout = time.time() + 120  # 2 minutes
+            while not self._shutdown_event.is_set() and time.time() < timeout:
                 found = await self._check_device_via_esphome(api, mac_int)
                 if not found:
                     logger.info("Device shut down confirmed (via ESP32 proxy).")
                     await self.mqtt_service.send_data_async(topic, "Device offline. Waiting for it to power back on...")
                     break
                 await asyncio.sleep(2)
+            else:
+                if time.time() >= timeout:
+                    logger.warning("Timeout waiting for device to disappear from ESP32 scanner. Device may still be advertising. Skipping to reconnection phase...")
 
-            # Phase 2: wait for device to reappear
+            # Phase 2: wait for device to reappear (max 2 minutes)
             logger.info(f"Waiting for device {device_id} to reappear on ESP32 proxy...")
-            while not self._shutdown_event.is_set():
+            timeout = time.time() + 120  # 2 minutes
+            while not self._shutdown_event.is_set() and time.time() < timeout:
                 found = await self._check_device_via_esphome(api, mac_int)
                 if found:
                     logger.info("Device back online (via ESP32 proxy).")
@@ -635,6 +646,9 @@ class ServiceMode:
                     await asyncio.sleep(2)
                     break
                 await asyncio.sleep(2)
+            else:
+                if time.time() >= timeout:
+                    logger.error("Timeout waiting for device to reappear on ESP32 scanner. Giving up on recovery. Please check device power and BLE advertising.")
         finally:
             # Disconnect from ESP32 API
             try:
@@ -665,20 +679,25 @@ class ServiceMode:
         """Wait for device restart using local BLE scanning."""
         logger.info("Using local BLE for recovery protocol")
 
-        # Phase 1: wait for the user to power-cycle the device
+        # Phase 1: wait for the user to power-cycle the device (max 2 minutes)
         await self.mqtt_service.send_data_async(topic, "Peripheral not responding. Please power cycle the device.")
         logger.info(f"Waiting for device {device_id} to drop off BLE scanner...")
-        while not self._shutdown_event.is_set():
+        timeout = time.time() + 120  # 2 minutes
+        while not self._shutdown_event.is_set() and time.time() < timeout:
             device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
             if device is None:
                 logger.info("Device shut down confirmed.")
                 await self.mqtt_service.send_data_async(topic, "Device offline. Waiting for it to power back on...")
                 break
             await asyncio.sleep(2)
+        else:
+            if time.time() >= timeout:
+                logger.warning("Timeout waiting for device to disappear from BLE scanner. Device may still be advertising. Skipping to reconnection phase...")
 
-        # Phase 2: wait for it to boot back up
+        # Phase 2: wait for it to boot back up (max 2 minutes)
         logger.info(f"Waiting for device {device_id} to reappear...")
-        while not self._shutdown_event.is_set():
+        timeout = time.time() + 120  # 2 minutes
+        while not self._shutdown_event.is_set() and time.time() < timeout:
             device = await BleakScanner.find_device_by_address(device_id, timeout=3.0)
             if device is not None:
                 logger.info("Device back online.")
@@ -686,6 +705,9 @@ class ServiceMode:
                 await asyncio.sleep(2)
                 break
             await asyncio.sleep(2)
+        else:
+            if time.time() >= timeout:
+                logger.error("Timeout waiting for device to reappear on BLE scanner. Giving up on recovery. Please check device power and BLE advertising.")
 
     # --- Event Handlers ---
     async def on_device_state_changed(self, sender, args):
