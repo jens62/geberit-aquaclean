@@ -50,9 +50,11 @@ ota_password: "your-ota-password"
 # api_encryption_key: "your-base64-key"
 ```
 
-The API is open (no authentication) by default — acceptable on a trusted home LAN.  To add encryption, generate a key, put it in both `secrets.yaml` and `config.ini` (`noise_psk`), and uncomment the `api: encryption:` block in the proxy YAML.
+The API is open (no authentication) by default — acceptable on a trusted home LAN.  **Recommendation: Start without encryption.** API encryption and authentication have **not been tested** with this bridge and may cause connection issues.
 
 > **ESPHome 2026.1 note:** `api: password:` was removed.  Use `api: encryption: key:` for auth, or just bare `api:` for no auth.  The encryption key **must** be valid base64 — `openssl rand -base64 32` generates one.  Placeholder strings like `"change-me"` will fail validation.
+>
+> **Encryption is UNTESTED:** If you need to secure the API, proceed at your own risk. Generate a key, put it in both `secrets.yaml` (`api_encryption_key`) and `config.ini` (`noise_psk`), and uncomment the `api: encryption:` block in the proxy YAML. Be prepared for connection failures.
 
 ### 3. Flash
 
@@ -178,10 +180,12 @@ Enable the proxy in `config.ini` by uncommenting and filling in the `[ESPHOME]` 
 [ESPHOME]
 host = 192.168.0.xxx        # IP address of the ESP32-POE-ISO
 port = 6053                  # ESPHome native API port (default: 6053)
-noise_psk = base64key==      # matches api_encryption_key in secrets.yaml
+; noise_psk =                # OPTIONAL and UNTESTED: leave commented out (no encryption recommended)
 ```
 
 When `host` is set the bridge automatically routes all BLE traffic through the ESP32.  When `host` is absent or empty the local Bluetooth adapter is used as before — no other changes required.
+
+**Note:** `noise_psk` is optional. API encryption has not been tested and is not recommended for initial setup. Start with an open API (no `noise_psk`) on a trusted LAN.
 
 ---
 

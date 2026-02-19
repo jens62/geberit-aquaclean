@@ -25,6 +25,13 @@ ble_connection = persistent      # persistent | on-demand
 host = 0.0.0.0
 port = 8080
 
+[ESPHOME]
+; host = 192.168.0.xxx            # IP address of ESP32 Bluetooth Proxy (optional)
+; port = 6053                     # ESPHome native API port
+; noise_psk =                     # base64 encryption key (matches api_encryption_key in secrets.yaml)
+; log_streaming = false           # Stream ESP32 logs to console app (for debugging)
+; log_level = INFO                # ESP32 log level: ERROR | WARN | INFO | DEBUG | VERBOSE
+
 [LOGGING]
 log_level = DEBUG                # DEBUG | INFO | WARNING | TRACE
 ```
@@ -73,6 +80,20 @@ A longer interval reduces BLE request frequency, which can help avoid the device
 | `port` | `8080` | TCP port for the REST API and web UI. |
 
 Used only in **api mode** (`--mode api`).
+
+### `[ESPHOME]`
+
+**Optional.** Use an ESP32 as a remote Bluetooth antenna instead of a local BLE adapter.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `host` | *(commented out)* | IP address or hostname of the ESP32 running ESPHome Bluetooth Proxy. When set, all BLE traffic is routed through the ESP32 over IP (port 6053). When absent or empty, the local Bluetooth adapter is used. **Example:** `192.168.0.154` or `aquaclean-proxy.local` |
+| `port` | `6053` | ESPHome native API port. Default is `6053` — rarely needs changing. |
+| `noise_psk` | *(commented out)* | **OPTIONAL and UNTESTED.** Base64-encoded encryption key for the ESPHome API. **Recommendation: Leave empty (no encryption) for initial setup.** Only add if you need API encryption: generate with `openssl rand -base64 32` and set matching `api_encryption_key` in the ESP32's `secrets.yaml`. Authentication and encryption have not been tested with this bridge. |
+| `log_streaming` | `false` | Stream live logs from the ESP32 device and integrate them into the console app logging. Useful for debugging BLE proxy issues, but very verbose — keep disabled for production use. |
+| `log_level` | `INFO` | Log level for ESP32 log streaming. Options: `ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`. Only applies when `log_streaming = true`. |
+
+For full setup instructions see [docs/esphome.md](esphome.md).
 
 ### `[LOGGING]`
 
