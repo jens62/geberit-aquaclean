@@ -486,8 +486,8 @@ class ServiceMode:
             )
             await asyncio.wait_for(self._esphome_log_api.connect(login=True), timeout=10.0)
 
-            # Subscribe to logs
-            self._esphome_log_unsub = await self._esphome_log_api.subscribe_logs(
+            # Subscribe to logs (subscribe_logs returns a callable, not awaitable)
+            self._esphome_log_unsub = self._esphome_log_api.subscribe_logs(
                 self._on_esphome_log_message,
                 log_level=log_level
             )
@@ -502,9 +502,15 @@ class ServiceMode:
         """Handle incoming log messages from ESPHome device."""
         from aioesphomeapi import LogLevel
 
-        tag = log_entry.tag
-        message = log_entry.message
-        level = log_entry.level
+        # Extract attributes safely - aioesphomeapi uses different names
+        try:
+            # Try different possible attribute names
+            tag = getattr(log_entry, 'tag', getattr(log_entry, 'name', 'esphome'))
+            message = getattr(log_entry, 'message', str(log_entry))
+            level = getattr(log_entry, 'level', LogLevel.LOG_LEVEL_INFO)
+        except Exception as e:
+            logger.debug(f"Error parsing log entry: {e}, entry={log_entry}")
+            return
 
         # Map ESP32 log level to Python log level and forward
         prefix = f"[ESP32:{tag}]"
