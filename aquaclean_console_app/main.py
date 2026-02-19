@@ -451,7 +451,14 @@ class ServiceMode:
 
     async def _start_esphome_log_streaming(self):
         """Subscribe to ESPHome device logs if log streaming is enabled."""
-        if not esphome_log_streaming or not esphome_host:
+        logger.debug(f"ESPHome log streaming config: enabled={esphome_log_streaming}, host={esphome_host!r}, level={esphome_log_level!r}")
+
+        if not esphome_log_streaming:
+            logger.debug("ESPHome log streaming disabled in config (log_streaming = false or not set)")
+            return
+
+        if not esphome_host:
+            logger.debug("ESPHome log streaming skipped: no host configured ([ESPHOME] host not set)")
             return
 
         from aioesphomeapi import APIClient, LogLevel
