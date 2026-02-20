@@ -901,6 +901,8 @@
       const host = state.esphome_proxy_host || '';
       const port = state.esphome_proxy_port || '';
       const error = state.esphome_proxy_error || '';
+      const errCode = state.esphome_proxy_error_code && state.esphome_proxy_error_code !== 'E0000'
+        ? `[${state.esphome_proxy_error_code}] ` : '';
 
       // Show/hide panel based on enabled status
       if (enabled) {
@@ -910,12 +912,12 @@
           badge.className = 'conn-badge connected';
           badge.textContent = 'connected';
           detail.textContent = name + ' (' + host + ':' + port + ')';
-          meta.textContent = error !== 'No error' ? error : '';
+          meta.textContent = error && error !== 'No error' ? errCode + error : '';
         } else {
           badge.className = 'conn-badge disconnected';
           badge.textContent = 'disconnected';
           detail.textContent = host ? host + ':' + port : '—';
-          meta.textContent = error !== 'No error' ? error : '';
+          meta.textContent = error && error !== 'No error' ? errCode + error : '';
         }
 
         _esp32Connected = connected;
