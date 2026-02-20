@@ -377,8 +377,10 @@
         <span id="pollIntervalLabel" style="font-size:0.8rem;font-weight:500">—</span>
       </div>
       <div class="conn-row">
-        <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
+        <span id="connectMsLabel" style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
         <span id="connectMs" style="font-size:0.8rem;font-weight:500">—</span>
+        <span id="bleMsLabel" style="color:var(--muted);font-size:0.8rem;margin-left:1rem;white-space:nowrap;display:none">BLE:</span>
+        <span id="bleMs" style="font-size:0.8rem;font-weight:500;display:none">—</span>
         <span style="color:var(--muted);font-size:0.8rem;margin-left:1.5rem;white-space:nowrap">Poll:</span>
         <span id="pollMs" style="font-size:0.8rem;font-weight:500">—</span>
       </div>
@@ -391,6 +393,11 @@
         <span class="conn-detail" id="esphomeProxyDetail">—</span>
       </div>
       <div class="conn-meta" id="esphomeProxyMeta"></div>
+      <div style="margin-top:0.5rem">
+        <button id="esp32ConnBtn" onclick="sendPost(esp32ConnBtnUrl(), this)">
+          <span class="spinner"></span><span id="esp32ConnBtnLabel">Connect ESP32</span>
+        </button>
+      </div>
     </div>
 
     <h2>Actions</h2>
@@ -440,7 +447,11 @@
         </button>
       </div>
       <div class="conn-row" id="queryTimingRow" style="display:none;margin-top:0.5rem">
-        <span style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
+        <span id="queryEspApiLabel" style="color:var(--muted);font-size:0.8rem;white-space:nowrap;display:none">ESP32:</span>
+        <span id="queryEspApiMs" style="font-size:0.8rem;font-weight:500;display:none">—</span>
+        <span id="queryBleLabel" style="color:var(--muted);font-size:0.8rem;margin-left:1rem;white-space:nowrap;display:none">BLE:</span>
+        <span id="queryBleMs" style="font-size:0.8rem;font-weight:500;display:none">—</span>
+        <span id="queryConnectLabel" style="color:var(--muted);font-size:0.8rem;white-space:nowrap">Connect:</span>
         <span id="queryConnectMs" style="font-size:0.8rem;font-weight:500">—</span>
         <span style="color:var(--muted);font-size:0.8rem;margin-left:1.5rem;white-space:nowrap">Query:</span>
         <span id="queryMs" style="font-size:0.8rem;font-weight:500">—</span>
@@ -601,6 +612,13 @@
       if (label) label.textContent = status === 'connected' ? 'Disconnect' : 'Reconnect';
     }
 
+    // --- ESP32 proxy button ---
+    let _esp32Connected = false;
+
+    function esp32ConnBtnUrl() {
+      return _esp32Connected ? '/esphome/disconnect' : '/esphome/connect';
+    }
+
     // --- BLE connection mode toggle ---
     let _bleConnection = null;
 
@@ -660,6 +678,32 @@
       }
     }
 
+    // --- On-demand query timing display ---
+    function updateQueryTiming(data) {
+      if (data._connect_ms === undefined && data._query_ms === undefined) return;
+      const hasEsphome = data._esphome_api_ms != null;
+      if (hasEsphome) {
+        document.getElementById('queryEspApiLabel').style.display = '';
+        document.getElementById('queryEspApiMs').style.display = '';
+        document.getElementById('queryBleLabel').style.display = '';
+        document.getElementById('queryBleMs').style.display = '';
+        document.getElementById('queryConnectLabel').style.display = 'none';
+        document.getElementById('queryConnectMs').style.display = 'none';
+        set('queryEspApiMs', fmt(data._esphome_api_ms));
+        set('queryBleMs', fmt(data._ble_ms));
+      } else {
+        document.getElementById('queryEspApiLabel').style.display = 'none';
+        document.getElementById('queryEspApiMs').style.display = 'none';
+        document.getElementById('queryBleLabel').style.display = 'none';
+        document.getElementById('queryBleMs').style.display = 'none';
+        document.getElementById('queryConnectLabel').style.display = '';
+        document.getElementById('queryConnectMs').style.display = '';
+        set('queryConnectMs', fmt(data._connect_ms));
+      }
+      set('queryMs', fmt(data._query_ms === 0 ? null : data._query_ms));
+      document.getElementById('queryTimingRow').style.display = '';
+    }
+
     // --- Queries (on-demand mode) ---
     async function queryGet(url, btn, onBefore, onResult) {
       const cleanup = onBefore ? onBefore() : null;
@@ -671,11 +715,7 @@
         if (r.ok) {
           const data = await r.json();
           if (onResult) onResult(data);
-          if (data._connect_ms !== undefined || data._query_ms !== undefined) {
-            set('queryConnectMs', fmt(data._connect_ms));
-            set('queryMs', fmt(data._query_ms === 0 ? null : data._query_ms));
-            document.getElementById('queryTimingRow').style.display = '';
-          }
+          updateQueryTiming(data);
           btn.classList.add('success');
         } else {
           btn.classList.add('error');
@@ -795,8 +835,20 @@
         meta.textContent   = '';
       }
 
-      set('connectMs', fmt(state.last_connect_ms));
-      set('pollMs',    fmt(state.last_poll_ms));
+      const hasEsphomeTiming = state.last_esphome_api_ms != null;
+      if (hasEsphomeTiming) {
+        document.getElementById('connectMsLabel').textContent = 'ESP32:';
+        set('connectMs', fmt(state.last_esphome_api_ms));
+        document.getElementById('bleMsLabel').style.display = '';
+        document.getElementById('bleMs').style.display = '';
+        set('bleMs', fmt(state.last_ble_ms));
+      } else {
+        document.getElementById('connectMsLabel').textContent = 'Connect:';
+        set('connectMs', fmt(state.last_connect_ms));
+        document.getElementById('bleMsLabel').style.display = 'none';
+        document.getElementById('bleMs').style.display = 'none';
+      }
+      set('pollMs', fmt(state.last_poll_ms));
 
       if (status === 'connected' && prevStatus !== 'connected' && state.ble_connection !== 'on-demand') fetchDeviceInfo();
     }
@@ -830,6 +882,10 @@
           detail.textContent = host ? host + ':' + port : '—';
           meta.textContent = error !== 'No error' ? error : '';
         }
+
+        _esp32Connected = connected;
+        const lbl = document.getElementById('esp32ConnBtnLabel');
+        if (lbl) lbl.textContent = connected ? 'Disconnect ESP32' : 'Connect ESP32';
       } else {
         panel.style.display = 'none';
       }
@@ -867,11 +923,7 @@
         if (r.ok) {
           try {
             const data = await r.json();
-            if (data._connect_ms !== undefined || data._query_ms !== undefined) {
-              set('queryConnectMs', fmt(data._connect_ms));
-              set('queryMs', fmt(data._query_ms === 0 ? null : data._query_ms));
-              document.getElementById('queryTimingRow').style.display = '';
-            }
+            updateQueryTiming(data);
           } catch (_) {}
           btn.classList.add('success');
         } else {
