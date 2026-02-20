@@ -198,3 +198,6 @@ Adds on top of `main`:
 - First-poll identification fetch + SSE caching
 - `disconnect_ble_only()` — keeps ESP32 TCP alive, only drops BLE
 - `_poll_interval_event` in ServiceMode for persistent-mode interval changes
+- `_on_poll_done()` resets connect timing to 0 (persistent mode reuses connection)
+- `_persistent_query()` helper — wraps persistent-mode BLE calls with timing metadata
+  so `updateQueryTiming()` in the webapp receives `_connect_ms=0`, `_query_ms=N`
