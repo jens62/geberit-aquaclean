@@ -1364,6 +1364,22 @@ class ApiMode:
                     connected=False, error="No error", error_code="E0000"
                 )
 
+    async def _publish_identification_to_mqtt(self, info: dict):
+        """Publish device identification fields to their MQTT topics.
+        Mirrors what ServiceMode.on_device_identification / device_initial_operation_date
+        do in persistent mode via event handlers."""
+        topic = self.service.mqttConfig['topic']
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/Identification/SapNumber",    str(info.get("sap_number", "")))
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/Identification/SerialNumber",  str(info.get("serial_number", "")))
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/Identification/ProductionDate", str(info.get("production_date", "")))
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/Identification/Description",   str(info.get("description", "")))
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/initialOperationDate",         str(info.get("initial_operation_date", "")))
+
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
         when running in on-demand mode. Skips silently in persistent mode.
@@ -1371,6 +1387,18 @@ class ApiMode:
         when the interval is changed at runtime via set_poll_interval()."""
         logger.info(f"Poll loop started (interval={self._poll_interval}s)")
         topic = self.service.mqttConfig['topic']
+
+        # On startup, fetch device identification once and publish to MQTT.
+        # In persistent mode this happens via connect() + DeviceIdentification event.
+        # In on-demand mode connect_ble_only() skips data fetching, so we do it explicitly.
+        if self.ble_connection == "on-demand":
+            try:
+                info = await self._on_demand(self._fetch_info)
+                await self._publish_identification_to_mqtt(info)
+                logger.info("Startup identification published to MQTT")
+            except Exception as e:
+                logger.warning(f"Startup identification fetch failed: {e}")
+
         while True:
             # Sleep for the current interval; _poll_wakeup interrupts early on change.
             try:
