@@ -422,6 +422,10 @@ class ServiceMode:
 
     async def _on_poll_done(self, millis: int):
         self.device_state["last_poll_ms"] = millis
+        # Persistent mode reuses the BLE connection — no reconnect cost per poll.
+        self.device_state["last_connect_ms"] = 0
+        self.device_state["last_esphome_api_ms"] = 0 if esphome_host else None
+        self.device_state["last_ble_ms"] = 0 if esphome_host else None
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -1105,7 +1109,7 @@ class ApiMode:
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            await self._execute_command(self.service.client, command)
+            return await self._persistent_query(lambda client: self._execute_command(client, command))
         else:
             return await self._on_demand(lambda client: self._execute_command(client, command))
 
@@ -1247,7 +1251,7 @@ class ApiMode:
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            result = await self._fetch_anal_shower_state(self.service.client)
+            result = await self._persistent_query(self._fetch_anal_shower_state)
         else:
             result = await self._on_demand(self._fetch_anal_shower_state)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
@@ -1258,7 +1262,7 @@ class ApiMode:
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            result = await self._fetch_user_sitting_state(self.service.client)
+            result = await self._persistent_query(self._fetch_user_sitting_state)
         else:
             result = await self._on_demand(self._fetch_user_sitting_state)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting", str(result["is_user_sitting"]))
@@ -1269,7 +1273,7 @@ class ApiMode:
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            result = await self._fetch_lady_shower_state(self.service.client)
+            result = await self._persistent_query(self._fetch_lady_shower_state)
         else:
             result = await self._on_demand(self._fetch_lady_shower_state)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
@@ -1280,7 +1284,7 @@ class ApiMode:
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            result = await self._fetch_dryer_state(self.service.client)
+            result = await self._persistent_query(self._fetch_dryer_state)
         else:
             result = await self._on_demand(self._fetch_dryer_state)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(result["is_dryer_running"]))
@@ -1337,6 +1341,22 @@ class ApiMode:
             self._esphome_connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
             self._esphome_connector.connection_status_changed_handlers += self.service.on_connection_status_changed
         return self._esphome_connector
+
+    async def _persistent_query(self, action):
+        """Execute a BLE action on the persistent client and return timing metadata.
+        Connect costs are 0 — the connection is already live."""
+        t = time.perf_counter()
+        result = await action(self.service.client)
+        query_ms = int((time.perf_counter() - t) * 1000)
+        timing = {
+            "_connect_ms": 0,
+            "_esphome_api_ms": 0 if esphome_host else None,
+            "_ble_ms": 0 if esphome_host else None,
+            "_query_ms": query_ms,
+        }
+        if isinstance(result, dict):
+            return {**result, **timing}
+        return timing
 
     async def _on_demand(self, action):
         """Connect, execute action, disconnect — for on-demand connection mode.
