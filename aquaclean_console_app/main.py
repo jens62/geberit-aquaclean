@@ -129,6 +129,7 @@ class ServiceMode:
             "error_code": "E0000"
         }
         self._reconnect_requested = asyncio.Event()
+        self._poll_interval_event = asyncio.Event()  # set by set_poll_interval() in persistent mode
         self._connection_allowed = asyncio.Event()
         self._connection_allowed.set()  # auto-connect on startup
         self._shutdown_event = shutdown_event or asyncio.Event()
@@ -242,34 +243,57 @@ class ServiceMode:
                 # deterministic countdown regardless of when they connect.
                 self.device_state["poll_epoch"] = time.time()
 
-                # Run polling, reconnect-request watcher, and shutdown watcher
-                # concurrently; whichever finishes first wins.
-                polling_task   = asyncio.create_task(self.client.start_polling(interval, on_poll_done=self._on_poll_done))
-                reconnect_task = asyncio.create_task(self._reconnect_requested.wait())
-                shutdown_task  = asyncio.create_task(self._shutdown_event.wait())
+                # Inner polling loop — stays within this BLE connection.
+                # Reacts to poll-interval changes (set_poll_interval) without
+                # disconnecting; only reconnect/shutdown break out via exception.
+                shutdown_requested = False
+                while True:
+                    current_poll_interval = self.device_state.get("poll_interval", interval)
 
-                done, pending = await asyncio.wait(
-                    [polling_task, reconnect_task, shutdown_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for t in pending:
-                    t.cancel()
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
+                    reconnect_task    = asyncio.create_task(self._reconnect_requested.wait())
+                    shutdown_task     = asyncio.create_task(self._shutdown_event.wait())
+                    poll_change_task  = asyncio.create_task(self._poll_interval_event.wait())
 
-                if shutdown_task in done:
+                    if current_poll_interval > 0:
+                        polling_task = asyncio.create_task(
+                            self.client.start_polling(current_poll_interval, on_poll_done=self._on_poll_done))
+                        tasks = [polling_task, reconnect_task, shutdown_task, poll_change_task]
+                    else:
+                        polling_task = None
+                        tasks = [reconnect_task, shutdown_task, poll_change_task]
+
+                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for t in pending:
+                        t.cancel()
+                        try:
+                            await t
+                        except asyncio.CancelledError:
+                            pass
+
+                    if shutdown_task in done:
+                        shutdown_requested = True
+                        break  # exit inner loop; outer break below exits recovery loop
+
+                    if reconnect_task in done:
+                        self._reconnect_requested.clear()
+                        raise ManualReconnectRequested()
+
+                    if poll_change_task in done:
+                        self._poll_interval_event.clear()
+                        new_interval = self.device_state.get("poll_interval", interval)
+                        if new_interval > 0:
+                            # Reset countdown epoch when re-enabling polling
+                            self.device_state["poll_epoch"] = time.time()
+                        continue  # restart inner loop with new interval
+
+                    # polling_task finished — re-raise its exception if any
+                    if polling_task is not None:
+                        exc = polling_task.exception() if not polling_task.cancelled() else None
+                        if exc:
+                            raise exc
+
+                if shutdown_requested:
                     break  # exit recovery loop
-
-                if reconnect_task in done:
-                    self._reconnect_requested.clear()
-                    raise ManualReconnectRequested()
-
-                # polling_task finished — re-raise its exception if any
-                exc = polling_task.exception() if not polling_task.cancelled() else None
-                if exc:
-                    raise exc
 
             except ManualReconnectRequested:
                 logger.info("Manual reconnect requested — reconnecting...")
@@ -997,9 +1021,15 @@ class ApiMode:
     async def set_poll_interval(self, value: float) -> dict:
         if value < 0:
             self._http_error(400, E4002, f"Value {value} is invalid. Must be >= 0 (0 = disabled)")
+        old_interval = self._poll_interval
         self._poll_interval = value
         self.service.device_state["poll_interval"] = value
-        self._poll_wakeup.set()   # wake the poll loop so it picks up the new interval immediately
+        if old_interval == 0 and value > 0:
+            # Reset the countdown epoch so the webapp starts the countdown immediately
+            # rather than resuming from a stale epoch set when polling was previously active.
+            self.service.device_state["poll_epoch"] = time.time()
+        self._poll_wakeup.set()                    # wake on-demand _polling_loop
+        self.service._poll_interval_event.set()    # wake persistent-mode inner loop
         await self.rest_api.broadcast_state(self.service.device_state.copy())
         return {"status": "success", "poll_interval": value}
 
