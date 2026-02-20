@@ -372,18 +372,27 @@ class ServiceMode:
             # Clear device info to prevent stale data display
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
-        elif status in ("disconnected", "connecting"):
+        elif status == "connecting":
             self.device_state["ble_connected_at"] = None
-            self.device_state["poll_epoch"] = None
+            # Reset timing so the webapp shows fresh values once connected,
+            # not stale values from the previous operation.
             self.device_state["last_connect_ms"] = None
             self.device_state["last_esphome_api_ms"] = None
             self.device_state["last_ble_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = None
             self.device_state["ble_error_code"] = None
-            # Clear device info to prevent stale data display
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
+        elif status == "disconnected":
+            self.device_state["ble_connected_at"] = None
+            self.device_state["ble_error"] = None
+            self.device_state["ble_error_code"] = None
+            self.device_state["ble_device_name"] = None
+            self.device_state["ble_device_address"] = None
+            # Do NOT clear timing or poll_epoch here — the last completed
+            # operation's values should remain visible in the webapp until
+            # the next operation starts (clearing on "connecting" handles that).
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 

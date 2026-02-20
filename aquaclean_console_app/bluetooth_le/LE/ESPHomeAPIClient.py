@@ -403,6 +403,17 @@ class ESPHomeAPIClient:
                 self._notify_worker_task.cancel()
                 self._notify_worker_task = None
 
+            # Remove all notification callbacks from aioesphomeapi's dispatch table.
+            # Must be done before the next connect; otherwise each reconnect stacks
+            # another on_notify handler on the same handle, causing duplicate frames.
+            for _stop_notify, remove_cb in self._notify_unsubs:
+                try:
+                    remove_cb()
+                except Exception:
+                    pass
+            self._notify_unsubs.clear()
+            self._notify_callbacks.clear()
+
             # Disconnect from BLE device
             await self._api.bluetooth_device_disconnect(self._mac_int)
             logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address}")
