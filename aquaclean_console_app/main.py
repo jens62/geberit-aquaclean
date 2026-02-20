@@ -79,7 +79,8 @@ class NullMqttService:
         self.SetPollInterval   = myEvent.EventHandler()
         self.Disconnect        = myEvent.EventHandler()
         self.ConnectESP32      = myEvent.EventHandler()
-        self.DisconnectESP32   = myEvent.EventHandler()
+        self.DisconnectESP32         = myEvent.EventHandler()
+        self.SetEsphomeApiConnection = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
@@ -110,6 +111,7 @@ class ServiceMode:
             "last_esphome_api_ms": None,     # portion: ESP32 API TCP connect (None = local BLE, 0 = reused)
             "last_ble_ms": None,             # portion: BLE scan + handshake to toilet
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
+            "esphome_api_connection": "persistent" if esphome_persistent_api else "on-demand",
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -822,6 +824,7 @@ class ApiMode:
         self._on_demand_lock = asyncio.Lock()
         self._poll_wakeup    = asyncio.Event()
         self._esphome_connector: "BluetoothLeConnector | None" = None
+        self.esphome_api_connection = "persistent" if esphome_persistent_api else "on-demand"
 
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
@@ -873,8 +876,9 @@ class ApiMode:
         self.service.mqtt_service.SetBleConnection += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetPollInterval  += self._on_mqtt_set_poll_interval
         self.service.mqtt_service.Disconnect       += self._on_mqtt_disconnect
-        self.service.mqtt_service.ConnectESP32     += self._on_mqtt_esp32_connect
-        self.service.mqtt_service.DisconnectESP32  += self._on_mqtt_esp32_disconnect
+        self.service.mqtt_service.ConnectESP32          += self._on_mqtt_esp32_connect
+        self.service.mqtt_service.DisconnectESP32        += self._on_mqtt_esp32_disconnect
+        self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
         service_task = asyncio.create_task(self.service.run())
         poll_task = asyncio.create_task(self._polling_loop())
         try:
@@ -911,7 +915,11 @@ class ApiMode:
         return state
 
     def get_config(self) -> dict:
-        return {"ble_connection": self.ble_connection, "poll_interval": self._poll_interval}
+        return {
+            "ble_connection": self.ble_connection,
+            "poll_interval": self._poll_interval,
+            "esphome_api_connection": self.esphome_api_connection,
+        }
 
     async def set_ble_connection(self, value: str) -> dict:
         if value not in ("persistent", "on-demand"):
@@ -924,6 +932,25 @@ class ApiMode:
             await self.service.request_disconnect()
         await self.rest_api.broadcast_state(self.service.device_state.copy())
         return {"status": "success", "ble_connection": value}
+
+    async def set_esphome_api_connection(self, value: str) -> dict:
+        if value not in ("persistent", "on-demand"):
+            self._http_error(400, E4001, f"Invalid value {value!r}. Use 'persistent' or 'on-demand'.")
+        self.esphome_api_connection = value
+        self.service.device_state["esphome_api_connection"] = value
+        # When switching to on-demand, tear down the shared connector so the
+        # next request gets a fresh connection rather than reusing a stale one.
+        if value == "on-demand" and self._esphome_connector is not None:
+            try:
+                await self._esphome_connector.disconnect_esp32_api()
+            except Exception:
+                pass
+            self._esphome_connector = None
+            await self.service._update_esphome_proxy_state(
+                connected=False, error="No error", error_code="E0000"
+            )
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "esphome_api_connection": value}
 
     async def set_poll_interval(self, value: float) -> dict:
         if value < 0:
@@ -959,6 +986,12 @@ class ApiMode:
             await self.do_disconnect()
         except Exception as e:
             logger.warning(f"MQTT disconnect failed: {e}")
+
+    async def _on_mqtt_set_esphome_api_connection(self, value: str):
+        try:
+            await self.set_esphome_api_connection(value)
+        except Exception as e:
+            logger.warning(f"MQTT set_esphome_api_connection({value!r}) failed: {e}")
 
     # --- REST endpoint implementations ---
 
@@ -1236,7 +1269,7 @@ class ApiMode:
         device_id = config.get("BLE", "device_id")
         topic = self.service.mqttConfig['topic']
 
-        use_persistent = esphome_host and esphome_persistent_api
+        use_persistent = esphome_host and (self.esphome_api_connection == "persistent")
 
         if use_persistent:
             connector = self._get_esphome_connector()

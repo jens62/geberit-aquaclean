@@ -17,6 +17,10 @@ class BleConnectionUpdate(BaseModel):
 class PollIntervalUpdate(BaseModel):
     value: float
 
+
+class EsphomeApiConnectionUpdate(BaseModel):
+    value: str
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,6 +148,10 @@ class RestApiService:
         @app.post("/config/poll-interval")
         async def set_poll_interval(body: PollIntervalUpdate):
             return await self._api_mode.set_poll_interval(body.value)
+
+        @app.post("/config/esphome-api-connection")
+        async def set_esphome_api_connection(body: EsphomeApiConnectionUpdate):
+            return await self._api_mode.set_esphome_api_connection(body.value)
 
         @app.post("/connect")
         async def connect():

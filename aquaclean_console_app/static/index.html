@@ -408,6 +408,9 @@
       <button id="bleConnModeBtn" onclick="toggleBleConnectionMode(this)">
         <span class="spinner"></span><span id="bleConnModeBtnLabel">—</span>
       </button>
+      <button id="esp32ApiModeBtn" onclick="toggleEsp32ApiConnection(this)" style="display:none">
+        <span class="spinner"></span><span id="esp32ApiModeBtnLabel">—</span>
+      </button>
       <div style="display:flex;align-items:center;gap:0.4rem">
         <input id="pollIntervalInput" type="number" min="0" step="0.5"
                style="width:5rem;padding:0.35rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.85rem"
@@ -580,6 +583,7 @@
       }
       if (state.poll_epoch !== undefined) _pollEpoch = state.poll_epoch;
       if (state.ble_connection !== undefined) updateBleConnectionMode(state.ble_connection);
+      if (state.esphome_api_connection !== undefined) updateEsp32ApiConnection(state.esphome_api_connection);
     }
 
     (function tickCountdown() {
@@ -610,6 +614,37 @@
       _bleStatus = status;
       const label = document.getElementById('connBtnLabel');
       if (label) label.textContent = status === 'connected' ? 'Disconnect' : 'Reconnect';
+    }
+
+    // --- ESP32 API connection mode toggle ---
+    let _esp32ApiConnection = null;
+
+    function updateEsp32ApiConnection(mode) {
+      _esp32ApiConnection = mode;
+      const lbl = document.getElementById('esp32ApiModeBtnLabel');
+      if (lbl) lbl.textContent = mode === 'persistent' ? 'ESP32: Switch to On-Demand' : 'ESP32: Switch to Persistent';
+    }
+
+    async function toggleEsp32ApiConnection(btn) {
+      if (_esp32ApiConnection === null) return;
+      const newMode = _esp32ApiConnection === 'persistent' ? 'on-demand' : 'persistent';
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.classList.remove('success', 'error');
+      try {
+        const r = await fetch(apiBase + '/config/esphome-api-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: newMode }),
+        });
+        btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        btn.classList.add('error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
     }
 
     // --- ESP32 proxy button ---
@@ -886,8 +921,13 @@
         _esp32Connected = connected;
         const lbl = document.getElementById('esp32ConnBtnLabel');
         if (lbl) lbl.textContent = connected ? 'Disconnect ESP32' : 'Connect ESP32';
+
+        const apiBtn = document.getElementById('esp32ApiModeBtn');
+        if (apiBtn) apiBtn.style.display = '';
       } else {
         panel.style.display = 'none';
+        const apiBtn = document.getElementById('esp32ApiModeBtn');
+        if (apiBtn) apiBtn.style.display = 'none';
       }
     }
 
