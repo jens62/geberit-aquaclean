@@ -153,6 +153,14 @@ class RestApiService:
         async def disconnect():
             return await self._api_mode.do_disconnect()
 
+        @app.post("/esphome/connect")
+        async def esp32_connect():
+            return await self._api_mode.esp32_connect()
+
+        @app.post("/esphome/disconnect")
+        async def esp32_disconnect():
+            return await self._api_mode.esp32_disconnect()
+
     async def start(self, shutdown_event: asyncio.Event):
         server_config = uvicorn.Config(
             self.app,

@@ -46,6 +46,7 @@ esphome_port           = int(config.get("ESPHOME", "port",    fallback="6053"))
 esphome_noise_psk      = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
 esphome_log_streaming  = config.getboolean("ESPHOME", "log_streaming", fallback=False)
 esphome_log_level      = config.get("ESPHOME", "log_level", fallback="INFO")
+esphome_persistent_api = config.getboolean("ESPHOME", "persistent_api", fallback=False)
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 
 # Suppress verbose external library logging (but not when explicitly debugging at TRACE/SILLY)
@@ -77,6 +78,8 @@ class NullMqttService:
         self.SetBleConnection  = myEvent.EventHandler()
         self.SetPollInterval   = myEvent.EventHandler()
         self.Disconnect        = myEvent.EventHandler()
+        self.ConnectESP32      = myEvent.EventHandler()
+        self.DisconnectESP32   = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
@@ -103,7 +106,9 @@ class ServiceMode:
             "ble_device_address": None,      # BLE address from config
             "ble_error": None,               # error message when ble_status == "error"
             "ble_error_code": None,          # error code (E0001-E7999) when ble_status == "error"
-            "last_connect_ms": None,         # duration of last BLE connect in ms
+            "last_connect_ms": None,         # duration of last BLE connect in ms (total)
+            "last_esphome_api_ms": None,     # portion: ESP32 API TCP connect (None = local BLE, 0 = reused)
+            "last_ble_ms": None,             # portion: BLE scan + handshake to toilet
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
         }
         self.esphome_proxy_state = {
@@ -201,10 +206,20 @@ class ServiceMode:
                 t0 = time.perf_counter()
                 await self.client.connect(device_id)
                 self.device_state["last_connect_ms"] = int((time.perf_counter() - t0) * 1000)
+                self.device_state["last_esphome_api_ms"] = bluetooth_connector.last_esphome_api_ms
+                self.device_state["last_ble_ms"] = bluetooth_connector.last_ble_ms
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
                     device_address=device_id,
+                )
+                await self.mqtt_service.send_data_async(
+                    f"{self.mqttConfig['topic']}/centralDevice/timings",
+                    json.dumps({
+                        "connect_ms": self.device_state["last_connect_ms"],
+                        "esphome_api_ms": bluetooth_connector.last_esphome_api_ms,
+                        "ble_ms": bluetooth_connector.last_ble_ms,
+                    })
                 )
 
                 # Update ESPHome proxy status if connected via ESP32
@@ -314,6 +329,8 @@ class ServiceMode:
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
             self.device_state["last_connect_ms"] = None
+            self.device_state["last_esphome_api_ms"] = None
+            self.device_state["last_ble_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = error_msg
             self.device_state["ble_error_code"] = error_code
@@ -324,6 +341,8 @@ class ServiceMode:
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
             self.device_state["last_connect_ms"] = None
+            self.device_state["last_esphome_api_ms"] = None
+            self.device_state["last_ble_ms"] = None
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = None
             self.device_state["ble_error_code"] = None
@@ -802,6 +821,7 @@ class ApiMode:
         self._shutdown_event = asyncio.Event()
         self._on_demand_lock = asyncio.Lock()
         self._poll_wakeup    = asyncio.Event()
+        self._esphome_connector: "BluetoothLeConnector | None" = None
 
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
@@ -853,6 +873,8 @@ class ApiMode:
         self.service.mqtt_service.SetBleConnection += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetPollInterval  += self._on_mqtt_set_poll_interval
         self.service.mqtt_service.Disconnect       += self._on_mqtt_disconnect
+        self.service.mqtt_service.ConnectESP32     += self._on_mqtt_esp32_connect
+        self.service.mqtt_service.DisconnectESP32  += self._on_mqtt_esp32_disconnect
         service_task = asyncio.create_task(self.service.run())
         poll_task = asyncio.create_task(self._polling_loop())
         try:
@@ -992,6 +1014,62 @@ class ApiMode:
             return {"status": "success", "action": "disconnect requested"}
         else:
             return {"status": "success", "action": "no persistent connection to disconnect"}
+
+    async def esp32_connect(self) -> dict:
+        """Establish the ESP32 API TCP connection without connecting BLE to the toilet."""
+        if not esphome_host:
+            self._http_error(400, E4001, "No ESPHome host configured")
+        try:
+            connector = self._get_esphome_connector()
+            await connector._ensure_esphome_api_connected()
+            await self.service._update_esphome_proxy_state(
+                connected=True,
+                name=connector.esphome_proxy_name,
+                error="No error",
+                error_code="E0000",
+            )
+            return {
+                "status": "success",
+                "action": "esp32_connected",
+                "esphome_proxy_name": connector.esphome_proxy_name,
+                "esphome_api_ms": connector.last_esphome_api_ms,
+            }
+        except Exception as e:
+            await self.service._update_esphome_proxy_state(
+                connected=False,
+                error=str(e),
+                error_code="E2005",
+            )
+            self._http_error(503, E2005, str(e))
+
+    async def esp32_disconnect(self) -> dict:
+        """Close the ESP32 API TCP connection (disconnects any active BLE link first)."""
+        if not esphome_host:
+            self._http_error(400, E4001, "No ESPHome host configured")
+        connector = self._esphome_connector
+        if connector is None:
+            await self.service._update_esphome_proxy_state(
+                connected=False, error="No error", error_code="E0000"
+            )
+            return {"status": "success", "action": "no_esp32_connection"}
+        await connector.disconnect_esp32_api()
+        self._esphome_connector = None  # Force fresh connector on next request
+        await self.service._update_esphome_proxy_state(
+            connected=False, error="No error", error_code="E0000"
+        )
+        return {"status": "success", "action": "esp32_disconnected"}
+
+    async def _on_mqtt_esp32_connect(self):
+        try:
+            await self.esp32_connect()
+        except Exception as e:
+            logger.warning(f"MQTT esp32_connect failed: {e}")
+
+    async def _on_mqtt_esp32_disconnect(self):
+        try:
+            await self.esp32_disconnect()
+        except Exception as e:
+            logger.warning(f"MQTT esp32_disconnect failed: {e}")
 
     # --- Data query endpoints ---
 
@@ -1140,6 +1218,13 @@ class ApiMode:
             "description": ident.description,
         }
 
+    def _get_esphome_connector(self) -> "BluetoothLeConnector":
+        """Return the shared persistent ESPHome connector, creating it on first call."""
+        if self._esphome_connector is None:
+            self._esphome_connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
+            self._esphome_connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+        return self._esphome_connector
+
     async def _on_demand(self, action):
         """Connect, execute action, disconnect — for on-demand connection mode.
         Publishes connecting/connected/disconnected to MQTT and SSE, mirroring
@@ -1150,9 +1235,16 @@ class ApiMode:
     async def _on_demand_inner(self, action):
         device_id = config.get("BLE", "device_id")
         topic = self.service.mqttConfig['topic']
-        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
-        # Mirror persistent mode: let the connector publish "True, address, name"
-        connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+
+        use_persistent = esphome_host and esphome_persistent_api
+
+        if use_persistent:
+            connector = self._get_esphome_connector()
+        else:
+            connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
+            # Mirror persistent mode: let the connector publish "True, address, name"
+            connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+
         factory = AquaCleanClientFactory(connector)
         client = factory.create_client()
         try:
@@ -1163,13 +1255,28 @@ class ApiMode:
             await client.connect_ble_only(device_id)
             connect_ms = int((time.perf_counter() - t0) * 1000)
             self.service.device_state["last_connect_ms"] = connect_ms
+            self.service.device_state["last_esphome_api_ms"] = connector.last_esphome_api_ms
+            self.service.device_state["last_ble_ms"] = connector.last_ble_ms
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
+            await self.service.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/timings",
+                json.dumps({
+                    "connect_ms": connect_ms,
+                    "esphome_api_ms": connector.last_esphome_api_ms,
+                    "ble_ms": connector.last_ble_ms,
+                })
+            )
             t1 = time.perf_counter()
             result = action(client)
             result = await result if asyncio.iscoroutine(result) else result
             query_ms = int((time.perf_counter() - t1) * 1000)
             self.service.device_state["last_poll_ms"] = query_ms
-            timing = {"_connect_ms": connect_ms, "_query_ms": query_ms}
+            timing = {
+                "_connect_ms": connect_ms,
+                "_esphome_api_ms": connector.last_esphome_api_ms,
+                "_ble_ms": connector.last_ble_ms,
+                "_query_ms": query_ms,
+            }
             if isinstance(result, dict):
                 result = {**result, **timing}
             else:
@@ -1177,7 +1284,10 @@ class ApiMode:
             return result
         finally:
             try:
-                await client.disconnect()
+                if use_persistent:
+                    await connector.disconnect_ble_only()   # Keep ESP32 API TCP alive
+                else:
+                    await connector.disconnect()            # Full disconnect (original behavior)
             except Exception:
                 pass
             await self.service._set_ble_status("disconnected")
@@ -1212,8 +1322,10 @@ class ApiMode:
                 result = await self._on_demand(self._fetch_state)
                 # _set_ble_status("disconnected") cleared timing and poll_epoch;
                 # restore them so the webapp gets accurate values.
-                self.service.device_state["last_connect_ms"] = result.get("_connect_ms")
-                self.service.device_state["last_poll_ms"]    = result.get("_query_ms")
+                self.service.device_state["last_connect_ms"]    = result.get("_connect_ms")
+                self.service.device_state["last_esphome_api_ms"] = result.get("_esphome_api_ms")
+                self.service.device_state["last_ble_ms"]         = result.get("_ble_ms")
+                self.service.device_state["last_poll_ms"]        = result.get("_query_ms")
                 self.service.device_state["poll_epoch"]      = time.time()
                 await self.rest_api.broadcast_state(self.service.device_state.copy())
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
@@ -1536,6 +1648,37 @@ async def run_cli(args):
         print(json.dumps(result, indent=2))
         return
 
+    if args.command == 'esp32-connect':
+        if not esphome_host:
+            result["message"] = "No ESPHome host configured in [ESPHOME] host"
+            print(json.dumps(result, indent=2))
+            return
+        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
+        try:
+            await connector._ensure_esphome_api_connected()
+            result["status"] = "success"
+            result["message"] = "ESP32 API connected"
+            result["data"] = {
+                "esphome_proxy_name": connector.esphome_proxy_name,
+                "esphome_api_ms": connector.last_esphome_api_ms,
+            }
+        except Exception as e:
+            result["message"] = str(e)
+        finally:
+            try:
+                if connector._esphome_api:
+                    await connector._esphome_api.disconnect()
+            except Exception:
+                pass
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command == 'esp32-disconnect':
+        result["status"] = "success"
+        result["message"] = "No persistent ESP32 connection in CLI mode (one-shot)"
+        print(json.dumps(result, indent=2))
+        return
+
     # --- Commands that require a BLE connection ---
     client = None
     try:
@@ -1549,6 +1692,10 @@ async def run_cli(args):
 
         result["device"]        = client.Description
         result["serial_number"] = client.SerialNumber
+        result["timing"] = {
+            "esphome_api_ms": connector.last_esphome_api_ms,
+            "ble_ms": connector.last_ble_ms,
+        }
 
         if args.command in ('status', 'system-parameters'):
             r = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
@@ -1699,6 +1846,10 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command publish-ha-discovery\n"
             "  %(prog)s --mode cli --command remove-ha-discovery\n"
             "\n"
+            "ESPHome proxy (no BLE required):\n"
+            "  %(prog)s --mode cli --command esp32-connect\n"
+            "  %(prog)s --mode cli --command esp32-disconnect\n"
+            "\n"
             "options:\n"
             "  --address 38:AB:XX:XX:ZZ:67   override BLE device address from config.ini\n"
             "\n"
@@ -1718,6 +1869,8 @@ if __name__ == "__main__":
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
         'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
+        # ESPHome proxy (no BLE required)
+        'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
 
