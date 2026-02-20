@@ -512,8 +512,6 @@
       document.getElementById('offlineBanner').classList.add('visible');
       document.getElementById('connBtn').style.display = 'none';
       document.getElementById('bleConnModeBtn').style.display = 'none';
-      document.getElementById('queriesHeading').style.display = 'none';
-      document.getElementById('queriesSection').style.display = 'none';
 
       _pollEpoch = null;
       const pollLabel = document.getElementById('pollLabel');
@@ -663,9 +661,8 @@
       if (modeLabel) modeLabel.textContent = mode === 'persistent' ? 'Persistent' : 'On-Demand';
       const btnLabel = document.getElementById('bleConnModeBtnLabel');
       if (btnLabel) btnLabel.textContent = mode === 'persistent' ? 'Switch to On-Demand' : 'Switch to Persistent';
-      const show = mode === 'on-demand';
-      document.getElementById('queriesHeading').style.display = show ? '' : 'none';
-      document.getElementById('queriesSection').style.display = show ? '' : 'none';
+      document.getElementById('queriesHeading').style.display = '';
+      document.getElementById('queriesSection').style.display = '';
     }
 
     async function setPollInterval(btn) {
