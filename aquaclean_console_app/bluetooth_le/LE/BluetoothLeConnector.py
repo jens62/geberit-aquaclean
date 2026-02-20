@@ -344,6 +344,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         """BLE-only disconnect — ESP32 API TCP connection stays alive for reuse."""
         if self.client:
             await self.client.disconnect(close_api=False)
+            self.client = None  # Must be None so next _connect_via_esphome() doesn't run the
+                                # cleanup block which calls disconnect(close_api=True) and tears
+                                # down the persistent API we're trying to keep alive.
         if self._esphome_unsub_adv:
             try:
                 self._esphome_unsub_adv()
