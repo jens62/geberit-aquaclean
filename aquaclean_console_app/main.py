@@ -112,6 +112,12 @@ class ServiceMode:
             "last_ble_ms": None,             # portion: BLE scan + handshake to toilet
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
             "esphome_api_connection": "persistent" if esphome_persistent_api else "on-demand",
+            # Device identification — populated on first on-demand poll, cached for /info endpoint
+            "sap_number": None,
+            "serial_number": None,
+            "production_date": None,
+            "description": None,
+            "initial_operation_date": None,
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -1048,9 +1054,12 @@ class ApiMode:
                 "initial_operation_date": c.InitialOperationDate,
             }
         else:
-            result = await self._on_demand(lambda client: self._fetch_info(client))
-        # Note: MQTT publishing is handled by event handlers (on_device_identification, device_initial_operation_date)
-        # to avoid duplicate publishing when /info endpoint is called
+            if self.service.device_state.get("sap_number") is not None:
+                result = {k: self.service.device_state[k] for k in
+                          ("sap_number", "serial_number", "production_date",
+                           "description", "initial_operation_date")}
+            else:
+                result = await self._on_demand(lambda client: self._fetch_info(client))
         return result
 
     async def run_command(self, command: str):
@@ -1167,7 +1176,10 @@ class ApiMode:
                 self._http_error(503, E4003)
             result = {"initial_operation_date": str(self.service.client.InitialOperationDate)}
         else:
-            result = await self._on_demand(self._fetch_initial_op_date)
+            if self.service.device_state.get("initial_operation_date") is not None:
+                result = {"initial_operation_date": self.service.device_state["initial_operation_date"]}
+            else:
+                result = await self._on_demand(self._fetch_initial_op_date)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate", result["initial_operation_date"])
         return result
 
@@ -1184,9 +1196,11 @@ class ApiMode:
                 "description": c.Description,
             }
         else:
-            result = await self._on_demand(self._fetch_identification)
-        # Note: MQTT publishing is handled by on_device_identification event handler
-        # to avoid duplicate publishing when /identification endpoint is called
+            if self.service.device_state.get("sap_number") is not None:
+                result = {k: self.service.device_state[k] for k in
+                          ("sap_number", "serial_number", "production_date", "description")}
+            else:
+                result = await self._on_demand(self._fetch_identification)
         return result
 
     async def get_anal_shower_state(self):
@@ -1387,17 +1401,7 @@ class ApiMode:
         when the interval is changed at runtime via set_poll_interval()."""
         logger.info(f"Poll loop started (interval={self._poll_interval}s)")
         topic = self.service.mqttConfig['topic']
-
-        # On startup, fetch device identification once and publish to MQTT.
-        # In persistent mode this happens via connect() + DeviceIdentification event.
-        # In on-demand mode connect_ble_only() skips data fetching, so we do it explicitly.
-        if self.ble_connection == "on-demand":
-            try:
-                info = await self._on_demand(self._fetch_info)
-                await self._publish_identification_to_mqtt(info)
-                logger.info("Startup identification published to MQTT")
-            except Exception as e:
-                logger.warning(f"Startup identification fetch failed: {e}")
+        _identification_fetched = False  # fetch identification on the first poll, then state-only
 
         while True:
             # Sleep for the current interval; _poll_wakeup interrupts early on change.
@@ -1419,7 +1423,16 @@ class ApiMode:
             if self.ble_connection != "on-demand":
                 continue  # persistent mode handles its own polling
             try:
-                result = await self._on_demand(self._fetch_state)
+                if not _identification_fetched:
+                    result = await self._on_demand(self._fetch_state_and_info)
+                    _identification_fetched = True
+                    # Cache identification in device_state for SSE and /info endpoint.
+                    for k in ("sap_number", "serial_number", "production_date",
+                              "description", "initial_operation_date"):
+                        self.service.device_state[k] = result.get(k)
+                    await self._publish_identification_to_mqtt(result)
+                else:
+                    result = await self._on_demand(self._fetch_state)
                 # _set_ble_status("disconnected") cleared timing and poll_epoch;
                 # restore them so the webapp gets accurate values.
                 self.service.device_state["last_connect_ms"]    = result.get("_connect_ms")
@@ -1466,6 +1479,12 @@ class ApiMode:
             "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
             "is_dryer_running":       self.service.device_state["is_dryer_running"],
         }
+
+    async def _fetch_state_and_info(self, client):
+        """Used for the first on-demand poll only: fetch state + identification in one BLE session."""
+        state = await self._fetch_state(client)
+        info  = await self._fetch_info(client)
+        return {**state, **info}
 
     async def _fetch_info(self, client):
         ident = await client.base_client.get_device_identification_async(0)
