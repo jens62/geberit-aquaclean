@@ -21,7 +21,7 @@ from aquaclean_core.AquaCleanClientFactory                    import AquaCleanCl
 from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
 from aquaclean_core.Message.MessageService                    import MessageService
 from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
-from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector
+from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector, ESPHomeConnectionError, ESPHomeDeviceNotFoundError
 from MqttService                                              import MqttService as Mqtt
 from RestApiService                                           import RestApiService
 from myEvent                                                  import myEvent
@@ -278,52 +278,49 @@ class ServiceMode:
                 except Exception:
                     pass
                 await self.wait_for_device_restart(device_id)
+            except ESPHomeConnectionError as e:
+                # ESP32 TCP connection failed — Geberit was never reached.
+                error_code_obj = E1001 if e.timeout else E1002
+                msg = f"{e} — Check that the ESP32 is reachable at {esphome_host}:{esphome_port}"
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await self._set_ble_status("error", error_msg=msg, error_code=error_code_obj.code)
+                await self._update_esphome_proxy_state(connected=False, error=str(e), error_code=error_code_obj.code)
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    pass
+            except ESPHomeDeviceNotFoundError as e:
+                # ESP32 TCP connected fine, but Geberit not visible via BLE proxy.
+                msg = (
+                    f"{e} — "
+                    "Try in order: "
+                    "1) Power cycle the Geberit. "
+                    "2) Move the ESP32 closer to the Geberit. "
+                    "3) Restart the ESP32."
+                )
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0002, msg))
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0002.code)
+                await self._update_esphome_proxy_state(connected=False, error=str(e), error_code=E0002.code)
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    pass
             except BleakError as e:
-                err_str = str(e)
-                is_esp32_tcp_error    = esphome_host and "to ESPHome proxy" in err_str
-                is_esp32_ble_missing  = esphome_host and "not found via ESPHome proxy" in err_str
-
-                if is_esp32_tcp_error:
-                    # ESP32 TCP connection failed — the Geberit was never reached.
-                    # Do NOT publish E0003; route the error to esphomeProxy only.
-                    error_code_obj = E1001 if "Timeout" in err_str else E1002
-                    msg = f"{err_str} — Check that the ESP32 is reachable at {esphome_host}:{esphome_port}"
-                    logger.warning(msg)
-                    await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                    await self._set_ble_status("error", error_msg=msg, error_code=error_code_obj.code)
-                    await self._update_esphome_proxy_state(connected=False, error=err_str, error_code=error_code_obj.code)
-
-                elif is_esp32_ble_missing:
-                    # ESP32 TCP connected fine, but the Geberit was not found via BLE proxy.
-                    msg = (
-                        f"{err_str} — "
-                        "Try in order: "
-                        "1) Power cycle the Geberit. "
-                        "2) Move the ESP32 closer to the Geberit. "
-                        "3) Restart the ESP32."
-                    )
-                    logger.warning(msg)
-                    await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0002, msg))
-                    await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                    await self._set_ble_status("error", error_msg=msg, error_code=E0002.code)
-                    await self._update_esphome_proxy_state(connected=False, error=err_str, error_code=E0002.code)
-
-                else:
-                    # Generic local BLE error.
-                    msg = (
-                        f"{err_str} — "
-                        "Try in order: "
-                        "1) Power cycle the Geberit. "
-                        "2) Restart the Bluetooth service on the host machine. "
-                        "3) Restart the host machine."
-                    )
-                    logger.warning(msg)
-                    await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
-                    await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                    await self._set_ble_status("error", error_msg=msg, error_code=E0003.code)
-                    if esphome_host:
-                        await self._update_esphome_proxy_state(connected=False, error=err_str, error_code="E1003")
-
+                # Generic local BLE error (no ESPHome involved).
+                msg = (
+                    f"{e} — "
+                    "Try in order: "
+                    "1) Power cycle the Geberit. "
+                    "2) Restart the Bluetooth service on the host machine. "
+                    "3) Restart the host machine."
+                )
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code)
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -1321,6 +1318,13 @@ class ApiMode:
             self.service.device_state["last_esphome_api_ms"] = connector.last_esphome_api_ms
             self.service.device_state["last_ble_ms"] = connector.last_ble_ms
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
+            if esphome_host and connector.esphome_proxy_connected:
+                await self.service._update_esphome_proxy_state(
+                    connected=True,
+                    name=connector.esphome_proxy_name,
+                    error="No error",
+                    error_code="E0000",
+                )
             await self.service.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/timings",
                 json.dumps({
@@ -1354,6 +1358,11 @@ class ApiMode:
             except Exception:
                 pass
             await self.service._set_ble_status("disconnected")
+            # Reset proxy state only when TCP is also torn down
+            if esphome_host and not use_persistent:
+                await self.service._update_esphome_proxy_state(
+                    connected=False, error="No error", error_code="E0000"
+                )
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -1395,21 +1404,21 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+            except ESPHomeConnectionError as e:
+                error_code_obj = E1001 if e.timeout else E1002
+                logger.warning(f"On-demand poll: ESP32 TCP error: {e}")
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/esphomeProxy/error", ErrorManager.to_json(error_code_obj, str(e)))
+                await self.service._update_esphome_proxy_state(
+                    connected=False, error=str(e), error_code=error_code_obj.code)
+            except ESPHomeDeviceNotFoundError as e:
+                logger.warning(f"On-demand poll: Geberit not found via ESP32: {e}")
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/error", ErrorManager.to_json(E0002, str(e)))
             except BleakError as e:
-                err_str = str(e)
-                if esphome_host and "to ESPHome proxy" in err_str:
-                    error_code_obj = E1001 if "Timeout" in err_str else E1002
-                    logger.warning(f"On-demand poll: ESP32 TCP error: {err_str}")
-                    await self.service.mqtt_service.send_data_async(
-                        f"{topic}/esphomeProxy/error", ErrorManager.to_json(error_code_obj, err_str))
-                elif esphome_host and "not found via ESPHome proxy" in err_str:
-                    logger.warning(f"On-demand poll: Geberit not found via ESP32: {err_str}")
-                    await self.service.mqtt_service.send_data_async(
-                        f"{topic}/centralDevice/error", ErrorManager.to_json(E0002, err_str))
-                else:
-                    logger.warning(f"On-demand poll: BLE error: {err_str}")
-                    await self.service.mqtt_service.send_data_async(
-                        f"{topic}/centralDevice/error", ErrorManager.to_json(E0003, err_str))
+                logger.warning(f"On-demand poll: BLE error: {e}")
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/error", ErrorManager.to_json(E0003, str(e)))
             except Exception as e:
                 logger.warning(f"On-demand poll failed: {e}")
                 await self.service.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E7002, str(e)))
@@ -1835,17 +1844,22 @@ async def run_cli(args):
         result["error_code"] = E0003.code
         result["message"] = E0003.message + f": {str(e)}"
         logger.error(ErrorManager.to_cli(E0003, str(e)))
-    except BleakError as e:
-        # BLE errors (device not found, GATT errors, etc.)
-        error_str = str(e).lower()
-        if "not found" in error_str:
-            error_code = E0001 if "local" in error_str or "esphome" not in error_str else E0002
-        else:
-            error_code = E0003  # Generic BLE error
+    except ESPHomeConnectionError as e:
+        error_code = E1001 if e.timeout else E1002
         result["status"] = "error"
         result["error_code"] = error_code.code
-        result["message"] = error_code.message + f": {str(e)}"
+        result["message"] = error_code.message + f": {e}"
         logger.error(ErrorManager.to_cli(error_code, str(e)))
+    except ESPHomeDeviceNotFoundError as e:
+        result["status"] = "error"
+        result["error_code"] = E0002.code
+        result["message"] = E0002.message + f": {e}"
+        logger.error(ErrorManager.to_cli(E0002, str(e)))
+    except BleakError as e:
+        result["status"] = "error"
+        result["error_code"] = E0003.code
+        result["message"] = E0003.message + f": {e}"
+        logger.error(ErrorManager.to_cli(E0003, str(e)))
     except Exception as e:
         # Generic errors
         result["status"] = "error"
