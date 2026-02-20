@@ -10,13 +10,29 @@ from uuid import UUID
 from binascii import hexlify
 import logging
 
-from aquaclean_utils                                     import utils   
-from myEvent                                             import myEvent   
+from aquaclean_utils                                     import utils
+from myEvent                                             import myEvent
 
 from typing import Dict, Callable
 
 
 logger = logging.getLogger(__name__)
+
+
+class ESPHomeConnectionError(Exception):
+    """Raised when the app cannot reach the ESP32 API (TCP port 6053).
+
+    The ``timeout`` attribute distinguishes a connect timeout (E1001) from
+    a general connection failure (E1002).
+    """
+    def __init__(self, message: str, timeout: bool = False):
+        super().__init__(message)
+        self.timeout = timeout
+
+
+class ESPHomeDeviceNotFoundError(Exception):
+    """Raised when the Geberit device is not found via the ESPHome BLE proxy (E0002)."""
+
 
 class IBluetoothLeConnector:
     pass
@@ -127,9 +143,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             self._esphome_api = api
             return api
         except asyncio.TimeoutError:
-            raise BleakError(f"Timeout connecting to ESPHome proxy at {self.esphome_host}:{self.esphome_port}")
+            raise ESPHomeConnectionError(
+                f"Timeout connecting to ESPHome proxy at {self.esphome_host}:{self.esphome_port}",
+                timeout=True,
+            )
         except Exception as e:
-            raise BleakError(f"Failed to connect to ESPHome proxy at {self.esphome_host}: {e}")
+            raise ESPHomeConnectionError(
+                f"Failed to connect to ESPHome proxy at {self.esphome_host}: {e}",
+                timeout=False,
+            )
 
 
     async def _connect_via_esphome(self, device_id):
@@ -164,7 +186,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
         except asyncio.TimeoutError:
             unsub_adv()
-            raise BleakError(f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}")
+            raise ESPHomeDeviceNotFoundError(
+                f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
+            )
         # NOTE: Do NOT unsubscribe from advertisements here!
         # Unsubscribing sends UnsubscribeBluetoothLEAdvertisementsRequest which
         # clears api_connection_ on the ESP32. The ESP32 loop() then disconnects
