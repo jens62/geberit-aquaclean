@@ -582,6 +582,9 @@
       if (state.poll_epoch !== undefined) _pollEpoch = state.poll_epoch;
       if (state.ble_connection !== undefined) updateBleConnectionMode(state.ble_connection);
       if (state.esphome_api_connection !== undefined) updateEsp32ApiConnection(state.esphome_api_connection);
+      // Identification arrives via SSE state after the first on-demand poll.
+      if (state.sap_number != null) onIdentification(state);
+      if (state.initial_operation_date != null) onInitialOpDate(state);
     }
 
     (function tickCountdown() {
@@ -931,6 +934,10 @@
     }
 
     // --- Device info ---
+    // In on-demand mode, identification arrives via SSE state after the first poll
+    // (onStateReceived → onIdentification / onInitialOpDate).
+    // In persistent mode, it is fetched when BLE status transitions to 'connected'
+    // (updateConnection → fetchDeviceInfo).
     function fetchDeviceInfo() {
       fetch(apiBase + '/info')
         .then(r => r.ok ? r.json() : Promise.reject())
@@ -943,7 +950,6 @@
         })
         .catch(() => {});
     }
-    fetchDeviceInfo();
 
     function set(id, val) {
       const el = document.getElementById(id);
