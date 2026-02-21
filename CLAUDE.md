@@ -110,10 +110,9 @@ ble_connection      persistent | on-demand
 poll_interval       float (seconds); 0 = disabled
 poll_epoch          Unix timestamp of last poll start (for countdown)
 last_connect_ms     total connect time in ms
-last_esphome_api_ms portion: ESP32 TCP connect (None=local BLE, 0=reused)
+last_esphome_api_ms portion: ESP32 TCP connect (None=local BLE)
 last_ble_ms         portion: BLE scan + handshake
 last_poll_ms        duration of last GetSystemParameterList
-esphome_api_connection  persistent | on-demand
 sap_number / serial_number / production_date / description  (cached after first poll)
 initial_operation_date
 ble_error_hint       user-facing resolution hint or None (cleared on non-error transitions)
@@ -255,19 +254,9 @@ The hint survives this round-trip because `error_hint` is stored in
 
 ---
 
-## Invalid config combination — hard error at startup
-
-When ESPHome transport is used (`esphome_host` set), the combination
-`ble_connection = persistent` + `esphome_api_connection = on-demand` is **rejected at startup**
-with `sys.exit(1)`. A persistent BLE link runs over the ESP32 TCP connection;
-if the TCP drops after every request the BLE link drops too.
-
-Validated by `_check_config_errors()` (module-level, ~line 60).
-Called from `main()` for `service` and `api` modes. CLI mode skips it so
-`--command check-config` can still report the error as JSON.
-
 **CLI**: `--mode cli --command check-config` — validates config, returns JSON
 with `{"status": "success"|"error", "data": {"errors": [...]}}`.
+`_check_config_errors()` exists (module-level) but currently returns no errors.
 
 ---
 
@@ -383,20 +372,13 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
    `onStateReceived()` calls `onIdentification()` when SSE state has
    `sap_number != null`.
 
-7. **ESP32 proxy shows disconnected after every on-demand BLE cycle**
-   (with `esphome_api_connection=persistent`)
-   → `disconnect_ble_only()` must NOT call `_esphome_unsub_adv()` — doing so
-   causes the ESP32 to close TCP while BLE is still potentially active.
-   Fix: keep the reference in `disconnect_ble_only()` (do not null it); the
-   cleanup call happens at the START of the next `_connect_via_esphome()` before
-   a new subscription is made (no active BLE at that point, so no BLE connections
-   are dropped). See the "Critical invariant" note in the ESPHome connection modes
-   section.
-
-8. **ESP32 API shows ~125 ms per on-demand request despite `esphome_api_connection=persistent`**
-   → Same root cause as trap 7. TCP was being closed after every BLE disconnect;
-   `_ensure_esphome_api_connected()` detected a dead connection and re-established it.
-   After fix 7, TCP stays alive and `last_esphome_api_ms` reports 0.
+7. **ESP32 proxy shows stale "Cannot reach…" error hint after recovery**
+   → `_update_esphome_proxy_state` only updates `error_hint` when explicitly passed.
+   If a previous `ESPHomeConnectionError` stored E1002.hint, subsequent successful
+   polls call `_update_esphome_proxy_state(error_code="E0000")` without `error_hint`,
+   so the stale hint persists in `esphome_proxy_state` and the webapp keeps showing it.
+   Fix: when `error_code="E0000"` is set, `error_hint` is auto-cleared to `""`.
+   (Added to `_update_esphome_proxy_state` logic.)
 
 ---
 
@@ -405,7 +387,7 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
 ```ini
 [SERVICE]  ble_connection = persistent | on-demand
 [POLL]     interval = float (seconds)
-[ESPHOME]  host, port, noise_psk, esphome_api_connection = persistent|on-demand
+[ESPHOME]  host, port, noise_psk
 [BLE]      device_id = BLE MAC address
 [MQTT]     server, port, topic, username, password
 [API]      host, port
@@ -416,19 +398,14 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
 ## Feature summary (merged from `feature/persistent-esphome-api`)
 
 Key additions vs. the original `main`:
-- Persistent ESPHome API TCP connection (`esphome_api_connection` config)
 - Split connect timing (ESP32 API ms vs BLE ms)
-- Runtime toggle for `ble_connection` and `esphome_api_connection`
+- Runtime toggle for `ble_connection` at runtime
 - On-demand polling loop with `set_poll_interval` support (both modes)
 - First-poll identification fetch + SSE caching
-- `disconnect_ble_only()` — keeps ESP32 TCP alive, only drops BLE
 - `_poll_interval_event` in ServiceMode for persistent-mode interval changes
-- `_on_poll_done()` resets connect timing to 0 (persistent mode reuses connection)
-- `_persistent_query()` helper — wraps persistent-mode BLE calls with timing metadata
-  so `updateQueryTiming()` in the webapp receives `_connect_ms=0`, `_query_ms=N`
-- `_check_config_errors()` — startup config validation; rejects `ble_connection=persistent`
-  + `esphome_api_connection=on-demand` + ESPHome with `sys.exit(1)`
-- `--command check-config` CLI command — same validation, returns JSON
+- `_on_poll_done()` resets connect timing to 0 (persistent BLE mode reuses connection)
+- `_check_config_errors()` — startup config validation stub (currently empty)
+- `--command check-config` CLI command — returns JSON
 - Recovery fallback fixes: `wait_for_device_restart` now passes `bluetooth_connector`
   so the persistent `_esphome_api` is reused; MQTT topic bug fixed (was sending
   to `.../centralDevice/connected/centralDevice/error`); E2005 now surfaces via
@@ -437,9 +414,7 @@ Key additions vs. the original `main`:
   `doc_url` field reserved for future doc links; hints propagate through
   `_set_ble_status` / `_update_esphome_proxy_state` → `device_state` → SSE → webapp
 - `soc_application_versions = None` initialised in `AquaCleanClient.__init__`;
-  `get_soc_versions()` reads data attribute, not EventHandler (was `AttributeError` in persistent mode)
-- `disconnect_ble_only()` no longer calls `_esphome_unsub_adv()` — doing so killed
-  the persistent TCP; reference is dropped (subscriptions accumulate but are no-ops)
+  `get_soc_versions()` reads data attribute, not EventHandler
 - Cached-path timing: `get_identification()` / `get_initial_operation_date()` include
   timing zeros when returning from cache so webapp doesn't show stale timing
 - Circuit breaker in `_polling_loop`: after 5 consecutive failures switches to 60s
@@ -449,3 +424,5 @@ Key additions vs. the original `main`:
 - On-demand poll errors now surface to webapp via SSE (`_set_ble_status("error")` in
   `_on_demand_inner` finally block — DRY, covers all current and future error types)
 - All connection button labels consistent: `PREFIX: Action` pattern throughout
+- `esphome_proxy_error_hint` stale-hint fix: `_update_esphome_proxy_state` auto-clears
+  `error_hint` when `error_code="E0000"` so a previous failure hint doesn't persist

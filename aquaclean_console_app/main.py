@@ -462,6 +462,8 @@ class ServiceMode:
             self.esphome_proxy_state["error"] = error
         if error_code is not None:
             self.esphome_proxy_state["error_code"] = error_code
+            if error_code == "E0000":
+                self.esphome_proxy_state["error_hint"] = ""  # clear stale hint on success
         if error_hint is not None:
             self.esphome_proxy_state["error_hint"] = error_hint
         await self._publish_esphome_proxy_status()
