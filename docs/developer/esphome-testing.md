@@ -294,17 +294,12 @@ Record these metrics during testing:
 
 ## Known Issues / Limitations
 
-1. **TEMPORARY connection management** (BluetoothLeConnector.py:127)
-   - Currently creates fresh ESP32 API connection for each BLE connection
-   - Could be optimized to reuse connection in persistent mode
-   - Works correctly but creates ~1s overhead for each on-demand request
+1. **Connection overhead** (~1 s per on-demand request)
+   - Fresh ESP32 API TCP connection + device_info + BLE scan on every request
+   - Persistent TCP was prototyped (`esphome-persistent-api` git tag) but removed due to ESP32 firmware instability
+   - On-demand is the only supported mode; overhead is accepted
 
-2. **Unused method** (`_ensure_esphome_api_connected()`)
-   - Dead code left from development
-   - Can be removed in future cleanup
-   - Does not affect functionality
-
-3. **API encryption untested**
+2. **API encryption untested**
    - `noise_psk` parameter exists but has not been tested
    - Recommendation: Start without encryption, test on trusted LAN
    - See [esphome.md](esphome.md) for encryption notes
@@ -329,9 +324,8 @@ Record these metrics during testing:
 1. ✅ Complete implementation (DONE)
 2. ⏳ Run manual tests (this checklist)
 3. ⏳ Performance tuning (if needed)
-4. ⏳ Remove dead code (`_ensure_esphome_api_connected()`)
-5. ⏳ Document any edge cases discovered
-6. ⏳ Update main README with test results
+4. ⏳ Document any edge cases discovered
+5. ⏳ Update main README with test results
 
 ---
 

@@ -85,7 +85,6 @@ The application subscribes to these topics and reacts to incoming messages.
 |-------|---------|--------|
 | `{prefix}/esphomeProxy/control/connect` | any | Connect/reconnect the ESP32 API TCP connection |
 | `{prefix}/esphomeProxy/control/disconnect` | any | Disconnect the ESP32 API TCP connection |
-| `{prefix}/esphomeProxy/config/apiConnection` | `persistent` or `on-demand` | Switch ESP32 API connection mode without restart |
 
 ### Runtime configuration
 

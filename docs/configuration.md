@@ -31,7 +31,6 @@ port = 8080
 ; noise_psk =                     # base64 encryption key (matches api_encryption_key in secrets.yaml)
 ; log_streaming = false           # Stream ESP32 logs to console app (for debugging)
 ; log_level = INFO                # ESP32 log level: ERROR | WARN | INFO | DEBUG | VERBOSE
-; esphome_api_connection = persistent  # persistent | on-demand (ESP32 TCP connection strategy)
 
 [LOGGING]
 log_level = DEBUG                # DEBUG | INFO | WARNING | TRACE
@@ -93,8 +92,6 @@ Used only in **api mode** (`--mode api`).
 | `noise_psk` | *(commented out)* | **OPTIONAL and UNTESTED.** Base64-encoded encryption key for the ESPHome API. **Recommendation: Leave empty (no encryption) for initial setup.** Only add if you need API encryption: generate with `openssl rand -base64 32` and set matching `api_encryption_key` in the ESP32's `secrets.yaml`. Authentication and encryption have not been tested with this bridge. |
 | `log_streaming` | `false` | Stream live logs from the ESP32 device and integrate them into the console app logging. Useful for debugging BLE proxy issues, but very verbose — keep disabled for production use. |
 | `log_level` | `INFO` | Log level for ESP32 log streaming. Options: `ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`. Only applies when `log_streaming = true`. |
-| `esphome_api_connection` | `persistent` | Controls the ESP32 **TCP** connection strategy. `persistent` keeps the TCP connection to the ESP32 alive between on-demand BLE requests — much faster (~50 ms vs ~1 s overhead per request). `on-demand` creates a fresh TCP connection for every request (original behaviour). **Recommended: `persistent`.** Note: `persistent` BLE + `on-demand` ESP32 API is rejected at startup (invalid combination). |
-
 For full setup instructions see [docs/esphome.md](esphome.md).
 
 ### `[LOGGING]`
