@@ -181,25 +181,13 @@ Enable the proxy in `config.ini` by uncommenting and filling in the `[ESPHOME]` 
 host = 192.168.0.xxx              # IP address of the ESP32-POE-ISO
 port = 6053                        # ESPHome native API port (default: 6053)
 ; noise_psk =                      # OPTIONAL and UNTESTED: leave commented out
-esphome_api_connection = persistent  # persistent (recommended) | on-demand
 ```
 
 When `host` is set the bridge automatically routes all BLE traffic through the ESP32.  When `host` is absent or empty the local Bluetooth adapter is used — no other changes required.
 
 **Note:** `noise_psk` is optional. API encryption has not been tested and is not recommended for initial setup.
 
-### ESP32 API connection modes
-
-| Mode | Behaviour | Overhead per request |
-|------|-----------|---------------------|
-| `persistent` (recommended) | TCP connection to the ESP32 is kept alive between on-demand BLE requests. Only BLE is connected/disconnected per request. | ~50–100 ms (BLE only) |
-| `on-demand` | A fresh TCP connection is established for every on-demand request, including `device_info` fetch. | ~1 s (TCP + device_info + BLE) |
-
-**Recommended: `persistent`.**  The difference in practice is ~1 second saved per request.  The TCP connection to the ESP32 is lightweight and stable; there is no benefit to tearing it down between requests.
-
-The mode can be toggled at runtime via the web UI, REST API (`POST /config/esphome-api-connection`), or the MQTT topic `esphomeProxy/config/apiConnection` — without restart.
-
-**Invalid combination:** `ble_connection = persistent` + `esphome_api_connection = on-demand` is rejected at startup. A persistent BLE link runs over the ESP32 TCP connection; tearing down TCP after every request also drops BLE.
+Each on-demand BLE request opens a fresh TCP connection to the ESP32, fetches device info, scans for the Geberit, connects BLE, performs the request, then disconnects everything cleanly. This adds ~1 s overhead per request but is proven stable in long-term production use.
 
 ---
 
