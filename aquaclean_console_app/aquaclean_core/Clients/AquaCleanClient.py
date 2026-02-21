@@ -27,6 +27,7 @@ class AquaCleanClient(IAquaCleanClient):
         self.ProductionDate = ""
         self.Description = ""
         self.InitialOperationDate = ""
+        self.soc_application_versions = None
 
     async def connect(self, device_id: str):
         """Standard connection and info fetching. No infinite loop here."""
