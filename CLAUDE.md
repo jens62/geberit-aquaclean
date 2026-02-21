@@ -379,9 +379,9 @@ Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before
 
 ---
 
-## Branch: `feature/persistent-esphome-api`
+## Feature summary (merged from `feature/persistent-esphome-api`)
 
-Adds on top of `main`:
+Key additions vs. the original `main`:
 - Persistent ESPHome API TCP connection (`esphome_api_connection` config)
 - Split connect timing (ESP32 API ms vs BLE ms)
 - Runtime toggle for `ble_connection` and `esphome_api_connection`

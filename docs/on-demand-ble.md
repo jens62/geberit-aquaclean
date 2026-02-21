@@ -95,26 +95,51 @@ mosquitto_pub -h YOUR_BROKER \
 
 ## Timing information
 
-Every REST API response that required a BLE round-trip includes two extra fields:
+Every REST API response that required a BLE round-trip includes timing fields:
 
 | Field | Description |
 |-------|-------------|
-| `_connect_ms` | Time in ms to establish the BLE connection |
-| `_query_ms` | Time in ms for the query itself after connecting |
+| `_connect_ms` | Total time in ms to establish all connections (ESP32 TCP + BLE scan + handshake) |
+| `_esphome_api_ms` | Portion spent connecting to the ESP32 API (TCP); `null` if using local BLE; `0` if reused |
+| `_ble_ms` | Portion spent on BLE scan + GATT handshake; `null` if using local BLE directly |
+| `_query_ms` | Time in ms for the query itself after connecting; `0` means data was served from cache |
 
-Example — toggle lid:
+Example — toggle lid (ESP32 proxy, fresh TCP connection):
 ```json
-{"status":"success","command":"toggle-lid","_connect_ms":4388,"_query_ms":1316}
+{"status":"success","command":"toggle-lid","_connect_ms":1050,"_esphome_api_ms":980,"_ble_ms":70,"_query_ms":312}
 ```
 
-Example — user sitting state:
+Example — same request with persistent ESP32 API connection (TCP reused):
 ```json
-{"is_user_sitting":false,"_connect_ms":4311,"_query_ms":306}
+{"status":"success","command":"toggle-lid","_connect_ms":75,"_esphome_api_ms":0,"_ble_ms":75,"_query_ms":318}
 ```
 
-**Note:** `_connect_ms` includes the full connect sequence — the client fetches identification, SOC versions, and initial operation date during connect.  As a result, `_query_ms` for those specific endpoints (`/data/identification`, `/data/soc-versions`, `/data/initial-operation-date`) will be ~0 ms because the data is already cached by the time the query runs.
+Example — cached endpoint (identification already fetched):
+```json
+{"sap_number":"966.848.00.0","_connect_ms":0,"_esphome_api_ms":0,"_ble_ms":0,"_query_ms":0}
+```
+
+**Cached endpoints:** identification, SOC versions, and initial operation date are fetched once on the first background poll and cached in memory. Subsequent REST calls to `/data/identification`, `/data/soc-versions`, and `/data/initial-operation-date` return the cached data without a BLE connect — all timing fields are `0` and the web UI shows `— (cached)` for the Query field.
 
 The web UI displays these timings below the Queries buttons in on-demand mode.
+
+---
+
+## Circuit breaker (on-demand polling)
+
+The background polling loop has a built-in circuit breaker to handle unresponsive devices gracefully.
+
+After **5 consecutive poll failures** the circuit opens:
+- The log shows `Circuit open after 5 failures — probing every 60s`
+- The poll interval switches to **60-second probe attempts** instead of the normal interval
+- The BLE error status is shown in the web UI
+
+On the **first successful probe** the circuit closes:
+- The log shows `Poll recovered after N failures`
+- Normal polling resumes at the configured interval
+- Identification data is re-fetched (in case the device was power-cycled during the outage)
+
+This prevents the app from hammering an unresponsive device at full poll frequency. The threshold and probe interval are constants at the top of `_polling_loop` in `main.py`.
 
 ---
 

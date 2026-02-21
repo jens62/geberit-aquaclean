@@ -47,14 +47,34 @@ A grid shows static device information fetched on connection or page load:
 
 Shows current BLE status (`connected`, `connecting`, `error`, or `disconnected`), the device name and MAC address, how long ago it connected, the active BLE connection mode, and the poll interval.
 
-Timing fields — **Connect** (last BLE connect duration) and **Poll** (last poll round-trip) — are shown here when available.
+Timing fields are shown here when available:
 
-### Actions
+| Field | Label | Description |
+|-------|-------|-------------|
+| `last_connect_ms` | **Connect:** | Total time for the last connect (ESP32 TCP + BLE) |
+| `last_esphome_api_ms` | **ESP32:** | Portion spent on ESP32 TCP connect; `0` = reused; hidden for local BLE |
+| `last_ble_ms` | **BLE:** | Portion spent on BLE scan + handshake; hidden for local BLE |
+| `last_poll_ms` | **Poll:** | Last background poll round-trip |
+
+When an error occurs, the error code, message, and resolution hint are shown in the BLE status widget.
+
+### ESP32 proxy panel (when ESPHome is configured)
+
+Shows ESP32 connection status, host/port, and the active API connection mode.
 
 | Control | Effect |
 |---------|--------|
-| Reconnect / Disconnect button | `POST /connect` or `POST /disconnect` depending on current state |
-| Switch to On-Demand / Switch to Persistent button | Toggles BLE connection mode via `POST /config/ble-connection` |
+| `ESP32: Connect` / `ESP32: Disconnect` | Connect or disconnect the ESP32 API TCP connection |
+| `ESP32: Switch to On-Demand` / `ESP32: Switch to Persistent` | Toggles ESP32 API connection mode |
+
+### Actions
+
+All connection buttons use a consistent `PREFIX: Action` label format.
+
+| Control | Effect |
+|---------|--------|
+| `BLE: Reconnect` / `BLE: Disconnect` | `POST /connect` or `POST /disconnect` depending on current state |
+| `BLE: Switch to On-Demand` / `BLE: Switch to Persistent` | Toggles BLE connection mode via `POST /config/ble-connection` |
 | Poll interval input + Set Interval button | Updates poll interval via `POST /config/poll-interval` |
 
 ### Queries section (on-demand mode only)
@@ -72,7 +92,10 @@ Visible only when the BLE connection mode is **on-demand**.  Each button trigger
 | Lady Shower State | `GET /data/lady-shower-state` |
 | Dryer State | `GET /data/dryer-state` |
 
-After each query, **Connect** and **Query** timing fields show the BLE round-trip durations.
+After each query, timing fields show the breakdown:
+- **ESP32:** — TCP connect time (`0 ms` if reused, hidden for local BLE)
+- **BLE:** — BLE scan + handshake time (hidden for local BLE)
+- **Query:** — time for the data request itself; shown as `— (cached)` when data was served from the in-memory cache without a BLE connect
 
 ---
 
