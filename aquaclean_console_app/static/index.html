@@ -864,7 +864,7 @@
       } else if (status === 'error' && state.ble_error) {
         const errorCode = state.ble_error_code ? `[${state.ble_error_code}] ` : '';
         detail.textContent = errorCode + state.ble_error;
-        meta.textContent   = '';
+        meta.textContent   = state.ble_error_hint || '';
       } else {
         detail.textContent = state.ble_device_address || '—';
         meta.textContent   = '';
@@ -903,6 +903,7 @@
       const error = state.esphome_proxy_error || '';
       const errCode = state.esphome_proxy_error_code && state.esphome_proxy_error_code !== 'E0000'
         ? `[${state.esphome_proxy_error_code}] ` : '';
+      const errHint = state.esphome_proxy_error_hint || '';
 
       // Show/hide panel based on enabled status
       if (enabled) {
@@ -912,12 +913,14 @@
           badge.className = 'conn-badge connected';
           badge.textContent = 'connected';
           detail.textContent = name + ' (' + host + ':' + port + ')';
-          meta.textContent = error && error !== 'No error' ? errCode + error : '';
+          const errorText = error && error !== 'No error' ? errCode + error : '';
+          meta.textContent = errorText + (errorText && errHint ? ' — ' + errHint : '');
         } else {
           badge.className = 'conn-badge disconnected';
           badge.textContent = 'disconnected';
           detail.textContent = host ? host + ':' + port : '—';
-          meta.textContent = error && error !== 'No error' ? errCode + error : '';
+          const errorText = error && error !== 'No error' ? errCode + error : '';
+          meta.textContent = errorText + (errorText && errHint ? ' — ' + errHint : errHint ? errHint : '');
         }
 
         _esp32Connected = connected;
