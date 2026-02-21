@@ -146,6 +146,22 @@ This is now done in `ESPHomeAPIClient.disconnect()`.
 
 ---
 
+## Invalid config combination — hard error at startup
+
+When ESPHome transport is used (`esphome_host` set), the combination
+`ble_connection = persistent` + `persistent_api = false` is **rejected at startup**
+with `sys.exit(1)`. A persistent BLE link runs over the ESP32 TCP connection;
+if the TCP drops after every request the BLE link drops too.
+
+Validated by `_check_config_errors()` (module-level, ~line 60).
+Called from `main()` for `service` and `api` modes. CLI mode skips it so
+`--command check-config` can still report the error as JSON.
+
+**CLI**: `--mode cli --command check-config` — validates config, returns JSON
+with `{"status": "success"|"error", "data": {"errors": [...]}}`.
+
+---
+
 ## Common debugging traps
 
 1. **Polling stops after a REST query (webapp hangs)**
@@ -201,3 +217,6 @@ Adds on top of `main`:
 - `_on_poll_done()` resets connect timing to 0 (persistent mode reuses connection)
 - `_persistent_query()` helper — wraps persistent-mode BLE calls with timing metadata
   so `updateQueryTiming()` in the webapp receives `_connect_ms=0`, `_query_ms=N`
+- `_check_config_errors()` — startup config validation; rejects `ble_connection=persistent`
+  + `persistent_api=false` + ESPHome with `sys.exit(1)`
+- `--command check-config` CLI command — same validation, returns JSON
