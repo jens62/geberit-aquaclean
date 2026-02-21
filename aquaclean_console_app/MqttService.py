@@ -115,7 +115,6 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/config/pollInterval")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/connect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect")
-        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/config/apiConnection")
         logger.info("### SUBSCRIBED ###")
 
     def on_message(self, client, userdata, msg):
