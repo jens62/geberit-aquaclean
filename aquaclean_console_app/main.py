@@ -57,6 +57,20 @@ if log_level not in ('TRACE', 'SILLY'):
 logger = logging.getLogger(__name__)
 
 
+def _check_config_errors() -> list[str]:
+    """Return a list of configuration error strings. Empty list means config is valid."""
+    errors = []
+    ble_connection = config.get("SERVICE", "ble_connection", fallback="persistent")
+    if esphome_host and ble_connection == "persistent" and not esphome_persistent_api:
+        errors.append(
+            "ble_connection=persistent requires persistent_api=true when using an ESPHome proxy. "
+            "A persistent BLE link runs over the TCP connection to the ESP32 — "
+            "if the TCP drops after every request (persistent_api=false), the BLE link drops too. "
+            "Fix: set persistent_api = true in [ESPHOME], or switch ble_connection = on-demand."
+        )
+    return errors
+
+
 def get_full_class_name(obj):
     module = obj.__class__.__module__
     if module is None or module == str.__class__.__module__:
@@ -1806,6 +1820,19 @@ async def run_cli(args):
         return
 
     # --- Commands that don't need a BLE connection ---
+    if args.command == 'check-config':
+        errors = _check_config_errors()
+        if errors:
+            result["status"] = "error"
+            result["message"] = f"{len(errors)} configuration error(s) found"
+            result["data"] = {"errors": errors}
+        else:
+            result["status"] = "success"
+            result["message"] = "Configuration is valid"
+            result["data"] = {"errors": []}
+        print(json.dumps(result, indent=2))
+        return
+
     if args.command == 'get-config':
         result["data"] = {
             "ble_connection":  config.get("SERVICE", "ble_connection", fallback="persistent"),
@@ -1980,6 +2007,12 @@ async def run_cli(args):
 
 
 async def main(args):
+    if args.mode in ('service', 'api'):
+        errors = _check_config_errors()
+        if errors:
+            for e in errors:
+                logging.error(f"Invalid configuration: {e}")
+            sys.exit(1)
     if args.mode == 'service':
         service = ServiceMode()
         await shutdown_waits_for(service.run())
@@ -2040,6 +2073,7 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command toggle-anal\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
+            "  %(prog)s --mode cli --command check-config\n"
             "  %(prog)s --mode cli --command get-config\n"
             "  %(prog)s --mode cli --command publish-ha-discovery\n"
             "  %(prog)s --mode cli --command remove-ha-discovery\n"
@@ -2066,7 +2100,7 @@ if __name__ == "__main__":
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
-        'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
+        'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # ESPHome proxy (no BLE required)
         'esp32-connect', 'esp32-disconnect',
     ])
