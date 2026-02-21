@@ -121,6 +121,7 @@ class ServiceMode:
             "ble_device_address": None,      # BLE address from config
             "ble_error": None,               # error message when ble_status == "error"
             "ble_error_code": None,          # error code (E0001-E7999) when ble_status == "error"
+            "ble_error_hint": None,          # user-facing resolution hint when ble_status == "error"
             "last_connect_ms": None,         # duration of last BLE connect in ms (total)
             "last_esphome_api_ms": None,     # portion: ESP32 API TCP connect (None = local BLE, 0 = reused)
             "last_ble_ms": None,             # portion: BLE scan + handshake to toilet
@@ -140,7 +141,8 @@ class ServiceMode:
             "host": esphome_host or "",
             "port": esphome_port if esphome_host else "",
             "error": "No error",
-            "error_code": "E0000"
+            "error_code": "E0000",
+            "error_hint": "",
         }
         self._reconnect_requested = asyncio.Event()
         self._poll_interval_event = asyncio.Event()  # set by set_poll_interval() in persistent mode
@@ -328,8 +330,8 @@ class ServiceMode:
                 msg = f"{e} — Check that the ESP32 is reachable at {esphome_host}:{esphome_port}"
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=error_code_obj.code)
-                await self._update_esphome_proxy_state(connected=False, error=str(e), error_code=error_code_obj.code)
+                await self._set_ble_status("error", error_msg=msg, error_code=error_code_obj.code, error_hint=error_code_obj.hint)
+                await self._update_esphome_proxy_state(connected=False, error=str(e), error_code=error_code_obj.code, error_hint=error_code_obj.hint)
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -346,8 +348,8 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0002, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0002.code)
-                await self._update_esphome_proxy_state(connected=False, error=str(e), error_code=E0002.code)
+                await self._set_ble_status("error", error_msg=msg, error_code=E0002.code, error_hint=E0002.hint)
+                await self._update_esphome_proxy_state(connected=False, error=str(e), error_code=E0002.code, error_hint=E0002.hint)
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -364,7 +366,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code)
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint)
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -390,7 +392,7 @@ class ServiceMode:
         await self._stop_esphome_log_streaming()
         self.mqtt_service.stop()
 
-    async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None, error_code=None):
+    async def _set_ble_status(self, status: str, device_name=None, device_address=None, error_msg=None, error_code=None, error_hint=None):
         self.device_state["ble_status"] = status
         if status == "connected":
             self.device_state["ble_connected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -398,6 +400,7 @@ class ServiceMode:
             self.device_state["ble_device_address"] = device_address
             self.device_state["ble_error"] = None
             self.device_state["ble_error_code"] = None
+            self.device_state["ble_error_hint"] = None
         elif status == "error":
             self.device_state["ble_connected_at"] = None
             self.device_state["poll_epoch"] = None
@@ -407,6 +410,7 @@ class ServiceMode:
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = error_msg
             self.device_state["ble_error_code"] = error_code
+            self.device_state["ble_error_hint"] = error_hint
             # Clear device info to prevent stale data display
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
@@ -420,12 +424,14 @@ class ServiceMode:
             self.device_state["last_poll_ms"] = None
             self.device_state["ble_error"] = None
             self.device_state["ble_error_code"] = None
+            self.device_state["ble_error_hint"] = None
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
         elif status == "disconnected":
             self.device_state["ble_connected_at"] = None
             self.device_state["ble_error"] = None
             self.device_state["ble_error_code"] = None
+            self.device_state["ble_error_hint"] = None
             self.device_state["ble_device_name"] = None
             self.device_state["ble_device_address"] = None
             # Do NOT clear timing or poll_epoch here — the last completed
@@ -443,7 +449,7 @@ class ServiceMode:
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
-    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None):
+    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None, error_hint=None):
         """Update ESPHome proxy state and publish to MQTT."""
         if connected is not None:
             self.esphome_proxy_state["connected"] = connected
@@ -453,6 +459,8 @@ class ServiceMode:
             self.esphome_proxy_state["error"] = error
         if error_code is not None:
             self.esphome_proxy_state["error_code"] = error_code
+        if error_hint is not None:
+            self.esphome_proxy_state["error_hint"] = error_hint
         await self._publish_esphome_proxy_status()
         # Broadcast state change to SSE clients (webapp)
         if self.on_state_updated:
@@ -465,6 +473,7 @@ class ServiceMode:
                 "esphome_proxy_port": self.esphome_proxy_state["port"],
                 "esphome_proxy_error": self.esphome_proxy_state["error"],
                 "esphome_proxy_error_code": self.esphome_proxy_state["error_code"],
+                "esphome_proxy_error_hint": self.esphome_proxy_state.get("error_hint", ""),
             })
             await self.on_state_updated(state)
 
@@ -497,12 +506,13 @@ class ServiceMode:
         # Publish error status (JSON format matching centralDevice/error)
         error_code = self.esphome_proxy_state["error_code"]
         error_msg = self.esphome_proxy_state["error"]
+        error_hint = self.esphome_proxy_state.get("error_hint", "")
         if error_code == "E0000":
             error_json = ErrorManager.clear_error()
         else:
             # Create temporary ErrorCode for JSON formatting
             from ErrorCodes import ErrorCode
-            temp_error = ErrorCode(error_code, error_msg, "ESP32", "ERROR")
+            temp_error = ErrorCode(error_code, error_msg, "ESP32", "ERROR", error_hint)
             error_json = ErrorManager.to_json(temp_error, include_timestamp=True)
         await self.mqtt_service.send_data_async(
             f"{topic}/esphomeProxy/error",
@@ -757,12 +767,13 @@ class ServiceMode:
             except Exception as e:
                 logger.error(f"Failed to connect to ESP32 proxy for recovery: {e}")
                 logger.warning("Falling back to local BLE scanning")
-                await self._update_esphome_proxy_state(connected=False, error=f"Recovery connection failed: {e}", error_code="E2005")
+                await self._update_esphome_proxy_state(connected=False, error=f"Recovery connection failed: {e}", error_code=E2005.code, error_hint=E2005.hint)
                 await self.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E2005, str(e)))
                 await self._set_ble_status(
                     "error",
                     error_msg=f"ESP32 proxy unavailable during recovery — using local BLE scan: {e}",
                     error_code=E2005.code,
+                    error_hint=E2005.hint,
                 )
                 await self._wait_for_device_restart_local(device_id, topic)
                 return
@@ -1187,7 +1198,8 @@ class ApiMode:
             await self.service._update_esphome_proxy_state(
                 connected=False,
                 error=str(e),
-                error_code="E2005",
+                error_code=E2005.code,
+                error_hint=E2005.hint,
             )
             self._http_error(503, E2005, str(e))
 
@@ -1547,7 +1559,7 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(
                     f"{topic}/esphomeProxy/error", ErrorManager.to_json(error_code_obj, str(e)))
                 await self.service._update_esphome_proxy_state(
-                    connected=False, error=str(e), error_code=error_code_obj.code)
+                    connected=False, error=str(e), error_code=error_code_obj.code, error_hint=error_code_obj.hint)
             except ESPHomeDeviceNotFoundError as e:
                 logger.warning(f"On-demand poll: Geberit not found via ESP32: {e}")
                 await self.service.mqtt_service.send_data_async(
