@@ -31,6 +31,7 @@ port = 8080
 ; noise_psk =                     # base64 encryption key (matches api_encryption_key in secrets.yaml)
 ; log_streaming = false           # Stream ESP32 logs to console app (for debugging)
 ; log_level = INFO                # ESP32 log level: ERROR | WARN | INFO | DEBUG | VERBOSE
+; esphome_api_connection = persistent  # persistent | on-demand (ESP32 TCP connection strategy)
 
 [LOGGING]
 log_level = DEBUG                # DEBUG | INFO | WARNING | TRACE
@@ -92,6 +93,7 @@ Used only in **api mode** (`--mode api`).
 | `noise_psk` | *(commented out)* | **OPTIONAL and UNTESTED.** Base64-encoded encryption key for the ESPHome API. **Recommendation: Leave empty (no encryption) for initial setup.** Only add if you need API encryption: generate with `openssl rand -base64 32` and set matching `api_encryption_key` in the ESP32's `secrets.yaml`. Authentication and encryption have not been tested with this bridge. |
 | `log_streaming` | `false` | Stream live logs from the ESP32 device and integrate them into the console app logging. Useful for debugging BLE proxy issues, but very verbose — keep disabled for production use. |
 | `log_level` | `INFO` | Log level for ESP32 log streaming. Options: `ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`. Only applies when `log_streaming = true`. |
+| `esphome_api_connection` | `persistent` | Controls the ESP32 **TCP** connection strategy. `persistent` keeps the TCP connection to the ESP32 alive between on-demand BLE requests — much faster (~50 ms vs ~1 s overhead per request). `on-demand` creates a fresh TCP connection for every request (original behaviour). **Recommended: `persistent`.** Note: `persistent` BLE + `on-demand` ESP32 API is rejected at startup (invalid combination). |
 
 For full setup instructions see [docs/esphome.md](esphome.md).
 
@@ -103,15 +105,6 @@ For full setup instructions see [docs/esphome.md](esphome.md).
 
 ---
 
-## What is new compared to the main branch
+## Config.ini is logged at startup
 
-The `feature/rest-api` branch adds the following config.ini entries that did not exist on `main`:
-
-| Section | Key | New? | Notes |
-|---------|-----|------|-------|
-| `[SERVICE]` | `ble_connection` | **New** | `persistent` or `on-demand`; only relevant in api mode. |
-| `[SERVICE]` | `mqtt_enabled` | **New** | Enable/disable MQTT publishing independently of connection mode. |
-| `[API]` | `host` | **New** | REST API bind address. |
-| `[API]` | `port` | **New** | REST API port. |
-
-The `[POLL] interval` key existed before but its behaviour is extended: in api/on-demand mode it now drives a background polling loop, and it can be overridden at runtime without editing the file.
+On startup (service and api modes) the full contents of `config.ini` are logged at INFO level. Sensitive keys (`noise_psk`, `password`) are redacted to `***`. This makes it easy to correlate a log file with the configuration that was active at the time.

@@ -15,7 +15,25 @@ The application publishes to these topics.  All messages are published with `ret
 | Topic | Values | Description |
 |-------|--------|-------------|
 | `{prefix}/centralDevice/connected` | `Connecting to <addr> ...` → `True` → `False` | BLE connection lifecycle |
-| `{prefix}/centralDevice/error` | error string or `No error` | Last BLE error (cleared to `No error` on each new connect attempt) |
+| `{prefix}/centralDevice/error` | JSON (see below) | Last BLE error; cleared to `{"code":"E0000","message":"No error",...}` on each new connect attempt |
+| `{prefix}/centralDevice/timings` | JSON | Connect timing breakdown: `{"connect_ms":N,"esphome_api_ms":N,"ble_ms":N}` |
+
+**Error JSON format:**
+```json
+{
+  "code": "E7002",
+  "message": "No response from BLE peripheral ...",
+  "hint": "Usually a restart of the BLE peripheral is required.",
+  "timestamp": "2026-02-21T10:26:15.158749Z"
+}
+```
+
+### ESP32 proxy status (when `[ESPHOME] host` is configured)
+
+| Topic | Values | Description |
+|-------|--------|-------------|
+| `{prefix}/esphomeProxy/connected` | `True` / `False` | Whether the TCP connection to the ESP32 is alive |
+| `{prefix}/esphomeProxy/error` | JSON (same format as above) | Last ESP32 API error |
 
 ### Device state (monitor)
 
@@ -60,6 +78,14 @@ The application subscribes to these topics and reacts to incoming messages.
 |-------|---------|--------|
 | `{prefix}/centralDevice/control/connect` | any | Request BLE connect |
 | `{prefix}/centralDevice/control/disconnect` | any | Request BLE disconnect (persistent mode) |
+
+### ESP32 proxy control (when `[ESPHOME] host` is configured)
+
+| Topic | Payload | Effect |
+|-------|---------|--------|
+| `{prefix}/esphomeProxy/control/connect` | any | Connect/reconnect the ESP32 API TCP connection |
+| `{prefix}/esphomeProxy/control/disconnect` | any | Disconnect the ESP32 API TCP connection |
+| `{prefix}/esphomeProxy/config/apiConnection` | `persistent` or `on-demand` | Switch ESP32 API connection mode without restart |
 
 ### Runtime configuration
 
