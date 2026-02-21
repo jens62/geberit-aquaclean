@@ -663,7 +663,7 @@
       const modeLabel = document.getElementById('bleConnModeLabel');
       if (modeLabel) modeLabel.textContent = mode === 'persistent' ? 'Persistent' : 'On-Demand';
       const btnLabel = document.getElementById('bleConnModeBtnLabel');
-      if (btnLabel) btnLabel.textContent = mode === 'persistent' ? 'Switch to On-Demand' : 'Switch to Persistent';
+      if (btnLabel) btnLabel.textContent = mode === 'persistent' ? 'BLE: Switch to On-Demand' : 'BLE: Switch to Persistent';
       document.getElementById('queriesHeading').style.display = '';
       document.getElementById('queriesSection').style.display = '';
     }
@@ -735,7 +735,7 @@
         document.getElementById('queryConnectMs').style.display = '';
         set('queryConnectMs', fmt(data._connect_ms));
       }
-      set('queryMs', fmt(data._query_ms === 0 ? null : data._query_ms));
+      set('queryMs', data._query_ms === 0 ? '— (cached)' : fmt(data._query_ms));
       document.getElementById('queryTimingRow').style.display = '';
     }
 
