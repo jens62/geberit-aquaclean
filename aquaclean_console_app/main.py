@@ -1255,7 +1255,7 @@ class ApiMode:
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            result = {"soc_versions": str(self.service.client.SOCApplicationVersions)}
+            result = {"soc_versions": str(self.service.client.soc_application_versions or "")}
         else:
             result = await self._on_demand(self._fetch_soc_versions)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
