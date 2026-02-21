@@ -1269,7 +1269,13 @@ class ApiMode:
             result = {"initial_operation_date": str(self.service.client.InitialOperationDate)}
         else:
             if self.service.device_state.get("initial_operation_date") is not None:
-                result = {"initial_operation_date": self.service.device_state["initial_operation_date"]}
+                result = {
+                    "initial_operation_date": self.service.device_state["initial_operation_date"],
+                    "_connect_ms": 0,
+                    "_esphome_api_ms": 0 if esphome_host else None,
+                    "_ble_ms": 0 if esphome_host else None,
+                    "_query_ms": 0,
+                }
             else:
                 result = await self._on_demand(self._fetch_initial_op_date)
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/initialOperationDate", result["initial_operation_date"])
@@ -1291,6 +1297,12 @@ class ApiMode:
             if self.service.device_state.get("sap_number") is not None:
                 result = {k: self.service.device_state[k] for k in
                           ("sap_number", "serial_number", "production_date", "description")}
+                result.update({
+                    "_connect_ms": 0,
+                    "_esphome_api_ms": 0 if esphome_host else None,
+                    "_ble_ms": 0 if esphome_host else None,
+                    "_query_ms": 0,
+                })
             else:
                 result = await self._on_demand(self._fetch_identification)
         return result

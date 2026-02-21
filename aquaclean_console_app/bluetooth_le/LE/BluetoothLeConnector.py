@@ -347,12 +347,13 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             self.client = None  # Must be None so next _connect_via_esphome() doesn't run the
                                 # cleanup block which calls disconnect(close_api=True) and tears
                                 # down the persistent API we're trying to keep alive.
-        if self._esphome_unsub_adv:
-            try:
-                self._esphome_unsub_adv()
-            except Exception:
-                pass
-            self._esphome_unsub_adv = None
+        # Do NOT call _esphome_unsub_adv() here. Even after BLE disconnects, sending
+        # UnsubscribeBluetoothLEAdvertisementsRequest causes the ESP32 to close the TCP
+        # API connection, breaking the persistent API connection we want to keep alive.
+        # Drop the Python reference — the old on_raw_advertisements closure is already
+        # resolved (found_event was set) and becomes a no-op when advertisements fire.
+        # The next _connect_via_esphome() call creates a fresh subscription.
+        self._esphome_unsub_adv = None
         # Do NOT reset esphome_proxy_connected — API is still alive
 
     async def disconnect(self):
