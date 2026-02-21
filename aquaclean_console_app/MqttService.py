@@ -91,7 +91,15 @@ class MqttService:
 
     def on_disconnect(self, client, userdata, rc):
         logger.info("### DISCONNECTED ###")
-        asyncio.create_task(self.reconnect())
+        if self.aquaclean_loop and self.aquaclean_loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.reconnect(), self.aquaclean_loop)
+
+    async def reconnect(self):
+        try:
+            self.mqttc.reconnect()
+            logger.info("MQTT reconnected")
+        except Exception as e:
+            logger.warning(f"MQTT reconnect failed: {e}")
 
     def on_connect(self, client, userdata, flags, reason_code, properties):
         logger.trace("mqtt, on_connect, reason_code: %s", reason_code)
