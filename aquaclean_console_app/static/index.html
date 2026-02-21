@@ -614,7 +614,7 @@
     function updateConnBtn(status) {
       _bleStatus = status;
       const label = document.getElementById('connBtnLabel');
-      if (label) label.textContent = status === 'connected' ? 'Disconnect' : 'Reconnect';
+      if (label) label.textContent = status === 'connected' ? 'BLE: Disconnect' : 'BLE: Reconnect';
     }
 
     // --- ESP32 API connection mode toggle ---
@@ -925,7 +925,7 @@
 
         _esp32Connected = connected;
         const lbl = document.getElementById('esp32ConnBtnLabel');
-        if (lbl) lbl.textContent = connected ? 'Disconnect ESP32' : 'Connect ESP32';
+        if (lbl) lbl.textContent = connected ? 'ESP32: Disconnect' : 'ESP32: Connect';
 
         const apiBtn = document.getElementById('esp32ApiModeBtn');
         if (apiBtn) apiBtn.style.display = '';
