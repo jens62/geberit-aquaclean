@@ -315,6 +315,36 @@ Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before
 
 ---
 
+## ESPHome BLE connection — probe results (2026-02-21)
+
+All 4 parameter combinations tested against ESPHome 2026.1.5 from Mac (192.168.0.87):
+
+| has_cache | address_type | Protocol               | Result  |
+|-----------|--------------|------------------------|---------|
+| False     | 0 PUBLIC     | CONNECT_V3_WITHOUT_CACHE | OK MTU=23 |
+| True      | 0 PUBLIC     | CONNECT_V3_WITH_CACHE    | OK MTU=23 |
+| False     | 1 RANDOM     | CONNECT_V3_WITHOUT_CACHE | OK MTU=23 |
+| True      | 1 RANDOM     | CONNECT_V3_WITH_CACHE    | OK MTU=23 |
+
+**The connection parameters in `ESPHomeAPIClient.py` are correct.**
+Current settings (`has_cache=False, address_type=0, feature_flags=<device actual>`) work.
+
+**aioesphomeapi source (client.py) confirms only two code paths:**
+- `has_cache=True` → `CONNECT_V3_WITH_CACHE`
+- `has_cache=False` + REMOTE_CACHING bit set → `CONNECT_V3_WITHOUT_CACHE`
+- Old CONNECT method is fully removed; `feature_flags=0` raises `ValueError`.
+
+**The actual bug causing "Disconnect before connected":**
+`BluetoothLeConnector._connect_via_esphome()` line 161 calls `unsub_adv()` BEFORE
+`ESPHomeAPIClient.connect()`. The `UnsubscribeBluetoothLEAdvertisementsRequest` triggers
+internal ESP32 state changes that race with the BLE CONNECT request → ESP32 calls
+`disconnect()` on the BLE client while it is in CONNECTING state → "Disconnect before
+connected, disconnect scheduled" → reason 0x16.
+
+**Fix:** Call `unsub_adv()` AFTER `await self.client.connect()` returns successfully.
+
+---
+
 ## Common debugging traps
 
 1. **Polling stops after a REST query (webapp hangs)**

@@ -158,7 +158,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             raise ESPHomeDeviceNotFoundError(
                 f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
             )
-        unsub_adv()  # Clean up advertisement subscription before BLE connect
+        # Advertisement subscription intentionally kept alive until BLE connect completes.
+        # Calling unsub_adv() before bluetooth_device_connect() sends
+        # UnsubscribeBluetoothLEAdvertisementsRequest which clears api_connection_ on the
+        # ESP32, causing it to disconnect any BLE client in CONNECTING state immediately
+        # → "Disconnect before connected, disconnect scheduled" (reason 0x16).
+        # See CLAUDE.md trap 7.
 
         # Create wrapper client and connect to BLE device
         self.device_address = device_id
@@ -188,6 +193,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
                 self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, esphome_feature_flags)
                 await self.client.connect()
+                # BLE is now established — safe to unsubscribe from advertisements
+                unsub_adv()
                 logger.info(f"BLE connection successful with address_type={addr_type}")
                 break
             except Exception as e:
@@ -197,6 +204,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     logger.debug(f"Retrying with alternate address_type")
                 else:
                     logger.error(f"All BLE connection attempts failed")
+                    unsub_adv()
                     raise last_error
 
         self.last_ble_ms = int((time.perf_counter() - t_ble) * 1000)
