@@ -345,6 +345,15 @@ disconnect the BLE client. The symptom depends on timing:
 **Fix:** Never call `unsub_adv()` while BLE is active. Store it as `self._esphome_unsub_adv`
 and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down the BLE link.
 
+**Fix verified — Kali production run 2026-02-21 18:01:**
+- All BLE connects succeed: `BLE connection successful with address_type=0`
+- All disconnects clean: ESP32 reports `Close, reason=0x00, freeing slot`
+- Full data flow confirmed: `GetSystemParameterList`, `GetDeviceIdentification`,
+  `GetDeviceInitialOperationDate`, `GetSOCApplicationVersions` all succeed each poll
+- REST API serving correctly (`/data/soc-versions`, `/data/initial-operation-date`)
+- MQTT publishing all topics; session ends with PINGREQ/PINGRESP — stable
+- One pre-existing non-blocking INFO: `GetSOCApplicationVersions: Not yet fully implemented`
+
 ---
 
 ## Common debugging traps
