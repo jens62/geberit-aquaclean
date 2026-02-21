@@ -334,14 +334,16 @@ Current settings (`has_cache=False, address_type=0, feature_flags=<device actual
 - `has_cache=False` + REMOTE_CACHING bit set → `CONNECT_V3_WITHOUT_CACHE`
 - Old CONNECT method is fully removed; `feature_flags=0` raises `ValueError`.
 
-**The actual bug causing "Disconnect before connected":**
-`BluetoothLeConnector._connect_via_esphome()` line 161 calls `unsub_adv()` BEFORE
-`ESPHomeAPIClient.connect()`. The `UnsubscribeBluetoothLEAdvertisementsRequest` triggers
-internal ESP32 state changes that race with the BLE CONNECT request → ESP32 calls
-`disconnect()` on the BLE client while it is in CONNECTING state → "Disconnect before
-connected, disconnect scheduled" → reason 0x16.
+**The actual bug — `UnsubscribeBluetoothLEAdvertisementsRequest` while BLE is active:**
+`unsub_adv()` is synchronous: it only QUEUES the frame in aioesphomeapi's internal send
+buffer. The frame is flushed at the next `await` (e.g. inside `_post_connect()`). So calling
+`unsub_adv()` at ANY point while the BLE connection is active will cause the ESP32 to
+disconnect the BLE client. The symptom depends on timing:
+- Before `bluetooth_device_connect()` send: "Disconnect before connected" (reason 0x16)
+- After BLE is connected but during notify setup: immediate disconnect → notify timeout
 
-**Fix:** Call `unsub_adv()` AFTER `await self.client.connect()` returns successfully.
+**Fix:** Never call `unsub_adv()` while BLE is active. Store it as `self._esphome_unsub_adv`
+and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down the BLE link.
 
 ---
 

@@ -63,6 +63,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.esphome_proxy_name = None  # ESP32 device name from device_info
         self.esphome_proxy_connected = False  # True when ESP32 API is connected
         self.last_esphome_api_ms: int | None = None  # Time to connect/verify ESP32 API (None = local BLE, 0 = reused)
+        self._esphome_unsub_adv = None  # BLE advertisement unsubscribe callable; held until disconnect()
         self.last_ble_ms: int | None = None           # Time for BLE scan + handshake to toilet
 
 
@@ -193,8 +194,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
                 self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, esphome_feature_flags)
                 await self.client.connect()
-                # BLE is now established — safe to unsubscribe from advertisements
-                unsub_adv()
+                # Keep advertisement subscription alive for entire BLE connection lifetime.
+                # Sending UnsubscribeBluetoothLEAdvertisementsRequest while BLE is active
+                # causes the ESP32 to disconnect the BLE client (see CLAUDE.md trap 7).
+                # unsub_adv() is stored and called in disconnect() after BLE is torn down.
+                self._esphome_unsub_adv = unsub_adv
                 logger.info(f"BLE connection successful with address_type={addr_type}")
                 break
             except Exception as e:
@@ -289,6 +293,16 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             await self.client.disconnect()
         else:
             logger.silly(f"not self.client, no need to disconnect.")
+
+        # Unsubscribe from BLE advertisements now that BLE is fully torn down.
+        # Must NOT be called while BLE is active — the UnsubscribeBluetoothLEAdvertisementsRequest
+        # causes the ESP32 to disconnect any active BLE client (see CLAUDE.md trap 7).
+        if self._esphome_unsub_adv is not None:
+            try:
+                self._esphome_unsub_adv()
+            except Exception:
+                pass
+            self._esphome_unsub_adv = None
 
         # Reset ESP32 proxy connection state
         if self.esphome_host:
