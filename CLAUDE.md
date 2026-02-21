@@ -85,6 +85,33 @@ Relevant only when `[ESPHOME] host` is configured (ESP32 proxy in use).
 - `ApiMode._esphome_connector` (a `BluetoothLeConnector`) is kept alive.
 - Per on-demand request: only BLE is connected/disconnected via `disconnect_ble_only()`.
 - TCP to ESP32 is reused → much faster (~50 ms vs ~1 s per request).
+- On reconnect, `_ensure_esphome_api_connected()` checks `_esphome_api._connection.is_connected`;
+  if True → logs "Reusing existing ESP32 API connection", returns immediately (`last_esphome_api_ms = 0`).
+
+**Critical invariant — `_esphome_unsub_adv()` kills the TCP:**
+Calling the advertisement unsubscribe function (returned by
+`api.subscribe_bluetooth_le_raw_advertisements()`) sends
+`UnsubscribeBluetoothLEAdvertisementsRequest` to the ESP32. The ESP32 firmware
+nulls its internal `api_connection_` pointer in response, which **closes the TCP
+connection** — even if BLE has already been disconnected. Do **not** call
+`_esphome_unsub_adv()` inside `disconnect_ble_only()`. Drop the Python reference
+(`self._esphome_unsub_adv = None`) without calling it.
+
+- Consequence: advertisement subscriptions accumulate over the lifetime of the
+  persistent connection (one leaked per request). Each old closure is a no-op —
+  its `found_event` is already resolved. Acceptable for home-automation session
+  lengths.
+- `disconnect_esp32_api()` and the full `disconnect()` (non-persistent path) still
+  call `_esphome_unsub_adv()` because they tear down the TCP anyway.
+
+**Log pattern that reveals TCP being closed unexpectedly:**
+```
+[ESP32:api.connection] aioesphomeapi (host): disconnected   ← ESP32 closes TCP
+[ESPHomeAPIClient] Disconnected from ESP32 API              ← Python side (close_api=True)
+esphomeProxy/enabled, esphomeProxy/connected = false        ← proxy shown disconnected
+```
+If you see this sequence right after a BLE disconnect, something is calling
+`_esphome_unsub_adv()`. Check `disconnect_ble_only()` first.
 
 ### `on-demand`
 
@@ -131,6 +158,17 @@ In on-demand mode, `connect()` is never called (only `connect_ble_only()`), so
 - Results cached in `device_state` and broadcast via SSE.
 - Subsequent REST calls to `/data/identification` etc. return cached data
   without a BLE connect.
+
+**Cached path timing**: `get_identification()` and `get_initial_operation_date()`
+include `_connect_ms=0`, `_esphome_api_ms=0`, `_ble_ms=0`, `_query_ms=0` even
+when returning cached data. This ensures the webapp updates its timing display
+instead of showing stale values from a previous BLE operation.
+
+**`AquaCleanClient.soc_application_versions`**: must be initialised to `None` in
+`__init__` (not only set in `connect()`). In on-demand mode `connect()` is never
+called; persistent-mode REST path reads `client.soc_application_versions` directly.
+`get_soc_versions()` reads the **data attribute** (`soc_application_versions`),
+not the **event handler** (`SOCApplicationVersions`).
 
 ---
 
@@ -282,6 +320,18 @@ with `{"status": "success"|"error", "data": {"errors": [...]}}`.
    `onStateReceived()` calls `onIdentification()` when SSE state has
    `sap_number != null`.
 
+7. **ESP32 proxy shows disconnected after every on-demand BLE cycle**
+   (with `esphome_api_connection=persistent`)
+   → `disconnect_ble_only()` was calling `_esphome_unsub_adv()`, which causes
+   the ESP32 to close the TCP → `esphomeProxy/connected=false` published.
+   Fix: null the reference, never call the function in `disconnect_ble_only()`.
+   See the "Critical invariant" note in the ESPHome connection modes section.
+
+8. **ESP32 API shows ~125 ms per on-demand request despite `esphome_api_connection=persistent`**
+   → Same root cause as trap 7. TCP was being closed after every BLE disconnect;
+   `_ensure_esphome_api_connected()` detected a dead connection and re-established it.
+   After fix 7, TCP stays alive and `last_esphome_api_ms` reports 0.
+
 ---
 
 ## Config sections
@@ -320,3 +370,9 @@ Adds on top of `main`:
 - Error code hints: all `ErrorCode` definitions carry user-facing `hint` text;
   `doc_url` field reserved for future doc links; hints propagate through
   `_set_ble_status` / `_update_esphome_proxy_state` → `device_state` → SSE → webapp
+- `soc_application_versions = None` initialised in `AquaCleanClient.__init__`;
+  `get_soc_versions()` reads data attribute, not EventHandler (was `AttributeError` in persistent mode)
+- `disconnect_ble_only()` no longer calls `_esphome_unsub_adv()` — doing so killed
+  the persistent TCP; reference is dropped (subscriptions accumulate but are no-ops)
+- Cached-path timing: `get_identification()` / `get_initial_operation_date()` include
+  timing zeros when returning from cache so webapp doesn't show stale timing
