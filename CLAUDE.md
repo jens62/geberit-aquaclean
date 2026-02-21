@@ -97,10 +97,11 @@ connection** — even if BLE has already been disconnected. Do **not** call
 `_esphome_unsub_adv()` inside `disconnect_ble_only()`. Drop the Python reference
 (`self._esphome_unsub_adv = None`) without calling it.
 
-- Consequence: advertisement subscriptions accumulate over the lifetime of the
-  persistent connection (one leaked per request). Each old closure is a no-op —
-  its `found_event` is already resolved. Acceptable for home-automation session
-  lengths.
+- At the **start** of the next `_connect_via_esphome()` call, the old
+  `_esphome_unsub_adv` is called (if set) before the new subscription is created.
+  This prevents the ESP32 from logging "Only one API subscription is allowed at a
+  time". If the unsubscribe causes the ESP32 to close TCP, `_ensure_esphome_api_connected()`
+  reconnects it immediately after.
 - `disconnect_esp32_api()` and the full `disconnect()` (non-persistent path) still
   call `_esphome_unsub_adv()` because they tear down the TCP anyway.
 
@@ -354,9 +355,11 @@ Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before
 
 7. **ESP32 proxy shows disconnected after every on-demand BLE cycle**
    (with `esphome_api_connection=persistent`)
-   → `disconnect_ble_only()` was calling `_esphome_unsub_adv()`, which causes
-   the ESP32 to close the TCP → `esphomeProxy/connected=false` published.
-   Fix: null the reference, never call the function in `disconnect_ble_only()`.
+   → `disconnect_ble_only()` must NOT call `_esphome_unsub_adv()` — doing so
+   causes the ESP32 to close TCP while BLE is still potentially active.
+   Fix: null the reference in `disconnect_ble_only()`; the cleanup call happens
+   at the START of the next `_connect_via_esphome()` before a new subscription
+   is made (no active BLE at that point, so no BLE connections are dropped).
    See the "Critical invariant" note in the ESPHome connection modes section.
 
 8. **ESP32 API shows ~125 ms per on-demand request despite `esphome_api_connection=persistent`**
