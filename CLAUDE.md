@@ -293,6 +293,38 @@ with `{"status": "success"|"error", "data": {"errors": [...]}}`.
 
 ---
 
+## On-demand polling: circuit breaker
+
+`ApiMode._polling_loop` tracks `_consecutive_poll_failures` (local var).
+
+- Incremented in every except block (all error types).
+- Reset to `0` on first success. When reset from a non-zero value, `_identification_fetched` is also reset so the next BLE session re-fetches identification (device may have been power-cycled).
+- **Threshold = 5**: at exactly 5 consecutive failures, logs "Circuit open" once and switches to probe mode.
+- **Probe interval = 60s**: when circuit is open (`failures >= 5`), an extra `asyncio.sleep(60)` runs before each attempt, on top of the normal `_poll_interval` sleep.
+- On recovery: logs "Poll recovered after N failures".
+
+Constants are named locals at the top of `_polling_loop`:
+```python
+_CIRCUIT_OPEN_THRESHOLD = 5
+_CIRCUIT_OPEN_SLEEP     = 60
+```
+
+**Why `_identification_fetched` is reset on recovery**: if the device was power-cycled during the outage its identification data is unchanged in practice, but resetting ensures a clean re-fetch rather than serving potentially stale cached values.
+
+---
+
+## MQTT reconnect
+
+`MqttService.on_disconnect` calls `self.reconnect()` via `asyncio.run_coroutine_threadsafe`.
+`reconnect()` calls `self.mqttc.reconnect()` and logs the result.
+
+**Latent bug (now fixed)**: previously `on_disconnect` called `asyncio.create_task(self.reconnect())` — but `reconnect()` was not defined, causing a silent `AttributeError` in the task. paho's own network thread was reconnecting anyway (via `loop_start()`), so MQTT kept working, masking the bug.
+
+Pattern matches all other MQTT callbacks: `run_coroutine_threadsafe(coro, self.aquaclean_loop)`.
+Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before `start_async` completes is safe).
+
+---
+
 ## Common debugging traps
 
 1. **Polling stops after a REST query (webapp hangs)**
@@ -376,3 +408,10 @@ Adds on top of `main`:
   the persistent TCP; reference is dropped (subscriptions accumulate but are no-ops)
 - Cached-path timing: `get_identification()` / `get_initial_operation_date()` include
   timing zeros when returning from cache so webapp doesn't show stale timing
+- Circuit breaker in `_polling_loop`: after 5 consecutive failures switches to 60s
+  probe interval; resets `_identification_fetched` on recovery
+- MQTT `reconnect()` latent bug fixed: `on_disconnect` now uses `run_coroutine_threadsafe`
+  and calls a defined `reconnect()` method on `MqttService`
+- On-demand poll errors now surface to webapp via SSE (`_set_ble_status("error")` in
+  `_on_demand_inner` finally block — DRY, covers all current and future error types)
+- All connection button labels consistent: `PREFIX: Action` pattern throughout
