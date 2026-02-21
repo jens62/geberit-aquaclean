@@ -57,6 +57,19 @@ if log_level not in ('TRACE', 'SILLY'):
 logger = logging.getLogger(__name__)
 
 
+def _log_startup_config():
+    """Log all config.ini values at INFO level for post-hoc debugging."""
+    _REDACTED = {'noise_psk', 'password'}
+    lines = [f"Configuration ({iniFile}):"]
+    for section in config.sections():
+        for key, value in config.items(section):
+            display = '***' if key in _REDACTED else value
+            lines.append(f"  [{section}] {key} = {display}")
+    if not config.sections():
+        lines.append("  (no sections found — using defaults)")
+    logger.info('\n'.join(lines))
+
+
 def _check_config_errors() -> list[str]:
     """Return a list of configuration error strings. Empty list means config is valid."""
     errors = []
@@ -2060,6 +2073,7 @@ async def main(args):
             for e in errors:
                 logging.error(f"Invalid configuration: {e}")
             sys.exit(1)
+        _log_startup_config()
     if args.mode == 'service':
         service = ServiceMode()
         await shutdown_waits_for(service.run())
