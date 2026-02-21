@@ -330,6 +330,18 @@ Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before
 
 ---
 
+## TODO
+
+- **Log error codes to the Python log file.** When an exception is mapped to an
+  error code in `_on_demand_inner`'s finally block, only MQTT and SSE receive the
+  code (e.g. E7002). The Python log file only shows the raw message from
+  `AquaCleanBaseClient` (`logger.error("No response from BLE peripheral ...")`
+  at line 471) with no error code. Add a `logger.error(f"BLE error {ec.code} — {e}")`
+  (or similar) at the point of mapping in `main.py` so the log file is
+  self-contained and error codes can be correlated without cross-referencing MQTT.
+
+---
+
 ## Common debugging traps
 
 1. **Polling stops after a REST query (webapp hangs)**
