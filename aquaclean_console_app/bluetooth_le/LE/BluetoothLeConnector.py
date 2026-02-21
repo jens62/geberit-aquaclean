@@ -159,6 +159,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
 
+        # Clean up any leftover advertisement subscription from the previous request.
+        # Without this the ESP32 logs "Only one API subscription is allowed at a time"
+        # when we subscribe again below. If the unsubscribe causes the ESP32 to close
+        # the TCP connection, _ensure_esphome_api_connected() will reconnect it.
+        if self._esphome_unsub_adv:
+            try:
+                self._esphome_unsub_adv()
+                logger.debug("Cleaned up previous advertisement subscription")
+            except Exception as e:
+                logger.debug(f"Advertisement unsubscribe (cleanup): {e}")
+            self._esphome_unsub_adv = None
+
         api = await self._ensure_esphome_api_connected()
 
         t_ble = time.perf_counter()  # BLE timing starts after ESP32 API is ready
