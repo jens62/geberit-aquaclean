@@ -76,52 +76,25 @@ variable). Now it reads `device_state["poll_interval"]` each reconnect.
 
 ---
 
-## Two ESPHome API connection modes (`esphome_api_connection`)
+## ESPHome API connection mode
+
+> **Note:** The `persistent` ESP32 API connection mode was removed after proving
+> unstable in production (ESPHome firmware "Only one API subscription is allowed
+> at a time" error that could not be cleanly resolved). Only `on-demand` remains.
+>
+> **To restore persistent mode:** `git checkout esphome-persistent-api` — the tag
+> `esphome-persistent-api` points to the last commit with the full implementation.
+> All code, docs, and config for persistent mode are intact at that tag.
+
+## ESPHome API connection mode (on-demand only)
 
 Relevant only when `[ESPHOME] host` is configured (ESP32 proxy in use).
 
-### `persistent` (recommended)
-
-- `ApiMode._esphome_connector` (a `BluetoothLeConnector`) is kept alive.
-- Per on-demand request: only BLE is connected/disconnected via `disconnect_ble_only()`.
-- TCP to ESP32 is reused → much faster (~50 ms vs ~1 s per request).
-- On reconnect, `_ensure_esphome_api_connected()` checks `_esphome_api._connection.is_connected`;
-  if True → logs "Reusing existing ESP32 API connection", returns immediately (`last_esphome_api_ms = 0`).
-
-**Critical invariant — `_esphome_unsub_adv()` kills the TCP:**
-Calling the advertisement unsubscribe function (returned by
-`api.subscribe_bluetooth_le_raw_advertisements()`) sends
-`UnsubscribeBluetoothLEAdvertisementsRequest` to the ESP32. The ESP32 firmware
-nulls its internal `api_connection_` pointer in response, which **closes the TCP
-connection** — even if BLE has already been disconnected. Do **not** call
-`_esphome_unsub_adv()` inside `disconnect_ble_only()`. Drop the Python reference
-(`self._esphome_unsub_adv = None`) without calling it.
-
-- `disconnect_ble_only()` does **not** null `_esphome_unsub_adv` — the reference
-  is kept alive so that `_connect_via_esphome()` can call it at the very start of
-  the next request (before any BLE connection is active). This prevents the ESP32
-  from logging "Only one API subscription is allowed at a time".
-- If the unsubscribe causes the ESP32 to close TCP, `_ensure_esphome_api_connected()`
-  reconnects it immediately after. This may add TCP reconnect overhead per request —
-  whether it does depends on the ESPHome firmware version (observable in logs: look
-  for "ESP32 API connection lost, reconnecting" after "Cleaned up previous advertisement
-  subscription").
-- `disconnect_esp32_api()` and the full `disconnect()` (non-persistent path) still
-  call `_esphome_unsub_adv()` because they tear down the TCP anyway.
-
-**Log pattern that reveals TCP being closed unexpectedly:**
-```
-[ESP32:api.connection] aioesphomeapi (host): disconnected   ← ESP32 closes TCP
-[ESPHomeAPIClient] Disconnected from ESP32 API              ← Python side (close_api=True)
-esphomeProxy/enabled, esphomeProxy/connected = false        ← proxy shown disconnected
-```
-If you see this sequence right after a BLE disconnect, something is calling
-`_esphome_unsub_adv()`. Check `disconnect_ble_only()` first.
-
-### `on-demand`
-
-- A fresh `BluetoothLeConnector` is created per request.
-- Full TCP connect + `device_info` fetch every time.
+A fresh `BluetoothLeConnector` is created per on-demand BLE request.
+Each request opens a new TCP connection to the ESP32, fetches `device_info`,
+scans for the Geberit MAC, connects BLE, does the work, unsubscribes from
+advertisements, disconnects BLE, and closes the TCP connection. ~1–2 s overhead
+per request, but proven stable for hours in production.
 
 ---
 

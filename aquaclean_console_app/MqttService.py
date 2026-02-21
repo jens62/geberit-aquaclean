@@ -29,7 +29,6 @@ class MqttService:
         self.Disconnect        = myEvent.EventHandler()
         self.ConnectESP32            = myEvent.EventHandler()
         self.DisconnectESP32         = myEvent.EventHandler()
-        self.SetEsphomeApiConnection = myEvent.EventHandler()
 
 
     async def start_async(self, aquaclean_loop, mqtt_initialized_wait_queue):
@@ -142,8 +141,6 @@ class MqttService:
             self.handle_esp32_connect_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect":
             self.handle_esp32_disconnect_message()
-        elif msg.topic == f"{self.mqttConfig['topic']}/esphomeProxy/config/apiConnection":
-            self.handle_set_esphome_api_connection_message(msg.payload.decode().strip())
 
 
     def handle_toggleLidPositionMessage(self):
@@ -188,12 +185,6 @@ class MqttService:
         logger.trace("in handle_esp32_disconnect_message")
         for handler in self.DisconnectESP32.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
-            _ = future.result()
-
-    def handle_set_esphome_api_connection_message(self, value: str):
-        logger.trace(f"in handle_set_esphome_api_connection_message: {value!r}")
-        for handler in self.SetEsphomeApiConnection.get_handlers():
-            future = asyncio.run_coroutine_threadsafe(handler(value), self.aquaclean_loop)
             _ = future.result()
 
     def handle_set_poll_interval_message(self, value: str):
