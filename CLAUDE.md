@@ -149,7 +149,7 @@ This is now done in `ESPHomeAPIClient.disconnect()`.
 ## Invalid config combination — hard error at startup
 
 When ESPHome transport is used (`esphome_host` set), the combination
-`ble_connection = persistent` + `persistent_api = false` is **rejected at startup**
+`ble_connection = persistent` + `esphome_api_connection = on-demand` is **rejected at startup**
 with `sys.exit(1)`. A persistent BLE link runs over the ESP32 TCP connection;
 if the TCP drops after every request the BLE link drops too.
 
@@ -196,7 +196,7 @@ with `{"status": "success"|"error", "data": {"errors": [...]}}`.
 ```ini
 [SERVICE]  ble_connection = persistent | on-demand
 [POLL]     interval = float (seconds)
-[ESPHOME]  host, port, noise_psk, persistent_api = true|false
+[ESPHOME]  host, port, noise_psk, esphome_api_connection = persistent|on-demand
 [BLE]      device_id = BLE MAC address
 [MQTT]     server, port, topic, username, password
 [API]      host, port
@@ -207,7 +207,7 @@ with `{"status": "success"|"error", "data": {"errors": [...]}}`.
 ## Branch: `feature/persistent-esphome-api`
 
 Adds on top of `main`:
-- Persistent ESPHome API TCP connection (`persistent_api` config)
+- Persistent ESPHome API TCP connection (`esphome_api_connection` config)
 - Split connect timing (ESP32 API ms vs BLE ms)
 - Runtime toggle for `ble_connection` and `esphome_api_connection`
 - On-demand polling loop with `set_poll_interval` support (both modes)
@@ -218,5 +218,5 @@ Adds on top of `main`:
 - `_persistent_query()` helper — wraps persistent-mode BLE calls with timing metadata
   so `updateQueryTiming()` in the webapp receives `_connect_ms=0`, `_query_ms=N`
 - `_check_config_errors()` — startup config validation; rejects `ble_connection=persistent`
-  + `persistent_api=false` + ESPHome with `sys.exit(1)`
+  + `esphome_api_connection=on-demand` + ESPHome with `sys.exit(1)`
 - `--command check-config` CLI command — same validation, returns JSON

@@ -389,7 +389,7 @@ class ESPHomeAPIClient:
         Args:
             close_api: When True (default), also disconnects the ESP32 API TCP
                        connection. Pass False to keep the TCP connection alive
-                       for reuse (persistent_api mode).
+                       for reuse (esphome_api_connection=persistent mode).
         """
         logger.debug(f"[ESPHomeAPIClient] Disconnecting from {self._mac_address}")
 

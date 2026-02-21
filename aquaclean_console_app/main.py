@@ -46,7 +46,7 @@ esphome_port           = int(config.get("ESPHOME", "port",    fallback="6053"))
 esphome_noise_psk      = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
 esphome_log_streaming  = config.getboolean("ESPHOME", "log_streaming", fallback=False)
 esphome_log_level      = config.get("ESPHOME", "log_level", fallback="INFO")
-esphome_persistent_api = config.getboolean("ESPHOME", "persistent_api", fallback=False)
+esphome_api_connection  = config.get("ESPHOME", "esphome_api_connection", fallback="on-demand")
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 
 # Suppress verbose external library logging (but not when explicitly debugging at TRACE/SILLY)
@@ -61,12 +61,12 @@ def _check_config_errors() -> list[str]:
     """Return a list of configuration error strings. Empty list means config is valid."""
     errors = []
     ble_connection = config.get("SERVICE", "ble_connection", fallback="persistent")
-    if esphome_host and ble_connection == "persistent" and not esphome_persistent_api:
+    if esphome_host and ble_connection == "persistent" and esphome_api_connection != "persistent":
         errors.append(
-            "ble_connection=persistent requires persistent_api=true when using an ESPHome proxy. "
+            "ble_connection=persistent requires esphome_api_connection=persistent when using an ESPHome proxy. "
             "A persistent BLE link runs over the TCP connection to the ESP32 — "
-            "if the TCP drops after every request (persistent_api=false), the BLE link drops too. "
-            "Fix: set persistent_api = true in [ESPHOME], or switch ble_connection = on-demand."
+            "if the TCP drops after every request (esphome_api_connection=on-demand), the BLE link drops too. "
+            "Fix: set esphome_api_connection = persistent in [ESPHOME], or switch ble_connection = on-demand."
         )
     return errors
 
@@ -125,7 +125,7 @@ class ServiceMode:
             "last_esphome_api_ms": None,     # portion: ESP32 API TCP connect (None = local BLE, 0 = reused)
             "last_ble_ms": None,             # portion: BLE scan + handshake to toilet
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
-            "esphome_api_connection": "persistent" if esphome_persistent_api else "on-demand",
+            "esphome_api_connection": esphome_api_connection,
             # Device identification — populated on first on-demand poll, cached for /info endpoint
             "sap_number": None,
             "serial_number": None,
@@ -908,7 +908,7 @@ class ApiMode:
         self._on_demand_lock = asyncio.Lock()
         self._poll_wakeup    = asyncio.Event()
         self._esphome_connector: "BluetoothLeConnector | None" = None
-        self.esphome_api_connection = "persistent" if esphome_persistent_api else "on-demand"
+        self.esphome_api_connection = esphome_api_connection
 
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
