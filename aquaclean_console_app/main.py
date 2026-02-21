@@ -27,7 +27,8 @@ from RestApiService                                           import RestApiServ
 from myEvent                                                  import myEvent
 from aquaclean_utils                                          import utils
 from ErrorCodes                                               import (
-    ErrorManager, E0000, E0001, E0002, E0003, E2001, E2002, E2003, E2004, E2005,
+    ErrorManager, E0000, E0001, E0002, E0003, E1001, E1002,
+    E2001, E2002, E2003, E2004, E2005,
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
 
@@ -1454,6 +1455,7 @@ class ApiMode:
 
         factory = AquaCleanClientFactory(connector)
         client = factory.create_client()
+        _exc = None
         try:
             await self.service.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
@@ -1496,6 +1498,9 @@ class ApiMode:
             else:
                 result = timing
             return result
+        except Exception as e:
+            _exc = e
+            raise
         finally:
             try:
                 if use_persistent:
@@ -1504,12 +1509,25 @@ class ApiMode:
                     await connector.disconnect()            # Full disconnect (original behavior)
             except Exception:
                 pass
-            await self.service._set_ble_status("disconnected")
-            # Reset proxy state only when TCP is also torn down
-            if esphome_host and not use_persistent:
-                await self.service._update_esphome_proxy_state(
-                    connected=False, error="No error", error_code="E0000"
-                )
+            if _exc is not None:
+                # Map exception to error code so webapp shows the right status.
+                # _polling_loop handlers only need to publish to MQTT; this covers SSE.
+                if isinstance(_exc, ESPHomeConnectionError):
+                    ec = E1001 if _exc.timeout else E1002
+                elif isinstance(_exc, ESPHomeDeviceNotFoundError):
+                    ec = E0002
+                elif isinstance(_exc, BleakError):
+                    ec = E0003
+                else:
+                    ec = E7002
+                await self.service._set_ble_status("error", error_msg=str(_exc), error_code=ec.code, error_hint=ec.hint)
+            else:
+                await self.service._set_ble_status("disconnected")
+                # Reset proxy state only when TCP is also torn down
+                if esphome_host and not use_persistent:
+                    await self.service._update_esphome_proxy_state(
+                        connected=False, error="No error", error_code="E0000"
+                    )
 
     async def _publish_identification_to_mqtt(self, info: dict):
         """Publish device identification fields to their MQTT topics.
