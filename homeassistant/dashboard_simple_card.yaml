@@ -42,6 +42,22 @@ cards:
         name: Initial Operation Date
   
   - type: entities
+    title: Descale Statistics
+    entities:
+      - entity: sensor.geberit_aquaclean_days_until_next_descale
+        name: Days Until Next Descale
+      - entity: sensor.geberit_aquaclean_days_until_shower_restricted
+        name: Days Until Shower Restricted
+      - entity: sensor.geberit_aquaclean_shower_cycles_until_confirmation
+        name: Shower Cycles Until Confirmation
+      - entity: sensor.geberit_aquaclean_number_of_descale_cycles
+        name: Number of Descale Cycles
+      - entity: sensor.geberit_aquaclean_last_descale
+        name: Last Descale
+      - entity: sensor.geberit_aquaclean_unposted_shower_cycles
+        name: Unposted Shower Cycles
+
+  - type: entities
     title: Connection Status
     entities:
       - entity: sensor.geberit_aquaclean_connected

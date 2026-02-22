@@ -40,7 +40,40 @@ mqtt:
     - name: "Geberit AquaClean Initial Operation Date"
       state_topic: "Geberit/AquaClean/peripheralDevice/information/initialOperationDate"
       icon: mdi:calendar-clock
-      
+
+    # Descale statistics
+    - name: "Geberit AquaClean Days Until Next Descale"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/daysUntilNextDescale"
+      icon: mdi:calendar-refresh
+      unit_of_measurement: "days"
+
+    - name: "Geberit AquaClean Days Until Shower Restricted"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/daysUntilShowerRestricted"
+      icon: mdi:calendar-alert
+      unit_of_measurement: "days"
+
+    - name: "Geberit AquaClean Shower Cycles Until Confirmation"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/showerCyclesUntilConfirmation"
+      icon: mdi:counter
+
+    - name: "Geberit AquaClean Number Of Descale Cycles"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/numberOfDescaleCycles"
+      icon: mdi:history
+
+    - name: "Geberit AquaClean Last Descale"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/dateTimeAtLastDescale"
+      icon: mdi:calendar-check
+      value_template: >-
+        {% if value | int(0) > 0 %}
+          {{ value | int | timestamp_local }}
+        {% else %}
+          Never
+        {% endif %}
+
+    - name: "Geberit AquaClean Unposted Shower Cycles"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/unpostedShowerCycles"
+      icon: mdi:sync
+
     - name: "Geberit AquaClean Connected"
       state_topic: "Geberit/AquaClean/centralDevice/connected"
       icon: mdi:bluetooth-connect
