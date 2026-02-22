@@ -83,8 +83,19 @@ async def probe(start: int, end: int, config: configparser.ConfigParser):
             print(f"{label:<6}  OK     {len(raw):>5}  {hex_str}{note}")
         except BLEPeripheralTimeoutError:
             print(f"{label:<6}  ERR    {'':>5}  timeout{note}")
+            # Device disconnects BLE after unknown procedures — reconnect for next probe
+            try:
+                await connector.disconnect()
+            except Exception:
+                pass
+            await client.connect_async(device_id)
         except Exception as e:
             print(f"{label:<6}  ERR    {'':>5}  {type(e).__name__}: {e}{note}")
+            try:
+                await connector.disconnect()
+            except Exception:
+                pass
+            await client.connect_async(device_id)
 
     print("\nDone. Disconnecting …")
     await connector.disconnect()
