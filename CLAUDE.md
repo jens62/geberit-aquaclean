@@ -437,6 +437,70 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
 
 ---
 
+## BLE protocol — Commands, ProfileSettings, and BLE_COMMAND_REFERENCE.md
+
+### Two-layer protocol
+
+The code uses reverse-engineered C# enum codes, NOT the DpIds from `BLE_COMMAND_REFERENCE.md`.
+The DpIds (e.g. 563 = anal shower) are Geberit's device-level data point IDs — useful as a
+conceptual reference for what the device supports, but not directly callable from the code.
+
+**Layer 1 — `SetCommandAsync(Commands.X)`** (`aquaclean_core/Clients/Commands.py`)
+Sends Procedure=0x09 with a 1-byte command code. All are toggles/triggers:
+
+| Command | Code | Exposed in app? |
+|---|---|---|
+| `ToggleAnalShower` | 0 | ✅ |
+| `ToggleLadyShower` | 1 | ✅ |
+| `ToggleDryer` | 2 | ❌ |
+| `StartCleaningDevice` | 4 | ❌ |
+| `ExecuteNextCleaningStep` | 5 | ❌ |
+| `PrepareDescaling` | 6 | ❌ |
+| `ConfirmDescaling` | 7 | ❌ |
+| `CancelDescaling` | 8 | ❌ |
+| `PostponeDescaling` | 9 | ❌ |
+| `ToggleLidPosition` | 10 | ✅ |
+| `ToggleOrientationLight` | 20 | ❌ |
+| `StartLidPositionCalibration` | 33 | ❌ |
+| `LidPositionOffsetSave` | 34 | ❌ |
+| `LidPositionOffsetIncrement` | 35 | ❌ |
+| `LidPositionOffsetDecrement` | 36 | ❌ |
+| `TriggerFlushManually` | 37 | ❌ |
+| `ResetFilterCounter` | 47 | ❌ |
+
+**Layer 2 — `GetStoredProfileSettingAsync` / `SetStoredProfileSettingAsync`** (`aquaclean_core/Clients/ProfileSettings.py`)
+Reads/writes stored user settings by index. Getters already in `AquaCleanClient`, most not in REST:
+
+| Setting | Index | Getter | Setter |
+|---|---|---|---|
+| `OdourExtraction` | 0 | ✅ | ✅ |
+| `OscillatorState` | 1 | ✅ | ❌ |
+| `AnalShowerPressure` | 2 | ✅ | ❌ |
+| `LadyShowerPressure` | 3 | ❌ | ❌ |
+| `AnalShowerPosition` | 4 | ✅ | ❌ |
+| `LadyShowerPosition` | 5 | ✅ | ❌ |
+| `WaterTemperature` | 6 | ✅ | ❌ |
+| `WcSeatHeat` | 7 | ✅ | ❌ |
+| `DryerTemperature` | 8 | ✅ | ❌ |
+| `DryerState` | 9 | ✅ | ❌ |
+| `SystemFlush` | 10 | ✅ | ❌ |
+
+**Layer 3 — `GetSystemParameterList([0,1,2,3,4,5,7,9])`**
+Reads live device state (what's happening right now). Indices 0–9 are the only ones known.
+These are NOT DpIds — separate index space.
+
+### Quick-win new commands (zero new protocol code needed)
+All unexposed Commands enum entries just need REST endpoints + web UI wiring.
+Priority candidates: `ToggleDryer`, `TriggerFlushManually`, `ToggleOrientationLight`,
+descaling workflow (`PrepareDescaling → ConfirmDescaling / CancelDescaling / PostponeDescaling`).
+
+### BLE_COMMAND_REFERENCE.md
+Located at `operation_support/BLE_COMMAND_REFERENCE.md`. Verified against `DpId.cs` source.
+Use it to understand WHAT the device supports conceptually, but do NOT try to map its DpIds
+directly to Commands enum codes — they are different numbering systems.
+
+---
+
 ## Related repositories
 
 | Repo | Local path | Purpose |
