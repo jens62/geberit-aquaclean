@@ -1482,9 +1482,15 @@ class ApiMode:
             else:
                 await self.service._set_ble_status("disconnected")
                 if esphome_host:
-                    await self.service._update_esphome_proxy_state(
-                        connected=False, error="No error", error_code="E0000"
-                    )
+                    if use_persistent:
+                        # TCP stays alive — proxy remains connected between BLE cycles
+                        await self.service._update_esphome_proxy_state(
+                            connected=True, error="No error", error_code="E0000"
+                        )
+                    else:
+                        await self.service._update_esphome_proxy_state(
+                            connected=False, error="No error", error_code="E0000"
+                        )
 
     async def _publish_identification_to_mqtt(self, info: dict):
         """Publish device identification fields to their MQTT topics.
