@@ -34,6 +34,11 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+# haggis must be initialized before any app imports so logger.trace() exists
+from haggis import logs as _haggis_logs
+_haggis_logs.add_logging_level('TRACE', logging.DEBUG - 5)
+_haggis_logs.add_logging_level('SILLY', logging.DEBUG - 7)
+
 from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
 from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory          import AquaCleanClientFactory
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient     import BLEPeripheralTimeoutError
