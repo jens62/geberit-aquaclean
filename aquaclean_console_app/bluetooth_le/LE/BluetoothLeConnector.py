@@ -109,9 +109,23 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         from aioesphomeapi import APIClient
 
         if self._esphome_api is not None:
-            logger.debug("Reusing existing ESP32 API connection")
-            self.last_esphome_api_ms = 0
-            return self._esphome_api
+            # Check whether the underlying TCP connection is still alive.
+            # aioesphomeapi sets _connection = None internally when the TCP link
+            # drops (e.g. after the 90-second ping-response timeout).  Returning
+            # a dead APIClient here would cause "Not connected" errors on every
+            # subsequent poll with no chance of recovery.  Detect the dead state
+            # and fall through to open a fresh connection instead.
+            if getattr(self._esphome_api, '_connection', None) is not None:
+                logger.debug("Reusing existing ESP32 API connection")
+                self.last_esphome_api_ms = 0
+                return self._esphome_api
+            logger.warning(
+                "ESP32 API connection lost (ping timeout?); "
+                "clearing stale client and reconnecting"
+            )
+            self._esphome_api = None
+            self.esphome_proxy_connected = False
+            # Fall through to open a fresh connection
 
         t0 = time.perf_counter()
         api = APIClient(
