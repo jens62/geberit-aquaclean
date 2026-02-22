@@ -1874,6 +1874,75 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "device": DEVICE,
             },
         },
+        # --- Sensors: descale statistics (ApiMode.get_statistics_descale) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/days_until_next_descale/config",
+            "payload": {
+                "name": "Days Until Next Descale",
+                "unique_id": "geberit_aquaclean_days_until_next_descale",
+                "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/daysUntilNextDescale",
+                "icon": "mdi:calendar-refresh",
+                "unit_of_measurement": "days",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/days_until_shower_restricted/config",
+            "payload": {
+                "name": "Days Until Shower Restricted",
+                "unique_id": "geberit_aquaclean_days_until_shower_restricted",
+                "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/daysUntilShowerRestricted",
+                "icon": "mdi:calendar-alert",
+                "unit_of_measurement": "days",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/shower_cycles_until_confirmation/config",
+            "payload": {
+                "name": "Shower Cycles Until Confirmation",
+                "unique_id": "geberit_aquaclean_shower_cycles_until_confirmation",
+                "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/showerCyclesUntilConfirmation",
+                "icon": "mdi:counter",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/number_of_descale_cycles/config",
+            "payload": {
+                "name": "Number of Descale Cycles",
+                "unique_id": "geberit_aquaclean_number_of_descale_cycles",
+                "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/numberOfDescaleCycles",
+                "icon": "mdi:history",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/last_descale/config",
+            "payload": {
+                "name": "Last Descale",
+                "unique_id": "geberit_aquaclean_last_descale",
+                "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/dateTimeAtLastDescale",
+                "icon": "mdi:calendar-check",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/unposted_shower_cycles/config",
+            "payload": {
+                "name": "Unposted Shower Cycles",
+                "unique_id": "geberit_aquaclean_unposted_shower_cycles",
+                "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/unpostedShowerCycles",
+                "icon": "mdi:sync",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
         # --- Sensors: connection status (ServiceMode.run / on_connection_status_changed) ---
         {
             "topic": f"{HA}/sensor/geberit_aquaclean/connected/config",
