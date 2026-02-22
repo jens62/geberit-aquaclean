@@ -648,3 +648,13 @@ Similarly, adding a new MQTT-published feature should also be reflected in:
 - `device_state` key: `"esphome_api_connection"`
 - Runtime toggle method: `set_esphome_api_connection(value: str)`
 - MQTT event: `SetEsphomeApiConnection`
+
+---
+
+## Communication style
+
+### Markdown with brackets in terminal
+When the user asks for markdown text containing `[]()` links or `![]()` image embeds
+(e.g. draft GitHub issue comments), always wrap the entire response in a fenced
+code block (` ``` ` ... ` ``` `). Square brackets are interpreted by zsh/bash and
+will be stripped or cause errors if output as plain text in the terminal.
