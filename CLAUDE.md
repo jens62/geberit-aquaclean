@@ -323,11 +323,14 @@ Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before
 
 ### Wire remaining API-layer procedures from `tmp.txt`
 
-Two procedures identified in the thomas-bingel C# repo are not yet implemented:
+All procedures from the thomas-bingel C# repo that are not yet wired to any interface:
 
 | Procedure | Call | Priority | Notes |
 |-----------|------|----------|-------|
-| `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | High | Potentially bridges API layer to `BLE_COMMAND_REFERENCE.md` DpIds (water hardness, descaling intervals etc.); `storedCommonSettingId` mapping unknown — needs BLE sniffing or trial |
+| `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | High | Potentially bridges API layer to `BLE_COMMAND_REFERENCE.md` DpIds; `storedCommonSettingId` mapping unknown — needs BLE sniffing or trial |
+| `0x05` | `GetNodeList()` → `NodeList` | Medium | DTO already migrated; purpose unclear |
+| `0x0E` | `GetFirmwareVersionList(arg1, arg2)` → `FirmwareVersionList` | Medium | DTO already migrated; args unknown |
+| `0x08` | `SetActiveProfileSetting(profileSettingId, value)` | Medium | May overlap with `SetStoredProfileSetting` (0x54) |
 | `0x56` | `SetDeviceRegistrationLevel(registrationLevel: int)` | Low | Purpose unclear; value 257 mentioned in `tmp.txt` |
 
 **Suggested approach for `0x51`:**
@@ -545,18 +548,36 @@ does NOT reveal the discrete DpId procedure code Gemini called the "missing link
 - `tmp.txt` / CallClasses = structured API procedures (codes known, see table)
 - `BLE_COMMAND_REFERENCE.md` DpIds = discrete data point access (procedure code still UNKNOWN)
 
-**Procedures revealed by `tmp.txt`:**
+**All API-layer procedures — complete picture (C# repo + probe results):**
 
-| Procedure | Call | Status |
-|-----------|------|--------|
-| `0x45` | `GetStatisticsDescale()` → returns `StatisticsDescale` struct | ✅ implemented |
-| `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | ❌ not yet implemented |
-| `0x56` | `SetDeviceRegistrationLevel(int registrationLevel)` // 257 | ❌ not yet implemented |
+| Procedure | Call | Status | Source |
+|-----------|------|--------|--------|
+| `0x05` | `GetNodeList()` → `NodeList` | ❌ not yet wired | tmp.txt |
+| `0x08` | `SetActiveProfileSetting(profileSettingId, value)` | ❌ not yet wired | tmp.txt |
+| `0x09` | `SetCommand(command)` | ✅ implemented | CallClass |
+| `0x0D` | `GetSystemParameterList(params)` | ✅ implemented | CallClass |
+| `0x0E` | `GetFirmwareVersionList(arg1, arg2)` → `FirmwareVersionList` | ❌ not yet wired | tmp.txt |
+| `0x45` | `GetStatisticsDescale()` → `StatisticsDescale` | ✅ implemented | tmp.txt |
+| `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | ❌ not yet wired | tmp.txt |
+| `0x53` | `GetStoredProfileSetting(profileId, setting)` → int | ❌ migrated, not wired | CallClass |
+| `0x54` | `SetStoredProfileSetting(profileId, setting, value)` | ❌ migrated, not wired | CallClass |
+| `0x56` | `SetDeviceRegistrationLevel(registrationLevel)` // 257 | ❌ not yet wired | tmp.txt |
+| `0x81` | `GetSOCApplicationVersions()` | ✅ implemented | CallClass |
+| `0x82` | `GetDeviceIdentification()` | ✅ implemented | CallClass |
+| `0x86` | `GetDeviceInitialOperationDate()` | ✅ implemented | CallClass |
 
 **`GetStoredCommonSetting` (0x51)** is potentially the bridge between the API layer and the
 BLE_COMMAND_REFERENCE.md layer: it may be able to read device settings (water hardness,
 descaling intervals etc.) that also appear as DpIds in BLE_COMMAND_REFERENCE.md.
 The `storedCommonSettingId` parameter meaning is unknown — needs BLE sniffing or trial.
+
+**BLE procedure probe findings (2026-02-22):**
+- `0x40` → 1 byte `00`: responds but **not a known API procedure**. `0x40` is the BLE frame
+  layer CONS-frame header byte — this response is likely a protocol artefact, not application data.
+- `0x41` → 1 byte `01`: same conclusion — absent from all C# source, not a documented procedure.
+- `0x42`–`0x44`: device drops BLE connection (unknown/invalid procedures).
+- `0x45` (GetStatisticsDescale): should respond once device is stable — probe was interrupted.
+- See `docs/developer/ble-procedure-probe-findings.md` for full probe results and methodology.
 
 ### BLE_COMMAND_REFERENCE.md
 Located at `operation_support/BLE_COMMAND_REFERENCE.md`. Verified against `DpId.cs` source.
