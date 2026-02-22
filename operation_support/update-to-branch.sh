@@ -28,7 +28,7 @@ if [ -z "$PYTHON" ]; then
 fi
 PYTHON="${PYTHON:-python3}"
 PIP="${PIP:-$(dirname "$PYTHON")/pip}"
-BRANCH="feature/new-ble-commands"
+BRANCH="main"
 REPO="https://github.com/jens62/geberit-aquaclean.git"
 BACKUP="/tmp/aquaclean_config.ini.bak"
 
