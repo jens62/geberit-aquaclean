@@ -40,7 +40,7 @@ if _ROOT not in sys.path:
 # ---------------------------------------------------------------------------
 # Main probe loop
 # ---------------------------------------------------------------------------
-async def probe(start: int, end: int, config: configparser.ConfigParser):
+async def probe(start: int, end: int, delay: float, config: configparser.ConfigParser):
     from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute  import ApiCallAttribute
     from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient      import AquaCleanBaseClient, BLEPeripheralTimeoutError
     from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector            import BluetoothLeConnector
@@ -83,19 +83,25 @@ async def probe(start: int, end: int, config: configparser.ConfigParser):
             print(f"{label:<6}  OK     {len(raw):>5}  {hex_str}{note}")
         except BLEPeripheralTimeoutError:
             print(f"{label:<6}  ERR    {'':>5}  timeout{note}")
-            # Device disconnects BLE after unknown procedures — reconnect for next probe
-            try:
-                await connector.disconnect()
-            except Exception:
-                pass
-            await client.connect_async(device_id)
+            # Device drops BLE after unknown procedures — wait, then reconnect
+            if proc < end:
+                print(f"         waiting {delay:.0f}s for device to recover …")
+                await asyncio.sleep(delay)
+                try:
+                    await connector.disconnect()
+                except Exception:
+                    pass
+                await client.connect_async(device_id)
         except Exception as e:
             print(f"{label:<6}  ERR    {'':>5}  {type(e).__name__}: {e}{note}")
-            try:
-                await connector.disconnect()
-            except Exception:
-                pass
-            await client.connect_async(device_id)
+            if proc < end:
+                print(f"         waiting {delay:.0f}s for device to recover …")
+                await asyncio.sleep(delay)
+                try:
+                    await connector.disconnect()
+                except Exception:
+                    pass
+                await client.connect_async(device_id)
 
     print("\nDone. Disconnecting …")
     await connector.disconnect()
@@ -112,6 +118,8 @@ def main():
                         help="Last procedure code to probe (hex or int, default 0x60)")
     parser.add_argument("--config", default=os.path.join(_ROOT, "aquaclean_console_app", "config.ini"),
                         help="Path to config.ini")
+    parser.add_argument("--delay",  default="30",
+                        help="Seconds to wait after a timeout before reconnecting (default 30)")
     parser.add_argument("--log",    default="WARNING",
                         help="Log level (default WARNING — use DEBUG for full BLE trace)")
     args = parser.parse_args()
@@ -125,7 +133,7 @@ def main():
     logging.basicConfig(level=getattr(logging, args.log.upper(), logging.WARNING),
                         format="%(levelname)s %(name)s: %(message)s")
 
-    asyncio.run(probe(int(args.start, 0), int(args.end, 0), config))
+    asyncio.run(probe(int(args.start, 0), int(args.end, 0), float(args.delay), config))
 
 
 if __name__ == "__main__":
