@@ -335,6 +335,13 @@ Two procedures identified in the thomas-bingel C# repo are not yet implemented:
 2. Trial-and-error `storedCommonSettingId` values (0–N) while logging responses — correlate with known DpIds from `BLE_COMMAND_REFERENCE.md`
 3. Once mapping is known: expose via REST API, CLI, MQTT, and HA Discovery following the "all interfaces" rule
 
+### Filter counter — read status + expose reset command
+
+The device tracks a ceramic honeycomb filter counter. Two things are needed:
+
+1. **Read filter status** — no getter exists yet. Most likely accessible via `GetStoredCommonSetting` (0x51, see above). BLE sniffing the official app while it shows the filter reminder would confirm the exact `storedCommonSettingId` or DpId.
+2. **Wire `ResetFilterCounter` command** — `ResetFilterCounter = 47` is already defined in `Commands.py` but not exposed on any interface. Once the read side is understood, expose both read and reset via REST API, CLI, MQTT, and HA Discovery (same "all interfaces" rule).
+
 ### Wire `GetStoredProfileSetting` / `SetStoredProfileSetting`
 
 The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into any interface (REST API, CLI, MQTT, web UI). Blocked on knowing which `ProfileSettings` enum values map to useful device features.
