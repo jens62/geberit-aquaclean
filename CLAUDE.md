@@ -319,6 +319,28 @@ Guard: only fires if `self.aquaclean_loop` is set and running (disconnect before
 
 ---
 
+## Roadmap — next steps
+
+### Wire remaining API-layer procedures from `tmp.txt`
+
+Two procedures identified in the thomas-bingel C# repo are not yet implemented:
+
+| Procedure | Call | Priority | Notes |
+|-----------|------|----------|-------|
+| `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | High | Potentially bridges API layer to `BLE_COMMAND_REFERENCE.md` DpIds (water hardness, descaling intervals etc.); `storedCommonSettingId` mapping unknown — needs BLE sniffing or trial |
+| `0x56` | `SetDeviceRegistrationLevel(registrationLevel: int)` | Low | Purpose unclear; value 257 mentioned in `tmp.txt` |
+
+**Suggested approach for `0x51`:**
+1. Migrate `GetStoredCommonSetting` CallClass (same pattern as `GetStatisticsDescale`)
+2. Trial-and-error `storedCommonSettingId` values (0–N) while logging responses — correlate with known DpIds from `BLE_COMMAND_REFERENCE.md`
+3. Once mapping is known: expose via REST API, CLI, MQTT, and HA Discovery following the "all interfaces" rule
+
+### Wire `GetStoredProfileSetting` / `SetStoredProfileSetting`
+
+The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into any interface (REST API, CLI, MQTT, web UI). Blocked on knowing which `ProfileSettings` enum values map to useful device features.
+
+---
+
 ## TODO
 
 - **Log error codes to the Python log file.** When an exception is mapped to an
