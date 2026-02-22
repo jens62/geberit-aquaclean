@@ -3,7 +3,8 @@
 # preserving the existing config.ini.
 #
 # Usage (with venv active):
-#   bash update-to-branch.sh
+#   bash update-to-branch.sh                        # installs main
+#   bash update-to-branch.sh feature/my-branch      # installs a specific branch
 #
 # Usage (without activating venv):
 #   PYTHON=/home/jens/venv/bin/python3 PIP=/home/jens/venv/bin/pip bash update-to-branch.sh
@@ -28,7 +29,7 @@ if [ -z "$PYTHON" ]; then
 fi
 PYTHON="${PYTHON:-python3}"
 PIP="${PIP:-$(dirname "$PYTHON")/pip}"
-BRANCH="main"
+BRANCH="${1:-main}"
 REPO="https://github.com/jens62/geberit-aquaclean.git"
 BACKUP="/tmp/aquaclean_config.ini.bak"
 
