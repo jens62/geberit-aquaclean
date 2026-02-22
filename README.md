@@ -191,6 +191,12 @@ The web UI also has a one-click toggle button.  See [docs/modes.md](docs/modes.m
 
 ---
 
+## References
+
+- [Geberit AquaClean Mera Comfort — Service Manual (PDF)](https://cdn.data.geberit.com/documents-a6/972.447.00.0_00-A6.pdf)
+
+---
+
 ## Credits
 
 Original C# library by [Thomas Bingel](https://github.com/thomas-bingel).
