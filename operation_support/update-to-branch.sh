@@ -10,18 +10,24 @@
 
 set -e
 
-# Auto-detect venv from the aquaclean-bridge binary if PYTHON/PIP not set explicitly
-if [ -z "$PYTHON" ] && [ -z "$PIP" ]; then
-    BRIDGE=$(which aquaclean-bridge 2>/dev/null || true)
-    if [ -n "$BRIDGE" ]; then
-        VENV_BIN=$(dirname "$BRIDGE")
-        PYTHON="$VENV_BIN/python3"
-        PIP="$VENV_BIN/pip"
-        echo "Auto-detected venv: $VENV_BIN"
-    fi
+# Auto-detect a python3 that has aquaclean_console_app installed
+if [ -z "$PYTHON" ]; then
+    for candidate in \
+        "/home/$USER/venv/bin/python3" \
+        "/home/jens/venv/bin/python3" \
+        "/opt/venv/bin/python3" \
+        "$(which aquaclean-bridge 2>/dev/null | xargs -I{} dirname {} 2>/dev/null)/python3" \
+        "python3"; do
+        [ -z "$candidate" ] && continue
+        if "$candidate" -c "import aquaclean_console_app" 2>/dev/null; then
+            PYTHON="$candidate"
+            echo "Auto-detected Python: $PYTHON"
+            break
+        fi
+    done
 fi
 PYTHON="${PYTHON:-python3}"
-PIP="${PIP:-pip}"
+PIP="${PIP:-$(dirname "$PYTHON")/pip}"
 BRANCH="feature/new-ble-commands"
 REPO="https://github.com/jens62/geberit-aquaclean.git"
 BACKUP="/tmp/aquaclean_config.ini.bak"
