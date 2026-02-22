@@ -58,7 +58,7 @@ class _ProbeCall:
 # Main probe loop
 # ---------------------------------------------------------------------------
 async def probe(start: int, end: int, config_path: str):
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(inline_comment_prefixes=('#', ';'))
     config.read(config_path)
 
     device_id      = config.get("BLE",     "device_id")
