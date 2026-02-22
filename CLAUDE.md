@@ -405,6 +405,20 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
    Fix: when `error_code="E0000"` is set, `error_hint` is auto-cleared to `""`.
    (Added to `_update_esphome_proxy_state` logic.)
 
+9. **App permanently stuck returning E7002 "Not connected to aquaclean-proxy" after ~90 min**
+   → aioesphomeapi has a built-in 90-second ping timeout. When the TCP link goes quiet
+   (e.g. Geberit unreachable for 3 consecutive 30s scans = 90s), aioesphomeapi logs
+   "Ping response not received after 90.0 seconds" and internally sets `api._connection = None`.
+   `self._esphome_api` stays non-None on `BluetoothLeConnector`, so
+   `_ensure_esphome_api_connected()` keeps returning the dead client on every poll.
+   Every call to `subscribe_bluetooth_le_raw_advertisements` then fails with
+   "Not connected" → E7002 → circuit breaker opens → app probes every 60s forever.
+   **Fix** (in `_ensure_esphome_api_connected`): before returning the cached client,
+   check `getattr(self._esphome_api, '_connection', None) is not None`.
+   If `None`, log a warning, clear `self._esphome_api = None` and
+   `self.esphome_proxy_connected = False`, then fall through to reconnect.
+   The fast path (healthy connection, `_connection` not None) is unaffected.
+
 8. **Queries get slower with each poll in persistent ESPHome API mode**
    → `AquaCleanBaseClient.__init__` always does:
    `self.bluetooth_le_connector.data_received_handlers += self.frame_service.process_data`
