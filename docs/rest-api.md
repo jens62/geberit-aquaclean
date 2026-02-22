@@ -8,7 +8,20 @@ python main.py --mode api
 
 Base URL: `http://<host>:<port>` (default: `http://0.0.0.0:8080`)
 
-All endpoints return JSON.  In **on-demand** mode, timing fields `_connect_ms` and `_query_ms` are appended to every response that required a BLE round-trip.
+All endpoints return JSON.  In **on-demand** mode, timing fields are appended to every response that required a BLE round-trip:
+
+| Field | Description |
+|-------|-------------|
+| `_connect_ms` | Total connect time (ESP32 API + BLE handshake) |
+| `_esphome_api_ms` | ESP32 API TCP connect time (`0` when connection was reused) |
+| `_ble_ms` | BLE scan + handshake time |
+| `_query_ms` | Time for the actual GATT data request |
+
+On BLE or ESP32 errors, endpoints that trigger a BLE round-trip return HTTP **503** with a structured error body:
+
+```json
+{"status": "error", "error": {"code": "E0003", "message": "...", "hint": "..."}  }
+```
 
 An interactive Swagger UI is available at `http://<host>:<port>/docs`.
 
@@ -22,11 +35,14 @@ An interactive Swagger UI is available at `http://<host>:<port>/docs`.
 | `GET` | `/events` | SSE stream of state updates |
 | `GET` | `/status` | Current device state (4 monitor flags + BLE metadata) |
 | `GET` | `/info` | Device identification + initial operation date |
-| `GET` | `/config` | Current runtime config (`ble_connection`, `poll_interval`) |
-| `POST` | `/config/ble-connection` | Switch connection mode. Body: `{"value": "persistent"}` or `{"value": "on-demand"}` |
+| `GET` | `/config` | Current runtime config (`ble_connection`, `poll_interval`, `esphome_api_connection`) |
+| `POST` | `/config/ble-connection` | Switch BLE connection mode. Body: `{"value": "persistent"}` or `{"value": "on-demand"}` |
+| `POST` | `/config/esphome-api-connection` | Switch ESP32 API TCP mode. Body: `{"value": "persistent"}` or `{"value": "on-demand"}` |
 | `POST` | `/config/poll-interval` | Set poll interval at runtime (does not write `config.ini`). Body: `{"value": 10.5}`. `0` disables background polling. |
 | `POST` | `/connect` | Request BLE connect (persistent: reconnect; on-demand: connect + fetch info) |
 | `POST` | `/disconnect` | Request BLE disconnect (persistent only) |
+| `POST` | `/esphome/connect` | Connect/reconnect the ESP32 API TCP connection |
+| `POST` | `/esphome/disconnect` | Disconnect the ESP32 API TCP connection |
 
 ## Commands
 
@@ -94,6 +110,14 @@ curl -X POST http://localhost:8080/command/toggle-lid
 curl -X POST http://localhost:8080/config/ble-connection \
      -H "Content-Type: application/json" \
      -d '{"value": "on-demand"}'
+```
+
+### Switch ESP32 API connection to persistent
+
+```bash
+curl -X POST http://localhost:8080/config/esphome-api-connection \
+     -H "Content-Type: application/json" \
+     -d '{"value": "persistent"}'
 ```
 
 ### Set poll interval to 30 seconds

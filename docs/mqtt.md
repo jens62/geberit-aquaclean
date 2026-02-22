@@ -32,6 +32,7 @@ The application publishes to these topics.  All messages are published with `ret
 
 | Topic | Values | Description |
 |-------|--------|-------------|
+| `{prefix}/esphomeProxy/enabled` | `true` / `false` | Whether the ESPHome proxy is configured |
 | `{prefix}/esphomeProxy/connected` | `True` / `False` | Whether the TCP connection to the ESP32 is alive |
 | `{prefix}/esphomeProxy/error` | JSON (same format as above) | Last ESP32 API error |
 
@@ -92,6 +93,7 @@ The application subscribes to these topics and reacts to incoming messages.
 |-------|---------|--------|
 | `{prefix}/centralDevice/config/bleConnection` | `persistent` or `on-demand` | Switch BLE connection mode without restart |
 | `{prefix}/centralDevice/config/pollInterval` | float (seconds) | Set poll interval; `0` disables background polling |
+| `{prefix}/esphomeProxy/config/apiConnection` | `persistent` or `on-demand` | Switch ESP32 API TCP connection mode without restart |
 
 ---
 
