@@ -680,6 +680,15 @@ Similarly, adding a new MQTT-published feature should also be reflected in:
 
 ---
 
+## External references
+
+| Resource | URL |
+|----------|-----|
+| Geberit AquaClean Mera Comfort — Service Manual (PDF) | https://cdn.data.geberit.com/documents-a6/972.447.00.0_00-A6.pdf |
+| thomas-bingel C# reference repo | https://github.com/thomas-bingel/geberit-aquaclean |
+
+---
+
 ## Communication style
 
 ### Markdown with brackets in terminal
