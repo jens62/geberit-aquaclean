@@ -41,10 +41,9 @@ if _ROOT not in sys.path:
 # Main probe loop
 # ---------------------------------------------------------------------------
 async def probe(start: int, end: int, config: configparser.ConfigParser):
-    from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
-    from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory          import AquaCleanClientFactory
-    from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient     import BLEPeripheralTimeoutError
-    from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector           import BluetoothLeConnector
+    from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute  import ApiCallAttribute
+    from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient      import AquaCleanBaseClient, BLEPeripheralTimeoutError
+    from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector            import BluetoothLeConnector
 
     class _ProbeCall:
         def __init__(self, procedure: int):
@@ -60,8 +59,7 @@ async def probe(start: int, end: int, config: configparser.ConfigParser):
     esphome_psk  = config.get("ESPHOME", "noise_psk", fallback=None) or None
 
     connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_psk)
-    factory   = AquaCleanClientFactory(connector)
-    client    = factory.create_client()
+    client    = AquaCleanBaseClient(connector)
 
     print(f"Connecting to {device_id} …")
     await client.connect_async(device_id)
