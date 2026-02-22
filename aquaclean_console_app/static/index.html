@@ -431,6 +431,9 @@
         <button onclick="queryGet('/data/soc-versions',          this, clearSocVersions,       onSocVersions)">
           <span class="spinner"></span>SOC Versions
         </button>
+        <button onclick="queryGet('/data/statistics-descale',   this, clearStatisticsDescale, onStatisticsDescale)">
+          <span class="spinner"></span>Descale Statistics
+        </button>
         <button onclick="queryGet('/data/anal-shower-state',    this, clearAnalShowerState,   onAnalShowerState)">
           <span class="spinner"></span>Anal Shower State
         </button>
@@ -456,6 +459,14 @@
       </div>
       <dl class="info-grid" id="socVersionsGrid" style="display:none;margin-top:0.75rem">
         <dt>SOC Versions</dt><dd id="info-soc-versions">—</dd>
+      </dl>
+      <dl class="info-grid" id="descaleStatsGrid" style="display:none;margin-top:0.75rem">
+        <dt>Days until next descale</dt>      <dd id="ds-days-next">—</dd>
+        <dt>Days until shower restricted</dt> <dd id="ds-days-restricted">—</dd>
+        <dt>Cycles until confirmation</dt>    <dd id="ds-cycles-confirm">—</dd>
+        <dt>Number of descale cycles</dt>     <dd id="ds-num-cycles">—</dd>
+        <dt>Last descale</dt>                 <dd id="ds-last-descale">—</dd>
+        <dt>Unposted shower cycles</dt>       <dd id="ds-unposted">—</dd>
       </dl>
     </div>
 
@@ -790,6 +801,23 @@
       const el = document.getElementById('info-soc-versions');
       if (el) el.textContent = data.soc_versions || '—';
       const grid = document.getElementById('socVersionsGrid');
+      if (grid) grid.style.display = '';
+    }
+
+    function clearStatisticsDescale() {
+      ['ds-days-next','ds-days-restricted','ds-cycles-confirm','ds-num-cycles','ds-last-descale','ds-unposted']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '—'; });
+    }
+    function onStatisticsDescale(data) {
+      const fmt = ts => ts ? new Date(ts * 1000).toLocaleDateString() : '—';
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      set('ds-days-next',       data.days_until_next_descale ?? '—');
+      set('ds-days-restricted', data.days_until_shower_restricted ?? '—');
+      set('ds-cycles-confirm',  data.shower_cycles_until_confirmation ?? '—');
+      set('ds-num-cycles',      data.number_of_descale_cycles ?? '—');
+      set('ds-last-descale',    fmt(data.date_time_at_last_descale));
+      set('ds-unposted',        data.unposted_shower_cycles ?? '—');
+      const grid = document.getElementById('descaleStatsGrid');
       if (grid) grid.style.display = '';
     }
 
