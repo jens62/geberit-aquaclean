@@ -517,7 +517,7 @@ class ServiceMode:
             error_json = ErrorManager.clear_error()
         else:
             # Create temporary ErrorCode for JSON formatting
-            from ErrorCodes import ErrorCode
+            from aquaclean_console_app.ErrorCodes import ErrorCode
             temp_error = ErrorCode(error_code, error_msg, "ESP32", "ERROR", error_hint)
             error_json = ErrorManager.to_json(temp_error, include_timestamp=True)
         await self.mqtt_service.send_data_async(
@@ -1611,7 +1611,7 @@ class ApiMode:
                     logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
 
     async def _fetch_state(self, client):
-        from aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
+        from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
         result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 7, 9])
         # Update device_state before _on_demand's finally fires so the
         # "disconnected" SSE broadcast carries fresh values.
