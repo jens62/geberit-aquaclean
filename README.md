@@ -43,25 +43,30 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 
 ## Quick start
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
-pip install bleak paho-mqtt aiorun haggis fastapi uvicorn
+python3 -m venv venv
+source venv/bin/activate
+pip install git+https://github.com/jens62/geberit-aquaclean.git
 ```
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| [bleak](https://github.com/hbldh/bleak) | ≥ 0.22 | BLE connectivity (BlueZ on Linux, CoreBluetooth on macOS) |
-| [paho-mqtt](https://github.com/eclipse-paho/paho.mqtt.python) | ≥ 2.0 | MQTT broker client |
-| [aiorun](https://github.com/cjrh/aiorun) | ≥ 2024.8 | Asyncio run loop with clean shutdown handling |
-| [haggis](https://gitlab.com/madphysicist/haggis) | ≥ 0.14 | Adds `TRACE` and `SILLY` log levels to the Python logging framework |
-| [fastapi](https://fastapi.tiangolo.com) | ≥ 0.110 | REST API framework — api mode only |
-| [uvicorn](https://www.uvicorn.org) | ≥ 0.29 | ASGI server for FastAPI — api mode only |
-| [aioesphomeapi](https://github.com/esphome/aioesphomeapi) | ≥ 24.0 | ESPHome Bluetooth proxy backend — optional, only needed when using an ESP32 as a BLE bridge |
+All dependencies are installed automatically, including a [patched fork of haggis](https://github.com/jens62/haggis-patched) that works on Python 3.11+.
 
-> **ESPHome proxy (optional):** If you use an ESP32 as a remote BLE antenna, install `aioesphomeapi` separately: `pip install aioesphomeapi`
+<details>
+<summary>Dependencies installed</summary>
 
-> **Python 3.13 note:** `haggis` requires a [one-line workaround](https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561) for a logging compatibility issue. No further problems occur after applying it.
+| Package | Purpose |
+|---------|---------|
+| [bleak](https://github.com/hbldh/bleak) | BLE connectivity (BlueZ on Linux, CoreBluetooth on macOS) |
+| [aioesphomeapi](https://github.com/esphome/aioesphomeapi) | ESPHome Bluetooth proxy backend |
+| [paho-mqtt](https://github.com/eclipse-paho/paho.mqtt.python) | MQTT broker client |
+| [aiorun](https://github.com/cjrh/aiorun) | Asyncio run loop with clean shutdown handling |
+| [fastapi](https://fastapi.tiangolo.com) | REST API framework |
+| [uvicorn](https://www.uvicorn.org) | ASGI server for FastAPI |
+| [haggis-patched](https://github.com/jens62/haggis-patched) | Adds `TRACE` and `SILLY` log levels; patched for Python 3.11+ |
+
+</details>
 
 ### 2. Find the BLE address
 
@@ -72,6 +77,13 @@ bluetoothctl scan on
 
 ### 3. Edit config.ini
 
+Find the installed config file:
+```bash
+python3 -c "import os, aquaclean_console_app; print(os.path.join(os.path.dirname(aquaclean_console_app.__file__), 'config.ini'))"
+# → /path/to/venv/lib/python3.x/site-packages/aquaclean_console_app/config.ini
+```
+
+Edit the key values:
 ```ini
 [BLE]
 device_id = XX:XX:XX:XX:XX:XX   # from step 2
@@ -86,9 +98,9 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 
 | Goal | Command |
 |------|---------|
-| Background service (MQTT only) | `python main.py` |
-| REST API + web UI + MQTT | `python main.py --mode api` |
-| One-off CLI command | `python main.py --mode cli --command <cmd>` |
+| Background service (MQTT only) | `aquaclean-bridge` |
+| REST API + web UI + MQTT | `aquaclean-bridge --mode api` |
+| One-off CLI command | `aquaclean-bridge --mode cli --command <cmd>` |
 
 ---
 
@@ -119,6 +131,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 |----------|----|--------|
 | Raspberry Pi 5 | Kali Linux 2024.4 (arm64) | 3.12.8 |
 | MacBookAir + VirtualBox | Ubuntu 24.04 (x86-64) | 3.12.3 |
+| Debian server (arm64) | Debian 12 Bookworm | 3.11.2 |
 
 AquaClean firmware: RS28.0 TS199
 
