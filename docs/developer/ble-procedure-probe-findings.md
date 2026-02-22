@@ -62,15 +62,62 @@ user sitting/not sitting) and check whether the response bytes change.  If they 
 
 ---
 
+## SystemParameterList index map (updated 2026-02-22)
+
+Confirmed from `GetSystemParameterList.cs` and `IAquaCleanClient.cs` comments in the C# repo:
+
+| Index | C# field | Python key | MQTT published | Notes |
+|-------|----------|-----------|---------------|-------|
+| 0 | `IsUserSitting` | `is_user_sitting` | ✅ | |
+| 1 | `IsAnalShowerRunning` | `is_anal_shower_running` | ✅ | |
+| 2 | `IsLadyShowerRunning` | `is_lady_shower_running` | ✅ | |
+| 3 | `IsDryerRunning` | `is_dryer_running` | ✅ | |
+| 4 | `DescalingState` | — | ❌ | fetched, not consumed |
+| 5 | `DescalingDurationInMinutes` | — | ❌ | fetched, not consumed |
+| 6 | `LastErrorCode` | — | ❌ | not fetched |
+| 7 | unknown | — | ❌ | fetched, not consumed; meaning unknown |
+| 9 | `IsOrientationLightOn` | `is_orientation_light_on` | ❌ | see below |
+
+**Note on index 7:** The commented-out `ToString()` in `IAquaCleanClient.cs` lists
+`OrientationLightState` as format argument `{7}` — but that is the 8th positional argument
+to `string.Format`, not system parameter index 7. Index 7's meaning is still unknown.
+
+---
+
+## OrientationLightState — hardware finding (2026-02-22)
+
+`IsOrientationLightOn` (index 9) was wired to all interfaces (REST, CLI, MQTT, web UI,
+HA Discovery) and tested on a real Geberit AquaClean Mera Comfort (`38:AB:41:2A:0D:67`).
+
+**Result:**
+- The value is readable (`GET /data/orientation-light-state` returns successfully)
+- The value **never changes** regardless of physical toilet state
+- `POST /command/toggle-orientation-light` returns **503 Service Unavailable** —
+  the device drops the BLE connection when it receives command code 20
+
+**Conclusion:** Thomas Bingel had already commented this out in the C# repo for the
+same reason. The orientation light is either not implemented in this firmware version
+(RS28.0 TS199) or the API-layer toggle does not control it.
+
+**Current implementation decision:**
+- Code is fully preserved (fetch, `device_state` key, REST endpoint, CLI commands)
+- MQTT publication is **suppressed** in all 4 batch-publish paths
+- Web UI card, toggle button, and query button are **hidden** (HTML-commented)
+- HA Discovery config still includes the `binary_sensor` entry (harmless — no topic updates)
+- Available for diagnostic use via `GET /data/orientation-light-state` or
+  `--command orientation-light-state`
+
+---
+
 ## Complete known procedure code map (as of 2026-02-22)
 
 | Procedure | Call | Implemented |
 |-----------|------|:-----------:|
-| `0x05` | `GetNodeList()` | ❌ |
+| `0x05` | `GetNodeList()` → `NodeList` | ❌ |
 | `0x08` | `SetActiveProfileSetting(profileSettingId, value)` | ❌ |
 | `0x09` | `SetCommand(command)` | ✅ |
 | `0x0D` | `GetSystemParameterList(params)` | ✅ |
-| `0x0E` | `GetFirmwareVersionList(arg1, arg2)` | ❌ |
+| `0x0E` | `GetFirmwareVersionList(arg1, arg2)` → `FirmwareVersionList` | ❌ |
 | `0x45` | `GetStatisticsDescale()` | ✅ |
 | `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` | ❌ |
 | `0x53` | `GetStoredProfileSetting(profileId, setting)` | ❌ (migrated, not wired) |
@@ -89,3 +136,4 @@ user sitting/not sitting) and check whether the response bytes change.  If they 
 3. Probe `0x05`, `0x08`, `0x0E` to confirm they respond and understand their return format.
 4. Probe `0x51` with varying payload values to map `storedCommonSettingId` → device settings.
 5. Confirm or rule out `0x40`/`0x41` as real procedures by testing across device states.
+6. BLE-sniff indices 4 (`DescalingState`), 5 (`DescalingDurationInMinutes`), 7 (unknown) to understand their range and meaning.
