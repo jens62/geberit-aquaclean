@@ -98,15 +98,28 @@ variable). Now it reads `device_state["poll_interval"]` each reconnect.
 > isolation (no competing API client). The right path is a clean re-implementation
 > in the current `esphome-on-demand-stable` codebase, not testing the old broken tag.
 
-## ESPHome API connection mode (on-demand only)
+## ESPHome API connection mode (`esphome_api_connection`)
 
 Relevant only when `[ESPHOME] host` is configured (ESP32 proxy in use).
+
+### `on-demand` (default)
 
 A fresh `BluetoothLeConnector` is created per on-demand BLE request.
 Each request opens a new TCP connection to the ESP32, fetches `device_info`,
 scans for the Geberit MAC, connects BLE, does the work, unsubscribes from
-advertisements, disconnects BLE, and closes the TCP connection. ~1–2 s overhead
-per request, but proven stable for hours in production.
+advertisements, disconnects BLE, and closes the TCP connection.
+
+### `persistent`
+
+One `BluetoothLeConnector` and one `AquaCleanClient` are created once and cached
+as `ApiMode._esphome_connector` and `ApiMode._esphome_client`. The ESP32 API TCP
+connection stays alive between BLE cycles via `disconnect_ble_only()` (which tears
+down BLE + unsub_adv but skips `api.disconnect()`). Each poll reuses both objects.
+
+**Critical**: `_esphome_client` must be created alongside `_esphome_connector` (in
+`_get_esphome_connector()`) and reused — never re-created per poll. Creating a new
+`AquaCleanClient` per poll causes `data_received_handlers` to accumulate on the
+shared connector (see debugging trap 8).
 
 ---
 
@@ -391,6 +404,20 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
    so the stale hint persists in `esphome_proxy_state` and the webapp keeps showing it.
    Fix: when `error_code="E0000"` is set, `error_hint` is auto-cleared to `""`.
    (Added to `_update_esphome_proxy_state` logic.)
+
+8. **Queries get slower with each poll in persistent ESPHome API mode**
+   → `AquaCleanBaseClient.__init__` always does:
+   `self.bluetooth_le_connector.data_received_handlers += self.frame_service.process_data`
+   If `_on_demand_inner` creates a NEW `AquaCleanClientFactory(connector).create_client()`
+   on every poll while reusing the same persistent connector, handlers accumulate.
+   After N polls there are N handlers; each BLE GATT notification fires N times →
+   N "receive complete" log lines per request, N-fold slowdown.
+   **Fix**: in persistent mode, `_get_esphome_connector()` also creates one
+   `AquaCleanClient` (stored as `self._esphome_client`) and `_on_demand_inner` reuses
+   it. The client is reset to `None` alongside `_esphome_connector` whenever the
+   persistent connection is torn down (e.g., switching to on-demand).
+   **Do NOT call `AquaCleanClientFactory(connector).create_client()` on every poll
+   when the connector is persistent.**
 
 ---
 
