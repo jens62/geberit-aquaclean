@@ -10,8 +10,8 @@ from uuid import UUID
 from binascii import hexlify
 import logging
 
-from aquaclean_utils                                     import utils
-from myEvent                                             import myEvent
+from aquaclean_console_app.aquaclean_utils                                     import utils
+from aquaclean_console_app.myEvent                                             import myEvent
 
 from typing import Dict, Callable
 

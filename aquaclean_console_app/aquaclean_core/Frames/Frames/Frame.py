@@ -1,6 +1,6 @@
 from enum import Enum
 
-from aquaclean_core.Frames.Frames.FrameType          import FrameType
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType          import FrameType
 
 class FrameType(Enum):
     pass  # Assuming FrameType is an enum, define its values here

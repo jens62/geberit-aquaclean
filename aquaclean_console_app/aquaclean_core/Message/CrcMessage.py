@@ -1,6 +1,6 @@
 
 
-from aquaclean_utils import utils   
+from aquaclean_console_app.aquaclean_utils import utils   
 
 import logging
 logger = logging.getLogger(__name__)

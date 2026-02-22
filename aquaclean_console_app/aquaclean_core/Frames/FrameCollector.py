@@ -3,8 +3,8 @@ from typing import Dict, List, Callable, Any
 from binascii import hexlify
 import logging
 
-from aquaclean_utils                                     import utils   
-from myEvent                                             import myEvent   
+from aquaclean_console_app.aquaclean_utils                                     import utils   
+from aquaclean_console_app.myEvent                                             import myEvent   
 
 logger = logging.getLogger(__name__)
 

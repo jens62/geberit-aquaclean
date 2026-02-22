@@ -2,12 +2,12 @@ from typing import List, Optional, Any
 from binascii import hexlify
 
 
-from aquaclean_core.Frames.Frames.InfoFrame          import InfoFrame        as info_frame
-from aquaclean_core.Frames.Frames.FrameType          import FrameType        as frame_type
-from aquaclean_core.Frames.Frames.FlowControlFrame   import FlowControlFrame as flow_control_frame
-from aquaclean_core.Frames.Frames.SingleFrame        import SingleFrame      as single_frame
-from aquaclean_core.Frames.Frames.FirstConsFrame     import FirstConsFrame   as first_cons_frame
-from aquaclean_core.Frames.Frames.Frame              import Frame            as frame
+from aquaclean_console_app.aquaclean_core.Frames.Frames.InfoFrame          import InfoFrame        as info_frame
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType          import FrameType        as frame_type
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame   import FlowControlFrame as flow_control_frame
+from aquaclean_console_app.aquaclean_core.Frames.Frames.SingleFrame        import SingleFrame      as single_frame
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FirstConsFrame     import FirstConsFrame   as first_cons_frame
+from aquaclean_console_app.aquaclean_core.Frames.Frames.Frame              import Frame            as frame
 
 import logging
 

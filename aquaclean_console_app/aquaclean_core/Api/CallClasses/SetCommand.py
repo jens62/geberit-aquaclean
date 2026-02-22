@@ -1,8 +1,8 @@
 from enum import Enum
 
-from aquaclean_core.Api.Attributes.ApiCallAttribute      import ApiCallAttribute                                   
-from aquaclean_core.Clients.Commands                     import Commands
-from aquaclean_utils                                     import utils   
+from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute      import ApiCallAttribute                                   
+from aquaclean_console_app.aquaclean_core.Clients.Commands                     import Commands
+from aquaclean_console_app.aquaclean_utils                                     import utils   
 
 
 import logging

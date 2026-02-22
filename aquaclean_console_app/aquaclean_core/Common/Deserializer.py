@@ -3,9 +3,9 @@ import struct
 import sys
 from binascii import hexlify
 
-from aquaclean_core.Api.CallClasses.Dtos import SystemParameterList   
-from aquaclean_core.Api.CallClasses.Dtos import DeviceIdentification   
-from aquaclean_utils                     import utils   
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos import SystemParameterList   
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos import DeviceIdentification   
+from aquaclean_console_app.aquaclean_utils                     import utils   
 
 import logging
 logger = logging.getLogger(__name__)

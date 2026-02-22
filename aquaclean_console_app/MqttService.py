@@ -7,7 +7,7 @@ import paho.mqtt.client as mqtt_client
 import inspect
 import time
 
-from myEvent import myEvent   
+from aquaclean_console_app.myEvent import myEvent   
 
 logger = logging.getLogger(__name__)
 

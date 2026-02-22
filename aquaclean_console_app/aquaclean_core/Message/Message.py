@@ -1,6 +1,6 @@
 import logging
 
-from aquaclean_core.Message.CrcMessage     import CrcMessage      
+from aquaclean_console_app.aquaclean_core.Message.CrcMessage     import CrcMessage      
 
 logger = logging.getLogger(__name__)
 
