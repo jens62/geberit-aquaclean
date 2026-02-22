@@ -187,7 +187,22 @@ When `host` is set the bridge automatically routes all BLE traffic through the E
 
 **Note:** `noise_psk` is optional. API encryption has not been tested and is not recommended for initial setup.
 
-Each on-demand BLE request opens a fresh TCP connection to the ESP32, fetches device info, scans for the Geberit, connects BLE, performs the request, then disconnects everything cleanly. This adds ~1 s overhead per request but is proven stable in long-term production use.
+### ESP32 API connection mode (`esphome_api_connection`)
+
+Controls whether the ESP32 **TCP connection** is kept alive between on-demand BLE requests:
+
+| Value | Behaviour |
+|-------|-----------|
+| `on-demand` | Fresh TCP connection per request — original behavior, ~1 s overhead per request |
+| `persistent` | TCP connection reused — no per-request TCP handshake, faster subsequent requests |
+
+```ini
+[ESPHOME]
+host = 192.168.0.xxx
+esphome_api_connection = persistent   # recommended when using ESPHome proxy
+```
+
+Can be switched at runtime via `POST /config/esphome-api-connection` or the MQTT topic `esphomeProxy/config/apiConnection` — no restart required.
 
 ---
 
