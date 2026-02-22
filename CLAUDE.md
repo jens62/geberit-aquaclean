@@ -491,13 +491,26 @@ These are NOT DpIds — separate index space.
 
 ### Quick-win new commands (zero new protocol code needed)
 All unexposed Commands enum entries just need REST endpoints + web UI wiring.
-Priority candidates: `ToggleDryer`, `TriggerFlushManually`, `ToggleOrientationLight`,
-descaling workflow (`PrepareDescaling → ConfirmDescaling / CancelDescaling / PostponeDescaling`).
+No new protocol code needed — `SetCommandAsync(Commands.X)` already handles all of them.
+
+**Procedure codes confirmed in aquaclean-SILLY.log:**
+- `0x0D` — GetSystemParameterList (batched state poll)
+- `0x09` — SetCommand (toggle/trigger)
+- `0x82` — GetDeviceIdentification
+- `0x86` — GetDeviceInitialOperationDate
+- `0x81` — GetSOCApplicationVersions
+
+**Discrete DpId Procedure ID (for BLE_COMMAND_REFERENCE.md DpIds directly): UNKNOWN.**
+Not observed in any log. To find it: BLE-sniff the official Geberit Home app.
+Needed only for things not in Commands/ProfileSettings (water hardness, flush volumes,
+error status registers, descaling schedule). Not needed for the quick-win commands.
 
 ### BLE_COMMAND_REFERENCE.md
 Located at `operation_support/BLE_COMMAND_REFERENCE.md`. Verified against `DpId.cs` source.
 Use it to understand WHAT the device supports conceptually, but do NOT try to map its DpIds
 directly to Commands enum codes — they are different numbering systems.
+For 90% of useful functionality, Commands.py + ProfileSettings.py are sufficient.
+For the remaining 10% (water hardness, error status, etc.), BLE sniffing is required.
 
 ---
 
