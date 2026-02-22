@@ -1297,6 +1297,24 @@ class ApiMode:
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
         return result
 
+    async def get_statistics_descale(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            sd = await self.service.client.base_client.get_statistics_descale_async()
+            result = self._statistics_descale_to_dict(sd)
+        else:
+            result = await self._on_demand(self._fetch_statistics_descale)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/unpostedShowerCycles",          str(result["unposted_shower_cycles"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/daysUntilNextDescale",          str(result["days_until_next_descale"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/daysUntilShowerRestricted",     str(result["days_until_shower_restricted"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/showerCyclesUntilConfirmation", str(result["shower_cycles_until_confirmation"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/dateTimeAtLastDescale",         str(result["date_time_at_last_descale"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/dateTimeAtLastDescalePrompt",   str(result["date_time_at_last_descale_prompt"]))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/descaleStatistics/numberOfDescaleCycles",         str(result["number_of_descale_cycles"]))
+        return result
+
     async def get_initial_operation_date(self):
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
@@ -1418,6 +1436,22 @@ class ApiMode:
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
         return {"soc_versions": str(versions)}
+
+    async def _fetch_statistics_descale(self, client):
+        sd = await client.base_client.get_statistics_descale_async()
+        return self._statistics_descale_to_dict(sd)
+
+    @staticmethod
+    def _statistics_descale_to_dict(sd) -> dict:
+        return {
+            "unposted_shower_cycles":           sd.unposted_shower_cycles,
+            "days_until_next_descale":          sd.days_until_next_descale,
+            "days_until_shower_restricted":     sd.days_until_shower_restricted,
+            "shower_cycles_until_confirmation": sd.shower_cycles_until_confirmation,
+            "date_time_at_last_descale":        sd.date_time_at_last_descale,
+            "date_time_at_last_descale_prompt": sd.date_time_at_last_descale_prompt,
+            "number_of_descale_cycles":         sd.number_of_descale_cycles,
+        }
 
     async def _fetch_initial_op_date(self, client):
         date = await client.base_client.get_device_initial_operation_date()
