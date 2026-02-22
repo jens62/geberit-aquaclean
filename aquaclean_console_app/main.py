@@ -1927,6 +1927,7 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "name": "Last Descale",
                 "unique_id": "geberit_aquaclean_last_descale",
                 "state_topic": f"{t}/peripheralDevice/information/descaleStatistics/dateTimeAtLastDescale",
+                "value_template": "{% if value | int(0) > 0 %}{{ value | int | timestamp_local }}{% else %}Never{% endif %}",
                 "icon": "mdi:calendar-check",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
