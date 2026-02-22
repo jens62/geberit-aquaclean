@@ -134,7 +134,27 @@ cards:
           entity_picture:
             - width: 50px
             - height: 50px
-  
+
+      # Orientation Light - icon with brightness adjustment
+      - type: custom:button-card
+        entity: binary_sensor.geberit_aquaclean_orientation_light_on
+        name: Orientation Light
+        show_state: true
+        show_icon: true
+        icon: mdi:light-recessed
+        state:
+          - value: "on"
+            styles:
+              icon:
+                - color: var(--state-icon-active-color, orange)
+          - value: "off"
+            styles:
+              icon:
+                - color: var(--disabled-color, rgba(255,255,255,0.3))
+        styles:
+          card:
+            - height: 130px
+
   - type: entities
     title: Device Information
     entities:

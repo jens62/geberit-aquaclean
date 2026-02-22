@@ -26,6 +26,8 @@ cards:
         name: Lady Shower Running
       - entity: binary_sensor.geberit_aquaclean_dryer_running
         name: Dryer Running
+      - entity: binary_sensor.geberit_aquaclean_orientation_light_on
+        name: Orientation Light
   
   - type: entities
     title: Device Information

@@ -18,6 +18,9 @@ class IAquaCleanClient:
     async def toggle_anal_shower(self) -> Awaitable[None]:
         pass
 
+    async def toggle_orientation_light(self) -> Awaitable[None]:
+        pass
+
     async def get_anal_shower_position(self) -> Awaitable[int]:
         pass
 
@@ -71,6 +74,7 @@ class DeviceStateChangedEventArgs(Subscriptable):
     IsAnalShowerRunning: bool = None
     IsLadyShowerRunning: bool = None
     IsDryerRunning: bool = None
+    IsOrientationLightOn: bool = None
 
     def __eq__(self, other):
         if not isinstance(other, DeviceStateChangedEventArgs):
@@ -78,9 +82,10 @@ class DeviceStateChangedEventArgs(Subscriptable):
         return (self.IsUserSitting == other.IsUserSitting and
                 self.IsAnalShowerRunning == other.IsAnalShowerRunning and
                 self.IsLadyShowerRunning == other.IsLadyShowerRunning and
-                self.IsDryerRunning == other.IsDryerRunning)
-    
+                self.IsDryerRunning == other.IsDryerRunning and
+                self.IsOrientationLightOn == other.IsOrientationLightOn)
+
     def __str__(self):
-        return f'IsUserSitting: {self.IsUserSitting}, IsAnalShowerRunning: {self.IsAnalShowerRunning}, IsLadyShowerRunning: {self.IsLadyShowerRunning}, IsDryerRunning: {self.IsDryerRunning}'
+        return f'IsUserSitting: {self.IsUserSitting}, IsAnalShowerRunning: {self.IsAnalShowerRunning}, IsLadyShowerRunning: {self.IsLadyShowerRunning}, IsDryerRunning: {self.IsDryerRunning}, IsOrientationLightOn: {self.IsOrientationLightOn}'
     
  

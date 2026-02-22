@@ -76,7 +76,8 @@ class AquaCleanClient(IAquaCleanClient):
             IsUserSitting=result.data_array[0] != 0,
             IsAnalShowerRunning=result.data_array[1] != 0,
             IsLadyShowerRunning=result.data_array[2] != 0,
-            IsDryerRunning=result.data_array[3] != 0
+            IsDryerRunning=result.data_array[3] != 0,
+            IsOrientationLightOn=result.data_array[9] != 0,
         )
 
         if self.last_device_state_changed_event_args is None:
@@ -89,7 +90,8 @@ class AquaCleanClient(IAquaCleanClient):
                 IsUserSitting=dsc.IsUserSitting if dsc.IsUserSitting != ldsc.IsUserSitting else None,
                 IsAnalShowerRunning=dsc.IsAnalShowerRunning if dsc.IsAnalShowerRunning != ldsc.IsAnalShowerRunning else None,
                 IsLadyShowerRunning=dsc.IsLadyShowerRunning if dsc.IsLadyShowerRunning != ldsc.IsLadyShowerRunning else None,
-                IsDryerRunning=dsc.IsDryerRunning if dsc.IsDryerRunning != ldsc.IsDryerRunning else None
+                IsDryerRunning=dsc.IsDryerRunning if dsc.IsDryerRunning != ldsc.IsDryerRunning else None,
+                IsOrientationLightOn=dsc.IsOrientationLightOn if dsc.IsOrientationLightOn != ldsc.IsOrientationLightOn else None,
             ))
 
         self.last_device_state_changed_event_args = device_state_changed_event_args
@@ -106,6 +108,9 @@ class AquaCleanClient(IAquaCleanClient):
     async def toggle_lid_position(self):
         await self.base_client.SetCommandAsync(Commands.ToggleLidPosition)
         await asyncio.sleep(0.01)
+
+    async def toggle_orientation_light(self):
+        await self.base_client.SetCommandAsync(Commands.Commands.ToggleOrientationLight)
 
     # --- Restored Original Getter Methods ---
     async def get_anal_shower_position(self):

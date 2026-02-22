@@ -185,6 +185,7 @@ class ServiceMode:
             "is_anal_shower_running": None,
             "is_lady_shower_running": None,
             "is_dryer_running": None,
+            "is_orientation_light_on": None,
             "ble_status": "disconnected",   # connecting | connected | disconnected | error
             "ble_connected_at": None,        # ISO timestamp string
             "ble_device_name": None,         # from client.Description
@@ -961,6 +962,9 @@ class ServiceMode:
         if "IsDryerRunning" in args.__dict__ and args.IsDryerRunning is not None:
             self.device_state["is_dryer_running"] = args.IsDryerRunning
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(args.IsDryerRunning))
+        if "IsOrientationLightOn" in args.__dict__ and args.IsOrientationLightOn is not None:
+            self.device_state["is_orientation_light_on"] = args.IsOrientationLightOn
+            await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(args.IsOrientationLightOn))
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -1198,10 +1202,11 @@ class ApiMode:
             result = self.service.device_state
         else:
             result = await self._on_demand(lambda client: self._fetch_state(client))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",        str(result.get("is_user_sitting")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning",  str(result.get("is_anal_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning",  str(result.get("is_lady_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",       str(result.get("is_dryer_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result.get("is_orientation_light_on")))
         return result
 
     async def get_info(self):
@@ -1280,10 +1285,11 @@ class ApiMode:
             return self.service.device_state
         else:
             result = await self._on_demand(lambda client: self._fetch_state(client))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result["is_user_sitting"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result["is_dryer_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",        str(result["is_user_sitting"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning",  str(result["is_anal_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning",  str(result["is_lady_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",       str(result["is_dryer_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result["is_orientation_light_on"]))
             return result
 
     async def get_soc_versions(self):
@@ -1405,6 +1411,17 @@ class ApiMode:
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(result["is_dryer_running"]))
         return result
 
+    async def get_orientation_light_state(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            result = await self._persistent_query(self._fetch_orientation_light_state)
+        else:
+            result = await self._on_demand(self._fetch_orientation_light_state)
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result["is_orientation_light_on"]))
+        return result
+
     # --- Helpers ---
 
     async def _fetch_anal_shower_state(self, client):
@@ -1432,6 +1449,12 @@ class ApiMode:
         val = result.data_array[3] != 0
         self.service.device_state["is_dryer_running"] = val
         return {"is_dryer_running": val}
+
+    async def _fetch_orientation_light_state(self, client):
+        result = await client.base_client.get_system_parameter_list_async([9])
+        val = result.data_array[9] != 0
+        self.service.device_state["is_orientation_light_on"] = val
+        return {"is_orientation_light_on": val}
 
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
@@ -1674,10 +1697,11 @@ class ApiMode:
                 self.service.device_state["last_poll_ms"]        = result.get("_query_ms")
                 self.service.device_state["poll_epoch"]      = time.time()
                 await self.rest_api.broadcast_state(self.service.device_state.copy())
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",        str(result.get("is_user_sitting")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning",  str(result.get("is_anal_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning",  str(result.get("is_lady_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",       str(result.get("is_dryer_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result.get("is_orientation_light_on")))
             except ESPHomeConnectionError as e:
                 error_code_obj = E1001 if e.timeout else E1002
                 _consecutive_poll_failures += 1
@@ -1718,11 +1742,13 @@ class ApiMode:
         self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
         self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
         self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
+        self.service.device_state["is_orientation_light_on"] = result.data_array[9] != 0
         return {
-            "is_user_sitting":        self.service.device_state["is_user_sitting"],
-            "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
-            "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
-            "is_dryer_running":       self.service.device_state["is_dryer_running"],
+            "is_user_sitting":         self.service.device_state["is_user_sitting"],
+            "is_anal_shower_running":  self.service.device_state["is_anal_shower_running"],
+            "is_lady_shower_running":  self.service.device_state["is_lady_shower_running"],
+            "is_dryer_running":        self.service.device_state["is_dryer_running"],
+            "is_orientation_light_on": self.service.device_state["is_orientation_light_on"],
         }
 
     async def _fetch_state_and_info(self, client):
@@ -1747,6 +1773,8 @@ class ApiMode:
             await client.toggle_lid_position()
         elif command == "toggle-anal":
             await client.toggle_anal_shower()
+        elif command == "toggle-orientation-light":
+            await client.toggle_orientation_light()
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
 
@@ -1814,6 +1842,17 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "state_topic": f"{t}/peripheralDevice/monitor/isDryerRunning",
                 "payload_on": "True", "payload_off": "False",
                 "icon": "mdi:air-filter",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/orientation_light_on/config",
+            "payload": {
+                "name": "Orientation Light",
+                "unique_id": "geberit_aquaclean_orientation_light_on",
+                "state_topic": f"{t}/peripheralDevice/monitor/isOrientationLightOn",
+                "payload_on": "True", "payload_off": "False",
+                "icon": "mdi:light-recessed",
                 "device": DEVICE,
             },
         },
@@ -2160,12 +2199,13 @@ async def run_cli(args):
         }
 
         if args.command in ('status', 'system-parameters'):
-            r = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
+            r = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 9])
             result["data"] = {
-                "is_user_sitting":        r.data_array[0] != 0,
-                "is_anal_shower_running": r.data_array[1] != 0,
-                "is_lady_shower_running": r.data_array[2] != 0,
-                "is_dryer_running":       r.data_array[3] != 0,
+                "is_user_sitting":         r.data_array[0] != 0,
+                "is_anal_shower_running":  r.data_array[1] != 0,
+                "is_lady_shower_running":  r.data_array[2] != 0,
+                "is_dryer_running":        r.data_array[3] != 0,
+                "is_orientation_light_on": r.data_array[9] != 0,
             }
         elif args.command == 'info':
             ident           = await client.base_client.get_device_identification_async(0)
@@ -2189,6 +2229,9 @@ async def run_cli(args):
         elif args.command == 'dryer-state':
             r = await client.base_client.get_system_parameter_list_async([3])
             result["data"] = {"is_dryer_running": r.data_array[3] != 0}
+        elif args.command == 'orientation-light-state':
+            r = await client.base_client.get_system_parameter_list_async([9])
+            result["data"] = {"is_orientation_light_on": r.data_array[9] != 0}
         elif args.command == 'identification':
             ident = await client.base_client.get_device_identification_async(0)
             result["data"] = {
@@ -2212,6 +2255,9 @@ async def run_cli(args):
         elif args.command == 'toggle-anal':
             await client.toggle_anal_shower()
             result["data"] = {"action": "anal_shower_toggled"}
+        elif args.command == 'toggle-orientation-light':
+            await client.toggle_orientation_light()
+            result["data"] = {"action": "orientation_light_toggled"}
 
         result["status"]  = "success"
         result["message"] = f"Command {args.command} completed"
@@ -2342,10 +2388,11 @@ if __name__ == "__main__":
         # device state queries
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
+        'orientation-light-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
         # device commands
-        'toggle-lid', 'toggle-anal',
+        'toggle-lid', 'toggle-anal', 'toggle-orientation-light',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # ESPHome proxy (no BLE required)

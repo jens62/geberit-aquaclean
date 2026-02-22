@@ -106,6 +106,11 @@ class RestApiService:
             result = await self._api_mode.run_command("toggle-anal") or {}
             return {"status": "success", "command": "toggle-anal", **result}
 
+        @app.post("/command/toggle-orientation-light")
+        async def toggle_orientation_light():
+            result = await self._api_mode.run_command("toggle-orientation-light") or {}
+            return {"status": "success", "command": "toggle-orientation-light", **result}
+
         @app.get("/data/system-parameters")
         async def get_system_parameters():
             return await self._api_mode.get_system_parameters()
@@ -141,6 +146,10 @@ class RestApiService:
         @app.get("/data/dryer-state")
         async def get_dryer_state():
             return await self._api_mode.get_dryer_state()
+
+        @app.get("/data/orientation-light-state")
+        async def get_orientation_light_state():
+            return await self._api_mode.get_orientation_light_state()
 
         @app.get("/config")
         async def get_config():

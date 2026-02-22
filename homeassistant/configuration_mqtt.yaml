@@ -91,6 +91,15 @@ mqtt:
       icon: mdi:toilet
       optimistic: true
       retain: false
+
+    # Control switch for orientation light
+    - name: "Geberit AquaClean Toggle Orientation Light"
+      command_topic: "Geberit/AquaClean/peripheralDevice/control/toggleOrientationLight"
+      payload_on: "true"
+      payload_off: "false"
+      icon: mdi:light-recessed
+      optimistic: true
+      retain: false
   
   binary_sensor:
     # Binary sensors for monitor states (on/off display)
@@ -121,3 +130,9 @@ mqtt:
       payload_on: "True"
       payload_off: "False"
       icon: mdi:air-filter
+
+    - name: "Geberit AquaClean Orientation Light"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isOrientationLightOn"
+      payload_on: "True"
+      payload_off: "False"
+      icon: mdi:light-recessed

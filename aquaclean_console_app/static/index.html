@@ -335,6 +335,15 @@
         <span class="card-value" id="val-dryer">—</span>
       </div>
 
+      <div class="card" id="card-orientation-light">
+        <!-- Orientation light icon -->
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path fill="currentColor" d="M12 2a7 7 0 0 1 7 7c0 2.73-1.56 5.1-3.84 6.32L15 17H9l-.16-1.68A7 7 0 0 1 5 9a7 7 0 0 1 7-7m0 2a5 5 0 0 0-5 5 5 5 0 0 0 3.5 4.75V15h3v-1.25A5 5 0 0 0 17 9a5 5 0 0 0-5-5m-1 13h2v1h-2v-1m0 2h2v1h-2v-1"/>
+        </svg>
+        <span class="card-label">Orientation Light</span>
+        <span class="card-value" id="val-orientation-light">—</span>
+      </div>
+
     </div>
     <div class="poll-row">
       <span id="pollLabel">—</span>
@@ -358,6 +367,13 @@
           <path fill="currentColor" fill-rule="evenodd" d="M11.6472727 1.69018182L12.6098909 2.3744L5.453 20.4152324L22.9617455 20.4158545C23.1502545 20.4158545 23.3304727 20.4948364 23.4552727 20.6322909C23.5809455 20.7701818 23.6420364 20.9569455 23.6241455 21.1450182L23.6136727 21.2082909L23.1716364 23L22.3246545 22.7914182L22.6946909 21.2885818L1.87272727 21.2885818L1.87272727 22.8957091L1 22.8957091L1 21.1048727C1 20.7248 1.30894545 20.4158545 1.68901818 20.4158545L3.096 20.4152324L1.40669091 19.4453818C1.08901818 19.2621091 0.979054545 18.8554182 1.16145455 18.5381818L10.7165091 1.89352727C10.8077091 1.73512727 10.9608727 1.62254545 11.1362909 1.58370909C11.3121455 1.54530909 11.4980364 1.58414545 11.6472727 1.69018182ZM11.3474909 2.54763636L2.02196364 18.7925818L4.57687273 20.2592L11.5464727 2.68901818L11.3474909 2.54763636ZM22.9617455 19.0186182L22.9617455 19.8913455L6.19883636 19.8913455L6.19883636 19.0186182L22.9617455 19.0186182ZM15.2446545 5.34385455L15.7460364 7.67578182L13.5847273 8.68552727L13.2155636 7.89483636L14.2414545 7.41570909L11.9274182 6.26632727L12.3153455 5.4848L14.6293818 6.63418182L14.3911273 5.52756364L15.2446545 5.34385455ZM6.6112 1.59810909L7.0528 2.35083636L6.07665455 2.92421818L8.48843636 3.85149091L8.17556364 4.66618182L5.76378182 3.73890909L6.10501818 4.81847273L5.27243636 5.08116364L4.55418182 2.8064L6.6112 1.59810909Z"/>
         </svg>
         Toggle Lid
+      </button>
+      <button onclick="sendPost('/command/toggle-orientation-light', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M12 2a7 7 0 0 1 7 7c0 2.73-1.56 5.1-3.84 6.32L15 17H9l-.16-1.68A7 7 0 0 1 5 9a7 7 0 0 1 7-7m0 2a5 5 0 0 0-5 5 5 5 0 0 0 3.5 4.75V15h3v-1.25A5 5 0 0 0 17 9a5 5 0 0 0-5-5m-1 13h2v1h-2v-1m0 2h2v1h-2v-1"/>
+        </svg>
+        Toggle Orientation Light
       </button>
     </div>
 
@@ -443,8 +459,11 @@
         <button onclick="queryGet('/data/lady-shower-state',    this, clearLadyShowerState,   onLadyShowerState)">
           <span class="spinner"></span>Lady Shower State
         </button>
-        <button onclick="queryGet('/data/dryer-state',          this, clearDryerState,        onDryerState)">
+        <button onclick="queryGet('/data/dryer-state',              this, clearDryerState,           onDryerState)">
           <span class="spinner"></span>Dryer State
+        </button>
+        <button onclick="queryGet('/data/orientation-light-state', this, clearOrientationLightState, onOrientationLightState)">
+          <span class="spinner"></span>Orientation Light State
         </button>
       </div>
       <div class="conn-row" id="queryTimingRow" style="display:none;margin-top:0.5rem">
@@ -525,7 +544,7 @@
       if (pollLabel) pollLabel.textContent = '—';
       if (pollBar)   pollBar.style.width   = '0%';
 
-      ['sitting', 'anal', 'lady', 'dryer'].forEach(k => updateCard(k, null));
+      ['sitting', 'anal', 'lady', 'dryer', 'orientation-light'].forEach(k => updateCard(k, null));
       updateConnection({ ble_status: 'disconnected', ble_device_name: null, ble_device_address: null, ble_connected_at: null });
     }
 
@@ -536,17 +555,19 @@
     }
 
     // --- Status cards ---
-    let _analQueryActive    = false;
-    let _sittingQueryActive = false;
-    let _ladyQueryActive    = false;
-    let _dryerQueryActive   = false;
+    let _analQueryActive             = false;
+    let _sittingQueryActive          = false;
+    let _ladyQueryActive             = false;
+    let _dryerQueryActive            = false;
+    let _orientationLightQueryActive = false;
 
     function updateCards(state) {
       console.log('[updateCards] Processing state:', state);
-      if (!_sittingQueryActive) updateCard('sitting', state.is_user_sitting);
-      if (!_analQueryActive)    updateCard('anal',    state.is_anal_shower_running);
-      if (!_ladyQueryActive)    updateCard('lady',    state.is_lady_shower_running);
-      if (!_dryerQueryActive)   updateCard('dryer',   state.is_dryer_running);
+      if (!_sittingQueryActive)          updateCard('sitting',          state.is_user_sitting);
+      if (!_analQueryActive)             updateCard('anal',             state.is_anal_shower_running);
+      if (!_ladyQueryActive)             updateCard('lady',             state.is_lady_shower_running);
+      if (!_dryerQueryActive)            updateCard('dryer',            state.is_dryer_running);
+      if (!_orientationLightQueryActive) updateCard('orientation-light', state.is_orientation_light_on);
       if ('ble_status' in state) {
         console.log('[updateCards] ble_status found in state, calling updateConnection');
         updateConnection(state);
@@ -769,7 +790,7 @@
     }
 
     function clearSystemParameters() {
-      ['sitting', 'anal', 'lady', 'dryer'].forEach(k => updateCard(k, null));
+      ['sitting', 'anal', 'lady', 'dryer', 'orientation-light'].forEach(k => updateCard(k, null));
     }
     function onSystemParameters(data) {
       updateCards(data);
@@ -859,6 +880,16 @@
     function onDryerState(data) {
       _dryerQueryActive = false;
       updateCard('dryer', data.is_dryer_running);
+    }
+
+    function clearOrientationLightState() {
+      _orientationLightQueryActive = true;
+      updateCard('orientation-light', null);
+      return () => { _orientationLightQueryActive = false; };
+    }
+    function onOrientationLightState(data) {
+      _orientationLightQueryActive = false;
+      updateCard('orientation-light', data.is_orientation_light_on);
     }
 
     // --- Connection status ---
