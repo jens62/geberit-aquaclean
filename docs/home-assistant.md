@@ -30,7 +30,7 @@ topic    = Geberit/AquaClean
 
 ### 2. Publish MQTT Discovery
 
-Run once to register all entities automatically in Home Assistant:
+Run once to register all entities automatically in Home Assistant.  This command is safe to run while the service is already active in `--mode api` or `--mode service` — it uses a separate MQTT connection and requires no BLE.
 
 ```bash
 python main.py --mode cli --command publish-ha-discovery

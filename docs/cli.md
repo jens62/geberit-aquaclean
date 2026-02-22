@@ -141,6 +141,8 @@ python main.py --mode cli --command get-config
 
 Publishes Home Assistant MQTT discovery messages so HA automatically creates all entities.  Reads broker connection settings from `config.ini` — no BLE needed.
 
+> **Safe to run while the service is active.** `publish-ha-discovery` (and `remove-ha-discovery`) open their own MQTT connection with a randomly generated client ID, so they do not interfere with a running `--mode api` or `--mode service` instance.
+
 ```bash
 python main.py --mode cli --command publish-ha-discovery
 ```
@@ -167,7 +169,7 @@ After running this, go to **Home Assistant → Settings → Devices & Services �
 
 ### `remove-ha-discovery`
 
-Removes all Geberit AquaClean entities from Home Assistant by publishing empty payloads to the discovery topics.  Only affects entities created by `publish-ha-discovery` — other MQTT entities are untouched.
+Removes all Geberit AquaClean entities from Home Assistant by publishing empty payloads to the discovery topics.  Only affects entities created by `publish-ha-discovery` — other MQTT entities are untouched.  Also safe to run while the service is active (see note above).
 
 ```bash
 python main.py --mode cli --command remove-ha-discovery
