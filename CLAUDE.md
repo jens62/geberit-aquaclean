@@ -435,6 +435,16 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
 
 ---
 
+## Related repositories
+
+| Repo | Local path | Purpose |
+|---|---|---|
+| `jens62/haggis-patched` | `/Users/jens/develop/haggis-patched` | Patched fork of `haggis` (logging utils); branch: `master` |
+
+**haggis-patched patch**: `src/haggis/logs.py` — replaced `logging._prepareFork()` / `logging._afterFork()` (Python 3.12+ only) with `logging._acquireLock()` / `logging._releaseLock()` so the package works on Python 3.11 (Debian). Source: https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561
+
+---
+
 ## Config sections
 
 ```ini
