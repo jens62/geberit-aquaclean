@@ -21,7 +21,8 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetDeviceIdentification        import GetDeviceIdentification                                        
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSOCApplicationVersions      import GetSOCApplicationVersions                    
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetDeviceInitialOperationDate  import GetDeviceInitialOperationDate                    
-from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand                     import SetCommand                    
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand                     import SetCommand
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStatisticsDescale           import GetStatisticsDescale
 
 from aquaclean_console_app.aquaclean_utils                                               import utils   
 
@@ -187,6 +188,19 @@ class AquaCleanBaseClient:
     # async def set_stored_profile_setting_async(self, profile_setting, setting_value):
     #     api_call = SetStoredProfileSetting(profile_setting, setting_value)
     #     await self.send_request(api_call)
+
+    async def get_statistics_descale_async(self):
+        api_call = GetStatisticsDescale()
+        logger.trace(f"api_call: {api_call}")
+
+        response = await self.send_request(api_call)
+        logger.debug(f"response: {response}")
+        logger.debug(f"self.message_context.result_bytes: {self.message_context.result_bytes}")
+
+        result = api_call.result(self.message_context.result_bytes)
+        logger.debug(f"result: {result}")
+
+        return result
 
     async def get_soc_application_versions_async(self):
         api_call = GetSOCApplicationVersions()

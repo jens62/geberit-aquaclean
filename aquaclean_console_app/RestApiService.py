@@ -114,6 +114,10 @@ class RestApiService:
         async def get_soc_versions():
             return await self._api_mode.get_soc_versions()
 
+        @app.get("/data/statistics-descale")
+        async def get_statistics_descale():
+            return await self._api_mode.get_statistics_descale()
+
         @app.get("/data/initial-operation-date")
         async def get_initial_operation_date():
             return await self._api_mode.get_initial_operation_date()
