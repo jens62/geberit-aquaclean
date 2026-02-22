@@ -625,7 +625,7 @@ class ServiceMode:
             "name": "ESPHome Proxy Connected",
             "unique_id": f"aquaclean_{device_id}_esphome_proxy_connected",
             "state_topic": f"{topic}/esphomeProxy/connected",
-            "value_template": "{{{{ 'ON' if value != 'false' else 'OFF' }}}}",
+            "value_template": "{{ 'ON' if value != 'false' else 'OFF' }}",
             "device_class": "connectivity",
             "entity_category": "diagnostic",
             "device": device_config
