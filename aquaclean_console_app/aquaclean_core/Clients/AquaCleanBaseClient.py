@@ -8,22 +8,22 @@ from binascii import hexlify
 
 import logging
 
-from aquaclean_core.Message.MessageService                         import MessageService         
-from aquaclean_core.IBluetoothLeConnector                          import IBluetoothLeConnector  
-from aquaclean_core.Frames.FrameService                            import FrameService                           
-from aquaclean_core.Frames.FrameFactory                            import FrameFactory                           
-from aquaclean_core.Frames.FrameValidation                         import FrameValidation as frame_validation                          
-from aquaclean_core.Frames.FrameCollector                          import FrameCollector as frame_collector                                                   
-from aquaclean_core.Message.MessageService                         import MessageService                            
-from aquaclean_core.Api.Attributes.ApiCallAttribute                import ApiCallAttribute                                   
-from aquaclean_core.Api.IApiCall                                   import IApiCall                             
-from aquaclean_core.Api.CallClasses.GetSystemParameterList         import GetSystemParameterList                    
-from aquaclean_core.Api.CallClasses.GetDeviceIdentification        import GetDeviceIdentification                                        
-from aquaclean_core.Api.CallClasses.GetSOCApplicationVersions      import GetSOCApplicationVersions                    
-from aquaclean_core.Api.CallClasses.GetDeviceInitialOperationDate  import GetDeviceInitialOperationDate                    
-from aquaclean_core.Api.CallClasses.SetCommand                     import SetCommand                    
+from aquaclean_console_app.aquaclean_core.Message.MessageService                         import MessageService         
+from aquaclean_console_app.aquaclean_core.IBluetoothLeConnector                          import IBluetoothLeConnector  
+from aquaclean_console_app.aquaclean_core.Frames.FrameService                            import FrameService                           
+from aquaclean_console_app.aquaclean_core.Frames.FrameFactory                            import FrameFactory                           
+from aquaclean_console_app.aquaclean_core.Frames.FrameValidation                         import FrameValidation as frame_validation                          
+from aquaclean_console_app.aquaclean_core.Frames.FrameCollector                          import FrameCollector as frame_collector                                                   
+from aquaclean_console_app.aquaclean_core.Message.MessageService                         import MessageService                            
+from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute                import ApiCallAttribute                                   
+from aquaclean_console_app.aquaclean_core.Api.IApiCall                                   import IApiCall                             
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList         import GetSystemParameterList                    
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetDeviceIdentification        import GetDeviceIdentification                                        
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSOCApplicationVersions      import GetSOCApplicationVersions                    
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetDeviceInitialOperationDate  import GetDeviceInitialOperationDate                    
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand                     import SetCommand                    
 
-from aquaclean_utils                                               import utils   
+from aquaclean_console_app.aquaclean_utils                                               import utils   
 
 from threading import Lock
 from queue import Queue, Empty

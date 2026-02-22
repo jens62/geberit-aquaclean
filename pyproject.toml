@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "geberit-aquaclean"
+version = "2.2.0"
+description = "Python bridge between Geberit AquaClean toilet (BLE) and home automation (MQTT/REST)"
+requires-python = ">=3.11"
+dependencies = [
+    "bleak",
+    "aioesphomeapi",
+    "aiorun",
+    "fastapi",
+    "uvicorn",
+    "paho-mqtt",
+    "haggis @ git+https://github.com/jens62/haggis-patched.git",
+]
+
+[project.scripts]
+aquaclean-bridge = "aquaclean_console_app.__main__:entry_point"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aquaclean_console_app*"]
+
+[tool.setuptools.package-data]
+"aquaclean_console_app" = ["static/*", "config.ini"]

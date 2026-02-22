@@ -2,9 +2,9 @@
 import logging
 logger = logging.getLogger(__name__)
 
-from aquaclean_core.Api.CallClasses.Dtos                  import DeviceIdentification   
-from aquaclean_core.Api.Attributes.ApiCallAttribute       import ApiCallAttribute   
-from aquaclean_core.Common.Deserializer                   import Deserializer   
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos                  import DeviceIdentification   
+from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute       import ApiCallAttribute   
+from aquaclean_console_app.aquaclean_core.Common.Deserializer                   import Deserializer   
 
 class GetDeviceIdentification:
 

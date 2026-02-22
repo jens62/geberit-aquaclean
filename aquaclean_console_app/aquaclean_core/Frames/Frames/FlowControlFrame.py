@@ -1,7 +1,7 @@
 import array
 
 
-from aquaclean_core.Frames.Frames.Frame              import Frame   
+from aquaclean_console_app.aquaclean_core.Frames.Frames.Frame              import Frame   
 
 # c#
 # internal class FlowControlFrame : Frame

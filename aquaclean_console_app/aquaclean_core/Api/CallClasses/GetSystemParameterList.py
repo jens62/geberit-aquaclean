@@ -2,9 +2,9 @@ from typing import List
 import struct
 from binascii import hexlify
 
-from aquaclean_core.Api.CallClasses.Dtos import SystemParameterList   
-from aquaclean_core.Api.Attributes       import ApiCallAttribute   
-from aquaclean_core.Common.Deserializer  import Deserializer   
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos import SystemParameterList   
+from aquaclean_console_app.aquaclean_core.Api.Attributes       import ApiCallAttribute   
+from aquaclean_console_app.aquaclean_core.Common.Deserializer  import Deserializer   
 
 import logging
 

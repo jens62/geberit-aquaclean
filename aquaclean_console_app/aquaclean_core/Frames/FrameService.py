@@ -1,18 +1,18 @@
 import asyncio
 
-from aquaclean_core.Frames.FrameFactory                  import FrameFactory       
-from aquaclean_core.Frames.Frames.FrameType              import FrameType   
-from aquaclean_core.Frames.TlMsgOutCtl                   import TlMsgOutCtl   
-from aquaclean_core.Frames.Frames.Frame                  import Frame   
-from aquaclean_core.Frames.Frames.FlowControlFrame       import FlowControlFrame   
-from aquaclean_core.Frames.FrameValidation                import FrameValidation as frame_validation
-from aquaclean_core.Frames.FrameCollector                import FrameCollector
+from aquaclean_console_app.aquaclean_core.Frames.FrameFactory                  import FrameFactory       
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType              import FrameType   
+from aquaclean_console_app.aquaclean_core.Frames.TlMsgOutCtl                   import TlMsgOutCtl   
+from aquaclean_console_app.aquaclean_core.Frames.Frames.Frame                  import Frame   
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame       import FlowControlFrame   
+from aquaclean_console_app.aquaclean_core.Frames.FrameValidation                import FrameValidation as frame_validation
+from aquaclean_console_app.aquaclean_core.Frames.FrameCollector                import FrameCollector
 
-from bluetooth_le.LE.BluetoothLeConnector                import BluetoothLeConnector                   
-from aquaclean_core.Frames.Frames.FlowControlFrame       import FlowControlFrame   
+from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector                import BluetoothLeConnector                   
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame       import FlowControlFrame   
 
-from aquaclean_utils                                     import utils   
-from myEvent                                             import myEvent   
+from aquaclean_console_app.aquaclean_utils                                     import utils   
+from aquaclean_console_app.myEvent                                             import myEvent   
 
 from binascii import hexlify
 

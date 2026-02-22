@@ -14,19 +14,19 @@ from haggis import logs
 
 from bleak import BleakScanner
 from bleak.exc import BleakError
-from aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
-from aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
-from aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
-from aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
-from aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
-from aquaclean_core.Message.MessageService                    import MessageService
-from aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
-from bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector, ESPHomeConnectionError, ESPHomeDeviceNotFoundError
-from MqttService                                              import MqttService as Mqtt
-from RestApiService                                           import RestApiService
-from myEvent                                                  import myEvent
-from aquaclean_utils                                          import utils
-from ErrorCodes                                               import (
+from aquaclean_console_app.aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
+from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
+from aquaclean_console_app.aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
+from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
+from aquaclean_console_app.aquaclean_core.Message.MessageService                    import MessageService
+from aquaclean_console_app.aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
+from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector                     import BluetoothLeConnector, ESPHomeConnectionError, ESPHomeDeviceNotFoundError
+from aquaclean_console_app.MqttService                                              import MqttService as Mqtt
+from aquaclean_console_app.RestApiService                                           import RestApiService
+from aquaclean_console_app.myEvent                                                  import myEvent
+from aquaclean_console_app.aquaclean_utils                                          import utils
+from aquaclean_console_app.ErrorCodes                                               import (
     ErrorManager, E0000, E0001, E0002, E0003, E1001, E1002,
     E2001, E2002, E2003, E2004, E2005,
     E3002, E3003, E4001, E4002, E4003, E7002, E7004

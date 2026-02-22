@@ -1,6 +1,6 @@
 
-from aquaclean_core.Clients                                    import AquaCleanClient
-from aquaclean_core.Clients                                    import AquaCleanBaseClient
+from aquaclean_console_app.aquaclean_core.Clients                                    import AquaCleanClient
+from aquaclean_console_app.aquaclean_core.Clients                                    import AquaCleanBaseClient
 
 
 class AquaCleanClientFactory:

@@ -1,6 +1,6 @@
 
-from aquaclean_core.Frames.Frames.FrameType          import FrameType        as frame_type
-from aquaclean_core.Frames.Frames.Frame              import Frame   
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType          import FrameType        as frame_type
+from aquaclean_console_app.aquaclean_core.Frames.Frames.Frame              import Frame   
 
 class InfoFrame(Frame):
     INFO_PROTOVERS_2_0 = 32

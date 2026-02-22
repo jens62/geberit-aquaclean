@@ -1,8 +1,8 @@
 
-from aquaclean_core.Message.CrcMessage     import CrcMessage      
-from aquaclean_core.Message.MessageContext import MessageContext
-from aquaclean_core.Message.Message        import Message    
-from aquaclean_utils                       import utils   
+from aquaclean_console_app.aquaclean_core.Message.CrcMessage     import CrcMessage      
+from aquaclean_console_app.aquaclean_core.Message.MessageContext import MessageContext
+from aquaclean_console_app.aquaclean_core.Message.Message        import Message    
+from aquaclean_console_app.aquaclean_utils                       import utils   
 
 import logging
 

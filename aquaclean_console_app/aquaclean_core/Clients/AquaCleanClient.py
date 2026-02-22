@@ -4,12 +4,12 @@ import logging
 import datetime
 import time
 
-from aquaclean_core.IAquaCleanClient import IAquaCleanClient, DeviceStateChangedEventArgs   
-from aquaclean_core.Clients import AquaCleanBaseClient
-from aquaclean_core.Clients.Commands import Commands
-from aquaclean_core.Clients.ProfileSettings import ProfileSettings
-from aquaclean_utils import utils   
-from myEvent import myEvent   
+from aquaclean_console_app.aquaclean_core.IAquaCleanClient import IAquaCleanClient, DeviceStateChangedEventArgs   
+from aquaclean_console_app.aquaclean_core.Clients import AquaCleanBaseClient
+from aquaclean_console_app.aquaclean_core.Clients.Commands import Commands
+from aquaclean_console_app.aquaclean_core.Clients.ProfileSettings import ProfileSettings
+from aquaclean_console_app.aquaclean_utils import utils   
+from aquaclean_console_app.myEvent import myEvent   
 
 logger = logging.getLogger(__name__)
 
