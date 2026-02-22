@@ -202,6 +202,50 @@ the parsed one.
 
 ---
 
+## E0002 / "No devices found" — ESP32 BLE scanner stuck
+
+**Symptom:** The application logs repeated E0002 errors ("BLE device not found via ESPHome proxy")
+even though the Geberit toilet is powered on and was working fine before.
+Running `ble-scan.py` against the ESP32 returns "No devices found" — zero advertisements seen,
+despite the ESP32 port being open and the TCP connection succeeding.
+
+```
+Checking port 6053 on 192.168.0.160 … OK
+Connecting …
+Scanning for 10 s …
+No devices found.
+```
+
+**Cause:** The ESP32's internal BLE scanner occasionally gets into a stuck state where it stops
+reporting advertisements. This is an ESP32/ESPHome firmware issue unrelated to the bridge code.
+The Geberit device is advertising normally; the ESP32 is simply not forwarding the packets.
+
+**Fix:** Power-cycle the ESP32 (unplug and replug power / PoE). Within ~30 seconds the scanner
+recovers and all nearby BLE devices become visible again:
+
+```
+MAC Address               RSSI  Name
+----------------------------------------------------------
+38:AB:41:2A:0D:67      -82 dBm  Geberit AC PRO
+…
+34 device(s) found.
+```
+
+**Diagnostic:** before rebooting the application after an E0002 run, confirm the ESP32 is the
+problem (not the Geberit being out of range):
+
+```bash
+python esphome/ble-scan.py 192.168.0.160
+```
+
+- **"No devices found"** → ESP32 scanner stuck → power-cycle the ESP32
+- **Geberit visible in list** → scanner is fine → check the bridge config or Geberit power
+
+**Note:** Port 6053 remains open and TCP connections succeed even when the scanner is stuck.
+The port check alone is not sufficient to confirm the ESP32 is healthy.
+
+---
+
 ## bleak-esphome v3.x does not work standalone (requires Home Assistant)
 
 **Symptom:**

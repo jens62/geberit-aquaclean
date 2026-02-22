@@ -50,7 +50,10 @@ E0001 = ErrorCode(
 E0002 = ErrorCode(
     "E0002", "BLE device not found (ESP32 proxy)", "BLE", "ERROR",
     hint="Ensure the Geberit AquaClean is powered on and within BLE range of the ESP32 proxy. "
-         "Try moving the ESP32 closer to the device.",
+         "Try moving the ESP32 closer to the device. "
+         "If the device was recently visible and nothing moved, the ESP32 BLE scanner may be stuck — "
+         "power-cycle the ESP32 to recover. "
+         "Verify with: python esphome/ble-scan.py <esp32-ip>",
 )
 E0003 = ErrorCode(
     "E0003", "BLE connection timeout", "BLE", "ERROR",
