@@ -328,10 +328,10 @@ All procedures from the thomas-bingel C# repo that are not yet wired to any inte
 | Procedure | Call | Priority | Notes |
 |-----------|------|----------|-------|
 | `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | High | Potentially bridges API layer to `BLE_COMMAND_REFERENCE.md` DpIds; `storedCommonSettingId` mapping unknown — needs BLE sniffing or trial |
-| `0x05` | `GetNodeList()` → `NodeList` | Medium | DTO already migrated; purpose unclear |
-| `0x0E` | `GetFirmwareVersionList(arg1, arg2)` → `FirmwareVersionList` | Medium | DTO already migrated; args unknown |
-| `0x08` | `SetActiveProfileSetting(profileSettingId, value)` | Medium | May overlap with `SetStoredProfileSetting` (0x54) |
-| `0x56` | `SetDeviceRegistrationLevel(registrationLevel: int)` | Low | Purpose unclear; value 257 mentioned in `tmp.txt` |
+| `0x05` | `GetNodeList()` → `NodeList` | Medium | DTO already migrated; returns list of node IDs on the device bus; purpose unclear |
+| `0x0E` | `GetFirmwareVersionList(arg1, arg2)` → `FirmwareVersionList` | Medium | DTO already migrated; arg types unknown (both int in C# signature); presumably returns firmware version strings per node |
+| `0x08` | `SetActiveProfileSetting(profileSettingId, value)` | Medium | Live profile setting write (vs. `SetStoredProfileSetting` 0x54 which writes stored/persistent values); profileSettingId maps to `ProfileSettings` enum |
+| `0x56` | `SetDeviceRegistrationLevel(registrationLevel: int)` | Low | Purpose unclear; value `257` mentioned in C# `tmp.txt`; likely a device pairing/registration step |
 
 **Suggested approach for `0x51`:**
 1. Migrate `GetStoredCommonSetting` CallClass (same pattern as `GetStatisticsDescale`)
@@ -492,7 +492,7 @@ Sends Procedure=0x09 with a 1-byte command code. All are toggles/triggers:
 | `CancelDescaling` | 8 | ❌ |
 | `PostponeDescaling` | 9 | ❌ |
 | `ToggleLidPosition` | 10 | ✅ |
-| `ToggleOrientationLight` | 20 | ❌ |
+| `ToggleOrientationLight` | 20 | ✅ |
 | `StartLidPositionCalibration` | 33 | ❌ |
 | `LidPositionOffsetSave` | 34 | ❌ |
 | `LidPositionOffsetIncrement` | 35 | ❌ |
@@ -518,8 +518,28 @@ Reads/writes stored user settings by index. Getters already in `AquaCleanClient`
 | `SystemFlush` | 10 | ✅ | ❌ |
 
 **Layer 3 — `GetSystemParameterList([0,1,2,3,4,5,7,9])`**
-Reads live device state (what's happening right now). Indices 0–9 are the only ones known.
-These are NOT DpIds — separate index space.
+Reads live device state (what's happening right now). These are NOT DpIds — separate index space.
+
+**SystemParameterList index map** (confirmed from C# `Deserializer` and `DeviceStateChangedEventArgs`):
+
+| Index | Field | Python key | Status |
+|-------|-------|-----------|--------|
+| 0 | `IsUserSitting` | `is_user_sitting` | ✅ consumed |
+| 1 | `IsAnalShowerRunning` | `is_anal_shower_running` | ✅ consumed |
+| 2 | `IsLadyShowerRunning` | `is_lady_shower_running` | ✅ consumed |
+| 3 | `IsDryerRunning` | `is_dryer_running` | ✅ consumed |
+| 4 | unknown | — | fetched, not consumed |
+| 5 | unknown | — | fetched, not consumed |
+| 7 | unknown | — | fetched, not consumed |
+| 9 | `IsOrientationLightOn` | `is_orientation_light_on` | ✅ consumed |
+
+Indices 4, 5, 7 appear in the C# request array but are not used in `DeviceStateChangedEventArgs`.
+Their meaning is unknown — BLE sniffing the official app would reveal them.
+
+**C# Deserializer pattern:** The C# code accesses fields by positional byte offset
+(`Deserializer.DeserializeToInt(result.DataArray, 7*5+1, 4)`), not by device parameter index.
+Python uses the index directly (`result.data_array[9]`). These are equivalent — the C# positional
+formula `7*5+1 = 36` corresponds to index 9 in the response array layout.
 
 ### Quick-win new commands (zero new protocol code needed)
 All unexposed Commands enum entries just need REST endpoints + web UI wiring.
@@ -571,13 +591,43 @@ BLE_COMMAND_REFERENCE.md layer: it may be able to read device settings (water ha
 descaling intervals etc.) that also appear as DpIds in BLE_COMMAND_REFERENCE.md.
 The `storedCommonSettingId` parameter meaning is unknown — needs BLE sniffing or trial.
 
+**BLE frame type constants from `FrameFactory.cs` (C# repo):**
+Frame type is extracted as `(headerByte >> 5) & 7`:
+
+| Frame type | Name | Header byte range |
+|-----------|------|------------------|
+| 0 | SINGLE | 0x00–0x1F |
+| 1 | FIRST | 0x20–0x3F |
+| 2 | CONS (consecutive) | 0x40–0x5F |
+| 3 | LAST | 0x60–0x7F |
+
+This explains the probe results for 0x40 and 0x41: the device interprets those bytes as CONS
+frame headers at the BLE **frame layer**, not as API-layer procedure codes. The single-byte
+responses (`00`, `01`) are framing artefacts, not application data.
+
 **BLE procedure probe findings (2026-02-22):**
-- `0x40` → 1 byte `00`: responds but **not a known API procedure**. `0x40` is the BLE frame
-  layer CONS-frame header byte — this response is likely a protocol artefact, not application data.
-- `0x41` → 1 byte `01`: same conclusion — absent from all C# source, not a documented procedure.
+- `0x40` → 1 byte `00`: **not an API procedure** — 0x40 is a CONS frame header byte (frame layer).
+- `0x41` → 1 byte `01`: **not an API procedure** — absent from all C# source entirely.
 - `0x42`–`0x44`: device drops BLE connection (unknown/invalid procedures).
 - `0x45` (GetStatisticsDescale): should respond once device is stable — probe was interrupted.
 - See `docs/developer/ble-procedure-probe-findings.md` for full probe results and methodology.
+
+### `DeviceStateChangedEventArgs` — C# ↔ Python correspondence
+
+C# `DeviceStateChangedEventArgs` fields and their Python equivalents
+(confirmed from `AquaCleanClient.cs` + `Deserializer.cs` in the C# repo):
+
+| C# field | Python `device_state` key | SystemParameter index |
+|----------|--------------------------|----------------------|
+| `IsUserSitting` | `is_user_sitting` | 0 |
+| `IsAnalShowerRunning` | `is_anal_shower_running` | 1 |
+| `IsLadyShowerRunning` | `is_lady_shower_running` | 2 |
+| `IsDryerRunning` | `is_dryer_running` | 3 |
+| `IsOrientationLightOn` | `is_orientation_light_on` | 9 |
+
+The C# code uses `Deserializer.DeserializeToInt(result.DataArray, offset, length)` with
+positional byte offsets (e.g. `7*5+1` for index 9). Python reads `result.data_array[N]` directly —
+simpler and equivalent.
 
 ### BLE_COMMAND_REFERENCE.md
 Located at `operation_support/BLE_COMMAND_REFERENCE.md`. Verified against `DpId.cs` source.
