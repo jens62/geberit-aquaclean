@@ -948,6 +948,7 @@ class ApiMode:
         self._on_demand_lock = asyncio.Lock()
         self._poll_wakeup    = asyncio.Event()
         self._esphome_connector: "BluetoothLeConnector | None" = None  # Persistent connector (esphome_api_connection=persistent)
+        self._esphome_client = None  # Paired client — created once so data_received_handlers don't accumulate
         self.esphome_api_connection = esphome_api_connection  # runtime-mutable: "persistent" | "on-demand"
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
@@ -1070,6 +1071,7 @@ class ApiMode:
             except Exception:
                 pass
             self._esphome_connector = None
+            self._esphome_client = None
             await self.service._update_esphome_proxy_state(
                 connected=False, error="No error", error_code="E0000"
             )
@@ -1390,6 +1392,8 @@ class ApiMode:
         if self._esphome_connector is None:
             self._esphome_connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
             self._esphome_connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+            factory = AquaCleanClientFactory(self._esphome_connector)
+            self._esphome_client = factory.create_client()
         return self._esphome_connector
 
     async def _on_demand(self, action):
@@ -1407,12 +1411,12 @@ class ApiMode:
 
         if use_persistent:
             connector = self._get_esphome_connector()
+            client = self._esphome_client
         else:
             connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
             connector.connection_status_changed_handlers += self.service.on_connection_status_changed
-
-        factory = AquaCleanClientFactory(connector)
-        client = factory.create_client()
+            factory = AquaCleanClientFactory(connector)
+            client = factory.create_client()
         _exc = None
         try:
             await self.service.mqtt_service.send_data_async(
