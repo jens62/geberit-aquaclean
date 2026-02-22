@@ -615,6 +615,23 @@ All two-state config/runtime options use `persistent` | `on-demand` as values (n
 - `POST /config/esphome-api-connection` body: `{"value": "persistent"|"on-demand"}`
 - `POST /config/poll-interval`          body: `{"value": <float>}`
 
+### MQTT ↔ HA Discovery dependency (MANDATORY)
+
+**Any change to an outbound MQTT topic requires a matching update in two places:**
+
+1. `get_ha_discovery_configs()` in `main.py` — the auto-discovery path
+   (`--command publish-ha-discovery` / `--command remove-ha-discovery`)
+2. `homeassistant/configuration_mqtt.yaml` — the manual config alternative
+
+Both must stay in sync with every `send_data_async(topic, ...)` call.
+The comment in `get_ha_discovery_configs()` says the same: *"HOW TO KEEP THIS IN SYNC:
+when you add a new send_data_async() call elsewhere in this file, add the corresponding
+HA entity here."*
+
+Similarly, adding a new MQTT-published feature should also be reflected in:
+- `homeassistant/dashboard_button_card.yaml`
+- `homeassistant/dashboard_simple_card.yaml`
+
 ### MQTT topics (inbound config)
 - `<topic>/centralDevice/config/bleConnection`
 - `<topic>/centralDevice/config/pollInterval`
