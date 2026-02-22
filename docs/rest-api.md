@@ -65,6 +65,7 @@ Each endpoint queries only the relevant parameter from the device.
 | `GET` | `/data/identification` | `sap_number`, `serial_number`, `production_date`, `description` |
 | `GET` | `/data/initial-operation-date` | `initial_operation_date` |
 | `GET` | `/data/soc-versions` | `soc_versions` |
+| `GET` | `/data/statistics-descale` | `days_until_next_descale`, `days_until_shower_restricted`, `shower_cycles_until_confirmation`, `number_of_descale_cycles`, `date_time_at_last_descale`, `date_time_at_last_descale_prompt`, `unposted_shower_cycles` |
 
 ---
 
@@ -92,6 +93,25 @@ curl http://localhost:8080/data/system-parameters
   "is_dryer_running": false,
   "_connect_ms": 812,
   "_query_ms": 198
+}
+```
+
+### Query descale statistics
+
+```bash
+curl http://localhost:8080/data/statistics-descale
+```
+```json
+{
+  "days_until_next_descale": 61,
+  "days_until_shower_restricted": 14,
+  "shower_cycles_until_confirmation": 1,
+  "number_of_descale_cycles": 2,
+  "date_time_at_last_descale": 1745932224,
+  "date_time_at_last_descale_prompt": 1745932224,
+  "unposted_shower_cycles": 1,
+  "_connect_ms": 4210,
+  "_query_ms": 312
 }
 ```
 
