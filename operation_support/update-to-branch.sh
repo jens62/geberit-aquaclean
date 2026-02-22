@@ -10,6 +10,16 @@
 
 set -e
 
+# Auto-detect venv from the aquaclean-bridge binary if PYTHON/PIP not set explicitly
+if [ -z "$PYTHON" ] && [ -z "$PIP" ]; then
+    BRIDGE=$(which aquaclean-bridge 2>/dev/null || true)
+    if [ -n "$BRIDGE" ]; then
+        VENV_BIN=$(dirname "$BRIDGE")
+        PYTHON="$VENV_BIN/python3"
+        PIP="$VENV_BIN/pip"
+        echo "Auto-detected venv: $VENV_BIN"
+    fi
+fi
 PYTHON="${PYTHON:-python3}"
 PIP="${PIP:-pip}"
 BRANCH="feature/new-ble-commands"
