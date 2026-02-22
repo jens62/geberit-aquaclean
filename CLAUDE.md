@@ -505,6 +505,30 @@ Not observed in any log. To find it: BLE-sniff the official Geberit Home app.
 Needed only for things not in Commands/ProfileSettings (water hardness, flush volumes,
 error status registers, descaling schedule). Not needed for the quick-win commands.
 
+### `tmp.txt` — unimplemented API-layer procedures (thomas-bingel C# repo)
+
+`aquaclean-core/Api/CallClasses/tmp.txt` is a scratch file of procedures that were
+planned but never implemented as full CallClasses in the C# repo. It is the missing link
+**within the API layer** (same layer as GetSystemParameterList, SetCommand etc.) but it
+does NOT reveal the discrete DpId procedure code Gemini called the "missing link".
+
+**Two layers remain separate:**
+- `tmp.txt` / CallClasses = structured API procedures (codes known, see table)
+- `BLE_COMMAND_REFERENCE.md` DpIds = discrete data point access (procedure code still UNKNOWN)
+
+**Procedures revealed by `tmp.txt`:**
+
+| Procedure | Call | Status |
+|-----------|------|--------|
+| `0x45` | `GetStatisticsDescale()` → returns `StatisticsDescale` struct | ✅ implemented |
+| `0x51` | `GetStoredCommonSetting(storedCommonSettingId)` → 2-byte int | ❌ not yet implemented |
+| `0x56` | `SetDeviceRegistrationLevel(int registrationLevel)` // 257 | ❌ not yet implemented |
+
+**`GetStoredCommonSetting` (0x51)** is potentially the bridge between the API layer and the
+BLE_COMMAND_REFERENCE.md layer: it may be able to read device settings (water hardness,
+descaling intervals etc.) that also appear as DpIds in BLE_COMMAND_REFERENCE.md.
+The `storedCommonSettingId` parameter meaning is unknown — needs BLE sniffing or trial.
+
 ### BLE_COMMAND_REFERENCE.md
 Located at `operation_support/BLE_COMMAND_REFERENCE.md`. Verified against `DpId.cs` source.
 Use it to understand WHAT the device supports conceptually, but do NOT try to map its DpIds
