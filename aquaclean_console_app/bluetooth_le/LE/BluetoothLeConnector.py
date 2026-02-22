@@ -163,7 +163,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         return api
 
     async def _connect_via_esphome(self, device_id):
-        from bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
+        from aquaclean_console_app.bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
 
         logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
 
