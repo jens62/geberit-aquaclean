@@ -65,7 +65,7 @@ mqtt:
       icon: mdi:calendar-check
       value_template: >-
         {% if value | int(0) > 0 %}
-          {{ value | int | timestamp_local }}
+          {{ value | int | timestamp_custom('%d.%m.%Y') }}
         {% else %}
           Never
         {% endif %}
