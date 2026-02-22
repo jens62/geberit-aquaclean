@@ -2133,6 +2133,9 @@ async def run_cli(args):
         elif args.command == 'soc-versions':
             versions = await client.base_client.get_soc_application_versions_async()
             result["data"] = {"soc_versions": str(versions)}
+        elif args.command == 'statistics-descale':
+            sd = await client.base_client.get_statistics_descale_async()
+            result["data"] = ApiMode._statistics_descale_to_dict(sd)
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
             result["data"] = {"action": "lid_toggled"}
@@ -2240,6 +2243,7 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command identification\n"
             "  %(prog)s --mode cli --command initial-operation-date\n"
             "  %(prog)s --mode cli --command soc-versions\n"
+            "  %(prog)s --mode cli --command statistics-descale\n"
             "\n"
             "device commands (require BLE):\n"
             "  %(prog)s --mode cli --command toggle-lid\n"
@@ -2269,7 +2273,7 @@ if __name__ == "__main__":
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
-        'info', 'identification', 'initial-operation-date', 'soc-versions',
+        'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
