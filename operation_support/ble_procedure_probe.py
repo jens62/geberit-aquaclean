@@ -28,56 +28,48 @@ import os
 import sys
 import logging
 
+from haggis import logs
+
 # Make sure the package root is on sys.path when run directly
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-# haggis must be initialized before any app imports so logger.trace() exists
-from haggis import logs as _haggis_logs
-_haggis_logs.add_logging_level('TRACE', logging.DEBUG - 5)
-_haggis_logs.add_logging_level('SILLY', logging.DEBUG - 7)
-
-from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
-from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory          import AquaCleanClientFactory
-from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient     import BLEPeripheralTimeoutError
-from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector           import BluetoothLeConnector
-
-
-# ---------------------------------------------------------------------------
-# Minimal probe call — same duck-type interface as real CallClasses
-# ---------------------------------------------------------------------------
-class _ProbeCall:
-    def __init__(self, procedure: int):
-        self._attr = ApiCallAttribute(0x01, procedure, 0x01)
-
-    def get_api_call_attribute(self) -> ApiCallAttribute:
-        return self._attr
-
-    def get_payload(self) -> bytearray:
-        return bytearray()
-
 
 # ---------------------------------------------------------------------------
 # Main probe loop
 # ---------------------------------------------------------------------------
-async def probe(start: int, end: int, config_path: str):
-    config = configparser.ConfigParser(inline_comment_prefixes=('#', ';'))
-    config.read(config_path)
+async def probe(start: int, end: int, config: configparser.ConfigParser):
+    from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
+    from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory          import AquaCleanClientFactory
+    from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient     import BLEPeripheralTimeoutError
+    from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector           import BluetoothLeConnector
 
-    device_id      = config.get("BLE",     "device_id")
-    esphome_host   = config.get("ESPHOME", "host",      fallback=None) or None
-    esphome_port   = int(config.get("ESPHOME", "port",  fallback="6053"))
-    esphome_psk    = config.get("ESPHOME", "noise_psk", fallback=None) or None
+    class _ProbeCall:
+        def __init__(self, procedure: int):
+            self._attr = ApiCallAttribute(0x01, procedure, 0x01)
+        def get_api_call_attribute(self):
+            return self._attr
+        def get_payload(self) -> bytearray:
+            return bytearray()
+
+    device_id    = config.get("BLE",     "device_id")
+    esphome_host = config.get("ESPHOME", "host",      fallback=None) or None
+    esphome_port = int(config.get("ESPHOME", "port",  fallback="6053"))
+    esphome_psk  = config.get("ESPHOME", "noise_psk", fallback=None) or None
 
     connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_psk)
     factory   = AquaCleanClientFactory(connector)
-    client    = factory.create_client()   # AquaCleanBaseClient
+    client    = factory.create_client()
 
     print(f"Connecting to {device_id} …")
     await client.connect_async(device_id)
     print("Connected.\n")
+
+    known = {0x45: "GetStatisticsDescale", 0x51: "GetStoredCommonSetting",
+             0x53: "GetStoredProfileSetting", 0x54: "SetStoredProfileSetting",
+             0x56: "SetDeviceRegistrationLevel"}
 
     print(f"Probing procedure codes 0x{start:02X} – 0x{end:02X}\n")
     print(f"{'Code':<6}  {'Status':<5}  {'Bytes':>5}  Hex")
@@ -85,15 +77,9 @@ async def probe(start: int, end: int, config_path: str):
 
     for proc in range(start, end + 1):
         label = f"0x{proc:02X}"
-        # Mark known procedures for easy orientation
-        known = {0x45: "GetStatisticsDescale", 0x51: "GetStoredCommonSetting",
-                 0x53: "GetStoredProfileSetting", 0x54: "SetStoredProfileSetting",
-                 0x56: "SetDeviceRegistrationLevel"}
-        note = f"  <- known: {known[proc]}" if proc in known else ""
-
+        note  = f"  <- known: {known[proc]}" if proc in known else ""
         try:
-            call = _ProbeCall(proc)
-            await client.send_request(call)
+            await client.send_request(_ProbeCall(proc))
             raw = client.message_context.result_bytes or bytearray()
             hex_str = raw.hex(" ") if raw else "(empty)"
             print(f"{label:<6}  OK     {len(raw):>5}  {hex_str}{note}")
@@ -121,13 +107,16 @@ def main():
                         help="Log level (default WARNING — use DEBUG for full BLE trace)")
     args = parser.parse_args()
 
+    config = configparser.ConfigParser(inline_comment_prefixes=('#', ';'))
+    config.read(args.config)
+
+    logs.add_logging_level('TRACE', logging.DEBUG - 5)
+    logs.add_logging_level('SILLY', logging.DEBUG - 7)
+
     logging.basicConfig(level=getattr(logging, args.log.upper(), logging.WARNING),
                         format="%(levelname)s %(name)s: %(message)s")
 
-    start = int(args.start, 0)
-    end   = int(args.end,   0)
-
-    asyncio.run(probe(start, end, args.config))
+    asyncio.run(probe(int(args.start, 0), int(args.end, 0), config))
 
 
 if __name__ == "__main__":
