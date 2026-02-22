@@ -73,7 +73,72 @@ def _log_startup_config():
 
 def _check_config_errors() -> list[str]:
     """Return a list of configuration error strings. Empty list means config is valid."""
+    import re
     errors = []
+
+    # [BLE] device_id — required, MAC address format
+    try:
+        device_id = config.get("BLE", "device_id")
+        if not re.match(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$', device_id):
+            errors.append(
+                f"[BLE] device_id={device_id!r} — expected MAC address XX:XX:XX:XX:XX:XX"
+            )
+    except Exception:
+        errors.append("[BLE] device_id is missing (required)")
+
+    # [SERVICE] ble_connection — enum
+    ble_connection = config.get("SERVICE", "ble_connection", fallback="persistent")
+    if ble_connection not in ("persistent", "on-demand"):
+        errors.append(
+            f"[SERVICE] ble_connection={ble_connection!r} — must be 'persistent' or 'on-demand'"
+        )
+
+    # [ESPHOME] esphome_api_connection — enum
+    esphome_api_conn = config.get("ESPHOME", "esphome_api_connection", fallback="on-demand")
+    if esphome_api_conn not in ("persistent", "on-demand"):
+        errors.append(
+            f"[ESPHOME] esphome_api_connection={esphome_api_conn!r} — must be 'persistent' or 'on-demand'"
+        )
+
+    # [ESPHOME] port — integer
+    try:
+        port = int(config.get("ESPHOME", "port", fallback="6053"))
+        if not (1 <= port <= 65535):
+            errors.append(f"[ESPHOME] port={port} — must be 1–65535")
+    except ValueError:
+        errors.append(f"[ESPHOME] port={config.get('ESPHOME', 'port', fallback='')!r} — must be an integer")
+
+    # [API] port — integer
+    try:
+        api_port = int(config.get("API", "port", fallback="8080"))
+        if not (1 <= api_port <= 65535):
+            errors.append(f"[API] port={api_port} — must be 1–65535")
+    except ValueError:
+        errors.append(f"[API] port={config.get('API', 'port', fallback='')!r} — must be an integer")
+
+    # [POLL] interval — non-negative float
+    try:
+        interval = float(config.get("POLL", "interval", fallback="0"))
+        if interval < 0:
+            errors.append(f"[POLL] interval={interval} — must be >= 0")
+    except ValueError:
+        errors.append(f"[POLL] interval={config.get('POLL', 'interval', fallback='')!r} — must be a number")
+
+    # [LOGGING] log_level — known level
+    valid_levels = {"SILLY", "TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+    log_level = config.get("LOGGING", "log_level", fallback="DEBUG").upper()
+    if log_level not in valid_levels:
+        errors.append(
+            f"[LOGGING] log_level={log_level!r} — must be one of {sorted(valid_levels)}"
+        )
+
+    # [ESPHOME] log_level — known level
+    esphome_log_level = config.get("ESPHOME", "log_level", fallback="INFO").upper()
+    if esphome_log_level not in valid_levels:
+        errors.append(
+            f"[ESPHOME] log_level={esphome_log_level!r} — must be one of {sorted(valid_levels)}"
+        )
+
     return errors
 
 
