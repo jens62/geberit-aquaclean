@@ -281,7 +281,9 @@ The hint survives this round-trip because `error_hint` is stored in
 
 **CLI**: `--mode cli --command check-config` — validates config, returns JSON
 with `{"status": "success"|"error", "data": {"errors": [...]}}`.
-`_check_config_errors()` exists (module-level) but currently returns no errors.
+`_check_config_errors()` validates: `[BLE] device_id` (MAC format), `[SERVICE] ble_connection`
+and `[ESPHOME] esphome_api_connection` (enum), `[ESPHOME/API] port` (integer), `[POLL] interval`
+(float), `[LOGGING/ESPHOME] log_level` (known level).
 
 ---
 
