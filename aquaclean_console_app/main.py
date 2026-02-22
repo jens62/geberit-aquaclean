@@ -1418,6 +1418,7 @@ class ApiMode:
             factory = AquaCleanClientFactory(connector)
             client = factory.create_client()
         _exc = None
+        _ec = None
         try:
             await self.service.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/connected", f"Connecting to {device_id} ...")
@@ -1462,7 +1463,6 @@ class ApiMode:
             return result
         except Exception as e:
             _exc = e
-            raise
         finally:
             try:
                 if use_persistent:
@@ -1473,16 +1473,17 @@ class ApiMode:
                 pass
             if _exc is not None:
                 # Map exception to error code so webapp shows the right status.
-                # _polling_loop handlers only need to publish to MQTT; this covers SSE.
-                if isinstance(_exc, ESPHomeConnectionError):
-                    ec = E1001 if _exc.timeout else E1002
+                if isinstance(_exc, BLEPeripheralTimeoutError):
+                    _ec = E0003
+                elif isinstance(_exc, ESPHomeConnectionError):
+                    _ec = E1001 if _exc.timeout else E1002
                 elif isinstance(_exc, ESPHomeDeviceNotFoundError):
-                    ec = E0002
+                    _ec = E0002
                 elif isinstance(_exc, BleakError):
-                    ec = E0003
+                    _ec = E0003
                 else:
-                    ec = E7002
-                await self.service._set_ble_status("error", error_msg=str(_exc), error_code=ec.code, error_hint=ec.hint)
+                    _ec = E7002
+                await self.service._set_ble_status("error", error_msg=str(_exc), error_code=_ec.code, error_hint=_ec.hint)
             else:
                 await self.service._set_ble_status("disconnected")
                 if esphome_host:
@@ -1495,6 +1496,8 @@ class ApiMode:
                         await self.service._update_esphome_proxy_state(
                             connected=False, error="No error", error_code="E0000"
                         )
+        if _exc is not None:
+            ApiMode._http_error(503, _ec, str(_exc))
 
     async def _publish_identification_to_mqtt(self, info: dict):
         """Publish device identification fields to their MQTT topics.
