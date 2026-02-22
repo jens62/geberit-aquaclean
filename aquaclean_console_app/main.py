@@ -47,6 +47,7 @@ esphome_port           = int(config.get("ESPHOME", "port",    fallback="6053"))
 esphome_noise_psk      = config.get("ESPHOME",  "noise_psk",  fallback=None) or None
 esphome_log_streaming  = config.getboolean("ESPHOME", "log_streaming", fallback=False)
 esphome_log_level      = config.get("ESPHOME", "log_level", fallback="INFO")
+esphome_api_connection = config.get("ESPHOME", "esphome_api_connection", fallback="on-demand")
 logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)d %(levelname)s: %(message)s")
 
 # Suppress verbose external library logging (but not when explicitly debugging at TRACE/SILLY)
@@ -946,18 +947,21 @@ class ApiMode:
         self._shutdown_event = asyncio.Event()
         self._on_demand_lock = asyncio.Lock()
         self._poll_wakeup    = asyncio.Event()
+        self._esphome_connector: "BluetoothLeConnector | None" = None  # Persistent connector (esphome_api_connection=persistent)
+        self.esphome_api_connection = esphome_api_connection  # runtime-mutable: "persistent" | "on-demand"
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
 
         # Always create ServiceMode so ble_connection can be toggled at runtime.
         self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
         self.service.device_state["ble_connection"] = self.ble_connection
+        self.service.device_state["esphome_api_connection"] = self.esphome_api_connection
         self.service.device_state["poll_interval"]  = self._poll_interval
         if self.ble_connection != "persistent":
             # Start in standby — loop waits on _connection_allowed until switched
             self.service._connection_allowed.clear()
 
-        logger.info(f"API mode: ble_connection={self.ble_connection}, mqtt_enabled={mqtt_enabled}, {api_host}:{api_port}")
+        logger.info(f"API mode: ble_connection={self.ble_connection}, esphome_api_connection={self.esphome_api_connection if esphome_host else 'N/A'}, mqtt_enabled={mqtt_enabled}, {api_host}:{api_port}")
 
     @staticmethod
     def _http_error(status_code: int, error_code, details: str = None):
@@ -993,8 +997,9 @@ class ApiMode:
         self.service.on_state_updated = self.rest_api.broadcast_state
         # Wire MQTT inbound control topics → ApiMode handlers
         self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
-        self.service.mqtt_service.SetBleConnection += self._on_mqtt_set_ble_connection
-        self.service.mqtt_service.SetPollInterval  += self._on_mqtt_set_poll_interval
+        self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
+        self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
+        self.service.mqtt_service.SetPollInterval         += self._on_mqtt_set_poll_interval
         self.service.mqtt_service.Disconnect       += self._on_mqtt_disconnect
         self.service.mqtt_service.ConnectESP32          += self._on_mqtt_esp32_connect
         self.service.mqtt_service.DisconnectESP32        += self._on_mqtt_esp32_disconnect
@@ -1036,6 +1041,7 @@ class ApiMode:
     def get_config(self) -> dict:
         return {
             "ble_connection": self.ble_connection,
+            "esphome_api_connection": self.esphome_api_connection,
             "poll_interval": self._poll_interval,
         }
 
@@ -1050,6 +1056,25 @@ class ApiMode:
             await self.service.request_disconnect()
         await self.rest_api.broadcast_state(self.service.device_state.copy())
         return {"status": "success", "ble_connection": value}
+
+    async def set_esphome_api_connection(self, value: str) -> dict:
+        if value not in ("persistent", "on-demand"):
+            self._http_error(400, E4001, f"Invalid value {value!r}. Use 'persistent' or 'on-demand'.")
+        self.esphome_api_connection = value
+        self.service.device_state["esphome_api_connection"] = value
+        # When switching to on-demand, tear down the shared connector so the
+        # next request gets a fresh connection rather than reusing a stale one.
+        if value == "on-demand" and self._esphome_connector is not None:
+            try:
+                await self._esphome_connector.disconnect()
+            except Exception:
+                pass
+            self._esphome_connector = None
+            await self.service._update_esphome_proxy_state(
+                connected=False, error="No error", error_code="E0000"
+            )
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "esphome_api_connection": value}
 
     async def set_poll_interval(self, value: float) -> dict:
         if value < 0:
@@ -1079,6 +1104,12 @@ class ApiMode:
             await self.set_ble_connection(value)
         except Exception as e:
             logger.warning(f"MQTT set_ble_connection({value!r}) failed: {e}")
+
+    async def _on_mqtt_set_esphome_api_connection(self, value: str):
+        try:
+            await self.set_esphome_api_connection(value)
+        except Exception as e:
+            logger.warning(f"MQTT set_esphome_api_connection({value!r}) failed: {e}")
 
     async def _on_mqtt_set_poll_interval(self, value: float):
         try:
@@ -1350,6 +1381,17 @@ class ApiMode:
             return {**result, **timing}
         return timing
 
+    def _get_esphome_connector(self) -> BluetoothLeConnector:
+        """Return the cached persistent BluetoothLeConnector for persistent_api mode.
+
+        Created on first call and reused across requests. The ESP32 API TCP connection
+        inside the connector is kept alive between BLE cycles via disconnect_ble_only().
+        """
+        if self._esphome_connector is None:
+            self._esphome_connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
+            self._esphome_connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+        return self._esphome_connector
+
     async def _on_demand(self, action):
         """Connect, execute action, disconnect — for on-demand connection mode.
         Publishes connecting/connected/disconnected to MQTT and SSE, mirroring
@@ -1361,8 +1403,13 @@ class ApiMode:
         device_id = config.get("BLE", "device_id")
         topic = self.service.mqttConfig['topic']
 
-        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
-        connector.connection_status_changed_handlers += self.service.on_connection_status_changed
+        use_persistent = bool(esphome_host and self.esphome_api_connection == "persistent")
+
+        if use_persistent:
+            connector = self._get_esphome_connector()
+        else:
+            connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
+            connector.connection_status_changed_handlers += self.service.on_connection_status_changed
 
         factory = AquaCleanClientFactory(connector)
         client = factory.create_client()
@@ -1414,7 +1461,10 @@ class ApiMode:
             raise
         finally:
             try:
-                await connector.disconnect()
+                if use_persistent:
+                    await connector.disconnect_ble_only()  # Keep ESP32 API TCP alive for next request
+                else:
+                    await connector.disconnect()           # Full teardown (original behavior)
             except Exception:
                 pass
             if _exc is not None:
