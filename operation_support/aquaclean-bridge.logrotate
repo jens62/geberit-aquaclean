@@ -1,0 +1,24 @@
+# logrotate config for aquaclean-bridge
+#
+# Installation:
+#   sudo cp aquaclean-bridge.logrotate /etc/logrotate.d/aquaclean-bridge
+#
+# Test (dry-run):
+#   sudo logrotate --debug /etc/logrotate.d/aquaclean-bridge
+#
+# Force rotation now:
+#   sudo logrotate --force /etc/logrotate.d/aquaclean-bridge
+
+/var/log/aquaclean/aquaclean.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+
+    # copytruncate: copy the log file then truncate the original in place.
+    # Required because systemd keeps the file open with StandardOutput=append:
+    # Moving the file (default logrotate behaviour) would break the open fd.
+    copytruncate
+}

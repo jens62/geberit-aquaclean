@@ -1,0 +1,36 @@
+# systemd service unit for aquaclean-bridge
+#
+# Installation:
+#   sudo cp aquaclean-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable aquaclean-bridge
+#   sudo systemctl start aquaclean-bridge
+#
+# Usage:
+#   sudo systemctl status aquaclean-bridge
+#   sudo systemctl restart aquaclean-bridge
+#   tail -f /var/log/aquaclean/aquaclean.log
+
+[Unit]
+Description=Geberit AquaClean bridge (BLE → MQTT / REST API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jens
+
+ExecStart=/home/jens/venv/bin/aquaclean-bridge --mode api
+
+Restart=on-failure
+RestartSec=10
+
+# Log both stdout (JSON CLI results) and stderr (Python logging) to the same file.
+# LogsDirectory creates /var/log/aquaclean/ owned by User= on first start.
+LogsDirectory=aquaclean
+LogsDirectoryMode=0755
+StandardOutput=append:/var/log/aquaclean/aquaclean.log
+StandardError=append:/var/log/aquaclean/aquaclean.log
+
+[Install]
+WantedBy=multi-user.target
