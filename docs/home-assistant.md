@@ -47,23 +47,29 @@ python main.py --mode cli --command publish-ha-discovery
       "User Sitting", "Anal Shower Running", "Lady Shower Running", "Dryer Running",
       "SAP Number", "Serial Number", "Production Date", "Description",
       "Initial Operation Date", "Connected", "Error",
+      "Days Until Next Descale", "Days Until Shower Restricted",
+      "Shower Cycles Until Confirmation", "Number of Descale Cycles",
+      "Last Descale", "Unposted Shower Cycles",
       "Toggle Lid", "Toggle Anal Shower"
     ],
     "failed": []
   },
-  "message": "Published 13 HA discovery entities to 192.168.0.xxx:1883"
+  "message": "Published 19 HA discovery entities to 192.168.0.xxx:1883"
 }
 ```
 
 ### 3. Verify in Home Assistant
 
-Go to **Settings → Devices & Services → MQTT** — you will see a **Geberit AquaClean** device with 13 entities grouped together:
+Go to **Settings → Devices & Services → MQTT** — you will see a **Geberit AquaClean** device with 19 entities grouped together:
 
 | Type | Entities |
 |------|---------|
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
 | Sensor | SAP Number, Serial Number, Production Date, Description, Initial Operation Date, Connected, Error |
+| Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Switch | Toggle Lid, Toggle Anal Shower |
+
+![Descale Statistics in Home Assistant](homeassistant-descale-statistics.png)
 
 ### 4. Start the service
 

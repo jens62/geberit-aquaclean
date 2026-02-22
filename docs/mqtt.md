@@ -60,6 +60,19 @@ Published on connect (when identification data is fetched).
 | `{prefix}/peripheralDevice/information/initialOperationDate` | `31.05.2024` | Date first put into service |
 | `{prefix}/peripheralDevice/information/SocVersions` | version string | SOC firmware version |
 
+### Descale statistics
+
+Published when descale statistics are fetched (on connect in persistent mode, or on demand via `/data/statistics-descale`).
+
+| Topic | Example value | Description |
+|-------|---------------|-------------|
+| `{prefix}/peripheralDevice/information/descaleStatistics/daysUntilNextDescale` | `61` | Days until next scheduled descale |
+| `{prefix}/peripheralDevice/information/descaleStatistics/daysUntilShowerRestricted` | `14` | Days until shower function is restricted |
+| `{prefix}/peripheralDevice/information/descaleStatistics/showerCyclesUntilConfirmation` | `1` | Shower cycles remaining before confirmation required |
+| `{prefix}/peripheralDevice/information/descaleStatistics/numberOfDescaleCycles` | `2` | Total number of completed descale cycles |
+| `{prefix}/peripheralDevice/information/descaleStatistics/dateTimeAtLastDescale` | `1745932224` | Unix timestamp of last descale (0 = never) |
+| `{prefix}/peripheralDevice/information/descaleStatistics/unpostedShowerCycles` | `1` | Shower cycles not yet synced to the device counter |
+
 ---
 
 ## Subscribed topics (incoming)

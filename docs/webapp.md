@@ -87,10 +87,15 @@ Visible only when the BLE connection mode is **on-demand**.  Each button trigger
 | Identification | `GET /data/identification` |
 | Initial Op Date | `GET /data/initial-operation-date` |
 | SOC Versions | `GET /data/soc-versions` |
+| Descale Statistics | `GET /data/statistics-descale` |
 | Anal Shower State | `GET /data/anal-shower-state` |
 | User Sitting State | `GET /data/user-sitting-state` |
 | Lady Shower State | `GET /data/lady-shower-state` |
 | Dryer State | `GET /data/dryer-state` |
+
+The Descale Statistics result includes days until next descale, days until shower restricted, shower cycles until confirmation, number of descale cycles, last descale date (formatted), and unposted shower cycles.
+
+![Descale Statistics in the web UI](webapp-descale-statistics.png)
 
 After each query, timing fields show the breakdown:
 - **ESP32:** — TCP connect time (`0 ms` if reused, hidden for local BLE)

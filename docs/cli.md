@@ -68,6 +68,7 @@ python main.py --mode cli --command status
 | `identification` | `sap_number`, `serial_number`, `production_date`, `description` |
 | `initial-operation-date` | `initial_operation_date` |
 | `soc-versions` | `soc_versions` |
+| `statistics-descale` | `days_until_next_descale`, `days_until_shower_restricted`, `shower_cycles_until_confirmation`, `number_of_descale_cycles`, `date_time_at_last_descale`, `unposted_shower_cycles` |
 
 ```bash
 python main.py --mode cli --command info
@@ -157,11 +158,14 @@ python main.py --mode cli --command publish-ha-discovery
       "User Sitting", "Anal Shower Running", "Lady Shower Running", "Dryer Running",
       "SAP Number", "Serial Number", "Production Date", "Description",
       "Initial Operation Date", "Connected", "Error",
+      "Days Until Next Descale", "Days Until Shower Restricted",
+      "Shower Cycles Until Confirmation", "Number of Descale Cycles",
+      "Last Descale", "Unposted Shower Cycles",
       "Toggle Lid", "Toggle Anal Shower"
     ],
     "failed": []
   },
-  "message": "Published 13 HA discovery entities to 192.168.0.xxx:1883"
+  "message": "Published 19 HA discovery entities to 192.168.0.xxx:1883"
 }
 ```
 
