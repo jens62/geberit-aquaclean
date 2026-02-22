@@ -1,7 +1,14 @@
 # systemd service unit for aquaclean-bridge
 #
-# Installation:
-#   sudo cp aquaclean-bridge.service /etc/systemd/system/
+# Before installing, replace the two placeholders:
+#   YOUR_USER   — the OS user that owns the venv (e.g. jens, pi, aquaclean)
+#   /path/to/venv — absolute path to the Python venv (e.g. /home/jens/venv)
+#
+#   sed -e 's|YOUR_USER|jens|g' \
+#       -e 's|/path/to/venv|/home/jens/venv|g' \
+#       aquaclean-bridge.service | sudo tee /etc/systemd/system/aquaclean-bridge.service
+#
+# Then:
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable aquaclean-bridge
 #   sudo systemctl start aquaclean-bridge
@@ -18,9 +25,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=jens
+User=YOUR_USER
 
-ExecStart=/home/jens/venv/bin/aquaclean-bridge --mode api
+ExecStart=/path/to/venv/bin/aquaclean-bridge --mode api
 
 Restart=on-failure
 RestartSec=10
