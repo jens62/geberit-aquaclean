@@ -964,7 +964,8 @@ class ServiceMode:
             await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning", str(args.IsDryerRunning))
         if "IsOrientationLightOn" in args.__dict__ and args.IsOrientationLightOn is not None:
             self.device_state["is_orientation_light_on"] = args.IsOrientationLightOn
-            await self.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(args.IsOrientationLightOn))
+            # NOTE: orientation light state never changes on real hardware (Thomas Bingel commented
+            # it out for this reason).  State is kept internally but not published to MQTT.
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -1202,11 +1203,11 @@ class ApiMode:
             result = self.service.device_state
         else:
             result = await self._on_demand(lambda client: self._fetch_state(client))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",        str(result.get("is_user_sitting")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning",  str(result.get("is_anal_shower_running")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning",  str(result.get("is_lady_shower_running")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",       str(result.get("is_dryer_running")))
-        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result.get("is_orientation_light_on")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
+        await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+        # isOrientationLightOn intentionally not published — state never changes on real hardware
         return result
 
     async def get_info(self):
@@ -1285,11 +1286,11 @@ class ApiMode:
             return self.service.device_state
         else:
             result = await self._on_demand(lambda client: self._fetch_state(client))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",        str(result["is_user_sitting"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning",  str(result["is_anal_shower_running"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning",  str(result["is_lady_shower_running"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",       str(result["is_dryer_running"]))
-            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result["is_orientation_light_on"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result["is_user_sitting"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result["is_anal_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result["is_lady_shower_running"]))
+            await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result["is_dryer_running"]))
+            # isOrientationLightOn intentionally not published — state never changes on real hardware
             return result
 
     async def get_soc_versions(self):
@@ -1697,11 +1698,11 @@ class ApiMode:
                 self.service.device_state["last_poll_ms"]        = result.get("_query_ms")
                 self.service.device_state["poll_epoch"]      = time.time()
                 await self.rest_api.broadcast_state(self.service.device_state.copy())
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",        str(result.get("is_user_sitting")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning",  str(result.get("is_anal_shower_running")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning",  str(result.get("is_lady_shower_running")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",       str(result.get("is_dryer_running")))
-                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isOrientationLightOn", str(result.get("is_orientation_light_on")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
+                await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+                # isOrientationLightOn intentionally not published — state never changes on real hardware
             except ESPHomeConnectionError as e:
                 error_code_obj = E1001 if e.timeout else E1002
                 _consecutive_poll_failures += 1

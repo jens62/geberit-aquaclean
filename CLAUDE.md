@@ -520,21 +520,30 @@ Reads/writes stored user settings by index. Getters already in `AquaCleanClient`
 **Layer 3 — `GetSystemParameterList([0,1,2,3,4,5,7,9])`**
 Reads live device state (what's happening right now). These are NOT DpIds — separate index space.
 
-**SystemParameterList index map** (confirmed from C# `Deserializer` and `DeviceStateChangedEventArgs`):
+**SystemParameterList index map** (confirmed from C# `GetSystemParameterList.cs` comment,
+`Deserializer.cs`, and `IAquaCleanClient.cs` commented-out `ToString()`):
 
 | Index | Field | Python key | Status |
 |-------|-------|-----------|--------|
-| 0 | `IsUserSitting` | `is_user_sitting` | ✅ consumed |
-| 1 | `IsAnalShowerRunning` | `is_anal_shower_running` | ✅ consumed |
-| 2 | `IsLadyShowerRunning` | `is_lady_shower_running` | ✅ consumed |
-| 3 | `IsDryerRunning` | `is_dryer_running` | ✅ consumed |
-| 4 | unknown | — | fetched, not consumed |
-| 5 | unknown | — | fetched, not consumed |
+| 0 | `IsUserSitting` | `is_user_sitting` | ✅ consumed + MQTT |
+| 1 | `IsAnalShowerRunning` | `is_anal_shower_running` | ✅ consumed + MQTT |
+| 2 | `IsLadyShowerRunning` | `is_lady_shower_running` | ✅ consumed + MQTT |
+| 3 | `IsDryerRunning` | `is_dryer_running` | ✅ consumed + MQTT |
+| 4 | `DescalingState` | — | fetched, not consumed |
+| 5 | `DescalingDurationInMinutes` | — | fetched, not consumed |
+| 6 | `LastErrorCode` | — | not fetched |
 | 7 | unknown | — | fetched, not consumed |
-| 9 | `IsOrientationLightOn` | `is_orientation_light_on` | ✅ consumed |
+| 9 | `IsOrientationLightOn` | `is_orientation_light_on` | ✅ consumed, **not published to MQTT** |
 
-Indices 4, 5, 7 appear in the C# request array but are not used in `DeviceStateChangedEventArgs`.
-Their meaning is unknown — BLE sniffing the official app would reveal them.
+**Orientation light note:** `IsOrientationLightOn` (index 9) is read and stored in `device_state`
+but intentionally **not** published to MQTT and **not** shown in the web UI.
+Reason: the value never changes on real hardware — Thomas Bingel commented it out in the C#
+repo for exactly this reason. `ToggleOrientationLight` (command 20) also returns a BLE error
+(503 from REST) on actual devices. The code path is preserved for CLI/REST diagnostic use only.
+
+Note on `{7}` in `IAquaCleanClient.cs` `ToString()`: this is the 8th format argument to
+`string.Format` (0-indexed positional), **not** system parameter index 7. Index 7's meaning
+remains unknown.
 
 **C# Deserializer pattern:** The C# code accesses fields by positional byte offset
 (`Deserializer.DeserializeToInt(result.DataArray, 7*5+1, 4)`), not by device parameter index.
@@ -617,13 +626,13 @@ responses (`00`, `01`) are framing artefacts, not application data.
 C# `DeviceStateChangedEventArgs` fields and their Python equivalents
 (confirmed from `AquaCleanClient.cs` + `Deserializer.cs` in the C# repo):
 
-| C# field | Python `device_state` key | SystemParameter index |
-|----------|--------------------------|----------------------|
-| `IsUserSitting` | `is_user_sitting` | 0 |
-| `IsAnalShowerRunning` | `is_anal_shower_running` | 1 |
-| `IsLadyShowerRunning` | `is_lady_shower_running` | 2 |
-| `IsDryerRunning` | `is_dryer_running` | 3 |
-| `IsOrientationLightOn` | `is_orientation_light_on` | 9 |
+| C# field | Python `device_state` key | SystemParameter index | MQTT published |
+|----------|--------------------------|----------------------|---------------|
+| `IsUserSitting` | `is_user_sitting` | 0 | ✅ |
+| `IsAnalShowerRunning` | `is_anal_shower_running` | 1 | ✅ |
+| `IsLadyShowerRunning` | `is_lady_shower_running` | 2 | ✅ |
+| `IsDryerRunning` | `is_dryer_running` | 3 | ✅ |
+| `IsOrientationLightOn` | `is_orientation_light_on` | 9 | ❌ (never changes on real hardware) |
 
 The C# code uses `Deserializer.DeserializeToInt(result.DataArray, offset, length)` with
 positional byte offsets (e.g. `7*5+1` for index 9). Python reads `result.data_array[N]` directly —
