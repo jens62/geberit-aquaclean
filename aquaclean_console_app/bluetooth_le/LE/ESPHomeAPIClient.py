@@ -383,8 +383,14 @@ class ESPHomeAPIClient:
             logger.error(f"[ESPHomeAPIClient] Write failed for {uuid_str}: {e}")
             raise
 
-    async def disconnect(self):
-        """Disconnect from the BLE device and the ESP32 API TCP connection."""
+    async def disconnect(self, close_api: bool = True):
+        """Disconnect from the BLE device, and optionally the ESP32 API TCP connection.
+
+        Args:
+            close_api: When True (default), also disconnects the ESP32 API TCP connection.
+                       When False, only the BLE link is torn down — the TCP connection stays
+                       alive for reuse (persistent_api mode).
+        """
         logger.debug(f"[ESPHomeAPIClient] Disconnecting from {self._mac_address}")
 
         if not self._is_connected:
@@ -421,11 +427,14 @@ class ESPHomeAPIClient:
 
             self._is_connected = False
 
-            try:
-                await self._api.disconnect()
-                logger.debug("[ESPHomeAPIClient] Disconnected from ESP32 API")
-            except Exception as e:
-                logger.debug(f"[ESPHomeAPIClient] ESP32 API disconnect: {e}")
+            if close_api:
+                try:
+                    await self._api.disconnect()
+                    logger.debug("[ESPHomeAPIClient] Disconnected from ESP32 API")
+                except Exception as e:
+                    logger.debug(f"[ESPHomeAPIClient] ESP32 API disconnect: {e}")
+            else:
+                logger.debug("[ESPHomeAPIClient] Keeping ESP32 API TCP connection alive (close_api=False)")
 
             # Invoke disconnected callback
             if self._disconnected_callback:

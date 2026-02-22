@@ -24,8 +24,9 @@ class MqttService:
         self.ToggleLidPosition = myEvent.EventHandler()
         self.Connect           = myEvent.EventHandler()
         self.ToggleAnal        = myEvent.EventHandler()
-        self.SetBleConnection  = myEvent.EventHandler()
-        self.SetPollInterval   = myEvent.EventHandler()
+        self.SetBleConnection        = myEvent.EventHandler()
+        self.SetEsphomeApiConnection = myEvent.EventHandler()
+        self.SetPollInterval         = myEvent.EventHandler()
         self.Disconnect        = myEvent.EventHandler()
         self.ConnectESP32            = myEvent.EventHandler()
         self.DisconnectESP32         = myEvent.EventHandler()
@@ -113,6 +114,7 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/control/disconnect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/config/bleConnection")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/centralDevice/config/pollInterval")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/config/apiConnection")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/connect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect")
         logger.info("### SUBSCRIBED ###")
@@ -136,6 +138,8 @@ class MqttService:
             self.handle_set_ble_connection_message(msg.payload.decode().strip())
         elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/config/pollInterval":
             self.handle_set_poll_interval_message(msg.payload.decode().strip())
+        elif msg.topic == f"{self.mqttConfig['topic']}/esphomeProxy/config/apiConnection":
+            self.handle_set_esphome_api_connection_message(msg.payload.decode().strip())
         elif msg.topic == f"{self.mqttConfig['topic']}/esphomeProxy/control/connect":
             self.handle_esp32_connect_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect":
@@ -171,6 +175,12 @@ class MqttService:
     def handle_set_ble_connection_message(self, value: str):
         logger.trace(f"in handle_set_ble_connection_message: {value!r}")
         for handler in self.SetBleConnection.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(value), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_set_esphome_api_connection_message(self, value: str):
+        logger.trace(f"in handle_set_esphome_api_connection_message: {value!r}")
+        for handler in self.SetEsphomeApiConnection.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(value), self.aquaclean_loop)
             _ = future.result()
 

@@ -65,6 +65,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.last_esphome_api_ms: int | None = None  # Time to connect/verify ESP32 API (None = local BLE, 0 = reused)
         self._esphome_unsub_adv = None  # BLE advertisement unsubscribe callable; held until disconnect()
         self.last_ble_ms: int | None = None           # Time for BLE scan + handshake to toilet
+        self._esphome_api = None          # Persistent ESP32 API TCP connection (reused when persistent_api=true)
+        self._esphome_feature_flags = 0   # Cached bluetooth_proxy_feature_flags from device_info
 
 
     async def connect_async(self, device_id):
@@ -92,11 +94,24 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         await self._post_connect()
 
 
-    async def _connect_via_esphome(self, device_id):
-        from aioesphomeapi import APIClient
-        from bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
+    async def _ensure_esphome_api_connected(self):
+        """Return a connected ESP32 API client, reusing the existing TCP connection if alive.
 
-        logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
+        On first call (or after a full disconnect): opens a new TCP connection, fetches
+        device_info, stores feature_flags and proxy name, sets last_esphome_api_ms to
+        the actual connect time.
+
+        On subsequent calls when the TCP connection is still alive: returns immediately
+        with last_esphome_api_ms = 0 (no TCP handshake overhead).
+
+        Raises ESPHomeConnectionError on connection failure.
+        """
+        from aioesphomeapi import APIClient
+
+        if self._esphome_api is not None:
+            logger.debug("Reusing existing ESP32 API connection")
+            self.last_esphome_api_ms = 0
+            return self._esphome_api
 
         t0 = time.perf_counter()
         api = APIClient(
@@ -120,16 +135,29 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         try:
             device_info = await asyncio.wait_for(api.device_info(), timeout=10.0)
-            esphome_feature_flags = getattr(device_info, "bluetooth_proxy_feature_flags", 0)
+            self._esphome_feature_flags = getattr(device_info, "bluetooth_proxy_feature_flags", 0)
             self.esphome_proxy_name = getattr(device_info, "name", "unknown")
         except Exception as e:
             logger.warning(f"Failed to get device info, using default feature_flags=0: {e}")
-            esphome_feature_flags = 0
+            self._esphome_feature_flags = 0
             self.esphome_proxy_name = "unknown"
 
+        self._esphome_api = api
         self.esphome_proxy_connected = True
         self.last_esphome_api_ms = int((time.perf_counter() - t0) * 1000)
         logger.debug(f"ESP32 proxy connected: {self.esphome_proxy_name} ({self.last_esphome_api_ms} ms)")
+        return api
+
+    async def _connect_via_esphome(self, device_id):
+        from bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
+
+        logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
+
+        try:
+            api = await self._ensure_esphome_api_connected()
+        except ESPHomeConnectionError:
+            self._esphome_api = None  # Force reconnect on next attempt
+            raise
 
         t_ble = time.perf_counter()  # BLE timing starts after ESP32 API is ready
 
@@ -181,18 +209,19 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             try:
                 logger.debug(f"BLE connection attempt {attempt}/2 with address_type={addr_type} ({'RANDOM' if addr_type == 1 else 'PUBLIC'})")
 
-                # Ensure previous attempt is fully cleaned up before starting new one
+                # Ensure previous attempt is fully cleaned up before starting new one.
+                # close_api=False: keep the TCP connection alive — we only retry the BLE link.
                 if self.client is not None:
                     logger.silly(f"Cleaning up previous connection attempt before retry")
                     try:
-                        await self.client.disconnect()
+                        await self.client.disconnect(close_api=False)
                     except Exception as cleanup_error:
                         logger.silly(f"Cleanup error (expected): {cleanup_error}")
                     self.client = None
                     # Give ESP32 a moment to fully process the disconnect
                     await asyncio.sleep(0.5)
 
-                self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, esphome_feature_flags)
+                self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, self._esphome_feature_flags)
                 await self.client.connect()
                 # Keep advertisement subscription alive for entire BLE connection lifetime.
                 # Sending UnsubscribeBluetoothLEAdvertisementsRequest while BLE is active
@@ -286,6 +315,31 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.silly(f"result: {result}")
 
 
+    async def disconnect_ble_only(self):
+        """BLE-only disconnect — ESP32 API TCP connection stays alive for reuse.
+
+        Used in persistent_api mode: tears down the BLE link to the Geberit and
+        releases the advertisement subscription (safe to do after BLE is down —
+        see CLAUDE.md trap 7), but leaves self._esphome_api connected so the next
+        call to _connect_via_esphome() reuses the TCP connection at 0 ms overhead.
+        """
+        logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
+        if self.client:
+            await self.client.disconnect(close_api=False)
+            self.client = None
+        else:
+            logger.silly("not self.client, no need to disconnect BLE.")
+
+        # Unsubscribe from BLE advertisements — safe now that BLE is fully down (trap 7).
+        if self._esphome_unsub_adv is not None:
+            try:
+                self._esphome_unsub_adv()
+            except Exception:
+                pass
+            self._esphome_unsub_adv = None
+
+        # Do NOT reset self._esphome_api or esphome_proxy_connected — TCP stays alive.
+
     async def disconnect(self):
         logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         if self.client:
@@ -307,4 +361,5 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # Reset ESP32 proxy connection state
         if self.esphome_host:
             self.esphome_proxy_connected = False
+            self._esphome_api = None  # TCP connection is gone; force reconnect on next call
 

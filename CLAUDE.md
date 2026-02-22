@@ -79,12 +79,24 @@ variable). Now it reads `device_state["poll_interval"]` each reconnect.
 ## ESPHome API connection mode
 
 > **Note:** The `persistent` ESP32 API connection mode was removed after proving
-> unstable in production (ESPHome firmware "Only one API subscription is allowed
-> at a time" error that could not be cleanly resolved). Only `on-demand` remains.
+> unstable in production. Only `on-demand` remains in the current codebase.
 >
-> **To restore persistent mode:** `git checkout esphome-persistent-api` — the tag
-> `esphome-persistent-api` points to the last commit with the full implementation.
-> All code, docs, and config for persistent mode are intact at that tag.
+> **`esphome-persistent-api` tag:** marks the last commit before the persistent TCP
+> code was abandoned — **not** a working version. The tag was created to preserve
+> that state. The code at that tag had trap 7 fixes applied but the overall
+> persistent TCP implementation was still failing; the exact remaining failure was
+> never pinpointed before the approach was reverted.
+>
+> **"Only one API subscription is allowed at a time"** — this is an ESP32 firmware
+> limit: only one API client may hold an active BLE advertisement subscription at a
+> time. It is NOT a TCP connection limit. It only occurs when two API clients compete
+> (e.g. the main app and a probe script running simultaneously). In production the
+> main app is the only client, so this limit is never hit.
+>
+> **Persistent TCP IS achievable** — proven by `esphome-aioesphomeapi-probe-v4.py`:
+> all 3 cycles succeeded with TCP reused (0 ms overhead on cycles 2+) when run in
+> isolation (no competing API client). The right path is a clean re-implementation
+> in the current `esphome-on-demand-stable` codebase, not testing the old broken tag.
 
 ## ESPHome API connection mode (on-demand only)
 
@@ -426,3 +438,42 @@ Key additions vs. the original `main`:
 - All connection button labels consistent: `PREFIX: Action` pattern throughout
 - `esphome_proxy_error_hint` stale-hint fix: `_update_esphome_proxy_state` auto-clears
   `error_hint` when `error_code="E0000"` so a previous failure hint doesn't persist
+
+---
+
+## Naming conventions (MANDATORY — do not change without explicit instruction)
+
+Consistent naming is a hard requirement across config, code, MQTT, REST, and webui.
+**Always check existing names before introducing a new one.**
+
+### Toggle values
+All two-state config/runtime options use `persistent` | `on-demand` as values (not
+`true`/`false`, not `enabled`/`disabled`):
+- `ble_connection = persistent | on-demand` (`[SERVICE]`)
+- `esphome_api_connection = persistent | on-demand` (`[ESPHOME]`)
+
+### Config keys
+- `[SERVICE] ble_connection`
+- `[ESPHOME] esphome_api_connection`
+
+### REST endpoints
+- `POST /config/ble-connection`        body: `{"value": "persistent"|"on-demand"}`
+- `POST /config/esphome-api-connection` body: `{"value": "persistent"|"on-demand"}`
+- `POST /config/poll-interval`          body: `{"value": <float>}`
+
+### MQTT topics (inbound config)
+- `<topic>/centralDevice/config/bleConnection`
+- `<topic>/centralDevice/config/pollInterval`
+- `<topic>/esphomeProxy/config/apiConnection`
+
+### Webui button labels — `PREFIX: Switch to <OTHER>` pattern
+- BLE connection toggle: `BLE: Switch to On-Demand` / `BLE: Switch to Persistent`
+- ESP32 API connection toggle: `ESP32: Switch to On-Demand` / `ESP32: Switch to Persistent`
+- Other buttons: `BLE: Reconnect` / `BLE: Disconnect`, `ESP32: Connect` / `ESP32: Disconnect`
+
+### Python identifiers
+- Module-level: `esphome_api_connection` (string `"persistent"` | `"on-demand"`)
+- `ApiMode` instance: `self.esphome_api_connection`
+- `device_state` key: `"esphome_api_connection"`
+- Runtime toggle method: `set_esphome_api_connection(value: str)`
+- MQTT event: `SetEsphomeApiConnection`
