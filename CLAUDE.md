@@ -100,9 +100,10 @@ variable). Now it reads `device_state["poll_interval"]` each reconnect.
 >
 > **"Only one API subscription is allowed at a time"** — this is an ESP32 firmware
 > limit: only one API client may hold an active BLE advertisement subscription at a
-> time. It is NOT a TCP connection limit. It only occurs when two API clients compete
-> (e.g. the main app and a probe script running simultaneously). In production the
-> main app is the only client, so this limit is never hit.
+> time. It is NOT a TCP connection limit. It can also occur in production on bridge
+> restart: if the bridge is killed mid-scan (SIGTERM during the 30-second BLE scan
+> wait), the advertisement subscription is not released and the ESP32 holds it until
+> its ping timeout (~60–90 s). See debugging trap 10 for root cause and fix.
 >
 > **Persistent TCP IS achievable** — proven by `esphome-aioesphomeapi-probe-v4.py`:
 > all 3 cycles succeeded with TCP reused (0 ms overhead on cycles 2+) when run in
@@ -517,6 +518,32 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
    persistent connection is torn down (e.g., switching to on-demand).
    **Do NOT call `AquaCleanClientFactory(connector).create_client()` on every poll
    when the connector is persistent.**
+
+10. **"Only one API subscription is allowed at a time" on bridge restart**
+    → `self._esphome_unsub_adv` was only stored in `_connect_via_esphome()` at line 244
+    — AFTER the BLE GATT connect succeeded. When the bridge receives SIGTERM while
+    waiting for a BLE advertisement (the 30-second scan window), asyncio cancels the
+    task via `CancelledError`. The `finally` block in `_on_demand_inner` calls
+    `disconnect_ble_only()`, but `self._esphome_unsub_adv` is still `None` — so the
+    BLE advertisement subscription is never released. The ESP32 holds it until its ping
+    timeout (~60–90 s). If the new bridge polls within that window, it gets the "Only
+    one subscription" rejection.
+    **Fix**: store `self._esphome_unsub_adv = unsub_adv` immediately after calling
+    `api.subscribe_bluetooth_le_raw_advertisements()`, before the `asyncio.wait_for`.
+    In the `TimeoutError` handler, clear `self._esphome_unsub_adv = None` after calling
+    it to prevent a double-unsubscribe in `disconnect_ble_only()`.
+
+11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
+    → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
+    (lines 103–105 check `if log_level not in ('TRACE', 'SILLY')`). The
+    `aioesphomeapi.connection` logger at DEBUG level logs raw protobuf payloads, which
+    include the ANSI color codes the ESP32 embeds in its own log messages. These appear
+    as literal escape sequences (`\033[1;31m`) in the log file.
+    **Fix**: add a `logging.Filter` subclass (`_AnsiFilter`) to the `aioesphomeapi`
+    logger at module level in `main.py`. The filter calls `record.getMessage()`,
+    strips ANSI codes with the same regex used in `_on_esphome_log_message`, and
+    replaces `record.msg` / clears `record.args`. Applied unconditionally — harmless
+    at INFO level, essential at DEBUG/SILLY.
 
 ---
 
