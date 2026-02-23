@@ -10,6 +10,7 @@ This guide provides complete setup instructions for integrating a Geberit AquaCl
 - [Prerequisites](#prerequisites)
 - [MQTT Topics](#mqtt-topics)
 - [Configuration](#configuration)
+- [Upgrading](#upgrading)
 - [Custom Icons](#custom-icons)
 - [Dashboard Cards](#dashboard-cards)
 - [Troubleshooting](#troubleshooting)
@@ -94,18 +95,20 @@ You have **two options** for configuring the entities in Home Assistant:
 
 1. **Run the built-in CLI command** (reads broker settings from `config.ini`):
    ```bash
-   python main.py --mode cli --command publish-ha-discovery
+   aquaclean-bridge --mode cli --command publish-ha-discovery
    ```
+
+   > **Running from source?** Use `python main.py` in place of `aquaclean-bridge`.
 
    To remove all entities later:
    ```bash
-   python main.py --mode cli --command remove-ha-discovery
+   aquaclean-bridge --mode cli --command remove-ha-discovery
    ```
 
 2. **Verify in Home Assistant**:
    - Go to **Settings** → **Devices & Services** → **MQTT**
    - You should see **"Geberit AquaClean"** device
-   - Click on it to see all 13 entities grouped together
+   - Click on it to see all 19 entities grouped together
    - All entities are automatically created - no configuration.yaml editing needed!
 
    ![MQTT Discovery Result](./mqtt_discovery_result.png)
@@ -143,8 +146,33 @@ You have **two options** for configuring the entities in Home Assistant:
    - Search for "Geberit AquaClean"
    - You should see:
      - 4 binary sensors (monitor states)
-     - 7 sensors (device information and status)
-     - 1 switch (lid control)
+     - 13 sensors (identification, descale statistics, connection status)
+     - 2 switches (lid control, anal shower)
+
+## Upgrading
+
+When a new version of the bridge adds new HA entities, you need to re-publish the discovery config so Home Assistant learns about them. This is safe to do while the service is running.
+
+**Step 1 — Re-publish discovery** (registers any new entities):
+```bash
+aquaclean-bridge --mode cli --command publish-ha-discovery
+```
+
+**Step 2 — Populate new sensors** (triggers a first BLE read so the new sensors show data immediately rather than "unknown"):
+```bash
+curl http://localhost:8080/data/statistics-descale
+```
+
+> You only need Step 2 if the new entities are demand-fetched (like descale statistics).
+> Monitor sensors (user sitting, shower running, etc.) populate automatically on the next poll.
+
+**To remove all entities and start fresh:**
+```bash
+aquaclean-bridge --mode cli --command remove-ha-discovery
+aquaclean-bridge --mode cli --command publish-ha-discovery
+```
+
+---
 
 ## Custom Icons
 
