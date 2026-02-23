@@ -395,8 +395,32 @@ human intervention.
 4. After triggering the restart, sleep ~30s for the ESP32 to reboot before the
    next probe attempt.
 
-**Expected result:** 5 × 30s poll interval = 2.5 min to circuit open → ESP32 restarts
-→ BLE stack resets → polling resumes automatically. 4-hour outage becomes ~3 minutes.
+**Expected flow once implemented:**
+```
+5× E0002 → circuit breaker opens → bridge calls ESP32 restart button
+  → ESP32 reboots → BLE stack resets → bridge reconnects → polling resumes
+```
+5 × 30s poll interval = 2.5 min to circuit open → ESP32 restarts → polling resumes.
+4-hour outage becomes ~3 minutes.
+
+**Grep commands for log analysis:**
+
+```bash
+# Find when the circuit breaker opened (E0002 storm)
+grep "Circuit open after" /var/log/aquaclean/aquaclean.log
+
+# Find all consecutive E0002 failure counts
+grep "E0002\|consecutive" /var/log/aquaclean/aquaclean.log
+
+# Find when the auto-restart was triggered (once implemented)
+grep "Triggering ESP32 restart\|ESP32 restart" /var/log/aquaclean/aquaclean.log
+
+# Find when polling recovered after the restart
+grep "Poll recovered" /var/log/aquaclean/aquaclean.log
+
+# Full incident timeline in one command
+grep "Circuit open\|Triggering ESP32\|Poll recovered\|Connection reset" /var/log/aquaclean/aquaclean.log
+```
 
 ### Wire `GetStoredProfileSetting` / `SetStoredProfileSetting`
 
