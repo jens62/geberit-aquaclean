@@ -72,6 +72,12 @@ fi
 cleanup() { [ -n "$TMPDIR_USED" ] && rm -rf "$TMPDIR_USED"; }
 trap cleanup EXIT
 
+# --- Create log directory --------------------------------------------------------
+
+echo "==> Creating log directory /var/log/aquaclean..."
+sudo mkdir -p /var/log/aquaclean
+sudo chown "${USER_NAME}" /var/log/aquaclean
+
 # --- Stop existing service (if running) ------------------------------------------
 
 if systemctl is-active --quiet aquaclean-bridge 2>/dev/null; then
@@ -97,7 +103,17 @@ sudo cp "${LOGROTATE_SRC}" "${LOGROTATE_DEST}"
 echo "==> Reloading systemd and enabling service..."
 sudo systemctl daemon-reload
 sudo systemctl enable aquaclean-bridge
-sudo systemctl start aquaclean-bridge
+
+echo "==> Starting service..."
+if sudo systemctl start aquaclean-bridge; then
+    echo ""
+    echo "==> Service started successfully."
+else
+    echo ""
+    echo "==> Service did not start (exit code $?)."
+    echo "    This is normal if config.ini has not been configured yet."
+    echo "    Edit config.ini, then run: sudo systemctl start aquaclean-bridge"
+fi
 
 echo ""
 echo "==> Service status:"
