@@ -202,6 +202,41 @@ the parsed one.
 
 ---
 
+## "Only one API subscription is allowed at a time" — Home Assistant conflict
+
+**Symptom:** The bridge logs `Only one API subscription is allowed at a time` on every BLE scan
+attempt, even though no log streaming is configured.  `ble-scan.py` also returns
+"No devices found" despite the ESP32 being reachable on port 6053.
+
+**Cause:** Home Assistant auto-discovers ESPHome devices on the network.  If the
+`aquaclean-proxy` integration inside Home Assistant is **enabled**, HA opens its own
+persistent TCP connection to the ESP32 on port 6053 and holds the single BLE
+advertisement subscription slot.  Every subsequent connection attempt — from the Python
+bridge or `ble-scan.py` — is rejected with the "only one subscription" error because the
+slot is already taken by HA.
+
+This is the same root cause as the log streaming conflict (trap 12 in CLAUDE.md): the ESP32
+firmware (`bluetooth_proxy.cpp`) allows only **one** `BluetoothLEAdvertisements` subscription
+across **all** TCP connections simultaneously.
+
+**Fix:** In Home Assistant → Settings → Integrations, find the `aquaclean-proxy` ESPHome
+integration and **disable** it (set to "Deaktiviert" / Disabled).  Do **not** delete it —
+disabling is sufficient and keeps the entry for reference.  Once disabled, HA closes its TCP
+connection and releases the subscription slot.
+
+> The integration must remain disabled for as long as the standalone Python bridge is
+> in use.  Re-enabling it will immediately block all BLE scans again.
+
+**Verify the fix:** after disabling the HA integration, run:
+
+```bash
+python esphome/ble-scan.py 192.168.0.160
+```
+
+The Geberit device should appear in the scan results within 10–15 seconds.
+
+---
+
 ## E0002 / "No devices found" — ESP32 BLE scanner stuck
 
 **Symptom:** The application logs repeated E0002 errors ("BLE device not found via ESPHome proxy")

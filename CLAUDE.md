@@ -564,6 +564,12 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     `_ensure_esphome_api_connected()` reconnects TCP if the unsubscribe closes it.
     **Fix B:** Remove unsub+null from `disconnect_ble_only()` — the reference stays
     intact until `_connect_via_esphome()` uses it at the start of the next request.
+    **Bug C (Home Assistant conflict):** If the `aquaclean-proxy` ESPHome integration
+    is **enabled** in Home Assistant, HA opens its own persistent TCP connection to the
+    ESP32 and permanently holds the BLE subscription slot. Every bridge connection is
+    rejected. **Fix C:** Disable (not delete) the `aquaclean-proxy` integration in
+    HA → Settings → Integrations. It must remain disabled while the standalone bridge
+    is in use. See `docs/esphome-troubleshooting.md`.
 
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
     → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
