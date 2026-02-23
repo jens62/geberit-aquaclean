@@ -757,42 +757,20 @@ class ServiceMode:
             logger.debug("ESPHome log streaming skipped: no host configured ([ESPHOME] host not set)")
             return
 
-        from aioesphomeapi import APIClient, LogLevel
-
-        # Map config log level string to aioesphomeapi LogLevel
-        level_map = {
-            "ERROR": LogLevel.LOG_LEVEL_ERROR,
-            "WARN": LogLevel.LOG_LEVEL_WARN,
-            "WARNING": LogLevel.LOG_LEVEL_WARN,
-            "INFO": LogLevel.LOG_LEVEL_INFO,
-            "DEBUG": LogLevel.LOG_LEVEL_DEBUG,
-            "VERBOSE": LogLevel.LOG_LEVEL_VERBOSE,
-        }
-        log_level = level_map.get(esphome_log_level.upper(), LogLevel.LOG_LEVEL_INFO)
-
-        try:
-            logger.info(f"Starting ESPHome log streaming from {esphome_host}:{esphome_port} (level={esphome_log_level})")
-
-            # Create persistent API connection for log streaming
-            self._esphome_log_api = APIClient(
-                address=esphome_host,
-                port=esphome_port,
-                password="",
-                noise_psk=esphome_noise_psk
-            )
-            await asyncio.wait_for(self._esphome_log_api.connect(login=True), timeout=10.0)
-
-            # Subscribe to logs (subscribe_logs returns a callable, not awaitable)
-            self._esphome_log_unsub = self._esphome_log_api.subscribe_logs(
-                self._on_esphome_log_message,
-                log_level=log_level
-            )
-            logger.info("ESPHome log streaming started successfully")
-
-        except Exception as e:
-            logger.warning(f"Failed to start ESPHome log streaming: {e}")
-            self._esphome_log_api = None
-            self._esphome_log_unsub = None
+        # Log streaming and the ESPHome BLE proxy cannot share the same ESP32:
+        # each opens its own TCP connection, and the ESP32 allows only ONE BLE
+        # advertisement subscription (api_connection_) at a time across all
+        # connections.  The log streaming connection claims the slot first; every
+        # subsequent BLE scan from the BLE connector is rejected with
+        # "Only one API subscription is allowed at a time".
+        # See CLAUDE.md trap 12.
+        logger.warning(
+            "ESPHome log streaming is disabled: log streaming and the ESPHome BLE "
+            "proxy cannot share the ESP32 API simultaneously. Two TCP connections "
+            "fight for the single BLE advertisement subscription slot. "
+            "Set log_streaming = false in [ESPHOME] config.ini when using the ESP32 proxy."
+        )
+        return
 
     def _on_esphome_log_message(self, log_entry):
         """Handle incoming log messages from ESPHome device."""

@@ -99,11 +99,18 @@ variable). Now it reads `device_state["poll_interval"]` each reconnect.
 > never pinpointed before the approach was reverted.
 >
 > **"Only one API subscription is allowed at a time"** — this is an ESP32 firmware
-> limit: only one API client may hold an active BLE advertisement subscription at a
-> time. It is NOT a TCP connection limit. It can also occur in production on bridge
-> restart: if the bridge is killed mid-scan (SIGTERM during the 30-second BLE scan
-> wait), the advertisement subscription is not released and the ESP32 holds it until
-> its ping timeout (~60–90 s). See debugging trap 10 for root cause and fix.
+> limit: only one API client may hold an active BLE advertisement subscription
+> (`api_connection_` field) at a time across ALL TCP connections to that ESP32.
+> Two known causes:
+> 1. **Log streaming + ESPHome proxy**: `_start_esphome_log_streaming()` opens a
+>    second TCP connection to the same ESP32. The ESP32 assigns `api_connection_`
+>    to the first connection that subscribes (or connects, in newer ESPHome/aioesphomeapi
+>    versions). The BLE connector's subscribe attempt on the second TCP connection is
+>    then permanently rejected. **Fix: log streaming is disabled when ESPHome proxy
+>    is active.** See debugging trap 12.
+> 2. **SIGTERM mid-scan**: if the bridge is killed while waiting for a BLE
+>    advertisement, the subscription is not released and the ESP32 holds it until
+>    its ping timeout (~60–90 s). See debugging trap 10 for root cause and fix.
 >
 > **Persistent TCP IS achievable** — proven by `esphome-aioesphomeapi-probe-v4.py`:
 > all 3 cycles succeeded with TCP reused (0 ms overhead on cycles 2+) when run in
@@ -532,6 +539,31 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     `api.subscribe_bluetooth_le_raw_advertisements()`, before the `asyncio.wait_for`.
     In the `TimeoutError` handler, clear `self._esphome_unsub_adv = None` after calling
     it to prevent a double-unsubscribe in `disconnect_ble_only()`.
+
+12. **"Only one API subscription" on every BLE scan — two-TCP conflict AND stale ref**
+    Two independent bugs combine to break every BLE scan:
+    **Bug A (fresh start / across sessions):** `_start_esphome_log_streaming()` creates
+    a SECOND TCP connection to the same ESP32 (`self._esphome_log_api`). The ESP32's
+    `api_connection_` allows only ONE BLE advertisement subscription across all TCP
+    connections. The log streaming connection connects ~10 s before the first BLE poll
+    and claims the slot. Every `SubscribeBluetoothLEAdvertisementsRequest` from the BLE
+    connector's TCP is permanently rejected. Sending `UnsubscribeBluetoothLEAdvertisementsRequest`
+    from the BLE connector is useless — it never owned the subscription.
+    **Fix A:** `_start_esphome_log_streaming()` returns immediately (with a WARNING) when
+    `esphome_host` is configured. Log streaming and the ESPHome BLE proxy are mutually
+    exclusive on the same ESP32.
+    **Bug B (within-session, between BLE cycles):** `disconnect_ble_only()` was calling
+    and nulling `_esphome_unsub_adv` after each BLE cycle. The defensive cleanup at the
+    start of `_connect_via_esphome()` always found it `None` and skipped. The old
+    subscription on the ESP32 was never released before the next subscribe attempt →
+    "Only one API subscription" again. This was the regression introduced in commit
+    `8c52b2d` when `disconnect_ble_only()` was written with the unsub+null included.
+    The correct pattern (from commit `927e953`): `disconnect_ble_only()` must **keep**
+    `_esphome_unsub_adv` alive so `_connect_via_esphome()` can call it at the very start
+    of the next request (before any BLE connection is active), then
+    `_ensure_esphome_api_connected()` reconnects TCP if the unsubscribe closes it.
+    **Fix B:** Remove unsub+null from `disconnect_ble_only()` — the reference stays
+    intact until `_connect_via_esphome()` uses it at the start of the next request.
 
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
     → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
