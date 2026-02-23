@@ -48,7 +48,7 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 **Easy — no clone needed (Raspberry Pi / Linux server):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh | bash -s -- v2.4.3
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh | bash -s -- latest
 ```
 
 > `curl | bash` executes code from the internet directly. Review the script first if preferred:
@@ -61,7 +61,7 @@ upgrades in-place.
 **If you already have the repo cloned:**
 
 ```bash
-bash operation_support/install.sh v2.4.3
+bash operation_support/install.sh latest
 ```
 
 **Manual:**
@@ -69,13 +69,13 @@ bash operation_support/install.sh v2.4.3
 ```bash
 python3 -m venv ~/venv
 ~/venv/bin/pip install --upgrade pip setuptools wheel
-~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@v2.4.3
+~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@v2.4.4
 ```
 
 **Upgrading an existing install** (preserves your `config.ini`):
 
 ```bash
-bash operation_support/update-to-branch.sh v2.4.3
+bash operation_support/update-to-branch.sh latest
 ```
 
 <details>

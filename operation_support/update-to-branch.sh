@@ -4,11 +4,12 @@
 #
 # Usage (with venv active):
 #   bash update-to-branch.sh                        # installs main
+#   bash update-to-branch.sh latest                 # installs the latest release
 #   bash update-to-branch.sh feature/my-branch      # installs a specific branch
-#   bash update-to-branch.sh v2.4.3                 # installs a specific release tag
+#   bash update-to-branch.sh v2.4.4                 # installs a specific release tag
 #
 # Usage (without activating venv):
-#   PYTHON=/home/kali/venv/bin/python3 PIP=/home/kali/venv/bin/pip bash update-to-branch.sh v2.4.3
+#   PYTHON=/home/kali/venv/bin/python3 PIP=/home/kali/venv/bin/pip bash update-to-branch.sh latest
 
 set -e
 
@@ -33,6 +34,13 @@ PYTHON="${PYTHON:-python3}"
 PIP="${PIP:-$(dirname "$PYTHON")/pip}"
 REF="${1:-main}"
 REPO="https://github.com/jens62/geberit-aquaclean.git"
+
+if [ "$REF" = "latest" ]; then
+    echo "==> Resolving latest release..."
+    REF=$(curl -fsSL "https://api.github.com/repos/jens62/geberit-aquaclean/releases/latest" \
+          | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    echo "==> Latest release: ${REF}"
+fi
 BACKUP="/tmp/aquaclean_config.ini.bak"
 
 # Locate the installed config.ini

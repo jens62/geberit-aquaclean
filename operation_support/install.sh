@@ -8,7 +8,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh | bash -s -- <version>
 #
 # Examples:
-#   bash operation_support/install.sh v2.4.3   # install a specific release tag
+#   bash operation_support/install.sh latest    # install the latest release (recommended)
+#   bash operation_support/install.sh v2.4.4    # install a specific release tag
 #   bash operation_support/install.sh main      # install latest from main branch
 #
 # If ~/venv already exists, the apt/venv creation steps are skipped.
@@ -21,9 +22,17 @@ VERSION="${1:-}"
 
 if [ -z "$VERSION" ]; then
     echo "Usage: $0 <version>"
-    echo "  Example: $0 v2.4.3"
+    echo "  Example: $0 latest"
+    echo "  Example: $0 v2.4.4"
     echo "  Example: $0 main"
     exit 1
+fi
+
+if [ "$VERSION" = "latest" ]; then
+    echo "==> Resolving latest release..."
+    VERSION=$(curl -fsSL "https://api.github.com/repos/jens62/geberit-aquaclean/releases/latest" \
+              | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    echo "==> Latest release: ${VERSION}"
 fi
 
 if [ ! -d "$VENV" ]; then
@@ -65,3 +74,7 @@ echo "       ${VENV}/bin/aquaclean-bridge --mode api"
 echo ""
 echo "  3. Full usage:"
 echo "       ${VENV}/bin/aquaclean-bridge --help"
+echo ""
+echo "  To call aquaclean-bridge without the full path, add to your shell profile"
+echo "  (~/.bashrc or ~/.zshrc):"
+echo "       export PATH=\"\${HOME}/venv/bin:\$PATH\""
