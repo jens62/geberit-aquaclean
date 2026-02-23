@@ -366,6 +366,35 @@ The device tracks a ceramic honeycomb filter counter. Two things are needed:
 1. **Read filter status** — no getter exists yet. Most likely accessible via `GetStoredCommonSetting` (0x51, see above). BLE sniffing the official app while it shows the filter reminder would confirm the exact `storedCommonSettingId` or DpId.
 2. **Wire `ResetFilterCounter` command** — `ResetFilterCounter = 47` is already defined in `Commands.py` but not exposed on any interface. Once the read side is understood, expose both read and reset via REST API, CLI, MQTT, and HA Discovery (same "all interfaces" rule).
 
+### Auto-restart ESP32 when BLE scanner is stuck (E0002 circuit breaker)
+
+In the 2026-02-23 production incident, the ESP32's BLE scanner hung for ~4 hours
+(134 consecutive E0002 failures). The bridge's API connection to the ESP32 was
+healthy the whole time — `api: reboot_timeout:` in ESPHome would **not** have
+helped because it only watches the API connection, not the BLE scanner.
+
+**The right fix:** add `button: platform: restart` to the ESPHome YAML, then have
+the bridge call it programmatically via `aioesphomeapi` when the circuit breaker
+opens (5 consecutive E0002 failures). This resets the stuck BLE stack without any
+human intervention.
+
+**Implementation sketch:**
+1. Add to ESPHome YAML:
+   ```yaml
+   button:
+     - platform: restart
+       name: "Restart AquaClean Proxy"
+   ```
+2. Flash the ESP32.
+3. In `ApiMode._polling_loop`, when `_consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD`
+   and `esphome_host` is set, call the restart button via `aioesphomeapi`
+   (`ButtonCommandRequest` or `execute_service`).
+4. After triggering the restart, sleep ~30s for the ESP32 to reboot before the
+   next probe attempt.
+
+**Expected result:** 5 × 30s poll interval = 2.5 min to circuit open → ESP32 restarts
+→ BLE stack resets → polling resumes automatically. 4-hour outage becomes ~3 minutes.
+
 ### Wire `GetStoredProfileSetting` / `SetStoredProfileSetting`
 
 The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into any interface (REST API, CLI, MQTT, web UI). Blocked on knowing which `ProfileSettings` enum values map to useful device features.
