@@ -476,11 +476,16 @@
 
   </main>
 
-  <footer>API: <span id="apiBase"></span></footer>
+  <footer>API: <span id="apiBase"></span> &nbsp;|&nbsp; aquaclean-bridge <span id="bridgeVersion">—</span></footer>
 
   <script>
     const apiBase = window.location.origin;
     document.getElementById('apiBase').textContent = apiBase;
+
+    fetch(apiBase + '/version')
+      .then(r => r.json())
+      .then(d => { document.getElementById('bridgeVersion').textContent = d.version; })
+      .catch(() => {});
 
     // --- SSE ---
     const dot   = document.getElementById('sseDot');
@@ -604,8 +609,8 @@
       const bar   = document.getElementById('pollBar');
       if (_pollEpoch !== null && _pollInterval !== null) {
         const nowSec    = Date.now() / 1000;
-        const elapsed   = (nowSec - _pollEpoch) % _pollInterval;
-        const remaining = _pollInterval - elapsed;
+        const elapsed   = nowSec - _pollEpoch;
+        const remaining = Math.max(0, _pollInterval - elapsed);
         const pct       = (remaining / _pollInterval) * 100;
         label.textContent = 'Next poll in ' + Math.ceil(remaining) + ' s';
         bar.style.width = pct + '%';

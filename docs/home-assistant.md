@@ -28,35 +28,33 @@ port     = 1883
 topic    = Geberit/AquaClean
 ```
 
-### 2. Publish MQTT Discovery
-
-Run once to register all entities automatically in Home Assistant.  This command is safe to run while the service is already active in `--mode api` or `--mode service` — it uses a separate MQTT connection and requires no BLE.
+### 2. Start the bridge
 
 ```bash
-python main.py --mode cli --command publish-ha-discovery
+aquaclean-bridge --mode api
 ```
 
-```json
-{
-  "status": "success",
-  "command": "publish-ha-discovery",
-  "data": {
-    "topic_prefix": "Geberit/AquaClean",
-    "broker": "192.168.0.xxx:1883",
-    "published": [
-      "User Sitting", "Anal Shower Running", "Lady Shower Running", "Dryer Running",
-      "SAP Number", "Serial Number", "Production Date", "Description",
-      "Initial Operation Date", "Connected", "Error",
-      "Days Until Next Descale", "Days Until Shower Restricted",
-      "Shower Cycles Until Confirmation", "Number of Descale Cycles",
-      "Last Descale", "Unposted Shower Cycles",
-      "Toggle Lid", "Toggle Anal Shower"
-    ],
-    "failed": []
-  },
-  "message": "Published 19 HA discovery entities to 192.168.0.xxx:1883"
-}
+By default (`ha_discovery_on_startup = true` in `config.ini`), all Home Assistant MQTT discovery entities are published automatically on every startup — no manual step needed.  You will see in the log:
+
 ```
+INFO  Published 19 HA discovery entities on startup
+```
+
+**Disable automatic publishing** (optional):
+
+```bash
+aquaclean-bridge --mode api --no-ha-discovery
+```
+
+Or set `ha_discovery_on_startup = false` in `config.ini` to disable permanently.
+
+**Publish manually** (if auto-publish is disabled, or to force a republish):
+
+```bash
+aquaclean-bridge --mode cli --command publish-ha-discovery
+```
+
+This is safe to run while the service is already active — it uses a separate MQTT connection and requires no BLE.
 
 ### 3. Verify in Home Assistant
 
@@ -70,18 +68,6 @@ Go to **Settings → Devices & Services → MQTT** — you will see a **Geberit 
 | Switch | Toggle Lid, Toggle Anal Shower |
 
 ![Descale Statistics in Home Assistant](homeassistant-descale-statistics.png)
-
-### 4. Start the service
-
-```bash
-python main.py --mode service
-```
-
-Or in api mode (adds REST API and web UI):
-
-```bash
-python main.py --mode api
-```
 
 ---
 
@@ -99,7 +85,9 @@ This publishes empty retained payloads to all discovery topics.  Only entities c
 
 ## Keeping discovery in sync
 
-The discovery configuration is defined alongside the MQTT publish calls in `main.py`.  When a new `send_data_async()` call is added, a matching entity is added to `get_ha_discovery_configs()` in the same file.  Re-run `publish-ha-discovery` after any such change to update Home Assistant.
+The discovery configuration is defined alongside the MQTT publish calls in `main.py`.  When a new `send_data_async()` call is added, a matching entity is added to `get_ha_discovery_configs()` in the same file.
+
+Because `ha_discovery_on_startup = true` by default, entities are automatically re-registered each time the bridge restarts — so after any config change, simply restart the service.
 
 ---
 

@@ -8,6 +8,20 @@ python main.py --mode cli --command <command> [--address <ble-mac>]
 
 `--address` overrides the BLE device address from `config.ini` for commands that need BLE.
 
+### Startup flags (service and api modes)
+
+| Flag | Description |
+|------|-------------|
+| `--ha-discovery` | Force-publish HA MQTT discovery on startup (overrides `ha_discovery_on_startup = false` in config) |
+| `--no-ha-discovery` | Skip HA MQTT discovery on startup (overrides `ha_discovery_on_startup = true` in config) |
+
+```bash
+aquaclean-bridge --mode api --no-ha-discovery   # start without republishing HA entities
+aquaclean-bridge --mode api --ha-discovery      # force publish even if disabled in config
+```
+
+These flags have no effect in `--mode cli`.
+
 Redirect stderr to suppress log noise:
 
 ```bash

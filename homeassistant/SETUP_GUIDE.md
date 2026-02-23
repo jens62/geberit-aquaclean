@@ -8,6 +8,7 @@ This guide provides complete setup instructions for integrating a Geberit AquaCl
 ## Table of Contents
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
+- [Installation](#installation)
 - [MQTT Topics](#mqtt-topics)
 - [Configuration](#configuration)
 - [Upgrading](#upgrading)
@@ -58,6 +59,38 @@ This MQTT-based approach is the industry-standard pattern for BLE devices, simil
 - Custom Button Card installed from HACS (for advanced dashboard)
 - Geberit AquaClean device publishing to MQTT
 
+## Installation
+
+**1. Install the bridge** (Raspberry Pi / Linux server):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh | bash -s -- latest
+```
+
+The script installs system packages, creates `~/venv`, and prints next steps. Re-running it with a new version upgrades in-place.
+
+**2. Edit `config.ini`** — set your BLE device address and MQTT broker:
+
+```ini
+[BLE]
+device_id = XX:XX:XX:XX:XX:XX   # BLE MAC of your AquaClean (find with: bluetoothctl scan on)
+
+[MQTT]
+server = 192.168.0.xxx           # IP of your MQTT broker
+```
+
+**3. Install as a background service** (Linux / systemd):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/setup-service.sh | bash
+```
+
+The bridge starts automatically on boot and restarts on failure. Logs go to `/var/log/aquaclean/aquaclean.log`.
+
+**4. Home Assistant MQTT Discovery runs automatically** on every startup — no manual command needed (see [Configuration](#configuration) below).
+
+---
+
 ## MQTT Topics
 
 The integration uses the following MQTT topics:
@@ -89,18 +122,23 @@ You have **two options** for configuring the entities in Home Assistant:
 ### Option 1: MQTT Discovery (Recommended) ⭐
 
 **Pros:** Automatic entity creation, no manual YAML editing, entities grouped as a device, easier updates
-**Cons:** Requires running a command once
+**Cons:** none — discovery is published automatically on every startup
 
 **Steps:**
 
-1. **Run the built-in CLI command** (reads broker settings from `config.ini`):
+1. **Start the bridge** — discovery is published automatically on startup (controlled by `ha_discovery_on_startup = true` in `config.ini`):
+   ```bash
+   sudo systemctl start aquaclean-bridge   # if installed as a service
+   # or
+   aquaclean-bridge --mode api
+   ```
+
+   To publish discovery manually (e.g. after disabling auto-publish):
    ```bash
    aquaclean-bridge --mode cli --command publish-ha-discovery
    ```
 
-   > **Running from source?** Use `python main.py` in place of `aquaclean-bridge`.
-
-   To remove all entities later:
+   To remove all entities:
    ```bash
    aquaclean-bridge --mode cli --command remove-ha-discovery
    ```
@@ -151,20 +189,30 @@ You have **two options** for configuring the entities in Home Assistant:
 
 ## Upgrading
 
-When a new version of the bridge adds new HA entities, you need to re-publish the discovery config so Home Assistant learns about them. This is safe to do while the service is running.
+**Upgrade the bridge** (preserves your `config.ini`):
 
-**Step 1 — Re-publish discovery** (registers any new entities):
 ```bash
-aquaclean-bridge --mode cli --command publish-ha-discovery
+bash operation_support/update-to-branch.sh latest
 ```
 
-**Step 2 — Populate new sensors** (triggers a first BLE read so the new sensors show data immediately rather than "unknown"):
+Or without the repo cloned:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/update-to-branch.sh | bash -s -- latest
+```
+
+Then restart the service:
+
+```bash
+sudo systemctl restart aquaclean-bridge
+```
+
+Because `ha_discovery_on_startup = true` by default, Home Assistant discovery is re-published automatically on restart — new entities appear in HA without any manual step.
+
+**To populate demand-fetched sensors immediately** (e.g. descale statistics) rather than waiting for the next poll:
 ```bash
 curl http://localhost:8080/data/statistics-descale
 ```
-
-> You only need Step 2 if the new entities are demand-fetched (like descale statistics).
-> Monitor sensors (user sitting, shower running, etc.) populate automatically on the next poll.
 
 **To remove all entities and start fresh:**
 ```bash

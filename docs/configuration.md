@@ -20,6 +20,7 @@ interval = 10.5                  # seconds between state polls (see below)
 [SERVICE]
 mqtt_enabled  = true             # publish to MQTT broker (true/false)
 ble_connection = persistent      # persistent | on-demand
+ha_discovery_on_startup = true   # publish HA MQTT discovery entities on every start
 
 [API]
 host = 0.0.0.0
@@ -72,6 +73,7 @@ A longer interval reduces BLE request frequency, which can help avoid the device
 |-----|---------|-------------|
 | `mqtt_enabled` | `true` | When `true`, every REST API result and every state change is published to the MQTT broker. When `false`, a silent no-op stub is used — no guards are needed in application code. |
 | `ble_connection` | `persistent` | Controls the BLE connection strategy in **api mode**. `persistent` keeps a permanent BLE connection and polls on a timer (same as service mode). `on-demand` connects, queries, and disconnects for each request. Can be switched at runtime via `POST /config/ble-connection` or the MQTT topic `centralDevice/config/bleConnection`. Has no effect in service or cli mode. |
+| `ha_discovery_on_startup` | `true` | When `true`, all Home Assistant MQTT discovery entities are (re-)published automatically each time the bridge starts, immediately after MQTT connects. No manual `publish-ha-discovery` command needed. Set to `false` to disable automatic publishing. Can also be overridden per-run with `--ha-discovery` / `--no-ha-discovery` on the command line. |
 
 ### `[API]`
 

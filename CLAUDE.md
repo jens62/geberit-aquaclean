@@ -22,6 +22,7 @@ Entry point: `aquaclean_console_app/main.py`
 | File | Role |
 |---|---|
 | `main.py` | Everything: config, `ServiceMode`, `ApiMode`, REST wiring, startup |
+| `__main__.py` | Entry point for `aquaclean-bridge` command; **has its own argparse parser** |
 | `RestApiService.py` | FastAPI routes + SSE broadcast queue |
 | `MqttService.py` | paho-mqtt client; fires asyncio events into the main loop |
 | `bluetooth_le/LE/BluetoothLeConnector.py` | BLE connector; handles ESPHome proxy path |
@@ -29,6 +30,16 @@ Entry point: `aquaclean_console_app/main.py`
 | `aquaclean_core/Clients/AquaCleanClient.py` | High-level Geberit API; `start_polling()` |
 | `ErrorCodes.py` | All error codes as `ErrorCode` NamedTuples; `ErrorManager` formatters |
 | `config.ini` | Runtime config (not committed with real values) |
+
+**Two parsers — keep in sync (MANDATORY):**
+`main.py` (`if __name__ == "__main__":`) and `__main__.py` (`entry_point()`) each define
+a full `JsonArgumentParser`. Any change to either must be mirrored in the other:
+- New `--command` choice → add to both `choices=[...]` lists
+- New `add_argument(...)` flag → add to both parsers
+- Epilog examples → keep consistent
+
+`main.py`'s parser is used by `python main.py`; `__main__.py`'s parser is used by the
+installed `aquaclean-bridge` command. Updating only one silently breaks the other.
 
 ---
 
@@ -358,6 +369,35 @@ The device tracks a ceramic honeycomb filter counter. Two things are needed:
 1. **Read filter status** — no getter exists yet. Most likely accessible via `GetStoredCommonSetting` (0x51, see above). BLE sniffing the official app while it shows the filter reminder would confirm the exact `storedCommonSettingId` or DpId.
 2. **Wire `ResetFilterCounter` command** — `ResetFilterCounter = 47` is already defined in `Commands.py` but not exposed on any interface. Once the read side is understood, expose both read and reset via REST API, CLI, MQTT, and HA Discovery (same "all interfaces" rule).
 
+### Auto-restart ESP32 when BLE scanner is stuck (E0002 circuit breaker)
+
+In the 2026-02-23 production incident, the ESP32's BLE scanner hung for ~4 hours
+(134 consecutive E0002 failures). The bridge's API connection to the ESP32 was
+healthy the whole time — `api: reboot_timeout:` in ESPHome would **not** have
+helped because it only watches the API connection, not the BLE scanner.
+
+**The right fix:** add `button: platform: restart` to the ESPHome YAML, then have
+the bridge call it programmatically via `aioesphomeapi` when the circuit breaker
+opens (5 consecutive E0002 failures). This resets the stuck BLE stack without any
+human intervention.
+
+**Implementation sketch:**
+1. Add to ESPHome YAML:
+   ```yaml
+   button:
+     - platform: restart
+       name: "Restart AquaClean Proxy"
+   ```
+2. Flash the ESP32.
+3. In `ApiMode._polling_loop`, when `_consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD`
+   and `esphome_host` is set, call the restart button via `aioesphomeapi`
+   (`ButtonCommandRequest` or `execute_service`).
+4. After triggering the restart, sleep ~30s for the ESP32 to reboot before the
+   next probe attempt.
+
+**Expected result:** 5 × 30s poll interval = 2.5 min to circuit open → ESP32 restarts
+→ BLE stack resets → polling resumes automatically. 4-hour outage becomes ~3 minutes.
+
 ### Wire `GetStoredProfileSetting` / `SetStoredProfileSetting`
 
 The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into any interface (REST API, CLI, MQTT, web UI). Blocked on knowing which `ProfileSettings` enum values map to useful device features.
@@ -365,6 +405,7 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 ---
 
 ## TODO
+
 
 - **Log error codes to the Python log file.** When an exception is mapped to an
   error code in `_on_demand_inner`'s finally block, only MQTT and SSE receive the
@@ -662,11 +703,11 @@ For the remaining 10% (water hardness, error status, etc.), BLE sniffing is requ
 
 ## Related repositories
 
-| Repo | Local path | Purpose |
-|---|---|---|
-| `jens62/haggis-patched` | `/Users/jens/develop/haggis-patched` | Patched fork of `haggis` (logging utils); branch: `master` |
-
-**haggis-patched patch**: `src/haggis/logs.py` — replaced `logging._prepareFork()` / `logging._afterFork()` (Python 3.12+ only) with `logging._acquireLock()` / `logging._releaseLock()` so the package works on Python 3.11 (Debian). Source: https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561
+**haggis dependency removed (2026-02-23):** `haggis` was used only for `add_logging_level`.
+The patched fork became incompatible with Python 3.13 (`_acquireLock` removed after being
+added as a Python 3.11 workaround for the upstream Python 3.12-only API).
+Replaced with a 10-line inline `_add_logging_level()` in `main.py` — no external dependency,
+works on all Python versions.
 
 ---
 
@@ -738,6 +779,20 @@ All two-state config/runtime options use `persistent` | `on-demand` as values (n
 - `POST /config/ble-connection`        body: `{"value": "persistent"|"on-demand"}`
 - `POST /config/esphome-api-connection` body: `{"value": "persistent"|"on-demand"}`
 - `POST /config/poll-interval`          body: `{"value": <float>}`
+
+### Release checklist (MANDATORY)
+
+**Do not tag and create a release until all of the following docs are up to date:**
+
+| File | What to check |
+|------|--------------|
+| `README.md` | Install steps, curl commands, feature list |
+| `docs/configuration.md` | New config keys documented in table and example block |
+| `docs/cli.md` | New CLI flags or commands documented |
+| `docs/home-assistant.md` | HA-facing changes reflected |
+| `homeassistant/SETUP_GUIDE.md` | Install steps, discovery, upgrading section |
+
+Only bump `pyproject.toml` and run `gh release create` once all affected docs are updated in the same commit (or in a preceding commit on the same push).
 
 ### MQTT ↔ HA Discovery dependency (MANDATORY)
 

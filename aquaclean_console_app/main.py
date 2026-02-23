@@ -11,7 +11,6 @@ import importlib.metadata
 from datetime import datetime
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
-from haggis import logs
 
 from bleak import BleakScanner
 from bleak.exc import BleakError
@@ -33,14 +32,63 @@ from aquaclean_console_app.ErrorCodes                                           
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
 
+# --- Package version (module-level so argparse --version can use it) ---
+def _get_version() -> str:
+    """Return version string.
+
+    When installed from a tagged release (e.g. v2.4.12) returns the plain
+    version ("2.4.12").  When installed from a commit SHA or branch name
+    (e.g. pip install git+...@e09f1e7 or @main) appends the short commit SHA
+    so the exact code revision is identifiable: "2.4.12+e09f1e7".
+
+    Uses pip's PEP 610 direct_url.json metadata — no extra dependencies.
+    """
+    base = "unknown"
+    try:
+        base = importlib.metadata.version("geberit-aquaclean")
+        dist = importlib.metadata.distribution("geberit-aquaclean")
+        text = dist.read_text("direct_url.json")
+        if text:
+            vcs = json.loads(text).get("vcs_info", {})
+            requested = vcs.get("requested_revision", "")
+            commit_id = vcs.get("commit_id", "")
+            # A version tag looks like "v2.4.12" or "2.4.12" — always contains
+            # a dot.  Commit SHAs (hex, no dots) and branch names never do.
+            is_tag = "." in requested
+            if commit_id and not is_tag:
+                return f"{base}+{commit_id[:7]}"
+    except Exception:
+        pass
+    return base
+
+_bridge_version = _get_version()
+
+
+def _add_logging_level(level_name: str, level_num: int) -> None:
+    """Register a custom numeric log level with the logging module."""
+    method_name = level_name.lower()
+
+    def log_for_level(self, message, *args, **kwargs):
+        if self.isEnabledFor(level_num):
+            self._log(level_num, message, args, **kwargs)
+
+    def log_to_root(message, *args, **kwargs):
+        logging.log(level_num, message, *args, **kwargs)
+
+    logging.addLevelName(level_num, level_name)
+    setattr(logging, level_name, level_num)
+    setattr(logging.getLoggerClass(), method_name, log_for_level)
+    setattr(logging, method_name, log_to_root)
+
+
 # --- Configuration & Logging Setup ---
 __location__ = os.path.dirname(os.path.abspath(__file__))
 iniFile = os.path.join(__location__, 'config.ini')
 config = configparser.ConfigParser(allow_no_value=False, inline_comment_prefixes=('#',))
 config.read(iniFile)
 
-logs.add_logging_level('TRACE', logging.DEBUG - 5)
-logs.add_logging_level('SILLY', logging.DEBUG - 7)
+_add_logging_level('TRACE', logging.DEBUG - 5)
+_add_logging_level('SILLY', logging.DEBUG - 7)
 
 log_level              = config.get("LOGGING",  "log_level",  fallback="DEBUG")
 esphome_host           = config.get("ESPHOME",  "host",       fallback=None) or None
@@ -259,6 +307,7 @@ class ServiceMode:
         # Publish initial ESPHome proxy status and Home Assistant discovery
         await self._publish_esphome_proxy_status()
         await self._publish_esphome_proxy_discovery()
+        await self._publish_ha_discovery()
         logger.debug(f"ESPHome proxy mode: enabled={self.esphome_proxy_state['enabled']}, host={self.esphome_proxy_state['host']}")
 
         # Start ESPHome log streaming if enabled
@@ -664,6 +713,20 @@ class ServiceMode:
             f"homeassistant/sensor/aquaclean_{device_id}/esphome_proxy_error/config",
             json.dumps(error_config)
         )
+
+    async def _publish_ha_discovery(self):
+        """Publish Home Assistant MQTT discovery messages for all AquaClean entities on startup."""
+        if not config.getboolean("SERVICE", "ha_discovery_on_startup", fallback=False):
+            logger.debug("HA discovery on startup disabled (ha_discovery_on_startup = false)")
+            return
+        import json
+        topic = self.mqttConfig['topic']
+        configs = get_ha_discovery_configs(topic)
+        published = 0
+        for cfg in configs:
+            await self.mqtt_service.send_data_async(cfg["topic"], json.dumps(cfg["payload"]))
+            published += 1
+        logger.info(f"Published {published} HA discovery entities on startup")
 
     async def _start_esphome_log_streaming(self):
         """Subscribe to ESPHome device logs if log streaming is enabled."""
@@ -1675,6 +1738,10 @@ class ApiMode:
             if _consecutive_poll_failures >= _CIRCUIT_OPEN_THRESHOLD:
                 await asyncio.sleep(_CIRCUIT_OPEN_SLEEP)
 
+            # Set poll_epoch before the poll so the web UI countdown does not
+            # reset to 100% when results arrive — the epoch already lags by the
+            # BLE round-trip time (~1-2 s) when the broadcast fires.
+            self.service.device_state["poll_epoch"] = time.time()
             try:
                 if not _identification_fetched:
                     result = await self._on_demand(self._fetch_state_and_info)
@@ -1697,7 +1764,6 @@ class ApiMode:
                 self.service.device_state["last_esphome_api_ms"] = result.get("_esphome_api_ms")
                 self.service.device_state["last_ble_ms"]         = result.get("_ble_ms")
                 self.service.device_state["last_poll_ms"]        = result.get("_query_ms")
-                self.service.device_state["poll_epoch"]      = time.time()
                 await self.rest_api.broadcast_state(self.service.device_state.copy())
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
@@ -2300,17 +2366,20 @@ async def run_cli(args):
 
 
 async def main(args):
+    # CLI arg overrides config.ini for ha_discovery_on_startup
+    if getattr(args, 'ha_discovery', None) is not None:
+        if not config.has_section('SERVICE'):
+            config.add_section('SERVICE')
+        config.set('SERVICE', 'ha_discovery_on_startup', str(args.ha_discovery).lower())
+
     if args.mode in ('service', 'api'):
         errors = _check_config_errors()
         if errors:
             for e in errors:
                 logging.error(f"Invalid configuration: {e}")
             sys.exit(1)
-        try:
-            _bridge_version = importlib.metadata.version("geberit-aquaclean")
-        except importlib.metadata.PackageNotFoundError:
-            _bridge_version = "unknown"
-        logger.info(f"aquaclean-bridge version {_bridge_version}")
+        _py = sys.version_info
+        logger.info(f"aquaclean-bridge {_bridge_version} (Python {_py.major}.{_py.minor}.{_py.micro})")
         _log_startup_config()
     if args.mode == 'service':
         service = ServiceMode()
@@ -2406,6 +2475,12 @@ if __name__ == "__main__":
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--ha-discovery', default=None,
+                        action=argparse.BooleanOptionalAction,
+                        dest='ha_discovery',
+                        help='Publish HA MQTT discovery on startup (overrides config ha_discovery_on_startup)')
+    parser.add_argument('--version', action='version',
+                        version=f'aquaclean-bridge {_bridge_version}')
 
     args = parser.parse_args()
     run(main(args))

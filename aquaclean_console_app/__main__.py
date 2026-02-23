@@ -5,7 +5,7 @@ import sys
 
 from aiorun import run
 
-from aquaclean_console_app.main import main, JsonArgumentParser
+from aquaclean_console_app.main import main, JsonArgumentParser, _bridge_version
 
 
 def entry_point():
@@ -55,7 +55,7 @@ def entry_point():
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
-        'info', 'identification', 'initial-operation-date', 'soc-versions',
+        'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
@@ -64,6 +64,12 @@ def entry_point():
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--ha-discovery', default=None,
+                        action=argparse.BooleanOptionalAction,
+                        dest='ha_discovery',
+                        help='Publish HA MQTT discovery on startup (overrides config ha_discovery_on_startup)')
+    parser.add_argument('--version', action='version',
+                        version=f'aquaclean-bridge {_bridge_version}')
 
     args = parser.parse_args()
     run(main(args))

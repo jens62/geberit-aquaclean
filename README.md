@@ -45,13 +45,42 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 
 ### 1. Install
 
+**Easy — no clone needed (Raspberry Pi / Linux server):**
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install git+https://github.com/jens62/geberit-aquaclean.git
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh | bash -s -- latest
 ```
 
-All dependencies are installed automatically, including a [patched fork of haggis](https://github.com/jens62/haggis-patched) that works on Python 3.11+.
+> `curl | bash` executes code from the internet directly. Review the script first if preferred:
+> `curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh`
+
+The script installs system packages and creates `~/venv` if they don't exist yet,
+then installs the bridge and prints the next steps. Re-running it with a new version
+upgrades in-place.
+
+**If you already have the repo cloned:**
+
+```bash
+bash operation_support/install.sh latest
+```
+
+**Manual** (replace `<version>` with a release tag — list available releases):
+
+```bash
+curl -fsSL https://api.github.com/repos/jens62/geberit-aquaclean/releases | grep '"tag_name"'
+```
+
+```bash
+python3 -m venv ~/venv
+~/venv/bin/pip install --upgrade pip setuptools wheel
+~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@<version>
+```
+
+**Upgrading an existing install** (preserves your `config.ini`):
+
+```bash
+bash operation_support/update-to-branch.sh latest
+```
 
 <details>
 <summary>Dependencies installed</summary>
@@ -64,7 +93,6 @@ All dependencies are installed automatically, including a [patched fork of haggi
 | [aiorun](https://github.com/cjrh/aiorun) | Asyncio run loop with clean shutdown handling |
 | [fastapi](https://fastapi.tiangolo.com) | REST API framework |
 | [uvicorn](https://www.uvicorn.org) | ASGI server for FastAPI |
-| [haggis-patched](https://github.com/jens62/haggis-patched) | Adds `TRACE` and `SILLY` log levels; patched for Python 3.11+ |
 
 </details>
 
@@ -94,12 +122,28 @@ server = 192.168.0.xxx           # your MQTT broker IP
 
 Full config reference: [docs/configuration.md](docs/configuration.md)
 
-### 4. Run
+### 4. Install as a background service (recommended for production)
+
+Linux / systemd only:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/setup-service.sh | bash
+```
+
+The script downloads the service and logrotate templates, substitutes your
+username and venv path automatically, and starts the service.
+
+```bash
+sudo systemctl status aquaclean-bridge
+tail -f /var/log/aquaclean/aquaclean.log
+```
+
+### 5. Or run manually
 
 | Goal | Command |
 |------|---------|
-| Background service (MQTT only) | `aquaclean-bridge` |
 | REST API + web UI + MQTT | `aquaclean-bridge --mode api` |
+| Background service (MQTT only) | `aquaclean-bridge` |
 | One-off CLI command | `aquaclean-bridge --mode cli --command <cmd>` |
 
 ---
@@ -129,6 +173,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 
 | Hardware | OS | Python |
 |----------|----|--------|
+| Raspberry Pi 5 | Kali Linux (arm64) | 3.13 |
 | Raspberry Pi 5 | Kali Linux 2024.4 (arm64) | 3.12.8 |
 | MacBookAir + VirtualBox | Ubuntu 24.04 (x86-64) | 3.12.3 |
 | Debian server (arm64) | Debian 12 Bookworm | 3.11.2 |
