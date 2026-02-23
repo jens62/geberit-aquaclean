@@ -2,6 +2,7 @@ import json
 import asyncio
 import logging
 import os
+import re
 import configparser
 import argparse
 import traceback
@@ -103,6 +104,20 @@ logging.basicConfig(level=log_level, format="%(asctime)-15s %(name)-8s %(lineno)
 if log_level not in ('TRACE', 'SILLY'):
     logging.getLogger("aioesphomeapi.connection").setLevel(logging.INFO)
     logging.getLogger("aioesphomeapi._frame_helper.base").setLevel(logging.INFO)
+
+# Strip ANSI escape codes from aioesphomeapi debug output.
+# ESP32 log messages contain color codes (e.g. \033[1;31m) that appear as
+# garbled literal escape sequences in log files when aioesphomeapi logs the
+# raw protobuf payload at DEBUG level.
+_ansi_re = re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
+
+class _AnsiFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = _ansi_re.sub('', record.getMessage())
+        record.args = ()
+        return True
+
+logging.getLogger("aioesphomeapi").addFilter(_AnsiFilter())
 
 logger = logging.getLogger(__name__)
 
