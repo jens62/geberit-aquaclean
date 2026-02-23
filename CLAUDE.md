@@ -582,11 +582,11 @@ For the remaining 10% (water hardness, error status, etc.), BLE sniffing is requ
 
 ## Related repositories
 
-| Repo | Local path | Purpose |
-|---|---|---|
-| `jens62/haggis-patched` | `/Users/jens/develop/haggis-patched` | Patched fork of `haggis` (logging utils); branch: `master` |
-
-**haggis-patched patch**: `src/haggis/logs.py` — replaced `logging._prepareFork()` / `logging._afterFork()` (Python 3.12+ only) with `logging._acquireLock()` / `logging._releaseLock()` so the package works on Python 3.11 (Debian). Source: https://gitlab.com/madphysicist/haggis/-/issues/2#note_2355044561
+**haggis dependency removed (2026-02-23):** `haggis` was used only for `add_logging_level`.
+The patched fork became incompatible with Python 3.13 (`_acquireLock` removed after being
+added as a Python 3.11 workaround for the upstream Python 3.12-only API).
+Replaced with a 10-line inline `_add_logging_level()` in `main.py` — no external dependency,
+works on all Python versions.
 
 ---
 
