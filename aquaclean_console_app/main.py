@@ -33,10 +33,38 @@ from aquaclean_console_app.ErrorCodes                                           
 )
 
 # --- Package version (module-level so argparse --version can use it) ---
-try:
-    _bridge_version = importlib.metadata.version("geberit-aquaclean")
-except importlib.metadata.PackageNotFoundError:
-    _bridge_version = "unknown"
+def _get_version() -> str:
+    """Return version string.
+
+    When installed from a tagged release (e.g. v2.4.12) returns the plain
+    version ("2.4.12").  When installed from a commit SHA or branch name
+    (e.g. pip install git+...@e09f1e7 or @main) appends the short commit SHA
+    so the exact code revision is identifiable: "2.4.12+e09f1e7".
+
+    Uses pip's PEP 610 direct_url.json metadata — no extra dependencies.
+    """
+    base = "unknown"
+    try:
+        base = importlib.metadata.version("geberit-aquaclean")
+        dist = importlib.metadata.distribution("geberit-aquaclean")
+        text = dist.read_text("direct_url.json")
+        if text:
+            vcs = json.loads(text).get("vcs_info", {})
+            requested = vcs.get("requested_revision", "")
+            commit_id = vcs.get("commit_id", "")
+            # A version tag looks like "v2.4.12" or "2.4.12" — starts with a
+            # digit or "v" followed by a digit.  Branch names and raw SHAs don't.
+            is_tag = bool(requested) and (
+                requested[0].isdigit()
+                or (requested.startswith("v") and len(requested) > 1 and requested[1].isdigit())
+            )
+            if commit_id and not is_tag:
+                return f"{base}+{commit_id[:7]}"
+    except Exception:
+        pass
+    return base
+
+_bridge_version = _get_version()
 
 
 def _add_logging_level(level_name: str, level_num: int) -> None:
