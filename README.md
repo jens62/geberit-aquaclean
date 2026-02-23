@@ -64,7 +64,11 @@ upgrades in-place.
 bash operation_support/install.sh latest
 ```
 
-**Manual** (replace `<version>` with the tag from [Releases](https://github.com/jens62/geberit-aquaclean/releases), e.g. `v2.4.9`):
+**Manual** (replace `<version>` with a release tag — list available releases):
+
+```bash
+curl -fsSL https://api.github.com/repos/jens62/geberit-aquaclean/releases | grep '"tag_name"'
+```
 
 ```bash
 python3 -m venv ~/venv
