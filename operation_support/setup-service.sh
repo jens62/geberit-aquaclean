@@ -69,15 +69,26 @@ echo "==> BLE device:   ${CONFIG_DEVICE_ID:-NOT SET}"
 echo "==> MQTT server:  ${CONFIG_MQTT_SERVER:-NOT SET}"
 echo ""
 
-if [ -z "$CONFIG_DEVICE_ID" ] || [ -z "$CONFIG_MQTT_SERVER" ]; then
+CONFIG_OK=true
+
+# Treat empty or placeholder values as unconfigured
+if [ -z "$CONFIG_DEVICE_ID" ] || echo "$CONFIG_DEVICE_ID" | grep -qi 'XX:XX\|placeholder'; then
+    CONFIG_OK=false
+fi
+if [ -z "$CONFIG_MQTT_SERVER" ] || echo "$CONFIG_MQTT_SERVER" | grep -qi '\.x\.x\|placeholder'; then
+    CONFIG_OK=false
+fi
+
+if [ "$CONFIG_OK" = false ]; then
     echo "WARNING: config.ini is not fully configured."
     echo "         The service will be installed but may not start until you set:"
-    if [ -z "$CONFIG_DEVICE_ID" ]; then
-        echo "           [BLE]  device_id = XX:XX:XX:XX:XX:XX"
+    if [ -z "$CONFIG_DEVICE_ID" ] || echo "$CONFIG_DEVICE_ID" | grep -qi 'XX:XX\|placeholder'; then
+        echo "           [BLE]  device_id = XX:XX:XX:XX:XX:XX   # your AquaClean BLE MAC"
     fi
-    if [ -z "$CONFIG_MQTT_SERVER" ]; then
-        echo "           [MQTT] server    = 192.168.x.x"
+    if [ -z "$CONFIG_MQTT_SERVER" ] || echo "$CONFIG_MQTT_SERVER" | grep -qi '\.x\.x\|placeholder'; then
+        echo "           [MQTT] server    = 192.168.x.x          # your MQTT broker IP"
     fi
+    echo "         Config file: ${CONFIG_PATH}"
     echo "         Then run: sudo systemctl start aquaclean-bridge"
     echo ""
 fi
@@ -134,7 +145,7 @@ echo "==> Reloading systemd and enabling service..."
 sudo systemctl daemon-reload
 sudo systemctl enable aquaclean-bridge
 
-if [ -n "$CONFIG_DEVICE_ID" ] && [ -n "$CONFIG_MQTT_SERVER" ]; then
+if [ "$CONFIG_OK" = true ]; then
     echo "==> Starting service..."
     if sudo systemctl start aquaclean-bridge; then
         echo ""
