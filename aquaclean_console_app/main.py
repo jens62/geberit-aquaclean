@@ -281,6 +281,7 @@ class ServiceMode:
         # Publish initial ESPHome proxy status and Home Assistant discovery
         await self._publish_esphome_proxy_status()
         await self._publish_esphome_proxy_discovery()
+        await self._publish_ha_discovery()
         logger.debug(f"ESPHome proxy mode: enabled={self.esphome_proxy_state['enabled']}, host={self.esphome_proxy_state['host']}")
 
         # Start ESPHome log streaming if enabled
@@ -686,6 +687,20 @@ class ServiceMode:
             f"homeassistant/sensor/aquaclean_{device_id}/esphome_proxy_error/config",
             json.dumps(error_config)
         )
+
+    async def _publish_ha_discovery(self):
+        """Publish Home Assistant MQTT discovery messages for all AquaClean entities on startup."""
+        if not config.getboolean("SERVICE", "ha_discovery_on_startup", fallback=False):
+            logger.debug("HA discovery on startup disabled (ha_discovery_on_startup = false)")
+            return
+        import json
+        topic = self.mqttConfig['topic']
+        configs = get_ha_discovery_configs(topic)
+        published = 0
+        for cfg in configs:
+            await self.mqtt_service.send_data_async(cfg["topic"], json.dumps(cfg["payload"]))
+            published += 1
+        logger.info(f"Published {published} HA discovery entities on startup")
 
     async def _start_esphome_log_streaming(self):
         """Subscribe to ESPHome device logs if log streaming is enabled."""
@@ -2276,6 +2291,12 @@ async def run_cli(args):
 
 
 async def main(args):
+    # CLI arg overrides config.ini for ha_discovery_on_startup
+    if getattr(args, 'ha_discovery', None) is not None:
+        if not config.has_section('SERVICE'):
+            config.add_section('SERVICE')
+        config.set('SERVICE', 'ha_discovery_on_startup', str(args.ha_discovery).lower())
+
     if args.mode in ('service', 'api'):
         errors = _check_config_errors()
         if errors:
@@ -2378,6 +2399,10 @@ if __name__ == "__main__":
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--ha-discovery', default=None,
+                        action=argparse.BooleanOptionalAction,
+                        dest='ha_discovery',
+                        help='Publish HA MQTT discovery on startup (overrides config ha_discovery_on_startup)')
     parser.add_argument('--version', action='version',
                         version=f'aquaclean-bridge {_bridge_version}')
 
