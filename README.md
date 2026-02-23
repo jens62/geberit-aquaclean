@@ -64,12 +64,12 @@ upgrades in-place.
 bash operation_support/install.sh latest
 ```
 
-**Manual:**
+**Manual** (replace `<version>` with the tag from [Releases](https://github.com/jens62/geberit-aquaclean/releases), e.g. `v2.4.9`):
 
 ```bash
 python3 -m venv ~/venv
 ~/venv/bin/pip install --upgrade pip setuptools wheel
-~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@v2.4.6
+~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@<version>
 ```
 
 **Upgrading an existing install** (preserves your `config.ini`):
