@@ -167,6 +167,19 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
 
+        # Defensive cleanup: release any leftover advertisement subscription before
+        # subscribing again.  Normally disconnect_ble_only() handles this, but on a
+        # fresh bridge start the previous bridge may have left a dangling subscription
+        # on the ESP32 (if it exited before the TCP close was processed).
+        # Calling unsub here is safe — BLE is not connected yet (trap 7 does not apply).
+        if self._esphome_unsub_adv is not None:
+            try:
+                self._esphome_unsub_adv()
+                logger.debug("Cleaned up leftover advertisement subscription before scan")
+            except Exception as e:
+                logger.debug(f"Advertisement unsubscribe (pre-scan cleanup): {e}")
+            self._esphome_unsub_adv = None
+
         try:
             api = await self._ensure_esphome_api_connected()
         except ESPHomeConnectionError:

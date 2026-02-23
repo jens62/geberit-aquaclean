@@ -117,7 +117,10 @@ class _AnsiFilter(logging.Filter):
         record.args = ()
         return True
 
-logging.getLogger("aioesphomeapi").addFilter(_AnsiFilter())
+# Filter must be on the specific child loggers (or root handlers) — adding it
+# to the parent "aioesphomeapi" logger does NOT affect propagated child records.
+logging.getLogger("aioesphomeapi.connection").addFilter(_AnsiFilter())
+logging.getLogger("aioesphomeapi._frame_helper.base").addFilter(_AnsiFilter())
 
 logger = logging.getLogger(__name__)
 
@@ -1166,6 +1169,18 @@ class ApiMode:
                     await t
                 except asyncio.CancelledError:
                     pass
+            # Explicitly close the persistent ESP32 API connection so the
+            # UnsubscribeBluetoothLEAdvertisementsRequest is sent before the
+            # process exits.  Without this the TCP socket is closed by the OS
+            # and the ESP32 may not release the BLE subscription before the
+            # new bridge polls (~10 s after restart), causing
+            # "Only one API subscription is allowed at a time".
+            if self._esphome_connector is not None:
+                try:
+                    await asyncio.wait_for(self._esphome_connector.disconnect(), timeout=3.0)
+                except Exception:
+                    pass
+                self._esphome_connector = None
 
     # --- Config endpoints ---
 
