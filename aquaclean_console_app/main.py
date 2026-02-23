@@ -1662,6 +1662,58 @@ class ApiMode:
         if _exc is not None:
             ApiMode._http_error(503, _ec, str(_exc))
 
+    async def _trigger_esphome_restart(self, failure_count: int) -> bool:
+        """Press the restart button on the ESP32 via aioesphomeapi.
+
+        Requires 'button: platform: restart' to be present in the ESPHome YAML.
+        Uses a fresh API connection so it never interferes with ongoing BLE ops.
+
+        Returns True if the restart was triggered, False if the button was not
+        found or the connection failed.
+
+        Grep for these log lines to trace restart events:
+          grep "Triggering ESP32 restart\\|ESP32 restart triggered\\|ESP32 restart button not found\\|ESP32 restart failed" /var/log/aquaclean/aquaclean.log
+        """
+        from aioesphomeapi import APIClient, ButtonInfo
+        logger.warning(
+            f"Triggering ESP32 restart — BLE scanner stuck "
+            f"({failure_count} consecutive failures)"
+        )
+        api = APIClient(
+            address=esphome_host,
+            port=esphome_port,
+            password="",
+            noise_psk=esphome_noise_psk or None,
+        )
+        try:
+            await api.connect(login=True)
+            entities, _ = await api.list_entities_services()
+            button = next(
+                (e for e in entities
+                 if isinstance(e, ButtonInfo) and "restart" in e.name.lower()),
+                None,
+            )
+            if button is None:
+                logger.warning(
+                    "ESP32 restart button not found — add "
+                    "'button: platform: restart' to your ESPHome YAML and reflash"
+                )
+                return False
+            await api.button_command(button.key)
+            logger.warning(
+                f"ESP32 restart triggered successfully (button: '{button.name}') — "
+                "waiting for reboot before next probe"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"ESP32 restart failed: {e}")
+            return False
+        finally:
+            try:
+                await api.disconnect()
+            except Exception:
+                pass
+
     async def _publish_identification_to_mqtt(self, info: dict):
         """Publish device identification fields to their MQTT topics.
         Mirrors what ServiceMode.on_device_identification / device_initial_operation_date
@@ -1712,6 +1764,10 @@ class ApiMode:
 
             # Circuit breaker: after threshold failures, probe at a longer interval.
             if _consecutive_poll_failures >= _CIRCUIT_OPEN_THRESHOLD:
+                # On first opening, attempt to recover by restarting the ESP32.
+                # The subsequent _CIRCUIT_OPEN_SLEEP gives it time to reboot.
+                if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD and esphome_host:
+                    await self._trigger_esphome_restart(_consecutive_poll_failures)
                 await asyncio.sleep(_CIRCUIT_OPEN_SLEEP)
 
             # Set poll_epoch before the poll so the web UI countdown does not
