@@ -820,13 +820,14 @@ Similarly, adding a new MQTT-published feature should also be reflected in:
 
 ## After every fix — test install curl
 
-After committing a fix, always supply this curl command for the user to test on raspi-5:
+After committing a fix, always supply this curl command for the user to test on raspi-5.
+Use the **full commit SHA** (not the branch name) in both the raw URL and the `bash -s --` argument:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/feature/esphome-auto-restart/operation_support/install.sh | bash -s -- feature/esphome-auto-restart
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/<FULL_SHA>/operation_support/install.sh | bash -s -- <FULL_SHA>
 ```
 
-The branch name in both the URL and the `bash -s --` argument must match the current working branch.
+Get the full SHA with `git rev-parse HEAD` after committing.
 
 ---
 
