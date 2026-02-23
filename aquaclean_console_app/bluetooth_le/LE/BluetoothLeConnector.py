@@ -193,11 +193,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
         unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
+        # Store immediately so that disconnect_ble_only() / disconnect() can unsubscribe
+        # even if this coroutine is cancelled (e.g. SIGTERM during the scan window).
+        # Without this, a mid-scan cancellation leaves a dangling subscription on the
+        # ESP32 that blocks the next bridge startup with "Only one API subscription
+        # is allowed at a time".
+        self._esphome_unsub_adv = unsub_adv
         try:
             await asyncio.wait_for(found_event.wait(), timeout=30.0)
             logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
         except asyncio.TimeoutError:
             unsub_adv()
+            self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect_ble_only()
             raise ESPHomeDeviceNotFoundError(
                 f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
             )
