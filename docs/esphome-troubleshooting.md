@@ -244,6 +244,20 @@ python esphome/ble-scan.py 192.168.0.160
 **Note:** Port 6053 remains open and TCP connections succeed even when the scanner is stuck.
 The port check alone is not sufficient to confirm the ESP32 is healthy.
 
+**Automatic recovery:** The bridge detects 5 consecutive E0002 failures and automatically
+presses the restart button on the ESP32 (requires `button: platform: restart` in the ESPHome
+YAML — both proxy YAMLs include it). To verify this happened overnight:
+
+```bash
+grep "ESP32 restart" /var/log/aquaclean/aquaclean.log
+```
+
+You should see a line like:
+```
+WARNING: Triggering ESP32 restart — BLE scanner stuck (5 consecutive failures)
+WARNING: ESP32 restart triggered successfully (button: 'Restart AquaClean Proxy') — waiting for reboot before next probe
+```
+
 ---
 
 ## bleak-esphome v3.x does not work standalone (requires Home Assistant)
