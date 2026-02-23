@@ -69,7 +69,7 @@ bash operation_support/install.sh latest
 ```bash
 python3 -m venv ~/venv
 ~/venv/bin/pip install --upgrade pip setuptools wheel
-~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@v2.4.4
+~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@v2.4.6
 ```
 
 **Upgrading an existing install** (preserves your `config.ini`):
@@ -118,12 +118,29 @@ server = 192.168.0.xxx           # your MQTT broker IP
 
 Full config reference: [docs/configuration.md](docs/configuration.md)
 
-### 4. Run
+### 4. Install as a background service (recommended for production)
+
+Linux / systemd only. Requires the repo to be cloned:
+
+```bash
+git clone https://github.com/jens62/geberit-aquaclean.git
+bash geberit-aquaclean/operation_support/setup-service.sh
+```
+
+The script substitutes your username and venv path automatically, installs the
+systemd service and logrotate config, and starts the service.
+
+```bash
+sudo systemctl status aquaclean-bridge
+tail -f /var/log/aquaclean/aquaclean.log
+```
+
+### 5. Or run manually
 
 | Goal | Command |
 |------|---------|
-| Background service (MQTT only) | `aquaclean-bridge` |
 | REST API + web UI + MQTT | `aquaclean-bridge --mode api` |
+| Background service (MQTT only) | `aquaclean-bridge` |
 | One-off CLI command | `aquaclean-bridge --mode cli --command <cmd>` |
 
 ---
