@@ -45,14 +45,24 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 
 ### 1. Install
 
-**Easy (Raspberry Pi / Linux server):**
+**Easy — no clone needed (Raspberry Pi / Linux server):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh | bash -s -- v2.4.3
+```
+
+> `curl | bash` executes code from the internet directly. Review the script first if preferred:
+> `curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/install.sh`
+
+The script installs system packages and creates `~/venv` if they don't exist yet,
+then installs the bridge and prints the next steps. Re-running it with a new version
+upgrades in-place.
+
+**If you already have the repo cloned:**
 
 ```bash
 bash operation_support/install.sh v2.4.3
 ```
-
-The script installs system packages and creates `~/venv` if they don't exist yet,
-then installs the bridge. Re-running it with a new version upgrades in-place.
 
 **Manual:**
 
