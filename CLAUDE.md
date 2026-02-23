@@ -755,6 +755,8 @@ HA entity here."*
 Similarly, adding a new MQTT-published feature should also be reflected in:
 - `homeassistant/dashboard_button_card.yaml`
 - `homeassistant/dashboard_simple_card.yaml`
+- `homeassistant/SETUP_GUIDE.md` — update the entity count, the entity breakdown
+  list (binary sensors / sensors / switches), and the MQTT Topics section
 
 ### MQTT topics (inbound config)
 - `<topic>/centralDevice/config/bleConnection`
