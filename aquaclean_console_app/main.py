@@ -7,6 +7,7 @@ import argparse
 import traceback
 import sys
 import time
+import importlib.metadata
 from datetime import datetime
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
@@ -2258,6 +2259,11 @@ async def main(args):
             for e in errors:
                 logging.error(f"Invalid configuration: {e}")
             sys.exit(1)
+        try:
+            _bridge_version = importlib.metadata.version("geberit-aquaclean")
+        except importlib.metadata.PackageNotFoundError:
+            _bridge_version = "unknown"
+        logger.info(f"aquaclean-bridge version {_bridge_version}")
         _log_startup_config()
     if args.mode == 'service':
         service = ServiceMode()
