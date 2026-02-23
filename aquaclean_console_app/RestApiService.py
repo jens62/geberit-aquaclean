@@ -1,8 +1,10 @@
 import asyncio
+import importlib.metadata
 import json
 import logging
 import os
 import signal
+import sys
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -87,6 +89,18 @@ class RestApiService:
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
+
+        @app.get("/version")
+        async def get_version():
+            try:
+                version = importlib.metadata.version("geberit-aquaclean")
+            except importlib.metadata.PackageNotFoundError:
+                version = "unknown"
+            _py = sys.version_info
+            return {
+                "version": version,
+                "python": f"{_py.major}.{_py.minor}.{_py.micro}",
+            }
 
         @app.get("/status")
         async def get_status():

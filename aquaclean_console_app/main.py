@@ -11,7 +11,6 @@ import importlib.metadata
 from datetime import datetime
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
-from haggis import logs
 
 from bleak import BleakScanner
 from bleak.exc import BleakError
@@ -33,14 +32,38 @@ from aquaclean_console_app.ErrorCodes                                           
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
 
+# --- Package version (module-level so argparse --version can use it) ---
+try:
+    _bridge_version = importlib.metadata.version("geberit-aquaclean")
+except importlib.metadata.PackageNotFoundError:
+    _bridge_version = "unknown"
+
+
+def _add_logging_level(level_name: str, level_num: int) -> None:
+    """Register a custom numeric log level with the logging module."""
+    method_name = level_name.lower()
+
+    def log_for_level(self, message, *args, **kwargs):
+        if self.isEnabledFor(level_num):
+            self._log(level_num, message, args, **kwargs)
+
+    def log_to_root(message, *args, **kwargs):
+        logging.log(level_num, message, *args, **kwargs)
+
+    logging.addLevelName(level_num, level_name)
+    setattr(logging, level_name, level_num)
+    setattr(logging.getLoggerClass(), method_name, log_for_level)
+    setattr(logging, method_name, log_to_root)
+
+
 # --- Configuration & Logging Setup ---
 __location__ = os.path.dirname(os.path.abspath(__file__))
 iniFile = os.path.join(__location__, 'config.ini')
 config = configparser.ConfigParser(allow_no_value=False, inline_comment_prefixes=('#',))
 config.read(iniFile)
 
-logs.add_logging_level('TRACE', logging.DEBUG - 5)
-logs.add_logging_level('SILLY', logging.DEBUG - 7)
+_add_logging_level('TRACE', logging.DEBUG - 5)
+_add_logging_level('SILLY', logging.DEBUG - 7)
 
 log_level              = config.get("LOGGING",  "log_level",  fallback="DEBUG")
 esphome_host           = config.get("ESPHOME",  "host",       fallback=None) or None
@@ -2259,11 +2282,8 @@ async def main(args):
             for e in errors:
                 logging.error(f"Invalid configuration: {e}")
             sys.exit(1)
-        try:
-            _bridge_version = importlib.metadata.version("geberit-aquaclean")
-        except importlib.metadata.PackageNotFoundError:
-            _bridge_version = "unknown"
-        logger.info(f"aquaclean-bridge version {_bridge_version}")
+        _py = sys.version_info
+        logger.info(f"aquaclean-bridge {_bridge_version} (Python {_py.major}.{_py.minor}.{_py.micro})")
         _log_startup_config()
     if args.mode == 'service':
         service = ServiceMode()
@@ -2358,6 +2378,8 @@ if __name__ == "__main__":
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--version', action='version',
+                        version=f'aquaclean-bridge {_bridge_version}')
 
     args = parser.parse_args()
     run(main(args))

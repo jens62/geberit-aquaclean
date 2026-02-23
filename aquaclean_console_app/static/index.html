@@ -472,11 +472,16 @@
 
   </main>
 
-  <footer>API: <span id="apiBase"></span></footer>
+  <footer>API: <span id="apiBase"></span> &nbsp;|&nbsp; aquaclean-bridge <span id="bridgeVersion">—</span></footer>
 
   <script>
     const apiBase = window.location.origin;
     document.getElementById('apiBase').textContent = apiBase;
+
+    fetch(apiBase + '/version')
+      .then(r => r.json())
+      .then(d => { document.getElementById('bridgeVersion').textContent = d.version; })
+      .catch(() => {});
 
     // --- SSE ---
     const dot   = document.getElementById('sseDot');
