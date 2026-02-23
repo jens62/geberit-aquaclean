@@ -305,6 +305,19 @@ _CIRCUIT_OPEN_SLEEP     = 60
 
 **Why `_identification_fetched` is reset on recovery**: if the device was power-cycled during the outage its identification data is unchanged in practice, but resetting ensures a clean re-fetch rather than serving potentially stale cached values.
 
+**Confirmed production behavior (2026-02-23):** A real incident log (`local-assets/aquaclean.log.1-part.txt`) confirmed full auto-recovery with no bridge restart:
+
+| Time | Event |
+|------|-------|
+| 2026-02-22 20:17 | Bridge started, polling normally |
+| 2026-02-23 04:22 | First E0002 — ESP32 BLE scanner stuck |
+| 04:22 → 08:00 | 134 consecutive E0002 failures; circuit breaker at 60 s probe interval |
+| 08:01:39 | `aioesphomeapi: Connection reset by peer` — ESP32 rebooted after power-cycle |
+| 08:02:02 | Trap 9 fix: `"ESP32 API connection lost (ping timeout?); clearing stale client and reconnecting"` |
+| 08:02:05 | `"Poll recovered after 134 consecutive failure(s)"` — **automatic, no restart** |
+
+The bridge does NOT need to be restarted after an ESP32 power-cycle. The circuit breaker + trap 9 dead-connection detection handle it automatically.
+
 ---
 
 ## MQTT reconnect
@@ -616,6 +629,8 @@ Key additions vs. the original `main`:
   probe interval; resets `_identification_fetched` on recovery
 - MQTT `reconnect()` latent bug fixed: `on_disconnect` now uses `run_coroutine_threadsafe`
   and calls a defined `reconnect()` method on `MqttService`
+- Startup version logging: `importlib.metadata.version("geberit-aquaclean")` logged as
+  INFO before the config dump; falls back to `"unknown"` if package metadata is missing
 - On-demand poll errors now surface to webapp via SSE (`_set_ble_status("error")` in
   `_on_demand_inner` finally block — DRY, covers all current and future error types)
 - All connection button labels consistent: `PREFIX: Action` pattern throughout
