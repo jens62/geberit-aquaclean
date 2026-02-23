@@ -671,6 +671,20 @@ All two-state config/runtime options use `persistent` | `on-demand` as values (n
 - `POST /config/esphome-api-connection` body: `{"value": "persistent"|"on-demand"}`
 - `POST /config/poll-interval`          body: `{"value": <float>}`
 
+### Release checklist (MANDATORY)
+
+**Do not tag and create a release until all of the following docs are up to date:**
+
+| File | What to check |
+|------|--------------|
+| `README.md` | Install steps, curl commands, feature list |
+| `docs/configuration.md` | New config keys documented in table and example block |
+| `docs/cli.md` | New CLI flags or commands documented |
+| `docs/home-assistant.md` | HA-facing changes reflected |
+| `homeassistant/SETUP_GUIDE.md` | Install steps, discovery, upgrading section |
+
+Only bump `pyproject.toml` and run `gh release create` once all affected docs are updated in the same commit (or in a preceding commit on the same push).
+
 ### MQTT ↔ HA Discovery dependency (MANDATORY)
 
 **Any change to an outbound MQTT topic requires a matching update in two places:**
