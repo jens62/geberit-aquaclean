@@ -5,23 +5,23 @@
 # Run this once after installing aquaclean-bridge.
 # Safe to re-run: if the service is already installed it will be updated in place.
 #
-# Usage:
+# Usage (repo cloned):
 #   bash operation_support/setup-service.sh
 #
-# Or without cloning the repo — requires the service files already on the system
-# (they are not downloaded by this script alone; use install.sh first).
+# Usage (no clone needed):
+#   curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/setup-service.sh | bash
 #
 # What it does:
-#   1. Substitutes YOUR_USER and /path/to/venv placeholders in aquaclean-bridge.service
-#   2. Installs the service to /etc/systemd/system/
-#   3. Installs the logrotate config to /etc/logrotate.d/
-#   4. Enables and (re)starts the service
+#   1. Fetches aquaclean-bridge.service and aquaclean-bridge.logrotate from the
+#      repo (or uses local copies if the repo is already cloned)
+#   2. Substitutes YOUR_USER and /path/to/venv placeholders
+#   3. Installs the service to /etc/systemd/system/
+#   4. Installs the logrotate config to /etc/logrotate.d/
+#   5. Enables and (re)starts the service
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_SRC="${SCRIPT_DIR}/aquaclean-bridge.service"
-LOGROTATE_SRC="${SCRIPT_DIR}/aquaclean-bridge.logrotate"
+REPO_RAW="https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support"
 SERVICE_DEST="/etc/systemd/system/aquaclean-bridge.service"
 LOGROTATE_DEST="/etc/logrotate.d/aquaclean-bridge"
 
@@ -37,10 +37,10 @@ fi
 if [ ! -f "${VENV}/bin/aquaclean-bridge" ]; then
     echo "ERROR: aquaclean-bridge not found at ${VENV}/bin/aquaclean-bridge"
     echo "       Install it first with:"
-    echo "         bash operation_support/install.sh latest"
+    echo "         curl -fsSL ${REPO_RAW}/install.sh | bash -s -- latest"
     echo ""
     echo "       Or set AQUACLEAN_VENV to the correct venv path:"
-    echo "         AQUACLEAN_VENV=/opt/venv bash operation_support/setup-service.sh"
+    echo "         AQUACLEAN_VENV=/opt/venv bash setup-service.sh"
     exit 1
 fi
 
@@ -52,6 +52,26 @@ echo "==> Service:    ${SERVICE_DEST}"
 echo "==> Logrotate:  ${LOGROTATE_DEST}"
 echo ""
 
+# --- Locate or download template files -------------------------------------------
+
+# When run via curl|bash, BASH_SOURCE[0] is /dev/stdin — local files won't exist.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/stdin}")" 2>/dev/null && pwd || echo "")"
+SERVICE_SRC="${SCRIPT_DIR}/aquaclean-bridge.service"
+LOGROTATE_SRC="${SCRIPT_DIR}/aquaclean-bridge.logrotate"
+
+TMPDIR_USED=""
+if [ ! -f "$SERVICE_SRC" ] || [ ! -f "$LOGROTATE_SRC" ]; then
+    echo "==> Downloading service files from GitHub..."
+    TMPDIR_USED="$(mktemp -d)"
+    curl -fsSL "${REPO_RAW}/aquaclean-bridge.service"  -o "${TMPDIR_USED}/aquaclean-bridge.service"
+    curl -fsSL "${REPO_RAW}/aquaclean-bridge.logrotate" -o "${TMPDIR_USED}/aquaclean-bridge.logrotate"
+    SERVICE_SRC="${TMPDIR_USED}/aquaclean-bridge.service"
+    LOGROTATE_SRC="${TMPDIR_USED}/aquaclean-bridge.logrotate"
+fi
+
+cleanup() { [ -n "$TMPDIR_USED" ] && rm -rf "$TMPDIR_USED"; }
+trap cleanup EXIT
+
 # --- Stop existing service (if running) ------------------------------------------
 
 if systemctl is-active --quiet aquaclean-bridge 2>/dev/null; then
@@ -59,7 +79,7 @@ if systemctl is-active --quiet aquaclean-bridge 2>/dev/null; then
     sudo systemctl stop aquaclean-bridge
 fi
 
-# --- Install service unit ---------------------------------------------------------
+# --- Install service unit --------------------------------------------------------
 
 echo "==> Installing systemd service..."
 sed -e "s|YOUR_USER|${USER_NAME}|g" \
@@ -67,12 +87,12 @@ sed -e "s|YOUR_USER|${USER_NAME}|g" \
     "${SERVICE_SRC}" \
   | sudo tee "${SERVICE_DEST}" > /dev/null
 
-# --- Install logrotate config -----------------------------------------------------
+# --- Install logrotate config ----------------------------------------------------
 
 echo "==> Installing logrotate config..."
 sudo cp "${LOGROTATE_SRC}" "${LOGROTATE_DEST}"
 
-# --- Enable and start -------------------------------------------------------------
+# --- Enable and start ------------------------------------------------------------
 
 echo "==> Reloading systemd and enabling service..."
 sudo systemctl daemon-reload
