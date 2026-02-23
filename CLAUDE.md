@@ -374,6 +374,20 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **`install.sh` next-steps — two additions pending:**
+  1. After the `export PATH=...` line, add reload hint:
+     `source ~/.bashrc 2>/dev/null || source ~/.zshrc 2>/dev/null || true`
+  2. Add a recommendation to install the systemd service and logrotate config,
+     with a link to the relevant documentation:
+     ```
+     Recommended: install the systemd service and logrotate config:
+       See: <doc link>
+       Files: operation_support/aquaclean-bridge.service
+              operation_support/aquaclean-bridge.logrotate
+     ```
+     (Documentation page for service setup does not exist yet — create it or
+     link to the relevant section of the README/docs before adding the hint.)
+
 - **Log error codes to the Python log file.** When an exception is mapped to an
   error code in `_on_demand_inner`'s finally block, only MQTT and SSE receive the
   code (e.g. E7002). The Python log file only shows the raw message from
