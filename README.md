@@ -45,13 +45,28 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 
 ### 1. Install
 
+**Easy (Raspberry Pi / Linux server):**
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install git+https://github.com/jens62/geberit-aquaclean.git
+bash operation_support/install.sh v2.4.3
 ```
 
-All dependencies are installed automatically, including a [patched fork of haggis](https://github.com/jens62/haggis-patched) that works on Python 3.11+.
+The script installs system packages and creates `~/venv` if they don't exist yet,
+then installs the bridge. Re-running it with a new version upgrades in-place.
+
+**Manual:**
+
+```bash
+python3 -m venv ~/venv
+~/venv/bin/pip install --upgrade pip setuptools wheel
+~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@v2.4.3
+```
+
+**Upgrading an existing install** (preserves your `config.ini`):
+
+```bash
+bash operation_support/update-to-branch.sh v2.4.3
+```
 
 <details>
 <summary>Dependencies installed</summary>
@@ -64,7 +79,6 @@ All dependencies are installed automatically, including a [patched fork of haggi
 | [aiorun](https://github.com/cjrh/aiorun) | Asyncio run loop with clean shutdown handling |
 | [fastapi](https://fastapi.tiangolo.com) | REST API framework |
 | [uvicorn](https://www.uvicorn.org) | ASGI server for FastAPI |
-| [haggis-patched](https://github.com/jens62/haggis-patched) | Adds `TRACE` and `SILLY` log levels; patched for Python 3.11+ |
 
 </details>
 
@@ -129,6 +143,7 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 
 | Hardware | OS | Python |
 |----------|----|--------|
+| Raspberry Pi 5 | Kali Linux (arm64) | 3.13 |
 | Raspberry Pi 5 | Kali Linux 2024.4 (arm64) | 3.12.8 |
 | MacBookAir + VirtualBox | Ubuntu 24.04 (x86-64) | 3.12.3 |
 | Debian server (arm64) | Debian 12 Bookworm | 3.11.2 |
