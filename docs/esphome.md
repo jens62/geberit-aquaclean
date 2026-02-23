@@ -77,7 +77,17 @@ esphome run esphome/aquaclean-proxy-wifi.yaml
 esphome run esphome/aquaclean-proxy-eth.yaml
 ```
 
-After the first flash, subsequent updates can be done over the network (OTA) — no USB needed.
+After the first flash, subsequent updates can be done over the network (OTA) — no USB needed:
+
+```bash
+# WiFi variant
+esphome run esphome/aquaclean-proxy-wifi.yaml --device 192.168.0.160
+
+# Ethernet/PoE variant
+esphome run esphome/aquaclean-proxy-eth.yaml --device 192.168.0.160
+```
+
+Replace `192.168.0.160` with your ESP32's IP address (or its mDNS hostname, e.g. `aquaclean-proxy.local`).
 
 ### 4. Verify
 
