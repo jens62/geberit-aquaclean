@@ -101,10 +101,7 @@ class RestApiService:
                     vcs = json.loads(text).get("vcs_info", {})
                     requested = vcs.get("requested_revision", "")
                     commit_id = vcs.get("commit_id", "")
-                    is_tag = bool(requested) and (
-                        requested[0].isdigit()
-                        or (requested.startswith("v") and len(requested) > 1 and requested[1].isdigit())
-                    )
+                    is_tag = "." in requested
                     if commit_id and not is_tag:
                         base = f"{base}+{commit_id[:7]}"
             except Exception:

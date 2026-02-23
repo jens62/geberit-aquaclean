@@ -52,12 +52,9 @@ def _get_version() -> str:
             vcs = json.loads(text).get("vcs_info", {})
             requested = vcs.get("requested_revision", "")
             commit_id = vcs.get("commit_id", "")
-            # A version tag looks like "v2.4.12" or "2.4.12" — starts with a
-            # digit or "v" followed by a digit.  Branch names and raw SHAs don't.
-            is_tag = bool(requested) and (
-                requested[0].isdigit()
-                or (requested.startswith("v") and len(requested) > 1 and requested[1].isdigit())
-            )
+            # A version tag looks like "v2.4.12" or "2.4.12" — always contains
+            # a dot.  Commit SHAs (hex, no dots) and branch names never do.
+            is_tag = "." in requested
             if commit_id and not is_tag:
                 return f"{base}+{commit_id[:7]}"
     except Exception:
