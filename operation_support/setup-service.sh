@@ -14,10 +14,11 @@
 # What it does:
 #   1. Fetches aquaclean-bridge.service and aquaclean-bridge.logrotate from the
 #      repo (or uses local copies if the repo is already cloned)
-#   2. Substitutes YOUR_USER and /path/to/venv placeholders
-#   3. Installs the service to /etc/systemd/system/
-#   4. Installs the logrotate config to /etc/logrotate.d/
-#   5. Enables and (re)starts the service
+#   2. Creates /var/log/aquaclean with correct ownership
+#   3. Substitutes YOUR_USER and /path/to/venv placeholders
+#   4. Installs the service to /etc/systemd/system/
+#   5. Installs the logrotate config to /etc/logrotate.d/
+#   6. Enables and (re)starts the service
 
 set -euo pipefail
 
@@ -46,11 +47,40 @@ fi
 
 USER_NAME="$(whoami)"
 
-echo "==> User:       ${USER_NAME}"
-echo "==> Venv:       ${VENV}"
-echo "==> Service:    ${SERVICE_DEST}"
-echo "==> Logrotate:  ${LOGROTATE_DEST}"
+# --- Check config.ini ------------------------------------------------------------
+
+CONFIG_PATH=$("${VENV}/bin/python3" -c \
+    "import os, aquaclean_console_app; print(os.path.join(os.path.dirname(aquaclean_console_app.__file__), 'config.ini'))" \
+    2>/dev/null || echo "")
+
+CONFIG_DEVICE_ID=""
+CONFIG_MQTT_SERVER=""
+if [ -n "$CONFIG_PATH" ] && [ -f "$CONFIG_PATH" ]; then
+    CONFIG_DEVICE_ID=$(grep -i '^\s*device_id\s*=' "$CONFIG_PATH" | head -1 | cut -d= -f2 | tr -d ' ' || echo "")
+    CONFIG_MQTT_SERVER=$(grep -i '^\s*server\s*=' "$CONFIG_PATH" | head -1 | cut -d= -f2 | tr -d ' ' || echo "")
+fi
+
+echo "==> User:         ${USER_NAME}"
+echo "==> Venv:         ${VENV}"
+echo "==> Service:      ${SERVICE_DEST}"
+echo "==> Logrotate:    ${LOGROTATE_DEST}"
+echo "==> config.ini:   ${CONFIG_PATH:-not found}"
+echo "==> BLE device:   ${CONFIG_DEVICE_ID:-NOT SET}"
+echo "==> MQTT server:  ${CONFIG_MQTT_SERVER:-NOT SET}"
 echo ""
+
+if [ -z "$CONFIG_DEVICE_ID" ] || [ -z "$CONFIG_MQTT_SERVER" ]; then
+    echo "WARNING: config.ini is not fully configured."
+    echo "         The service will be installed but may not start until you set:"
+    if [ -z "$CONFIG_DEVICE_ID" ]; then
+        echo "           [BLE]  device_id = XX:XX:XX:XX:XX:XX"
+    fi
+    if [ -z "$CONFIG_MQTT_SERVER" ]; then
+        echo "           [MQTT] server    = 192.168.x.x"
+    fi
+    echo "         Then run: sudo systemctl start aquaclean-bridge"
+    echo ""
+fi
 
 # --- Locate or download template files -------------------------------------------
 
@@ -78,12 +108,12 @@ echo "==> Creating log directory /var/log/aquaclean..."
 sudo mkdir -p /var/log/aquaclean
 sudo chown "${USER_NAME}" /var/log/aquaclean
 
-# --- Stop existing service (if running) ------------------------------------------
+# --- Stop and reset existing service ---------------------------------------------
+# Stop unconditionally — handles both running and restart-loop (failed) states.
 
-if systemctl is-active --quiet aquaclean-bridge 2>/dev/null; then
-    echo "==> Stopping existing aquaclean-bridge service..."
-    sudo systemctl stop aquaclean-bridge
-fi
+echo "==> Stopping existing service (if any)..."
+sudo systemctl stop aquaclean-bridge 2>/dev/null || true
+sudo systemctl reset-failed aquaclean-bridge 2>/dev/null || true
 
 # --- Install service unit --------------------------------------------------------
 
@@ -104,15 +134,18 @@ echo "==> Reloading systemd and enabling service..."
 sudo systemctl daemon-reload
 sudo systemctl enable aquaclean-bridge
 
-echo "==> Starting service..."
-if sudo systemctl start aquaclean-bridge; then
-    echo ""
-    echo "==> Service started successfully."
+if [ -n "$CONFIG_DEVICE_ID" ] && [ -n "$CONFIG_MQTT_SERVER" ]; then
+    echo "==> Starting service..."
+    if sudo systemctl start aquaclean-bridge; then
+        echo ""
+        echo "==> Service started successfully."
+    else
+        echo ""
+        echo "==> Service failed to start. Check the log:"
+        echo "      journalctl -xeu aquaclean-bridge.service"
+    fi
 else
-    echo ""
-    echo "==> Service did not start (exit code $?)."
-    echo "    This is normal if config.ini has not been configured yet."
-    echo "    Edit config.ini, then run: sudo systemctl start aquaclean-bridge"
+    echo "==> Skipping start — configure config.ini first (see WARNING above)."
 fi
 
 echo ""
