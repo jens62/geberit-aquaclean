@@ -364,13 +364,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         else:
             logger.silly("not self.client, no need to disconnect BLE.")
 
-        # Unsubscribe from BLE advertisements — safe now that BLE is fully down (trap 7).
-        if self._esphome_unsub_adv is not None:
-            try:
-                self._esphome_unsub_adv()
-            except Exception:
-                pass
-            self._esphome_unsub_adv = None
+        # Do NOT call _esphome_unsub_adv() here — calling it causes the ESP32 to close
+        # the TCP connection, which breaks the persistent API we want to keep alive.
+        # Keep the reference intact so _connect_via_esphome() can call it at the very
+        # start of the next request (before any BLE connection is active), then let
+        # _ensure_esphome_api_connected() reconnect TCP if the unsubscribe closes it.
+        # See CLAUDE.md trap 12 / commit 927e953.
 
         # Do NOT reset self._esphome_api or esphome_proxy_connected — TCP stays alive.
 
