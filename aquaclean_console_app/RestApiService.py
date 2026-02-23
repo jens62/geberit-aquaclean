@@ -92,10 +92,24 @@ class RestApiService:
 
         @app.get("/version")
         async def get_version():
+            base = "unknown"
             try:
-                version = importlib.metadata.version("geberit-aquaclean")
-            except importlib.metadata.PackageNotFoundError:
-                version = "unknown"
+                base = importlib.metadata.version("geberit-aquaclean")
+                dist = importlib.metadata.distribution("geberit-aquaclean")
+                text = dist.read_text("direct_url.json")
+                if text:
+                    vcs = json.loads(text).get("vcs_info", {})
+                    requested = vcs.get("requested_revision", "")
+                    commit_id = vcs.get("commit_id", "")
+                    is_tag = bool(requested) and (
+                        requested[0].isdigit()
+                        or (requested.startswith("v") and len(requested) > 1 and requested[1].isdigit())
+                    )
+                    if commit_id and not is_tag:
+                        base = f"{base}+{commit_id[:7]}"
+            except Exception:
+                pass
+            version = base
             _py = sys.version_info
             return {
                 "version": version,
