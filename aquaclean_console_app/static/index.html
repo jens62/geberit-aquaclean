@@ -603,8 +603,8 @@
       const bar   = document.getElementById('pollBar');
       if (_pollEpoch !== null && _pollInterval !== null) {
         const nowSec    = Date.now() / 1000;
-        const elapsed   = (nowSec - _pollEpoch) % _pollInterval;
-        const remaining = _pollInterval - elapsed;
+        const elapsed   = nowSec - _pollEpoch;
+        const remaining = Math.max(0, _pollInterval - elapsed);
         const pct       = (remaining / _pollInterval) * 100;
         label.textContent = 'Next poll in ' + Math.ceil(remaining) + ' s';
         bar.style.width = pct + '%';
