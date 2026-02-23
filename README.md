@@ -120,15 +120,14 @@ Full config reference: [docs/configuration.md](docs/configuration.md)
 
 ### 4. Install as a background service (recommended for production)
 
-Linux / systemd only. Requires the repo to be cloned:
+Linux / systemd only:
 
 ```bash
-git clone https://github.com/jens62/geberit-aquaclean.git
-bash geberit-aquaclean/operation_support/setup-service.sh
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/setup-service.sh | bash
 ```
 
-The script substitutes your username and venv path automatically, installs the
-systemd service and logrotate config, and starts the service.
+The script downloads the service and logrotate templates, substitutes your
+username and venv path automatically, and starts the service.
 
 ```bash
 sudo systemctl status aquaclean-bridge
