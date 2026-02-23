@@ -22,6 +22,7 @@ Entry point: `aquaclean_console_app/main.py`
 | File | Role |
 |---|---|
 | `main.py` | Everything: config, `ServiceMode`, `ApiMode`, REST wiring, startup |
+| `__main__.py` | Entry point for `aquaclean-bridge` command; **has its own argparse parser** |
 | `RestApiService.py` | FastAPI routes + SSE broadcast queue |
 | `MqttService.py` | paho-mqtt client; fires asyncio events into the main loop |
 | `bluetooth_le/LE/BluetoothLeConnector.py` | BLE connector; handles ESPHome proxy path |
@@ -29,6 +30,16 @@ Entry point: `aquaclean_console_app/main.py`
 | `aquaclean_core/Clients/AquaCleanClient.py` | High-level Geberit API; `start_polling()` |
 | `ErrorCodes.py` | All error codes as `ErrorCode` NamedTuples; `ErrorManager` formatters |
 | `config.ini` | Runtime config (not committed with real values) |
+
+**Two parsers — keep in sync (MANDATORY):**
+`main.py` (`if __name__ == "__main__":`) and `__main__.py` (`entry_point()`) each define
+a full `JsonArgumentParser`. Any change to either must be mirrored in the other:
+- New `--command` choice → add to both `choices=[...]` lists
+- New `add_argument(...)` flag → add to both parsers
+- Epilog examples → keep consistent
+
+`main.py`'s parser is used by `python main.py`; `__main__.py`'s parser is used by the
+installed `aquaclean-bridge` command. Updating only one silently breaks the other.
 
 ---
 
