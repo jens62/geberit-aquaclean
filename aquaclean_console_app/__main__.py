@@ -64,6 +64,10 @@ def entry_point():
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--ha-discovery', default=None,
+                        action=argparse.BooleanOptionalAction,
+                        dest='ha_discovery',
+                        help='Publish HA MQTT discovery on startup (overrides config ha_discovery_on_startup)')
     parser.add_argument('--version', action='version',
                         version=f'aquaclean-bridge {_bridge_version}')
 
