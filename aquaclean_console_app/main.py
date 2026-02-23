@@ -1689,6 +1689,10 @@ class ApiMode:
             if _consecutive_poll_failures >= _CIRCUIT_OPEN_THRESHOLD:
                 await asyncio.sleep(_CIRCUIT_OPEN_SLEEP)
 
+            # Set poll_epoch before the poll so the web UI countdown does not
+            # reset to 100% when results arrive — the epoch already lags by the
+            # BLE round-trip time (~1-2 s) when the broadcast fires.
+            self.service.device_state["poll_epoch"] = time.time()
             try:
                 if not _identification_fetched:
                     result = await self._on_demand(self._fetch_state_and_info)
@@ -1711,7 +1715,6 @@ class ApiMode:
                 self.service.device_state["last_esphome_api_ms"] = result.get("_esphome_api_ms")
                 self.service.device_state["last_ble_ms"]         = result.get("_ble_ms")
                 self.service.device_state["last_poll_ms"]        = result.get("_query_ms")
-                self.service.device_state["poll_epoch"]      = time.time()
                 await self.rest_api.broadcast_state(self.service.device_state.copy())
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isUserSitting",       str(result.get("is_user_sitting")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
