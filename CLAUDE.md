@@ -99,10 +99,18 @@ variable). Now it reads `device_state["poll_interval"]` each reconnect.
 > never pinpointed before the approach was reverted.
 >
 > **"Only one API subscription is allowed at a time"** — this is an ESP32 firmware
-> limit: only one API client may hold an active BLE advertisement subscription at a
-> time. It is NOT a TCP connection limit. It only occurs when two API clients compete
-> (e.g. the main app and a probe script running simultaneously). In production the
-> main app is the only client, so this limit is never hit.
+> limit: only one API client may hold an active BLE advertisement subscription
+> (`api_connection_` field) at a time across ALL TCP connections to that ESP32.
+> Two known causes:
+> 1. **Log streaming + ESPHome proxy**: `_start_esphome_log_streaming()` opens a
+>    second TCP connection to the same ESP32. The ESP32 assigns `api_connection_`
+>    to the first connection that subscribes (or connects, in newer ESPHome/aioesphomeapi
+>    versions). The BLE connector's subscribe attempt on the second TCP connection is
+>    then permanently rejected. **Fix: log streaming is disabled when ESPHome proxy
+>    is active.** See debugging trap 12.
+> 2. **SIGTERM mid-scan**: if the bridge is killed while waiting for a BLE
+>    advertisement, the subscription is not released and the ESP32 holds it until
+>    its ping timeout (~60–90 s). See debugging trap 10 for root cause and fix.
 >
 > **Persistent TCP IS achievable** — proven by `esphome-aioesphomeapi-probe-v4.py`:
 > all 3 cycles succeeded with TCP reused (0 ms overhead on cycles 2+) when run in
@@ -518,6 +526,63 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
    **Do NOT call `AquaCleanClientFactory(connector).create_client()` on every poll
    when the connector is persistent.**
 
+10. **"Only one API subscription is allowed at a time" on bridge restart**
+    → `self._esphome_unsub_adv` was only stored in `_connect_via_esphome()` at line 244
+    — AFTER the BLE GATT connect succeeded. When the bridge receives SIGTERM while
+    waiting for a BLE advertisement (the 30-second scan window), asyncio cancels the
+    task via `CancelledError`. The `finally` block in `_on_demand_inner` calls
+    `disconnect_ble_only()`, but `self._esphome_unsub_adv` is still `None` — so the
+    BLE advertisement subscription is never released. The ESP32 holds it until its ping
+    timeout (~60–90 s). If the new bridge polls within that window, it gets the "Only
+    one subscription" rejection.
+    **Fix**: store `self._esphome_unsub_adv = unsub_adv` immediately after calling
+    `api.subscribe_bluetooth_le_raw_advertisements()`, before the `asyncio.wait_for`.
+    In the `TimeoutError` handler, clear `self._esphome_unsub_adv = None` after calling
+    it to prevent a double-unsubscribe in `disconnect_ble_only()`.
+
+12. **"Only one API subscription" on every BLE scan — two-TCP conflict AND stale ref**
+    Two independent bugs combine to break every BLE scan:
+    **Bug A (fresh start / across sessions):** `_start_esphome_log_streaming()` creates
+    a SECOND TCP connection to the same ESP32 (`self._esphome_log_api`). The ESP32's
+    `api_connection_` allows only ONE BLE advertisement subscription across all TCP
+    connections. The log streaming connection connects ~10 s before the first BLE poll
+    and claims the slot. Every `SubscribeBluetoothLEAdvertisementsRequest` from the BLE
+    connector's TCP is permanently rejected. Sending `UnsubscribeBluetoothLEAdvertisementsRequest`
+    from the BLE connector is useless — it never owned the subscription.
+    **Fix A:** `_start_esphome_log_streaming()` returns immediately (with a WARNING) when
+    `esphome_host` is configured. Log streaming and the ESPHome BLE proxy are mutually
+    exclusive on the same ESP32.
+    **Bug B (within-session, between BLE cycles):** `disconnect_ble_only()` was calling
+    and nulling `_esphome_unsub_adv` after each BLE cycle. The defensive cleanup at the
+    start of `_connect_via_esphome()` always found it `None` and skipped. The old
+    subscription on the ESP32 was never released before the next subscribe attempt →
+    "Only one API subscription" again. This was the regression introduced in commit
+    `8c52b2d` when `disconnect_ble_only()` was written with the unsub+null included.
+    The correct pattern (from commit `927e953`): `disconnect_ble_only()` must **keep**
+    `_esphome_unsub_adv` alive so `_connect_via_esphome()` can call it at the very start
+    of the next request (before any BLE connection is active), then
+    `_ensure_esphome_api_connected()` reconnects TCP if the unsubscribe closes it.
+    **Fix B:** Remove unsub+null from `disconnect_ble_only()` — the reference stays
+    intact until `_connect_via_esphome()` uses it at the start of the next request.
+    **Bug C (Home Assistant conflict):** If the `aquaclean-proxy` ESPHome integration
+    is **enabled** in Home Assistant, HA opens its own persistent TCP connection to the
+    ESP32 and permanently holds the BLE subscription slot. Every bridge connection is
+    rejected. **Fix C:** Disable (not delete) the `aquaclean-proxy` integration in
+    HA → Settings → Integrations. It must remain disabled while the standalone bridge
+    is in use. See `docs/esphome-troubleshooting.md`.
+
+11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
+    → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
+    (lines 103–105 check `if log_level not in ('TRACE', 'SILLY')`). The
+    `aioesphomeapi.connection` logger at DEBUG level logs raw protobuf payloads, which
+    include the ANSI color codes the ESP32 embeds in its own log messages. These appear
+    as literal escape sequences (`\033[1;31m`) in the log file.
+    **Fix**: add a `logging.Filter` subclass (`_AnsiFilter`) to the `aioesphomeapi`
+    logger at module level in `main.py`. The filter calls `record.getMessage()`,
+    strips ANSI codes with the same regex used in `_on_esphome_log_message`, and
+    replaces `record.msg` / clears `record.args`. Applied unconditionally — harmless
+    at INFO level, essential at DEBUG/SILLY.
+
 ---
 
 ## BLE protocol — Commands, ProfileSettings, and BLE_COMMAND_REFERENCE.md
@@ -756,6 +821,106 @@ Similarly, adding a new MQTT-published feature should also be reflected in:
 |----------|-----|
 | Geberit AquaClean Mera Comfort — Service Manual (PDF) | https://cdn.data.geberit.com/documents-a6/972.447.00.0_00-A6.pdf |
 | thomas-bingel C# reference repo | https://github.com/thomas-bingel/geberit-aquaclean |
+
+---
+
+## Planned: `--scan` CLI command
+
+`aquaclean-bridge --scan` (and `--scan --esphome-host <ip>`) for BLE device discovery
+at first-time setup.  Auto-selects local bleak or ESPHome path.  Scan logic belongs
+inside the package (`BluetoothLeConnector.scan()` or similar) — `ble-scan.py` becomes
+a thin wrapper or is retired.  DRY: one scan implementation, two consumers (CLI + ble-scan.py).
+See `docs/roadmap.md` for full spec.
+
+## Planned: HACS custom integration (Home Assistant, no MQTT)
+
+**Goal:** native HA integration installable via HACS.  No MQTT broker required.
+Standalone bridge + MQTT fully preserved alongside.
+
+**Structure (both options):**
+- `hacs.json` at repo root (`"category": "integration"`)
+- `custom_components/geberit_aquaclean/` — thin HA adapter only
+- `manifest.json` `requirements` points to this same repo's pip package → zero protocol code duplicated
+- `config_flow.py` replaces `config.ini` for the HA context (MAC, optional ESPHome host)
+- `coordinator.py` (`DataUpdateCoordinator`) replaces MQTT — calls `AquaCleanClient` directly
+- Entity files (`sensor.py`, `switch.py`, etc.) — wrappers around coordinator data
+
+---
+
+### Option A — bypass HA BLE, use `BluetoothLeConnector` directly (recommended first)
+
+**How:** `coordinator.py` instantiates `BluetoothLeConnector` exactly as the standalone
+bridge does.  HA's `bluetooth` domain is not involved.
+
+**Pros:**
+- Same battle-tested code path as standalone bridge — already proven
+- Low risk: no new infrastructure, no HA BLE stack integration
+- Straightforward: ~740 lines of new glue code
+
+**Cons:**
+- If HA itself is also using the local BLE adapter, adapter-conflict possible
+  (same root cause as two TCP connections to ESP32)
+- Not HA-native: device won't appear in HA's Bluetooth integration panel
+- No automatic BLE device discovery flow in HA UI
+
+**Estimated cost:** ~25–40K tokens total (write + debug).  1–2 sessions.
+
+---
+
+### Option B — integrate with HA's `bluetooth` domain
+
+**How:** register as a `bluetooth` passive scanner consumer.  HA delivers
+`BLEDevice` objects via scan callbacks; a new adapter layer maps them to
+`AquaCleanClient`.  ESPHome proxy path uses `bleak-esphome` + `habluetooth`
+inside HA's runtime (which IS available in HA, unlike standalone).
+
+**Pros:**
+- Fully HA-native: device appears in Bluetooth panel, auto-discovery flow
+- No BLE adapter conflict — HA manages the adapter
+- ESPHome proxy via `bleak-esphome` works inside HA (habluetooth is initialized)
+
+**Cons:**
+- ~4× more effort: ~1,500–2,500 lines including adapter layer
+- `habluetooth` inside HA behaves differently than standalone — needs re-validation
+  (see CLAUDE.md trap re: bleak-esphome requiring habluetooth)
+- Discovery flow in `config_flow.py` is fiddly
+- Higher risk of subtle bugs at the HA BLE abstraction boundary
+
+**Estimated cost:** ~80–150K tokens total.  3–5 sessions, higher debugging risk.
+
+---
+
+**Recommendation:** implement Option A first.  If HA-native BLE experience becomes
+important, migrate to Option B as a follow-on.  The coordinator/entity structure is
+identical — only the connector layer changes.
+
+**Why Option A first is the only sensible order:**
+The coordinator + entity layer (bulk of the HA integration work) is identical in both
+options.  The only difference is what sits behind `coordinator.py` as the transport.
+Option A gives a fully working HA integration; Option B is then a single-layer swap.
+Doing Option B first means solving two problems simultaneously ("make a working HA
+integration" AND "integrate with HA's BLE stack") — if something breaks, you don't
+know which layer caused it.
+
+**BLE adapter conflict is moot for this setup:** the conflict (HA also using the local
+adapter) only matters when running the bridge on the same machine as HA with local BLE
+and no ESPHome proxy.  With the ESPHome proxy in use, Option A has zero adapter
+conflict risk.
+
+See `docs/roadmap.md` for the full spec.
+
+---
+
+## After every fix — test install curl
+
+After committing a fix, always supply this curl command for the user to test on raspi-5.
+Use the **full commit SHA** (not the branch name) in both the raw URL and the `bash -s --` argument:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/<FULL_SHA>/operation_support/install.sh | bash -s -- <FULL_SHA>
+```
+
+Get the full SHA with `git rev-parse HEAD` after committing.
 
 ---
 
