@@ -771,10 +771,11 @@ All two-state config/runtime options use `persistent` | `on-demand` as values (n
 
 | File | What to check |
 |------|--------------|
-| `README.md` | Install steps, curl commands, feature list |
+| `README.md` | Install steps, curl commands, feature list, documentation table |
 | `docs/configuration.md` | New config keys documented in table and example block |
 | `docs/cli.md` | New CLI flags or commands documented |
 | `docs/home-assistant.md` | HA-facing changes reflected |
+| `docs/hacs-integration.md` | HACS integration changes, version-specific notes |
 | `homeassistant/SETUP_GUIDE.md` | Install steps, discovery, upgrading section |
 
 Only bump `pyproject.toml` and run `gh release create` once all affected docs are updated in the same commit (or in a preceding commit on the same push).
