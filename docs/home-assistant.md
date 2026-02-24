@@ -89,6 +89,40 @@ Useful levels:
 
 Restart HA after changing `configuration.yaml`.
 
+### Dashboard card (button-card)
+
+A ready-made dashboard using [Custom Button Card](https://github.com/custom-cards/button-card)
+is provided at `homeassistant/dashboard_button_card_hacs.yaml`.
+
+**Install the SVG icons first** — the card uses custom Geberit graphics that must be
+copied manually to `/config/www/custom_icons/geberit/` on your HA instance
+(File Editor or Samba add-on):
+
+| File in `graphics/` | Required by |
+|---------------------|-------------|
+| `adjustabletoiletseat.svg` | Toggle Lid button |
+| `is_user_sitting-on.svg`, `is_user_sitting-off.svg` | User Sitting sensor |
+| `analshower.svg` | Anal Shower button + sensor |
+| `ladywash.svg` | Lady Shower button + sensor |
+| `dryer_to_the_right-on.svg`, `dryer_to_the_right-off.svg` | Dryer sensor |
+
+**Add the card to your dashboard:**
+
+1. Dashboard → Edit → Add Card → **Manual**
+2. Paste the contents of `homeassistant/dashboard_button_card_hacs.yaml`
+
+**Entity IDs** are generated from the fixed device name `"Geberit AquaClean"`, giving
+predictable IDs like `binary_sensor.geberit_aquaclean_user_sitting`.  If HA assigns
+different IDs on your instance, check **Developer Tools → States** and update the YAML.
+
+**Differences from the MQTT dashboard** (`dashboard_button_card.yaml`):
+
+| MQTT version | HACS version |
+|---|---|
+| Toggle Lid / Shower are `switch` entities | They are `button` entities — tapping triggers the action |
+| Connection Status section | Not present — no connected/error sensors |
+| ESPHome Proxy Status section | Not present — proxy handled internally |
+
 ### Entities created
 
 | Platform | Entity |

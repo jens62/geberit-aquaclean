@@ -1,0 +1,216 @@
+# Dashboard Card for Geberit AquaClean — HACS native integration
+#
+# Requires:
+#   - Geberit AquaClean HACS integration (custom_components/geberit_aquaclean)
+#   - Custom Button Card from HACS (Frontend)
+#   - SVG icons copied to /config/www/custom_icons/geberit/ (see docs/home-assistant.md)
+#
+# Entity IDs are generated from the fixed device name "Geberit AquaClean".
+# If HA auto-assigns different IDs, check Developer Tools → States and adjust below.
+#
+# Differences from dashboard_button_card.yaml (MQTT version):
+#   - Toggle Lid / Anal Shower / Lady Shower are button entities (not switches)
+#   - No "Connection Status" section (no connected/error sensors in HACS integration)
+#   - No "ESPHome Proxy Status" section (proxy handled internally, not exposed as entities)
+
+type: vertical-stack
+cards:
+  - type: markdown
+    content: |
+      ## Geberit AquaClean Mera Comfort
+      ### 1. OG, Toilette im Master-Bad
+
+  # ── Actions ────────────────────────────────────────────────────────────────
+  - type: grid
+    title: Actions
+    columns: 3
+    square: false
+    cards:
+      - type: custom:button-card
+        entity: button.geberit_aquaclean_toggle_lid
+        name: Toggle Lid
+        show_state: false
+        show_icon: false
+        show_entity_picture: true
+        entity_picture: /local/custom_icons/geberit/adjustabletoiletseat.svg
+        tap_action:
+          action: call-service
+          service: button.press
+          service_data:
+            entity_id: button.geberit_aquaclean_toggle_lid
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+      - type: custom:button-card
+        entity: button.geberit_aquaclean_toggle_anal_shower
+        name: Toggle Anal Shower
+        show_state: false
+        show_icon: false
+        show_entity_picture: true
+        entity_picture: /local/custom_icons/geberit/analshower.svg
+        tap_action:
+          action: call-service
+          service: button.press
+          service_data:
+            entity_id: button.geberit_aquaclean_toggle_anal_shower
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+      - type: custom:button-card
+        entity: button.geberit_aquaclean_toggle_lady_shower
+        name: Toggle Lady Shower
+        show_state: false
+        show_icon: false
+        show_entity_picture: true
+        entity_picture: /local/custom_icons/geberit/ladywash.svg
+        tap_action:
+          action: call-service
+          service: button.press
+          service_data:
+            entity_id: button.geberit_aquaclean_toggle_lady_shower
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+  # ── Monitor ─────────────────────────────────────────────────────────────────
+  - type: grid
+    title: Monitor
+    columns: 2
+    square: false
+    cards:
+      - type: custom:button-card
+        entity: binary_sensor.geberit_aquaclean_user_sitting
+        name: User Sitting
+        show_state: true
+        show_icon: false
+        show_entity_picture: true
+        state:
+          - value: "on"
+            entity_picture: /local/custom_icons/geberit/is_user_sitting-on.svg
+            styles:
+              entity_picture:
+                - filter: brightness(1)
+          - value: "off"
+            entity_picture: /local/custom_icons/geberit/is_user_sitting-off.svg
+            styles:
+              entity_picture:
+                - filter: brightness(0.5)
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+      - type: custom:button-card
+        entity: binary_sensor.geberit_aquaclean_anal_shower_running
+        name: Anal Shower
+        show_state: true
+        show_icon: false
+        show_entity_picture: true
+        entity_picture: /local/custom_icons/geberit/analshower.svg
+        state:
+          - value: "on"
+            styles:
+              entity_picture:
+                - filter: brightness(1)
+          - value: "off"
+            styles:
+              entity_picture:
+                - filter: brightness(0.5)
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+      - type: custom:button-card
+        entity: binary_sensor.geberit_aquaclean_lady_shower_running
+        name: Lady Shower
+        show_state: true
+        show_icon: false
+        show_entity_picture: true
+        entity_picture: /local/custom_icons/geberit/ladywash.svg
+        state:
+          - value: "on"
+            styles:
+              entity_picture:
+                - filter: brightness(1)
+          - value: "off"
+            styles:
+              entity_picture:
+                - filter: brightness(0.5)
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+      - type: custom:button-card
+        entity: binary_sensor.geberit_aquaclean_dryer_running
+        name: Dryer
+        show_state: true
+        show_icon: false
+        show_entity_picture: true
+        state:
+          - value: "on"
+            entity_picture: /local/custom_icons/geberit/dryer_to_the_right-on.svg
+            styles:
+              entity_picture:
+                - filter: brightness(1)
+          - value: "off"
+            entity_picture: /local/custom_icons/geberit/dryer_to_the_right-off.svg
+            styles:
+              entity_picture:
+                - filter: brightness(0.5)
+        styles:
+          card:
+            - height: 130px
+          entity_picture:
+            - width: 50px
+            - height: 50px
+
+  # ── Device Information ───────────────────────────────────────────────────────
+  - type: entities
+    title: Device Information
+    entities:
+      - entity: sensor.geberit_aquaclean_serial_number
+        name: Serial Number
+      - entity: sensor.geberit_aquaclean_sap_number
+        name: SAP Number
+      - entity: sensor.geberit_aquaclean_model
+        name: Model
+      - entity: sensor.geberit_aquaclean_production_date
+        name: Production Date
+      - entity: sensor.geberit_aquaclean_initial_operation_date
+        name: Initial Operation Date
+
+  # ── Descale Statistics ───────────────────────────────────────────────────────
+  - type: entities
+    title: Descale Statistics
+    entities:
+      - entity: sensor.geberit_aquaclean_days_until_next_descale
+        name: Days Until Next Descale
+      - entity: sensor.geberit_aquaclean_days_until_shower_restricted
+        name: Days Until Shower Restricted
+      - entity: sensor.geberit_aquaclean_shower_cycles_until_confirmation
+        name: Shower Cycles Until Confirmation
+      - entity: sensor.geberit_aquaclean_number_of_descale_cycles
+        name: Number of Descale Cycles
+      - entity: sensor.geberit_aquaclean_last_descale
+        name: Last Descale
+      - entity: sensor.geberit_aquaclean_unposted_shower_cycles
+        name: Unposted Shower Cycles
