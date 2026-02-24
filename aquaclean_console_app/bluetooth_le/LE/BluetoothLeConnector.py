@@ -167,6 +167,19 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         logger.debug(f"BluetoothLeConnector: connecting to BLE device via ESPHome proxy")
 
+        # Defensive cleanup: release any leftover advertisement subscription before
+        # subscribing again.  Normally disconnect_ble_only() handles this, but on a
+        # fresh bridge start the previous bridge may have left a dangling subscription
+        # on the ESP32 (if it exited before the TCP close was processed).
+        # Calling unsub here is safe — BLE is not connected yet (trap 7 does not apply).
+        if self._esphome_unsub_adv is not None:
+            try:
+                self._esphome_unsub_adv()
+                logger.debug("Cleaned up leftover advertisement subscription before scan")
+            except Exception as e:
+                logger.debug(f"Advertisement unsubscribe (pre-scan cleanup): {e}")
+            self._esphome_unsub_adv = None
+
         try:
             api = await self._ensure_esphome_api_connected()
         except ESPHomeConnectionError:
@@ -193,11 +206,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
         unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
+        # Store immediately so that disconnect_ble_only() / disconnect() can unsubscribe
+        # even if this coroutine is cancelled (e.g. SIGTERM during the scan window).
+        # Without this, a mid-scan cancellation leaves a dangling subscription on the
+        # ESP32 that blocks the next bridge startup with "Only one API subscription
+        # is allowed at a time".
+        self._esphome_unsub_adv = unsub_adv
         try:
             await asyncio.wait_for(found_event.wait(), timeout=30.0)
             logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
         except asyncio.TimeoutError:
             unsub_adv()
+            self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
             raise ESPHomeDeviceNotFoundError(
                 f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
             )
@@ -332,10 +352,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     async def disconnect_ble_only(self):
         """BLE-only disconnect — ESP32 API TCP connection stays alive for reuse.
 
-        Used in persistent_api mode: tears down the BLE link to the Geberit and
-        releases the advertisement subscription (safe to do after BLE is down —
-        see CLAUDE.md trap 7), but leaves self._esphome_api connected so the next
-        call to _connect_via_esphome() reuses the TCP connection at 0 ms overhead.
+        Used in persistent_api mode: tears down only the BLE link to the Geberit.
+        The advertisement subscription reference (_esphome_unsub_adv) is kept alive
+        so that the pre-scan cleanup at the start of _connect_via_esphome() can call
+        it before the next subscribe attempt (see CLAUDE.md trap 12).
+        self._esphome_api stays connected for TCP reuse at 0 ms overhead.
         """
         logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         if self.client:
@@ -344,13 +365,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         else:
             logger.silly("not self.client, no need to disconnect BLE.")
 
-        # Unsubscribe from BLE advertisements — safe now that BLE is fully down (trap 7).
-        if self._esphome_unsub_adv is not None:
-            try:
-                self._esphome_unsub_adv()
-            except Exception:
-                pass
-            self._esphome_unsub_adv = None
+        # Do NOT call _esphome_unsub_adv() here — the subscription is kept alive so
+        # that _connect_via_esphome() can release it at the very start of the next request
+        # (before any new BLE connection is active, so trap 7 does not apply).
+        # Calling it here would null the reference and the pre-scan cleanup would skip it,
+        # leaving the old subscription on the ESP32 until it expires.
+        # See CLAUDE.md trap 12 / commit 0c6ba46.
 
         # Do NOT reset self._esphome_api or esphome_proxy_connected — TCP stays alive.
 
@@ -360,7 +380,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             await self.client.disconnect()
         else:
-            logger.silly(f"not self.client, no need to disconnect.")
+            logger.silly(f"not self.client, no need to disconnect BLE.")
+            # No BLE client means the scan timed out (device not found) before BLE connect.
+            # ESPHomeAPIClient.disconnect() would normally close the TCP connection, but
+            # since self.client was never created, we must close it explicitly here.
+            # Without this, the dangling TCP connection keeps the ESP32's advertisement
+            # subscription slot occupied, blocking ble-scan.py and other clients.
+            if self._esphome_api is not None:
+                try:
+                    await self._esphome_api.disconnect()
+                    logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection (no BLE client was established)")
+                except Exception as e:
+                    logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
 
         # Unsubscribe from BLE advertisements now that BLE is fully torn down.
         # Must NOT be called while BLE is active — the UnsubscribeBluetoothLEAdvertisementsRequest

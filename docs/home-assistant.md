@@ -23,7 +23,7 @@ No MQTT broker required. The integration talks directly to the AquaClean over BL
    (or "Experimental features", depending on your HACS version)
 
 3. **Install** — HACS → Integrations → search **Geberit AquaClean**
-   → Download → select `v2.4.12-hacs-beta`
+   → Download → select the latest version
 
 4. **Restart Home Assistant**
 
@@ -72,7 +72,11 @@ Raw log file: `/config/home-assistant.log`
 
 ### Log level
 
-Not configurable from the UI.  Set it in `configuration.yaml`:
+> **Note:** The `config.ini` `[logging] level` setting has **no effect** when running
+> under HACS — that setting only applies to the standalone bridge.  Use the options
+> below to control log verbosity inside Home Assistant.
+
+**Permanent** — set in `configuration.yaml` and restart HA:
 
 ```yaml
 logger:
@@ -80,14 +84,22 @@ logger:
   logs:
     custom_components.geberit_aquaclean: debug   # integration glue code
     aquaclean_console_app: debug                  # BLE protocol library
+    aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector: debug  # BLE detail
+```
+
+**Dynamic** — no restart required, takes effect immediately:
+
+Settings → Developer Tools → Actions → `logger.set_level` → call action with:
+
+```yaml
+custom_components.geberit_aquaclean: debug
+aquaclean_console_app: debug
 ```
 
 Useful levels:
 - `warning` — errors and warnings only (default / production)
 - `info` — connection lifecycle events
 - `debug` — full BLE handshake, GATT operations, coordinator polls
-
-Restart HA after changing `configuration.yaml`.
 
 ### Dashboard card (button-card)
 
