@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Geberit AquaClean",
+        "description": "Enter the BLE MAC address of your AquaClean device. Optionally configure an ESPHome Bluetooth proxy if the device is not in range of this machine.",
+        "data": {
+          "device_id": "BLE MAC Address (XX:XX:XX:XX:XX:XX)",
+          "esphome_host": "ESPHome Proxy Host (optional)",
+          "esphome_port": "ESPHome Proxy Port",
+          "noise_psk": "ESPHome Encryption Key (optional, base64)",
+          "poll_interval": "Poll Interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings."
+    },
+    "abort": {
+      "already_configured": "This AquaClean device is already configured."
+    }
+  }
+}
