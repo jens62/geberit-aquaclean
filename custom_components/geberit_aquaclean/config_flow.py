@@ -7,6 +7,8 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
+from homeassistant.loader import async_get_integration
+
 from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
@@ -77,6 +79,9 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors: dict[str, str] = {}
 
+        integration = await async_get_integration(self.hass, DOMAIN)
+        version = integration.manifest.get("version", "unknown")
+
         if user_input is not None:
             data = _normalise(user_input)
             try:
@@ -100,6 +105,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=_build_schema(user_input or {}),
             errors=errors,
+            description_placeholders={"version": version},
         )
 
 
@@ -114,6 +120,9 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
 
         # Current effective values: options override data
         current = {**self._config_entry.data, **self._config_entry.options}
+
+        integration = await async_get_integration(self.hass, DOMAIN)
+        version = integration.manifest.get("version", "unknown")
 
         if user_input is not None:
             data = _normalise(user_input)
@@ -133,4 +142,5 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
             step_id="init",
             data_schema=_build_schema(current),
             errors=errors,
+            description_placeholders={"version": version},
         )
