@@ -312,17 +312,29 @@ and `[ESPHOME] esphome_api_connection` (enum), `[ESPHOME/API] port` (integer), `
 
 - Incremented in every except block (all error types).
 - Reset to `0` on first success. When reset from a non-zero value, `_identification_fetched` is also reset so the next BLE session re-fetches identification (device may have been power-cycled).
-- **Threshold = 5**: at exactly 5 consecutive failures, logs "Circuit open" once and switches to probe mode.
-- **Probe interval = 60s**: when circuit is open (`failures >= 5`), an extra `asyncio.sleep(60)` runs before each attempt, on top of the normal `_poll_interval` sleep.
+- **Threshold = 3**: at exactly 3 consecutive failures, logs "Circuit open" and triggers `_trigger_esphome_restart()`.
+- **Probe interval = 60s**: when circuit is open (`failures >= 3`), an extra `asyncio.sleep(60)` runs before each attempt, on top of the normal `_poll_interval` sleep.
 - On recovery: logs "Poll recovered after N failures".
 
 Constants are named locals at the top of `_polling_loop`:
 ```python
-_CIRCUIT_OPEN_THRESHOLD = 5
+_CIRCUIT_OPEN_THRESHOLD = 3    # failures before circuit opens (3 × 10s scan = 30s max lag)
 _CIRCUIT_OPEN_SLEEP     = 60
 ```
 
+**BLE scan timeout: 10s** (`asyncio.wait_for(found_event.wait(), timeout=10.0)` in
+`BluetoothLeConnector._connect_via_esphome()`).  The Geberit appears in 110–314 ms
+when the ESP32 scanner is healthy; 10s is generous without blowing up recovery time.
+Not exposed in config.ini — it's an internal engineering constant, not a user knob.
+With threshold=3 and timeout=10s: **30 seconds maximum lag before ESP32 auto-restart**.
+
 **Why `_identification_fetched` is reset on recovery**: if the device was power-cycled during the outage its identification data is unchanged in practice, but resetting ensures a clean re-fetch rather than serving potentially stale cached values.
+
+**Note on exception routing**: `_on_demand_inner()` converts all exceptions to
+`HTTPException(503, ...)` at line ~1671.  The specific `except ESPHomeDeviceNotFoundError`
+/ `except ESPHomeConnectionError` handlers in `_polling_loop` are therefore dead code
+— every error arrives as `Exception` and is caught by the generic handler.  The counter
+is incremented correctly regardless; the specific handlers are harmless dead code.
 
 **Confirmed production behavior (2026-02-23):** A real incident log (`local-assets/aquaclean.log.1-part.txt`) confirmed full auto-recovery with no bridge restart:
 
@@ -336,6 +348,29 @@ _CIRCUIT_OPEN_SLEEP     = 60
 | 08:02:05 | `"Poll recovered after 134 consecutive failure(s)"` — **automatic, no restart** |
 
 The bridge does NOT need to be restarted after an ESP32 power-cycle. The circuit breaker + trap 9 dead-connection detection handle it automatically.
+
+**Second confirmed incident (2026-02-24):** `local-assets/aquaclean_2026-02-23-part.log`
+— ESP32 BLE scanner stuck after a BLE disconnect (within ~8 s of a successful poll),
+**not** after a long overnight outage:
+
+| Time | Event |
+|------|-------|
+| 07:15:57 | Successful poll; BLE disconnects, TCP kept alive (persistent API) |
+| 07:16:05 | Next poll — scanner subscribed, **no advertisements received** (scanner stuck) |
+| 07:16:35 | POST /command/toggle-lid → 503 (lock held by hanging 30s scan) |
+| 07:17:05 | failure #1 (scan timed out) |
+| 07:17:45 | failure #2 |
+| 07:18:26 | failure #3 |
+| 07:18:36 | User manually pressed "Restart AquaClean Proxy" on the ESP32 web UI → TCP drops |
+| 07:18:37 | Bridge reconnects; BLE device found in 186 ms |
+| 07:18:41 | `"Poll recovered after 3 consecutive failure(s)"` |
+
+**Finding**: the ESP32 `bluetooth_proxy` component can get stuck after a BLE disconnect,
+stopping advertisement forwarding even though the API TCP connection is still alive.
+"Restart AquaClean Proxy" (component restart, not full reboot) is sufficient to recover.
+With the old defaults (threshold=5, timeout=30s) the user had to wait 90s (3 failures)
+before manually intervening — auto-restart would have fired at failure #5 (150s).
+With the new defaults (threshold=3, timeout=10s) auto-restart fires at 30s.
 
 ---
 
@@ -374,34 +409,33 @@ The device tracks a ceramic honeycomb filter counter. Two things are needed:
 1. **Read filter status** — no getter exists yet. Most likely accessible via `GetStoredCommonSetting` (0x51, see above). BLE sniffing the official app while it shows the filter reminder would confirm the exact `storedCommonSettingId` or DpId.
 2. **Wire `ResetFilterCounter` command** — `ResetFilterCounter = 47` is already defined in `Commands.py` but not exposed on any interface. Once the read side is understood, expose both read and reset via REST API, CLI, MQTT, and HA Discovery (same "all interfaces" rule).
 
-### Auto-restart ESP32 when BLE scanner is stuck (E0002 circuit breaker)
+### Auto-restart ESP32 when BLE scanner is stuck (E0002 circuit breaker) — IMPLEMENTED
 
-In the 2026-02-23 production incident, the ESP32's BLE scanner hung for ~4 hours
-(134 consecutive E0002 failures). The bridge's API connection to the ESP32 was
-healthy the whole time — `api: reboot_timeout:` in ESPHome would **not** have
-helped because it only watches the API connection, not the BLE scanner.
+**Status: done** on `feature/esphome-auto-restart` (commit 7cf2d97, refined in 916b39b).
 
-**The right fix:** add `button: platform: restart` to the ESPHome YAML, then have
-the bridge call it programmatically via `aioesphomeapi` when the circuit breaker
-opens (5 consecutive E0002 failures). This resets the stuck BLE stack without any
-human intervention.
+The ESP32's `bluetooth_proxy` component can get stuck after a BLE disconnect, stopping
+advertisement forwarding while the API TCP connection stays alive.  `api: reboot_timeout:`
+in ESPHome does **not** help — it only watches the API connection, not the BLE scanner.
 
-**Implementation sketch:**
-1. Add to ESPHome YAML:
-   ```yaml
-   button:
-     - platform: restart
-       name: "Restart AquaClean Proxy"
-   ```
-2. Flash the ESP32.
-3. In `ApiMode._polling_loop`, when `_consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD`
-   and `esphome_host` is set, call the restart button via `aioesphomeapi`
-   (`ButtonCommandRequest` or `execute_service`).
-4. After triggering the restart, sleep ~30s for the ESP32 to reboot before the
-   next probe attempt.
+**How it works:**
+1. `button: platform: restart` added to both ESPHome YAML files (commit 05ab035).
+   Flash the ESP32 once; the button then appears as `ButtonInfo` via `list_entities_services`.
+2. `ApiMode._polling_loop` tracks `_consecutive_poll_failures` (incremented on every exception).
+3. At exactly `_CIRCUIT_OPEN_THRESHOLD = 3` failures, `_trigger_esphome_restart()` is called.
+4. `_trigger_esphome_restart()` opens a **fresh** APIClient (never touches the BLE path),
+   discovers the restart button via `list_entities_services`, presses it via `button_command`.
+5. After restart, `_CIRCUIT_OPEN_SLEEP = 60s` gives the ESP32 time to reboot.
 
-**Expected result:** 5 × 30s poll interval = 2.5 min to circuit open → ESP32 restarts
-→ BLE stack resets → polling resumes automatically. 4-hour outage becomes ~3 minutes.
+**Recovery time:** 3 × 10s scan timeout = **30 seconds** from scanner stuck to restart fired.
+
+**Requirements:** the ESPHome proxy YAML must contain:
+```yaml
+button:
+  - platform: restart
+    name: "Restart AquaClean Proxy"
+```
+If the button is absent, `_trigger_esphome_restart()` logs a warning and returns False —
+the circuit breaker still slows down polling but cannot auto-recover without the button.
 
 ### Wire `GetStoredProfileSetting` / `SetStoredProfileSetting`
 
