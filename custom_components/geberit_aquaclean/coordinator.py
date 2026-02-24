@@ -1,7 +1,7 @@
 """DataUpdateCoordinator — polls the AquaClean device on-demand over BLE."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -99,7 +99,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "days_until_shower_restricted": stats.days_until_shower_restricted,
                 "shower_cycles_until_confirmation": stats.shower_cycles_until_confirmation,
                 "number_of_descale_cycles": stats.number_of_descale_cycles,
-                "date_time_at_last_descale": stats.date_time_at_last_descale,
+                "date_time_at_last_descale": (
+                    datetime.fromtimestamp(stats.date_time_at_last_descale).strftime("%d.%m.%Y")
+                    if stats.date_time_at_last_descale and stats.date_time_at_last_descale > 0
+                    else "Never"
+                ),
                 "unposted_shower_cycles": stats.unposted_shower_cycles,
             }
         except Exception as exc:
