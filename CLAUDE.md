@@ -779,6 +779,24 @@ All two-state config/runtime options use `persistent` | `on-demand` as values (n
 
 Only bump `pyproject.toml` and run `gh release create` once all affected docs are updated in the same commit (or in a preceding commit on the same push).
 
+#### Git tag vs GitHub Release — HACS will NOT see a bare git tag
+
+**Pushing a git tag is not enough.** HACS exclusively reads GitHub Releases.
+A bare `git push --tags` leaves the version invisible to HACS users.
+
+**Mandatory release sequence:**
+```bash
+# 1. Bump versions in pyproject.toml + manifest.json, commit, push
+git tag vX.Y.Z
+git push origin main --tags
+
+# 2. Create the GitHub Release — this is what HACS actually reads
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "- change 1\n- change 2"
+```
+
+Confirmed root cause (2026-02-24): v2.4.15 and v2.4.16 were pushed as git tags only;
+neither appeared in HACS until `gh release create` was run for both.
+
 ### MQTT ↔ HA Discovery dependency (MANDATORY)
 
 **Any change to an outbound MQTT topic requires a matching update in two places:**
