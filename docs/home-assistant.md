@@ -123,6 +123,23 @@ different IDs on your instance, check **Developer Tools → States** and update 
 | Connection Status section | Not present — no connected/error sensors |
 | ESPHome Proxy Status section | Not present — proxy handled internally |
 
+### Web UI
+
+The standalone bridge's web UI (REST API on port 8080) does **not exist** in the HACS
+integration — it is only started when running `aquaclean-bridge --mode api`.
+The HACS integration never starts that process.
+
+HA's own UI replaces everything the web UI provided:
+
+| Standalone web UI | HA equivalent |
+|---|---|
+| Live device state | Dashboard (`dashboard_button_card_hacs.yaml`) |
+| Toggle lid / showers | Button entities on the dashboard |
+| Raw entity values | Developer Tools → States |
+| State history | History panel / Logbook |
+| Configuration | Settings → Devices & Services → Configure |
+| Logs / errors | Settings → System → Logs |
+
 ### Entities created
 
 | Platform | Entity |
