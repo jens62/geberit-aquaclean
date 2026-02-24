@@ -1,7 +1,11 @@
 """Config flow and options flow for Geberit AquaClean."""
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
@@ -43,6 +47,10 @@ async def _test_connection(
     noise_psk: str | None,
 ) -> None:
     """Attempt a BLE connect to validate the supplied settings."""
+    _LOGGER.info(
+        "[AquaClean] Config flow: testing connection — device=%s esphome_host=%s port=%s",
+        device_id, esphome_host, esphome_port,
+    )
     from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
     from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
 
@@ -50,6 +58,7 @@ async def _test_connection(
     client = AquaCleanClientFactory(connector).create_client()
     try:
         await client.connect_ble_only(device_id)
+        _LOGGER.info("[AquaClean] Config flow: connection test succeeded")
     finally:
         try:
             await connector.disconnect()
@@ -92,6 +101,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data[CONF_NOISE_PSK],
                 )
             except Exception:
+                _LOGGER.exception("[AquaClean] Config flow: connection test failed")
                 errors["base"] = "cannot_connect"
             else:
                 await self.async_set_unique_id(data[CONF_DEVICE_ID])
@@ -134,6 +144,7 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                     data[CONF_NOISE_PSK],
                 )
             except Exception:
+                _LOGGER.exception("[AquaClean] Options flow: connection test failed")
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_create_entry(title="", data=data)
