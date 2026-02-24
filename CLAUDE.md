@@ -894,6 +894,19 @@ inside HA's runtime (which IS available in HA, unlike standalone).
 important, migrate to Option B as a follow-on.  The coordinator/entity structure is
 identical — only the connector layer changes.
 
+**Why Option A first is the only sensible order:**
+The coordinator + entity layer (bulk of the HA integration work) is identical in both
+options.  The only difference is what sits behind `coordinator.py` as the transport.
+Option A gives a fully working HA integration; Option B is then a single-layer swap.
+Doing Option B first means solving two problems simultaneously ("make a working HA
+integration" AND "integrate with HA's BLE stack") — if something breaks, you don't
+know which layer caused it.
+
+**BLE adapter conflict is moot for this setup:** the conflict (HA also using the local
+adapter) only matters when running the bridge on the same machine as HA with local BLE
+and no ESPHome proxy.  With the ESPHome proxy in use, Option A has zero adapter
+conflict risk.
+
 See `docs/roadmap.md` for the full spec.
 
 ---
