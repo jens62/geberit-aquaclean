@@ -213,7 +213,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # is allowed at a time".
         self._esphome_unsub_adv = unsub_adv
         try:
-            await asyncio.wait_for(found_event.wait(), timeout=30.0)
+            await asyncio.wait_for(found_event.wait(), timeout=10.0)
             logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
         except asyncio.TimeoutError:
             unsub_adv()
@@ -379,7 +379,18 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             await self.client.disconnect()
         else:
-            logger.silly(f"not self.client, no need to disconnect.")
+            logger.silly(f"not self.client, no need to disconnect BLE.")
+            # No BLE client means the scan timed out (device not found) before BLE connect.
+            # ESPHomeAPIClient.disconnect() would normally close the TCP connection, but
+            # since self.client was never created, we must close it explicitly here.
+            # Without this, the dangling TCP connection keeps the ESP32's advertisement
+            # subscription slot occupied, blocking ble-scan.py and other clients.
+            if self._esphome_api is not None:
+                try:
+                    await self._esphome_api.disconnect()
+                    logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection (no BLE client was established)")
+                except Exception as e:
+                    logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
 
         # Unsubscribe from BLE advertisements now that BLE is fully torn down.
         # Must NOT be called while BLE is active — the UnsubscribeBluetoothLEAdvertisementsRequest
