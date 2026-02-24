@@ -824,6 +824,80 @@ Similarly, adding a new MQTT-published feature should also be reflected in:
 
 ---
 
+## Planned: `--scan` CLI command
+
+`aquaclean-bridge --scan` (and `--scan --esphome-host <ip>`) for BLE device discovery
+at first-time setup.  Auto-selects local bleak or ESPHome path.  Scan logic belongs
+inside the package (`BluetoothLeConnector.scan()` or similar) — `ble-scan.py` becomes
+a thin wrapper or is retired.  DRY: one scan implementation, two consumers (CLI + ble-scan.py).
+See `docs/roadmap.md` for full spec.
+
+## Planned: HACS custom integration (Home Assistant, no MQTT)
+
+**Goal:** native HA integration installable via HACS.  No MQTT broker required.
+Standalone bridge + MQTT fully preserved alongside.
+
+**Structure (both options):**
+- `hacs.json` at repo root (`"category": "integration"`)
+- `custom_components/geberit_aquaclean/` — thin HA adapter only
+- `manifest.json` `requirements` points to this same repo's pip package → zero protocol code duplicated
+- `config_flow.py` replaces `config.ini` for the HA context (MAC, optional ESPHome host)
+- `coordinator.py` (`DataUpdateCoordinator`) replaces MQTT — calls `AquaCleanClient` directly
+- Entity files (`sensor.py`, `switch.py`, etc.) — wrappers around coordinator data
+
+---
+
+### Option A — bypass HA BLE, use `BluetoothLeConnector` directly (recommended first)
+
+**How:** `coordinator.py` instantiates `BluetoothLeConnector` exactly as the standalone
+bridge does.  HA's `bluetooth` domain is not involved.
+
+**Pros:**
+- Same battle-tested code path as standalone bridge — already proven
+- Low risk: no new infrastructure, no HA BLE stack integration
+- Straightforward: ~740 lines of new glue code
+
+**Cons:**
+- If HA itself is also using the local BLE adapter, adapter-conflict possible
+  (same root cause as two TCP connections to ESP32)
+- Not HA-native: device won't appear in HA's Bluetooth integration panel
+- No automatic BLE device discovery flow in HA UI
+
+**Estimated cost:** ~25–40K tokens total (write + debug).  1–2 sessions.
+
+---
+
+### Option B — integrate with HA's `bluetooth` domain
+
+**How:** register as a `bluetooth` passive scanner consumer.  HA delivers
+`BLEDevice` objects via scan callbacks; a new adapter layer maps them to
+`AquaCleanClient`.  ESPHome proxy path uses `bleak-esphome` + `habluetooth`
+inside HA's runtime (which IS available in HA, unlike standalone).
+
+**Pros:**
+- Fully HA-native: device appears in Bluetooth panel, auto-discovery flow
+- No BLE adapter conflict — HA manages the adapter
+- ESPHome proxy via `bleak-esphome` works inside HA (habluetooth is initialized)
+
+**Cons:**
+- ~4× more effort: ~1,500–2,500 lines including adapter layer
+- `habluetooth` inside HA behaves differently than standalone — needs re-validation
+  (see CLAUDE.md trap re: bleak-esphome requiring habluetooth)
+- Discovery flow in `config_flow.py` is fiddly
+- Higher risk of subtle bugs at the HA BLE abstraction boundary
+
+**Estimated cost:** ~80–150K tokens total.  3–5 sessions, higher debugging risk.
+
+---
+
+**Recommendation:** implement Option A first.  If HA-native BLE experience becomes
+important, migrate to Option B as a follow-on.  The coordinator/entity structure is
+identical — only the connector layer changes.
+
+See `docs/roadmap.md` for the full spec.
+
+---
+
 ## After every fix — test install curl
 
 After committing a fix, always supply this curl command for the user to test on raspi-5.
