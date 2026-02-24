@@ -1747,7 +1747,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         _identification_fetched = False  # fetch identification on the first poll, then state-only
         _consecutive_poll_failures = 0
-        _CIRCUIT_OPEN_THRESHOLD = 5    # failures before circuit opens
+        _CIRCUIT_OPEN_THRESHOLD = 3    # failures before circuit opens (3 × 10s scan = 30s max lag)
         _CIRCUIT_OPEN_SLEEP     = 60   # seconds between probe attempts when open
 
         while True:
