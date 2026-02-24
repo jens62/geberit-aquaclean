@@ -36,11 +36,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
     """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        self._device_id: str = entry.data[CONF_DEVICE_ID]
-        self._esphome_host: str | None = entry.data.get(CONF_ESPHOME_HOST) or None
-        self._esphome_port: int = entry.data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
-        self._noise_psk: str | None = entry.data.get(CONF_NOISE_PSK) or None
-        poll_interval: int = entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+        # options (from options flow) take precedence over data (from initial config flow)
+        conf = {**entry.data, **entry.options}
+        self._device_id: str = conf[CONF_DEVICE_ID]
+        self._esphome_host: str | None = conf.get(CONF_ESPHOME_HOST) or None
+        self._esphome_port: int = conf.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
+        self._noise_psk: str | None = conf.get(CONF_NOISE_PSK) or None
+        poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
 
         super().__init__(
             hass,

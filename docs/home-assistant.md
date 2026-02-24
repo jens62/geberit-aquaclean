@@ -37,6 +37,58 @@ No MQTT broker required. The integration talks directly to the AquaClean over BL
 > integration in Home Assistant is **disabled** — two simultaneous connections to the
 > ESP32 block BLE scanning.  See [esphome-troubleshooting.md](esphome-troubleshooting.md).
 
+### Local BLE vs ESPHome proxy
+
+The **ESPHome Proxy Host** field is the only switch:
+
+| `ESPHome Proxy Host` field | Transport used |
+|----------------------------|----------------|
+| Empty (left blank)         | Local BLE adapter on the HA machine (bleak) |
+| Filled in (e.g. `192.168.0.160`) | ESPHome proxy via aioesphomeapi over TCP |
+
+No separate toggle exists — the presence of the host determines which path is used.
+The ESPHome port defaults to `6053`; the encryption key is optional (leave blank for
+unencrypted, which is the recommended default on a trusted home LAN).
+
+### Changing settings after setup (options flow)
+
+All settings can be changed without re-adding the integration:
+
+**Settings → Devices & Services → Geberit AquaClean → Configure**
+
+The Configure button opens the options form with all current values pre-filled:
+- BLE MAC address
+- ESPHome Proxy Host / Port / Encryption Key
+- Poll interval
+
+A connection test is performed on save.  The integration reloads automatically — no
+HA restart needed.
+
+### Logs
+
+**Settings → System → Logs** — search or filter for `geberit_aquaclean`.
+
+Raw log file: `/config/home-assistant.log`
+
+### Log level
+
+Not configurable from the UI.  Set it in `configuration.yaml`:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.geberit_aquaclean: debug   # integration glue code
+    aquaclean_console_app: debug                  # BLE protocol library
+```
+
+Useful levels:
+- `warning` — errors and warnings only (default / production)
+- `info` — connection lifecycle events
+- `debug` — full BLE handshake, GATT operations, coordinator polls
+
+Restart HA after changing `configuration.yaml`.
+
 ### Entities created
 
 | Platform | Entity |
