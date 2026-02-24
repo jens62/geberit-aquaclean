@@ -412,6 +412,14 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 ## TODO
 
 
+- **Add poll countdown to HACS integration.** The standalone webapp shows a countdown
+  bar to the next poll via `poll_epoch` + `poll_interval` from the SSE stream. The
+  HACS coordinator (`custom_components/geberit_aquaclean/coordinator.py`) should expose
+  a `next_poll` timestamp sensor (or `time_remaining` as a `SensorEntity` with
+  `device_class: timestamp` / `unit_of_measurement: "s"`), computed from
+  `coordinator.data["poll_epoch"]` + `coordinator.data["poll_interval"]`.
+  This lets users show a "Next poll in X s" badge in their HA dashboard.
+
 - **Log error codes to the Python log file.** When an exception is mapped to an
   error code in `_on_demand_inner`'s finally block, only MQTT and SSE receive the
   code (e.g. E7002). The Python log file only shows the raw message from
@@ -970,3 +978,4 @@ When the user asks for markdown text containing `[]()` links or `![]()` image em
 (e.g. draft GitHub issue comments), always wrap the entire response in a fenced
 code block (` ``` ` ... ` ``` `). Square brackets are interpreted by zsh/bash and
 will be stripped or cause errors if output as plain text in the terminal.
+
