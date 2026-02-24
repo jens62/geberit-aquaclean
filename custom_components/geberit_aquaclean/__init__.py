@@ -1,8 +1,39 @@
 """Geberit AquaClean integration."""
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+
+# aquaclean_console_app uses custom log levels TRACE (DEBUG-5) and SILLY (DEBUG-7)
+# that are registered at module level in main.py — which is never imported in HAOS.
+# Add them to logging.Logger directly so HassLogger (a subclass) inherits them.
+def _register_custom_log_levels() -> None:
+    _TRACE = logging.DEBUG - 5
+    _SILLY = logging.DEBUG - 7
+
+    if not hasattr(logging.Logger, "trace"):
+        logging.addLevelName(_TRACE, "TRACE")
+        logging.TRACE = _TRACE  # type: ignore[attr-defined]
+
+        def _trace(self: logging.Logger, msg: object, *args: object, **kwargs: object) -> None:
+            if self.isEnabledFor(_TRACE):
+                self._log(_TRACE, msg, args, **kwargs)
+
+        logging.Logger.trace = _trace  # type: ignore[attr-defined]
+
+    if not hasattr(logging.Logger, "silly"):
+        logging.addLevelName(_SILLY, "SILLY")
+        logging.SILLY = _SILLY  # type: ignore[attr-defined]
+
+        def _silly(self: logging.Logger, msg: object, *args: object, **kwargs: object) -> None:
+            if self.isEnabledFor(_SILLY):
+                self._log(_SILLY, msg, args, **kwargs)
+
+        logging.Logger.silly = _silly  # type: ignore[attr-defined]
+
+_register_custom_log_levels()
 
 from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
