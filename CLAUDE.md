@@ -911,6 +911,26 @@ See `docs/roadmap.md` for the full spec.
 
 ---
 
+## Before every new release tag — check standalone install compatibility
+
+Before creating any new git tag (whether for a fix, HACS update, or any other reason),
+verify that the standalone `curl | bash -s -- latest` install still works:
+
+1. `gh api repos/jens62/geberit-aquaclean/releases/latest --jq '.tag_name,.prerelease'`
+   → must be non-prerelease (`false`) and point to the intended tag
+2. The tag must include the correct `pyproject.toml` version — `aquaclean-bridge --version`
+   must match the tag name
+3. `custom_components/` is ignored by pip (`pyproject.toml` only includes
+   `aquaclean_console_app*`) — safe to have on main, does not affect standalone installs
+4. Pre-release tags (e.g. `v2.4.13-hacs-beta`) are excluded from `releases/latest`
+   automatically — no risk from HACS beta tags
+
+**Common mistake:** tagging before bumping `pyproject.toml` — the tag then reports the
+old version via `--version`. Always bump `pyproject.toml` (and `manifest.json`) BEFORE
+tagging, commit, then tag that commit.
+
+---
+
 ## After every fix — test install curl
 
 After committing a fix, always supply this curl command for the user to test on raspi-5.
