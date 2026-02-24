@@ -10,7 +10,8 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 - **MQTT** — publishes device state in real time; accepts control and configuration commands
 - **REST API + web UI** — live dashboard, per-request queries, runtime configuration without restart
 - **CLI** — one-shot commands for scripting, diagnostics, and automation
-- **Home Assistant** — automatic entity creation via MQTT Discovery, no manual YAML required
+- **Home Assistant (HACS)** — native HA integration installable via HACS; no separate Linux machine or MQTT broker needed
+- **Home Assistant (MQTT)** — automatic entity creation via MQTT Discovery, no manual YAML required
 - **openHAB** — integrates via MQTT; subscribe to device topics and publish control commands
 - **Voice control** — trigger commands by voice via Home Assistant or openHAB (e.g. Amazon Alexa, Google Assistant, Apple Siri)
 
@@ -21,8 +22,8 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
       <em>Web UI — live status, on-demand queries, runtime config</em>
     </td>
     <td align="center">
-      <img src="homeassistant/button-card-masked.png" width="380"/><br/>
-      <em>Home Assistant — auto-created entities via MQTT Discovery</em>
+      <img src="docs/hacs-user-is-sitting.png" width="380"/><br/>
+      <em>Home Assistant HACS integration — native entities, no MQTT broker needed</em>
     </td>
   </tr>
 </table>
@@ -35,13 +36,26 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 - **MQTT** — publishes device state and accepts control commands
 - **REST API + web UI** — live dashboard, on-demand queries, runtime config
 - **CLI** — one-shot commands for scripting and diagnostics
-- **Home Assistant** — automatic entity creation via MQTT Discovery
+- **Home Assistant (HACS)** — native integration; install via HACS, no MQTT broker or separate server required — see [docs/hacs-integration.md](docs/hacs-integration.md)
+- **Home Assistant (MQTT)** — automatic entity creation via MQTT Discovery — see [homeassistant/SETUP_GUIDE.md](homeassistant/SETUP_GUIDE.md)
 - **openHAB** — integrates via MQTT; subscribe to device topics and publish control commands
 - **Use cases** — greet, play music, dismiss, time sessions, control lights, voice commands — see [docs/use-cases.md](docs/use-cases.md)
 
 ---
 
 ## Quick start
+
+> **Two installation paths:**
+>
+> | | Option A — Standalone bridge | Option B — HACS integration |
+> |-|-----------------------------|-----------------------------|
+> | **What you need** | Raspberry Pi / Linux server + MQTT broker | Home Assistant + ESP32 proxy |
+> | **Install** | `curl \| bash` (see below) | HACS custom repository |
+> | **Config** | `config.ini` | HA config flow (UI) |
+> | **Use if** | You want MQTT, REST API, CLI, openHAB | You only need Home Assistant entities |
+>
+> For Option B see **[docs/hacs-integration.md](docs/hacs-integration.md)**.
+> The steps below cover Option A.
 
 ### 1. Install
 
@@ -152,6 +166,7 @@ tail -f /var/log/aquaclean/aquaclean.log
 
 | Topic | File |
 |-------|------|
+| **HACS integration (Option B)** | [docs/hacs-integration.md](docs/hacs-integration.md) |
 | Use cases | [docs/use-cases.md](docs/use-cases.md) |
 | On-demand BLE connection | [docs/on-demand-ble.md](docs/on-demand-ble.md) |
 | BLE coexistence (bridge vs Geberit Home app) | [docs/ble-coexistence.md](docs/ble-coexistence.md) |
@@ -161,8 +176,8 @@ tail -f /var/log/aquaclean/aquaclean.log
 | Web UI | [docs/webapp.md](docs/webapp.md) |
 | CLI commands | [docs/cli.md](docs/cli.md) |
 | MQTT topics | [docs/mqtt.md](docs/mqtt.md) |
-| Home Assistant setup | [docs/home-assistant.md](docs/home-assistant.md) |
-| HA full setup guide | [homeassistant/SETUP_GUIDE.md](homeassistant/SETUP_GUIDE.md) |
+| Home Assistant (MQTT) | [docs/home-assistant.md](docs/home-assistant.md) |
+| HA MQTT full setup guide | [homeassistant/SETUP_GUIDE.md](homeassistant/SETUP_GUIDE.md) |
 | ESPHome Bluetooth Proxy | [docs/esphome.md](docs/esphome.md) |
 | ESPHome troubleshooting | [docs/esphome-troubleshooting.md](docs/esphome-troubleshooting.md) |
 | ESPHome developer notes | [docs/esphome-developer-notes.md](docs/esphome-developer-notes.md) |
@@ -185,15 +200,14 @@ AquaClean firmware: RS28.0 TS199
 ## Architecture
 
 ```
-# Option 1: Local Bluetooth adapter
-AquaClean (BLE) ←→ Raspberry Pi / server ←→ MQTT broker ←→ Home Assistant / openHAB / …
-                            ↕
-                       REST API / Web UI
+# Option A — Standalone bridge (MQTT, REST API, CLI)
+AquaClean (BLE) ←→ ESP32 proxy ←→ [TCP] ←→ Raspberry Pi / server ←→ MQTT broker ←→ HA / openHAB
+                [ESPHome proxy]  port 6053          ↕
+                                              REST API / Web UI
 
-# Option 2: ESPHome Bluetooth Proxy (ESP32 as remote BLE antenna)
-AquaClean (BLE) ←→ ESP32-POE-ISO ←→ [Ethernet/IP] ←→ Raspberry Pi / server ←→ MQTT broker ←→ HA / openHAB
-                   [ESPHome proxy]     port 6053              ↕
-                                                         REST API / Web UI
+# Option B — HACS native integration (Home Assistant only, no separate server)
+AquaClean (BLE) ←→ ESP32 proxy ←→ [TCP] ←→ Home Assistant (HACS integration)
+                [ESPHome proxy]  port 6053
 ```
 
 ---
