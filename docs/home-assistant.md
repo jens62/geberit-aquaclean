@@ -1,5 +1,55 @@
 # Home Assistant Integration
 
+Two integration methods are available:
+
+| Method | Requires | Status |
+|--------|----------|--------|
+| **HACS native integration** | HACS installed in HA | Beta — see below |
+| **MQTT Discovery** (standalone bridge) | MQTT broker + Raspberry Pi / server near the toilet | Stable |
+
+---
+
+## HACS native integration (beta)
+
+No MQTT broker required. The integration talks directly to the AquaClean over BLE
+(local adapter or ESPHome proxy) from within Home Assistant.
+
+### Install
+
+1. **Add the custom repository** — HACS → ⋮ → **Custom repositories**
+   → URL: `https://github.com/jens62/geberit-aquaclean` → category **Integration** → Add
+
+2. **Enable beta versions** — HACS → Settings → enable **Show beta versions**
+   (or "Experimental features", depending on your HACS version)
+
+3. **Install** — HACS → Integrations → search **Geberit AquaClean**
+   → Download → select `v2.4.12-hacs-beta`
+
+4. **Restart Home Assistant**
+
+5. **Configure** — Settings → Devices & Services → **Add Integration**
+   → search **Geberit AquaClean** → fill in:
+   - BLE MAC address of your AquaClean (e.g. `38:AB:41:2A:0D:67`)
+   - ESPHome Proxy Host (optional — recommended if the toilet is not in BLE range of HA)
+   - Poll interval (default 30 s)
+
+> **ESPHome proxy note:** if you use the ESP32 proxy, ensure the `aquaclean-proxy`
+> integration in Home Assistant is **disabled** — two simultaneous connections to the
+> ESP32 block BLE scanning.  See [esphome-troubleshooting.md](esphome-troubleshooting.md).
+
+### Entities created
+
+| Platform | Entity |
+|----------|--------|
+| Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
+| Sensor | Serial Number, SAP Number, Model, Production Date, Initial Operation Date |
+| Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
+| Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
+
+---
+
+## MQTT Discovery (standalone bridge)
+
 The application integrates with Home Assistant via **MQTT Discovery** — no manual YAML editing required.
 
 For the full setup guide, custom icons, and dashboard card examples see [`homeassistant/SETUP_GUIDE.md`](../homeassistant/SETUP_GUIDE.md).
