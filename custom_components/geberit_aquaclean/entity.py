@@ -10,7 +10,21 @@ from .coordinator import AquaCleanCoordinator
 
 
 class AquaCleanEntity(CoordinatorEntity[AquaCleanCoordinator]):
-    """Base class that provides the shared DeviceInfo for all AquaClean entities."""
+    """Base class that provides the shared DeviceInfo for all AquaClean entities.
+
+    _attr_has_entity_name = True tells HA to prefix entity IDs with a slugified
+    version of the device name.  The device name is fixed as "Geberit AquaClean"
+    so entity IDs are stable and predictable:
+        binary_sensor.geberit_aquaclean_user_sitting
+        sensor.geberit_aquaclean_days_until_next_descale
+        button.geberit_aquaclean_toggle_lid
+        …
+
+    The actual product model (e.g. "AquaClean Mera Comfort") is stored in the
+    device registry under `model`, visible in the device detail page.
+    """
+
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -21,9 +35,9 @@ class AquaCleanEntity(CoordinatorEntity[AquaCleanCoordinator]):
         data = self.coordinator.data or {}
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.data[CONF_DEVICE_ID])},
-            name=data.get("description") or "Geberit AquaClean",
+            name="Geberit AquaClean",        # stable — drives entity ID prefix
             manufacturer="Geberit",
-            model=data.get("description"),
+            model=data.get("description"),   # e.g. "AquaClean Mera Comfort"
             serial_number=data.get("serial_number"),
             hw_version=data.get("sap_number"),
         )
