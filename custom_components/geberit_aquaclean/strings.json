@@ -14,7 +14,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings."
+      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings.",
+      "no_bluetooth": "No local Bluetooth adapter found on this machine. An ESPHome Bluetooth proxy host is required."
     },
     "abort": {
       "already_configured": "This AquaClean device is already configured."
@@ -35,7 +36,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings."
+      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings.",
+      "no_bluetooth": "No local Bluetooth adapter found on this machine. An ESPHome Bluetooth proxy host is required."
     }
   }
 }
