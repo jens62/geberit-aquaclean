@@ -58,7 +58,10 @@ E0002 = ErrorCode(
 E0003 = ErrorCode(
     "E0003", "BLE connection timeout", "BLE", "ERROR",
     hint="The device did not respond in time. "
-         "Try power cycling the Geberit AquaClean (unplug for 10 seconds). "
+         "Try in order: "
+         "1) Run 'bluetoothctl remove <BT-ADDRESS>' to clear the BlueZ device cache, then restart the bridge. "
+         "2) Power cycle the Geberit AquaClean (unplug for 10 seconds). "
+         "3) Restart the Bluetooth service: 'sudo systemctl restart bluetooth'. "
          "If using an ESP32 proxy, also power cycle it.",
 )
 E0004 = ErrorCode(
