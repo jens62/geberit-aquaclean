@@ -40,6 +40,18 @@ def _build_schema(defaults: dict) -> vol.Schema:
     )
 
 
+async def _has_local_bluetooth() -> bool:
+    """Return True if a local Bluetooth adapter is accessible."""
+    try:
+        from bleak import BleakScanner
+        scanner = BleakScanner()
+        await scanner.start()
+        await scanner.stop()
+        return True
+    except Exception:
+        return False
+
+
 async def _test_connection(
     device_id: str,
     esphome_host: str | None,
@@ -93,23 +105,26 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             data = _normalise(user_input)
-            try:
-                await _test_connection(
-                    data[CONF_DEVICE_ID],
-                    data[CONF_ESPHOME_HOST],
-                    data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
-                    data[CONF_NOISE_PSK],
-                )
-            except Exception:
-                _LOGGER.exception("[AquaClean] Config flow: connection test failed")
-                errors["base"] = "cannot_connect"
+            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
+                errors["base"] = "no_bluetooth"
             else:
-                await self.async_set_unique_id(data[CONF_DEVICE_ID])
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"AquaClean {data[CONF_DEVICE_ID]}",
-                    data=data,
-                )
+                try:
+                    await _test_connection(
+                        data[CONF_DEVICE_ID],
+                        data[CONF_ESPHOME_HOST],
+                        data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
+                        data[CONF_NOISE_PSK],
+                    )
+                except Exception:
+                    _LOGGER.exception("[AquaClean] Config flow: connection test failed")
+                    errors["base"] = "cannot_connect"
+                else:
+                    await self.async_set_unique_id(data[CONF_DEVICE_ID])
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=f"AquaClean {data[CONF_DEVICE_ID]}",
+                        data=data,
+                    )
 
         return self.async_show_form(
             step_id="user",
@@ -136,18 +151,21 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             data = _normalise(user_input)
-            try:
-                await _test_connection(
-                    data[CONF_DEVICE_ID],
-                    data[CONF_ESPHOME_HOST],
-                    data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
-                    data[CONF_NOISE_PSK],
-                )
-            except Exception:
-                _LOGGER.exception("[AquaClean] Options flow: connection test failed")
-                errors["base"] = "cannot_connect"
+            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
+                errors["base"] = "no_bluetooth"
             else:
-                return self.async_create_entry(title="", data=data)
+                try:
+                    await _test_connection(
+                        data[CONF_DEVICE_ID],
+                        data[CONF_ESPHOME_HOST],
+                        data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
+                        data[CONF_NOISE_PSK],
+                    )
+                except Exception:
+                    _LOGGER.exception("[AquaClean] Options flow: connection test failed")
+                    errors["base"] = "cannot_connect"
+                else:
+                    return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
             step_id="init",
