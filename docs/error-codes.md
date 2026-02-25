@@ -48,7 +48,7 @@ Errors related to Bluetooth LE connectivity with the AquaClean device.
 |------|---------|-------|----------|
 | **E0001** | BLE device not found (local adapter) | Device not in range or not advertising | Move closer to device; check device is powered on; verify MAC address in config |
 | **E0002** | BLE device not found (ESP32 proxy) | ESP32 cannot see the device | Move ESP32 closer to toilet; check ESP32 is scanning (`esphome logs`) |
-| **E0003** | BLE connection timeout | Connection attempt exceeded timeout | Check device is powered on; reduce distance; check for interference |
+| **E0003** | BLE connection timeout | Connection attempt exceeded timeout | 1) Run `bluetoothctl remove <BT-ADDRESS>` to clear the BlueZ device cache, then restart the bridge. 2) Power cycle the Geberit AquaClean (unplug 10 s). 3) `sudo systemctl restart bluetooth`. |
 | **E0004** | GATT service not found | Expected service UUID not present | Device may be incompatible; check device is AquaClean model |
 | **E0005** | GATT characteristics not found | Expected characteristic UUID not present | Device may be incompatible or firmware version issue |
 | **E0006** | Characteristic read failed | GATT read operation failed | Retry operation; check BLE connection quality |
