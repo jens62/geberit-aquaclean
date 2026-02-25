@@ -579,6 +579,34 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     HA → Settings → Integrations. It must remain disabled while the standalone bridge
     is in use. See `docs/esphome-troubleshooting.md`.
 
+13. **`asyncio.TimeoutError` from `BleakClient.connect()` not caught — wrong error code or crash**
+
+    When `BleakClient.connect()` times out (e.g. after many `le-connection-abort-by-local`
+    retries on a local BlueZ adapter), it raises `asyncio.TimeoutError` — which is **not**
+    a subclass of `BleakError`. Three places each had a gap:
+
+    | Location | Symptom without fix |
+    |---|---|
+    | `ServiceMode.run()` | Falls to `handle_exception()` → `sys.exit(1)` — **bridge crashes** in persistent mode |
+    | `_on_demand_inner` finally | `isinstance(_exc, BleakError)` fails → `_ec = E7002` ("Poll loop error") instead of E0003 — **wrong error shown in webapp** |
+    | `_polling_loop` | Falls to `except Exception` → publishes E7002 to MQTT instead of E0003 |
+
+    **Observed symptom (on-demand mode, local BlueZ):** webapp cycles
+    "connecting… → error (no message) → connecting…" because E7002's hint says
+    "An error occurred in the background polling loop" — unhelpful for a BLE timeout.
+    In persistent mode the same timeout would crash the bridge entirely.
+
+    **Root of the timeout itself (`le-connection-abort-by-local`):** BlueZ connects at
+    the link layer (`Connected: True` D-Bus signal) but immediately aborts with reason
+    `0x16`. Bleak retries automatically within the `connect()` call. After the default
+    10-second timeout, `asyncio.TimeoutError` is raised. On the Raspberry Pi 5 with
+    the built-in adapter this retry loop can take 25+ seconds before eventually
+    succeeding — or always timeout, depending on BlueZ state.
+
+    **Fix applied:** Added explicit `except asyncio.TimeoutError` handlers in all three
+    locations, treating them identically to `BleakError` — mapped to E0003, with the
+    correct hint, no crash.
+
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
     → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
     (lines 103–105 check `if log_level not in ('TRACE', 'SILLY')`). The

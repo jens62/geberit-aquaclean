@@ -508,6 +508,25 @@ class ServiceMode:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
                     pass
+            except asyncio.TimeoutError as e:
+                # BleakClient.connect() timed out (e.g. after le-connection-abort-by-local
+                # retries exhausted). Not a BleakError subclass — must be caught explicitly
+                # or it falls through to handle_exception() → sys.exit(1).
+                msg = (
+                    f"BLE connect timed out — "
+                    "Try in order: "
+                    "1) Power cycle the Geberit. "
+                    "2) Restart the Bluetooth service on the host machine. "
+                    "3) Restart the host machine."
+                )
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
+                await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint)
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    pass
             except Exception as e:
                 await self.handle_exception(e)
             finally:
@@ -1640,6 +1659,8 @@ class ApiMode:
                     _ec = E0002
                 elif isinstance(_exc, BleakError):
                     _ec = E0003
+                elif isinstance(_exc, asyncio.TimeoutError):
+                    _ec = E0003
                 else:
                     _ec = E7002
                 await self.service._set_ble_status("error", error_msg=str(_exc), error_code=_ec.code, error_hint=_ec.hint)
@@ -1761,6 +1782,13 @@ class ApiMode:
             except BleakError as e:
                 _consecutive_poll_failures += 1
                 logger.warning(f"On-demand poll: BLE error (failure #{_consecutive_poll_failures}): {e}")
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/error", ErrorManager.to_json(E0003, str(e)))
+                if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
+                    logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
+            except asyncio.TimeoutError as e:
+                _consecutive_poll_failures += 1
+                logger.warning(f"On-demand poll: BLE connect timeout (failure #{_consecutive_poll_failures}): {e}")
                 await self.service.mqtt_service.send_data_async(
                     f"{topic}/centralDevice/error", ErrorManager.to_json(E0003, str(e)))
                 if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
