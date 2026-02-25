@@ -504,7 +504,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint)
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", self.bleConfig['device_id']))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -523,7 +523,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint)
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", self.bleConfig['device_id']))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -1663,7 +1663,7 @@ class ApiMode:
                     _ec = E0003
                 else:
                     _ec = E7002
-                await self.service._set_ble_status("error", error_msg=str(_exc) or _ec.message, error_code=_ec.code, error_hint=_ec.hint)
+                await self.service._set_ble_status("error", error_msg=str(_exc) or _ec.message, error_code=_ec.code, error_hint=_ec.hint.replace("<BT-ADDRESS>", device_id))
             else:
                 await self.service._set_ble_status("disconnected")
                 if esphome_host:
