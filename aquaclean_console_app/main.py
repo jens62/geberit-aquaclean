@@ -27,10 +27,11 @@ from aquaclean_console_app.RestApiService                                       
 from aquaclean_console_app.myEvent                                                  import myEvent
 from aquaclean_console_app.aquaclean_utils                                          import utils
 from aquaclean_console_app.ErrorCodes                                               import (
-    ErrorManager, E0000, E0001, E0002, E0003, E1001, E1002,
+    ErrorCode, ErrorManager, E0000, E0001, E0002, E0003, E1001, E1002,
     E2001, E2002, E2003, E2004, E2005,
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
+from fastapi import HTTPException
 
 # --- Package version (module-level so argparse --version can use it) ---
 def _get_version() -> str:
@@ -1128,7 +1129,6 @@ class ApiMode:
                 }
             }
         """
-        from fastapi import HTTPException
         error_dict = ErrorManager.to_dict(error_code, details)
         raise HTTPException(
             status_code=status_code,
@@ -1791,6 +1791,22 @@ class ApiMode:
                 logger.warning(f"On-demand poll: BLE connect timeout (failure #{_consecutive_poll_failures}): {e}")
                 await self.service.mqtt_service.send_data_async(
                     f"{topic}/centralDevice/error", ErrorManager.to_json(E0003, str(e)))
+                if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
+                    logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
+            except HTTPException as e:
+                # _on_demand_inner catches all BLE/ESP32 exceptions and re-raises as
+                # HTTPException with the original error code embedded in e.detail.
+                # Extract it so MQTT gets E0003/E1001/etc. instead of E7002.
+                _consecutive_poll_failures += 1
+                detail = e.detail if isinstance(e.detail, dict) else {}
+                err = detail.get("error", {})
+                ec_code = err.get("code", "E7002")
+                ec_msg  = err.get("message", str(e))
+                ec_hint = err.get("hint", "")
+                logger.warning(f"On-demand poll failed (failure #{_consecutive_poll_failures}): {ec_code} — {ec_msg}")
+                temp_ec = ErrorCode(ec_code, ec_msg, "BLE", "ERROR", ec_hint)
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/error", ErrorManager.to_json(temp_ec))
                 if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
                     logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
             except Exception as e:
