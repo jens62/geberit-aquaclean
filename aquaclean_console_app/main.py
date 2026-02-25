@@ -1706,21 +1706,26 @@ class ApiMode:
         _consecutive_poll_failures = 0
         _CIRCUIT_OPEN_THRESHOLD = 5    # failures before circuit opens
         _CIRCUIT_OPEN_SLEEP     = 60   # seconds between probe attempts when open
+        _first_poll = True  # poll immediately on startup; then sleep between cycles
 
         while True:
             # Sleep for the current interval; _poll_wakeup interrupts early on change.
-            try:
-                if self._poll_interval > 0:
-                    await asyncio.wait_for(self._poll_wakeup.wait(), timeout=self._poll_interval)
-                else:
-                    await self._poll_wakeup.wait()   # interval=0: wait until re-enabled
-                # Woken by set_poll_interval — restart sleep with the new value.
-                self._poll_wakeup.clear()
-                continue
-            except asyncio.TimeoutError:
-                pass   # normal path: interval elapsed
-            except asyncio.CancelledError:
-                return
+            # Skipped on the very first iteration (when polling is enabled) so data
+            # appears in the webapp immediately at startup without waiting one full interval.
+            if not (_first_poll and self._poll_interval > 0):
+                try:
+                    if self._poll_interval > 0:
+                        await asyncio.wait_for(self._poll_wakeup.wait(), timeout=self._poll_interval)
+                    else:
+                        await self._poll_wakeup.wait()   # interval=0: wait until re-enabled
+                    # Woken by set_poll_interval — restart sleep with the new value.
+                    self._poll_wakeup.clear()
+                    continue
+                except asyncio.TimeoutError:
+                    pass   # normal path: interval elapsed
+                except asyncio.CancelledError:
+                    return
+            _first_poll = False
 
             if self._shutdown_event.is_set():
                 return
