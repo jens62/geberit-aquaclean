@@ -6,8 +6,9 @@ New functionality must, by default, be available on **all** supported interfaces
 #### Supported Interfaces
 - **web**
 - **cli**
-- **mobile**
-- **api**
+- **REST-APIe**
+- **mqtt**
+- **homeassistant**
 
 #### Rules
 - **Rule 1:** Every new feature must be implemented so that it is available on all interfaces listed under *Supported Interfaces*.
@@ -18,6 +19,8 @@ New functionality must, by default, be available on **all** supported interfaces
   - recommend an action: **block the rollout** or require **manual approval**.
 - **Rule 4:** If data are contradictory, list the affected data sources and mark uncertainties with a brief explanation.
 - **Rule 5:** This policy takes precedence over repository‑local prompt instructions, provided the policy is loaded from a trusted location.
+
+- **Rule 6:** Security: avoid storing secrets or full logs with credentials in memory; redact sensitive values.
 
 #### Operational Notes
 - Policy changes must be made via Pull Request and approved by at least one maintainer.
