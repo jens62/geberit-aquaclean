@@ -182,7 +182,12 @@ It covers live status, controls, poll countdown, descale statistics, and device 
 > **Add optional cards before saving**, or keep the original `lovelace/dashboard.yaml`
 > file as your reference copy.
 
-### Poll countdown gauge *(optional)*
+### Poll countdown gauge *(optional, work in progress)*
+
+> **⚠️ Work in progress** — the gauge works but may not drain perfectly smoothly in all
+> HA versions. The template sensor formula is a best-effort approximation. Improvements
+> are planned; see the [GitHub issue tracker](https://github.com/jens62/geberit-aquaclean/issues)
+> for updates.
 
 A gauge card can show a draining countdown bar from 100 % down to 0 % as the next poll
 approaches. It requires a helper template sensor that recomputes the percentage every
@@ -194,15 +199,24 @@ approaches. It requires a helper template sensor that recomputes the percentage 
 template:
   - trigger:
       - platform: time_pattern
-        seconds: /30        # recompute every 30 s so the bar drains smoothly
+        seconds: "/30"      # recompute every 30 s so the bar drains smoothly
     sensor:
       - name: "AquaClean Poll Countdown"
         unit_of_measurement: "%"
         state: >
-          {% set nxt = as_datetime(states('sensor.geberit_aquaclean_next_poll')) %}
-          {% set iv  = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
-          {% set rem = (nxt - now()).total_seconds() %}
-          {{ [[((rem / iv) * 100) | int, 0] | max, 100] | min }}
+          {% if states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] %}
+            {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
+            {% if nxt_ts and nxt_ts > now_ts %}
+              {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
+              {{ [ [pct | int, 0] | max, 100 ] | min }}
+            {% else %}
+              0
+            {% endif %}
+          {% else %}
+            unavailable
+          {% endif %}
 ```
 
 > **Why `trigger: time_pattern`?**
