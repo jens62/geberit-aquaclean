@@ -154,12 +154,23 @@ HA's own UI replaces everything the web UI provided:
 
 ### Entities created
 
+HA registers three devices under **Settings → Devices & Services**:
+
+**Geberit AquaClean** (toilet)
+
 | Platform | Entity |
 |----------|--------|
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
-| Sensor | Serial Number, SAP Number, Model, Production Date, Initial Operation Date |
+| Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
+| Sensor (poll) | Last Poll, Poll Interval, Next Poll |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
+
+**AquaClean Proxy** *(only when ESPHome host is configured)*
+
+| Platform | Entity |
+|----------|--------|
+| Button | Restart AquaClean Proxy |
 
 ---
 
@@ -223,15 +234,28 @@ This is safe to run while the service is already active — it uses a separate M
 
 ### 3. Verify in Home Assistant
 
-Go to **Settings → Devices & Services → MQTT** — you will see a **Geberit AquaClean** device with 21 entities grouped together:
+Go to **Settings → Devices & Services → MQTT** — you will see three devices grouped together:
+
+**Geberit AquaClean** (toilet)
 
 | Type | Entities |
 |------|---------|
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
-| Sensor | SAP Number, Serial Number, Production Date, Description, Initial Operation Date, Connected, Error |
+| Sensor | SAP Number, Serial Number, Production Date, Description, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
-| Sensor (diagnostic) | System Info, Performance Stats |
 | Switch | Toggle Lid, Toggle Anal Shower |
+
+**AquaClean Bridge** (standalone bridge process)
+
+| Type | Entities |
+|------|---------|
+| Sensor | Connected, Error, System Info, Performance Stats, Last Poll, Poll Interval |
+
+**AquaClean Proxy** *(only when ESPHome host is configured)*
+
+| Type | Entities |
+|------|---------|
+| Button | Restart AquaClean Proxy |
 
 ![Descale Statistics in Home Assistant](homeassistant-descale-statistics.png)
 

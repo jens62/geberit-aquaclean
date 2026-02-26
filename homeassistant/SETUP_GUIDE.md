@@ -145,9 +145,8 @@ You have **two options** for configuring the entities in Home Assistant:
 
 2. **Verify in Home Assistant**:
    - Go to **Settings** → **Devices & Services** → **MQTT**
-   - You should see **"Geberit AquaClean"** device
-   - Click on it to see all 19 entities grouped together
-   - All entities are automatically created - no configuration.yaml editing needed!
+   - You will see three devices: **Geberit AquaClean** (toilet), **AquaClean Bridge** (bridge process), and **AquaClean Proxy** (ESP32, only if configured)
+   - All entities are automatically created — no configuration.yaml editing needed!
 
    ![MQTT Discovery Result](./mqtt_discovery_result.png)
 

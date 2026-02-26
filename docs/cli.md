@@ -171,15 +171,18 @@ python main.py --mode cli --command publish-ha-discovery
     "published": [
       "User Sitting", "Anal Shower Running", "Lady Shower Running", "Dryer Running",
       "SAP Number", "Serial Number", "Production Date", "Description",
-      "Initial Operation Date", "Connected", "Error",
+      "Initial Operation Date", "SOC Versions",
       "Days Until Next Descale", "Days Until Shower Restricted",
       "Shower Cycles Until Confirmation", "Number of Descale Cycles",
       "Last Descale", "Unposted Shower Cycles",
-      "Toggle Lid", "Toggle Anal Shower"
+      "Toggle Lid", "Toggle Anal Shower",
+      "Connected", "Error", "System Info", "Performance Stats",
+      "Last Poll", "Poll Interval",
+      "Restart AquaClean Proxy"
     ],
     "failed": []
   },
-  "message": "Published 19 HA discovery entities to 192.168.0.xxx:1883"
+  "message": "Published 25 HA discovery entities to 192.168.0.xxx:1883"
 }
 ```
 
