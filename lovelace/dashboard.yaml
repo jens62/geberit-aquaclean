@@ -51,6 +51,9 @@ views:
         title: Live Status
         icon: mdi:information-outline
         entities:
+          # TODO: uncomment once binary_sensor.geberit_aquaclean_connected is implemented
+          # - entity: binary_sensor.geberit_aquaclean_connected
+          #   name: Connected
           - entity: binary_sensor.geberit_aquaclean_user_sitting
             name: User Sitting
           - entity: binary_sensor.geberit_aquaclean_anal_shower_running
