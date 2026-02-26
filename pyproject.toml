@@ -4,14 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geberit-aquaclean"
-version = "2.4.21"
+version = "2.4.22"
 description = "Python bridge between Geberit AquaClean toilet (BLE) and home automation (MQTT/REST)"
 requires-python = ">=3.11"
 dependencies = [
-    "bleak>=2.0.0,<2.1",  # 2.1.x regresses le-connection-abort-by-local on BCM4345C0 + BlueZ 5.84
-                          # Before widening: test BLE connect time < 3 s on raspi-5 local adapter
-                          # Confirmed: 2.0.0 = ~1.8 s, 2.1.1 = ~25 s (same HW, same BlueZ 5.84)
-                          # See docs/bluetooth-troubleshooting.md for test procedure
+    "bleak>=2.0.0",       # note: 2.1.x may slow BLE connect on RPi5 BCM4345C0 + BlueZ 5.84
+                          # (2.0.0 = ~1.8 s, 2.1.1 = ~25 s); ESP32 proxy is unaffected.
+                          # HA ships bleak 2.1.1 — upper bound removed to allow HACS installation.
     "aioesphomeapi",
     "aiorun",
     "fastapi",
