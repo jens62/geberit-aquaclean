@@ -160,6 +160,17 @@ Try in this order:
    ```
    BlueZ caches connection state per device. Stale entries cause extra retries.
 
+   **Live recovery confirmed (2026-02-26):** The bridge shows a BLE error in the webapp
+   (E0003 hint). Running `bluetoothctl remove <MAC>` from a terminal while the bridge
+   is running causes immediate recovery — **no bridge restart needed**. The polling loop
+   retries and succeeds on the next cycle.
+
+   **Why this is not a UI button:** Only relevant for the local BLE path (no ESPHome proxy).
+   In the typical ESPHome proxy setup, BlueZ on the host is not involved and this command
+   does nothing useful. It is also Linux/BlueZ-specific and would require running a
+   privileged subprocess with the device MAC address. For ESPHome proxy users, the
+   "Restart AquaClean Proxy" button (ESP32 reboot) is the equivalent recovery action.
+
 3. **Restart Bluetooth:**
    ```bash
    sudo systemctl restart bluetooth

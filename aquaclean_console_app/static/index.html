@@ -406,6 +406,9 @@
       <button id="esp32ApiModeBtn" onclick="toggleEsp32ApiConnection(this)" style="display:none">
         <span class="spinner"></span><span id="esp32ApiModeBtnLabel">—</span>
       </button>
+      <button id="esp32RestartBtn" onclick="sendPost('/esphome/restart', this)" style="display:none">
+        <span class="spinner"></span>ESP32: Restart
+      </button>
       <div style="display:flex;align-items:center;gap:0.4rem">
         <input id="pollIntervalInput" type="number" min="0" step="0.5"
                style="width:5rem;padding:0.35rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.85rem"
@@ -1024,10 +1027,14 @@
         _esp32Connected = connected;
         const apiBtn = document.getElementById('esp32ApiModeBtn');
         if (apiBtn) apiBtn.style.display = '';
+        const restartBtn = document.getElementById('esp32RestartBtn');
+        if (restartBtn) restartBtn.style.display = '';
       } else {
         panel.style.display = 'none';
         const apiBtn = document.getElementById('esp32ApiModeBtn');
         if (apiBtn) apiBtn.style.display = 'none';
+        const restartBtn = document.getElementById('esp32RestartBtn');
+        if (restartBtn) restartBtn.style.display = 'none';
       }
     }
 

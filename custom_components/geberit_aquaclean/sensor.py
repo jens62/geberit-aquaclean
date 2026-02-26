@@ -22,6 +22,7 @@ SENSORS: list[tuple] = [
     ("description",             "Model",                      None,  None,                          None,                              "mdi:toilet"),
     ("production_date",         "Production Date",            None,  None,                          None,                              "mdi:calendar-badge"),
     ("initial_operation_date",  "Initial Operation Date",     None,  None,                          None,                              "mdi:calendar-check"),
+    ("soc_versions",            "SOC Versions",               None,  None,                          None,                              "mdi:chip"),
     # Descale statistics
     ("days_until_next_descale",          "Days Until Next Descale",          "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-remove"),
     ("days_until_shower_restricted",     "Days Until Shower Restricted",     "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-alert"),
@@ -29,6 +30,10 @@ SENSORS: list[tuple] = [
     ("number_of_descale_cycles",         "Number of Descale Cycles",         None, None,                       SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),
     ("unposted_shower_cycles",           "Unposted Shower Cycles",           None, None,                       SensorStateClass.MEASUREMENT,       "mdi:counter"),
     ("date_time_at_last_descale",        "Last Descale",                     None, None,                       None,                               "mdi:calendar-clock"),
+    # Poll timing (for countdown visualization)
+    ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check"),
+    ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),
+    ("next_poll",     "Next Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:calendar-clock"),
 ]
 
 

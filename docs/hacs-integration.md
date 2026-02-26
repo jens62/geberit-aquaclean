@@ -130,14 +130,57 @@ After downloading, Home Assistant must be restarted before the integration appea
 
 ## Entities
 
-After setup, a **Geberit AquaClean** device appears under Settings → Devices & Services with the following entities:
+After setup, HA registers three devices under Settings → Devices & Services:
+
+### Geberit AquaClean (toilet)
 
 | Type | Entity |
 |------|--------|
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
-| Sensor | SAP Number, Serial Number, Production Date, Description, Initial Operation Date, Connected, Error |
+| Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
-| Switch | Toggle Lid, Toggle Anal Shower |
+| Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
+| Sensor (poll) | Last Poll, Poll Interval, Next Poll |
+
+### AquaClean Proxy *(only when ESPHome host is configured)*
+
+| Type | Entity |
+|------|--------|
+| Button | Restart AquaClean Proxy |
+
+---
+
+## Dashboard
+
+A ready-to-use Lovelace dashboard is included in the repository at [`lovelace/dashboard.yaml`](../lovelace/dashboard.yaml).
+It covers live status, controls, poll countdown, descale statistics, and device information — using only built-in HA card types (no extra HACS plugins needed).
+
+### Import
+
+1. **Settings → Dashboards → Add Dashboard** → name it e.g. "AquaClean", click **Create**
+2. Open the new dashboard → click the **pencil (edit)** icon → **three dots (⋮)** → **Raw configuration editor**
+3. Paste the contents of [`lovelace/dashboard.yaml`](../lovelace/dashboard.yaml) and click **Save**
+
+### Poll countdown gauge *(optional)*
+
+The dashboard includes a commented-out gauge card that shows a draining countdown bar.
+To enable it, add this template sensor to `configuration.yaml` and restart HA:
+
+```yaml
+template:
+  - sensor:
+      - name: "AquaClean Poll Countdown"
+        unit_of_measurement: "%"
+        state: >
+          {% set nxt = as_datetime(states('sensor.geberit_aquaclean_next_poll')) %}
+          {% set iv  = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
+          {% set rem = (nxt - now()).total_seconds() %}
+          {{ [[((rem / iv) * 100) | int, 0] | max, 100] | min }}
+```
+
+Then uncomment the `gauge` card block in the dashboard YAML.
+
+---
 
 **Nobody on the toilet — User Sitting = Frei:**
 

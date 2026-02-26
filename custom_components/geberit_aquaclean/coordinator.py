@@ -1,7 +1,7 @@
 """DataUpdateCoordinator — polls the AquaClean device on-demand over BLE."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -70,6 +70,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             AquaCleanClientFactory,
         )
 
+        poll_start = datetime.now(timezone.utc)
         connector = self._make_connector()
         client = AquaCleanClientFactory(connector).create_client()
         try:
@@ -81,6 +82,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 [0, 1, 2, 3, 4, 5, 7, 9]
             )
             stats = await client.base_client.get_statistics_descale_async()
+            soc_versions = await client.base_client.get_soc_application_versions_async()
 
             return {
                 # Device identification
@@ -105,6 +107,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     else "Never"
                 ),
                 "unposted_shower_cycles": stats.unposted_shower_cycles,
+                "soc_versions": str(soc_versions) if soc_versions else None,
+                # Poll timing (for countdown visualization)
+                "poll_epoch": poll_start,
+                "poll_interval": self.update_interval.total_seconds(),
+                "next_poll": datetime.now(timezone.utc) + self.update_interval,
             }
         except Exception as exc:
             raise UpdateFailed(f"AquaClean update failed: {exc}") from exc
@@ -117,6 +124,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------
     # Command execution (buttons)
     # ------------------------------------------------------------------
+
+    async def async_restart_esp32(self) -> None:
+        """Trigger a software reboot of the ESP32 proxy by pressing its restart button entity."""
+        if not self._esphome_host:
+            raise ValueError("No ESPHome host configured")
+        connector = self._make_connector()
+        await connector.restart_esp32_async()
 
     async def async_execute_command(self, command: str) -> None:
         """Execute a device command via a fresh on-demand BLE connection."""
