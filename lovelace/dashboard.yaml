@@ -20,15 +20,24 @@
 #   template:
 #     - trigger:
 #         - platform: time_pattern
-#           seconds: /30
+#           seconds: "/30"
 #       sensor:
 #         - name: "AquaClean Poll Countdown"
 #           unit_of_measurement: "%"
 #           state: >
-#             {% set nxt = as_datetime(states('sensor.geberit_aquaclean_next_poll')) %}
-#             {% set iv  = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
-#             {% set rem = (nxt - now()).total_seconds() %}
-#             {{ [[((rem / iv) * 100) | int, 0] | max, 100] | min }}
+#             {% if states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] %}
+#               {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
+#               {% set now_ts = as_timestamp(now()) %}
+#               {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
+#               {% if nxt_ts and nxt_ts > now_ts %}
+#                 {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
+#                 {{ [ [pct | int, 0] | max, 100 ] | min }}
+#               {% else %}
+#                 0
+#               {% endif %}
+#             {% else %}
+#               unavailable
+#             {% endif %}
 
 title: Geberit AquaClean
 views:

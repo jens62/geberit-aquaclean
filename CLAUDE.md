@@ -487,6 +487,15 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   Fields: `last_connect_ms`, `last_poll_ms`, `avg_connect_ms`, `avg_poll_ms`, `sample_count`.
   See memory/hacs-todos.md for rationale.
 
+- **HACS: Poll countdown gauge — improve accuracy and smoothness.**
+  The current template sensor (trigger: time_pattern seconds: "/30") is a best-effort
+  approximation. Known rough edges: the gauge may not drain perfectly smoothly across
+  all HA versions; `unavailable` state briefly shows on HA startup before the first poll.
+  Investigate whether a native `SensorEntity` with `device_class: timestamp` (exposing
+  `next_poll` directly) renders better in the gauge card than the percentage template sensor.
+  Consider replacing the template approach with a computed sensor in `coordinator.py` /
+  `sensor.py` that HA can render natively.
+
 - **HACS: Add integration version sensor.**
   The standalone bridge's `system_info` reports app version, OS, Python, library versions,
   and BLE adapter details — all properties of the bridge *process*. In the HACS integration
