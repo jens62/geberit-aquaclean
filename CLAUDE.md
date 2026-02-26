@@ -467,6 +467,21 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   (which has no running `ApiMode`) would still show only `from_file` values, which
   is correct behaviour for a CLI invocation.
 
+- **install.sh: show progress during slow pip steps.** On a Raspberry Pi, the
+  `pip install --upgrade pip setuptools wheel` and `pip install --force-reinstall ...`
+  steps can take several minutes with no output — users assume it has hung and cancel.
+  Fix options (pick one or combine):
+  1. Add a spinner/progress indicator running in the background while pip runs.
+  2. Print a "This may take several minutes on Raspberry Pi…" warning before each
+     slow step.
+  3. Add `--progress-bar on` explicitly to the pip commands (pip defaults to `on`
+     for TTYs but the curl-pipe context may suppress it).
+  4. Add `--timeout 60` so a genuine network hang fails fast with a clear error
+     instead of silently blocking forever.
+  The simplest effective fix is option 2 + 4 combined: one-liner warning +
+  timeout guard. Option 1 (spinner) is the most user-friendly but requires a
+  background job and `trap` cleanup.
+
 ---
 
 ## ESPHome BLE connection — probe results (2026-02-21)
