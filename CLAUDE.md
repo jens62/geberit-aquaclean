@@ -467,6 +467,16 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   (which has no running `ApiMode`) would still show only `from_file` values, which
   is correct behaviour for a CLI invocation.
 
+- **Investigate toggle anal shower / toggle lady shower not working.**
+  The `ToggleAnalShower` (code 0) and `ToggleLadyShower` (code 1) commands are exposed
+  via the HACS integration (`button.py`) and the standalone bridge (`MqttService.py`,
+  REST API) but do not appear to work in practice. This is a core BLE protocol issue,
+  not specific to Home Assistant. Buttons removed from `lovelace/dashboard.yaml` Controls
+  section until the root cause is identified.
+  Suggested investigation: BLE-sniff the official Geberit Home app while triggering the
+  shower manually to confirm the correct command code and procedure ID. Compare against
+  the current `SetCommandAsync(Commands.ToggleAnalShower)` implementation.
+
 - **HACS: Add performance statistics sensors.**
   The HACS coordinator (`coordinator.py`) runs the same connect/poll/disconnect cycle as
   the standalone bridge but doesn't measure or expose timing. The standalone bridge's

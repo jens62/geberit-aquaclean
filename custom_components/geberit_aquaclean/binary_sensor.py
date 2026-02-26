@@ -13,12 +13,12 @@ from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity
 
-# (data_key, friendly_name, device_class, icon)
-BINARY_SENSORS: list[tuple[str, str, BinarySensorDeviceClass | None, str]] = [
-    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "geberit:user-sitting"),
-    ("is_anal_shower_running", "Anal Shower Running", None,                               "geberit:analshower"),
-    ("is_lady_shower_running", "Lady Shower Running", None,                               "geberit:ladywash"),
-    ("is_dryer_running",       "Dryer Running",       None,                               "geberit:dryer"),
+# (data_key, friendly_name, device_class, icon_on, icon_off)
+BINARY_SENSORS: list[tuple[str, str, BinarySensorDeviceClass | None, str, str]] = [
+    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on",  "geberit:is_user_sitting-off"),
+    ("is_anal_shower_running", "Anal Shower Running", None,                               "geberit:analshower",           "geberit:analshower"),
+    ("is_lady_shower_running", "Lady Shower Running", None,                               "geberit:ladywash",             "geberit:ladywash"),
+    ("is_dryer_running",       "Dryer Running",       None,                               "geberit:dryer-on",             "geberit:dryer-off"),
 ]
 
 
@@ -29,19 +29,24 @@ async def async_setup_entry(
 ) -> None:
     coordinator: AquaCleanCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon)
-        for key, name, device_class, icon in BINARY_SENSORS
+        AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off)
+        for key, name, device_class, icon_on, icon_off in BINARY_SENSORS
     )
 
 
 class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
-    def __init__(self, coordinator, entry, key, name, device_class, icon) -> None:
+    def __init__(self, coordinator, entry, key, name, device_class, icon_on, icon_off) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_name = name
         self._attr_device_class = device_class
-        self._attr_icon = icon
+        self._icon_on = icon_on
+        self._icon_off = icon_off
+
+    @property
+    def icon(self) -> str:
+        return self._icon_on if self.is_on else self._icon_off
 
     @property
     def is_on(self) -> bool | None:
