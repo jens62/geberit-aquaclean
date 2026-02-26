@@ -37,6 +37,8 @@ def entry_point():
             "  %(prog)s --mode cli --command publish-ha-discovery\n"
             "  %(prog)s --mode cli --command remove-ha-discovery\n"
             "  %(prog)s --mode cli --command system-info\n"
+            "  %(prog)s --mode cli --command performance-stats\n"
+            "  %(prog)s --mode cli --command performance-stats --format markdown\n"
             "\n"
             "ESPHome proxy (no BLE required):\n"
             "  %(prog)s --mode cli --command esp32-connect\n"
@@ -44,6 +46,7 @@ def entry_point():
             "\n"
             "options:\n"
             "  --address 38:AB:XX:XX:ZZ:67   override BLE device address from config.ini\n"
+            "  --format json|markdown         output format for performance-stats (default: json)\n"
             "\n"
             "CLI results and errors are written to stdout as JSON.\n"
             "Log output goes to stderr (redirect with 2>logfile)."
@@ -61,12 +64,14 @@ def entry_point():
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
-        # system info (no BLE required)
-        'system-info',
+        # system info + performance stats (no BLE required)
+        'system-info', 'performance-stats',
         # ESPHome proxy (no BLE required)
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--format', choices=['json', 'markdown'], default='json',
+                        help='Output format for performance-stats (default: json)')
     parser.add_argument('--ha-discovery', default=None,
                         action=argparse.BooleanOptionalAction,
                         dest='ha_discovery',

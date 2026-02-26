@@ -89,6 +89,14 @@ mqtt:
       icon: mdi:information-variant
       entity_category: diagnostic
 
+    - name: "Geberit AquaClean Performance Stats"
+      state_topic: "Geberit/AquaClean/centralDevice/performanceStats"
+      value_template: "{{ value_json['persistent']['sample_count'] + value_json['on-demand']['sample_count'] }}"
+      json_attributes_topic: "Geberit/AquaClean/centralDevice/performanceStats"
+      icon: mdi:chart-bar
+      unit_of_measurement: "samples"
+      entity_category: diagnostic
+
   switch:
     # Control switch for lid position
     - name: "Geberit AquaClean Toggle Lid"
