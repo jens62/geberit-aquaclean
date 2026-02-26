@@ -65,12 +65,10 @@
     },
   };
 
-  window.customIconSets = window.customIconSets || {};
-  window.customIconSets["geberit"] = {
-    async getIcon(name) {
-      const icon = ICONS[name];
-      if (!icon) return null;
-      return { path: icon.path, viewBox: icon.viewBox };
-    },
+  window.customIconsets = window.customIconsets || {};
+  window.customIconsets["geberit"] = async (name) => {
+    const icon = ICONS[name];
+    if (!icon) return null;
+    return { path: icon.path, viewBox: icon.viewBox };
   };
 })();

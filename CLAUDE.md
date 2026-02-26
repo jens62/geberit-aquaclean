@@ -467,6 +467,27 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   (which has no running `ApiMode`) would still show only `from_file` values, which
   is correct behaviour for a CLI invocation.
 
+- **HACS: Add performance statistics sensors.**
+  The HACS coordinator (`coordinator.py`) runs the same connect/poll/disconnect cycle as
+  the standalone bridge but doesn't measure or expose timing. The standalone bridge's
+  `_publish_performance_stats_mqtt()` publishes per-mode min/max/avg connect and poll times.
+  The coordinator could do the same: instrument timing around `connect_ble_only()` and the
+  BLE fetch block, accumulate rolling stats in instance variables, include them in the
+  returned data dict, and expose as diagnostic `SensorEntity` entries in `sensor.py`.
+  Fields: `last_connect_ms`, `last_poll_ms`, `avg_connect_ms`, `avg_poll_ms`, `sample_count`.
+  See memory/hacs-todos.md for rationale.
+
+- **HACS: Add integration version sensor.**
+  The standalone bridge's `system_info` reports app version, OS, Python, library versions,
+  and BLE adapter details — all properties of the bridge *process*. In the HACS integration
+  there is no bridge process; the code runs inside HA, which already surfaces OS, Python,
+  and library info natively (Settings → System). The only field worth exposing is the
+  **integration version** (from `manifest.json`), so users can confirm which version is
+  running without navigating to Settings → Integrations.
+  Implementation: read version from `manifest.json` at setup time, expose as a single
+  diagnostic `SensorEntity` with `entity_category: EntityCategory.DIAGNOSTIC`.
+  See memory/hacs-todos.md for rationale.
+
 - **install.sh: show progress during slow pip steps.** On a Raspberry Pi, the
   `pip install --upgrade pip setuptools wheel` and `pip install --force-reinstall ...`
   steps can take several minutes with no output — users assume it has hung and cancel.
