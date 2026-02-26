@@ -9,11 +9,19 @@
 # prefix accordingly (e.g. "my_aquaclean" instead of "geberit_aquaclean").
 #
 # OPTIONAL — Poll countdown gauge:
-#   To show a gauge that drains to zero as the next poll approaches, add
-#   this template sensor to your configuration.yaml first:
+#   HA's Raw config editor strips all comments on save, so the commented-out
+#   gauge card below will be gone after your first save.  Add it manually
+#   after saving, or see docs/hacs-integration.md for the complete paste-ready
+#   YAML snippet and the required template sensor (configuration.yaml).
+#
+#   Template sensor (configuration.yaml) — use time_pattern trigger so the
+#   gauge drains smoothly every 30 s instead of only updating once per poll:
 #
 #   template:
-#     - sensor:
+#     - trigger:
+#         - platform: time_pattern
+#           seconds: /30
+#       sensor:
 #         - name: "AquaClean Poll Countdown"
 #           unit_of_measurement: "%"
 #           state: >
@@ -21,8 +29,6 @@
 #             {% set iv  = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
 #             {% set rem = (nxt - now()).total_seconds() %}
 #             {{ [[((rem / iv) * 100) | int, 0] | max, 100] | min }}
-#
-#   Then uncomment the gauge card in the "Poll Status" section below.
 
 title: Geberit AquaClean
 views:

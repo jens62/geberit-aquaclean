@@ -5,6 +5,20 @@ It is installed via HACS and configured entirely within the Home Assistant UI �
 
 For the alternative MQTT-based setup (standalone bridge on a Raspberry Pi), see [`homeassistant/SETUP_GUIDE.md`](../homeassistant/SETUP_GUIDE.md).
 
+> ### ⚠️ Tested with ESPHome Bluetooth proxy only
+>
+> **This integration has been tested exclusively with an ESP32 running the ESPHome
+> `bluetooth_proxy` component as the BLE-to-TCP bridge.**
+>
+> The following configurations are **untested and may not work**:
+> - Home Assistant with a built-in Bluetooth adapter (e.g. Raspberry Pi onboard BT)
+> - USB Bluetooth dongles connected to the HA host
+> - HA OS Bluetooth integration (`bluetooth` domain)
+>
+> If you do not have an ESP32 ESPHome proxy, set one up first — see the
+> [ESPHome proxy setup](#esphome-proxy) section below.
+> Reports from users testing direct BLE (without ESP32) are welcome via GitHub Issues.
+
 ---
 
 ## Architecture
@@ -161,14 +175,27 @@ It covers live status, controls, poll countdown, descale statistics, and device 
 2. Open the new dashboard → click the **pencil (edit)** icon → **three dots (⋮)** → **Raw configuration editor**
 3. Paste the contents of [`lovelace/dashboard.yaml`](../lovelace/dashboard.yaml) and click **Save**
 
+> **⚠️ HA strips all YAML comments on save.**
+> When you save in the Raw configuration editor, Home Assistant permanently removes every
+> comment line from your dashboard YAML. Any commented-out optional blocks (like the gauge
+> below) will be gone the next time you open the editor.
+> **Add optional cards before saving**, or keep the original `lovelace/dashboard.yaml`
+> file as your reference copy.
+
 ### Poll countdown gauge *(optional)*
 
-The dashboard includes a commented-out gauge card that shows a draining countdown bar.
-To enable it, add this template sensor to `configuration.yaml` and restart HA:
+A gauge card can show a draining countdown bar from 100 % down to 0 % as the next poll
+approaches. It requires a helper template sensor that recomputes the percentage every
+30 seconds.
+
+**Step 1 — add the template sensor to `configuration.yaml`** and restart HA:
 
 ```yaml
 template:
-  - sensor:
+  - trigger:
+      - platform: time_pattern
+        seconds: /30        # recompute every 30 s so the bar drains smoothly
+    sensor:
       - name: "AquaClean Poll Countdown"
         unit_of_measurement: "%"
         state: >
@@ -178,7 +205,27 @@ template:
           {{ [[((rem / iv) * 100) | int, 0] | max, 100] | min }}
 ```
 
-Then uncomment the `gauge` card block in the dashboard YAML.
+> **Why `trigger: time_pattern`?**
+> Without a time-pattern trigger the template sensor only re-evaluates when
+> `sensor.geberit_aquaclean_next_poll` changes — i.e. once per poll cycle.
+> The gauge would stay frozen between polls. The 30-second trigger makes it drain visibly.
+
+**Step 2 — add the gauge card to your dashboard.**
+In the Raw configuration editor, paste the following block directly after the
+`Poll Status` entities card (search for `title: Poll Status`):
+
+```yaml
+      - type: gauge
+        title: Poll Countdown
+        entity: sensor.aquaclean_poll_countdown
+        min: 0
+        max: 100
+        needle: true
+        severity:
+          green: 50
+          yellow: 20
+          red: 5
+```
 
 ---
 
