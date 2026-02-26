@@ -36,6 +36,7 @@ def entry_point():
             "  %(prog)s --mode cli --command get-config\n"
             "  %(prog)s --mode cli --command publish-ha-discovery\n"
             "  %(prog)s --mode cli --command remove-ha-discovery\n"
+            "  %(prog)s --mode cli --command system-info\n"
             "\n"
             "ESPHome proxy (no BLE required):\n"
             "  %(prog)s --mode cli --command esp32-connect\n"
@@ -60,6 +61,8 @@ def entry_point():
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
+        # system info (no BLE required)
+        'system-info',
         # ESPHome proxy (no BLE required)
         'esp32-connect', 'esp32-disconnect',
     ])

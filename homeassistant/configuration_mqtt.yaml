@@ -82,6 +82,13 @@ mqtt:
       state_topic: "Geberit/AquaClean/centralDevice/error"
       icon: mdi:alert-circle
 
+    - name: "Geberit AquaClean System Info"
+      state_topic: "Geberit/AquaClean/centralDevice/systemInfo"
+      value_template: "{{ value_json.app_version }}"
+      json_attributes_topic: "Geberit/AquaClean/centralDevice/systemInfo"
+      icon: mdi:information-variant
+      entity_category: diagnostic
+
   switch:
     # Control switch for lid position
     - name: "Geberit AquaClean Toggle Lid"
