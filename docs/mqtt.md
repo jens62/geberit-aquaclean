@@ -17,6 +17,17 @@ The application publishes to these topics.  All messages are published with `ret
 | `{prefix}/centralDevice/connected` | `Connecting to <addr> ...` → `True` → `False` | BLE connection lifecycle |
 | `{prefix}/centralDevice/error` | JSON (see below) | Last BLE error; cleared to `{"code":"E0000","message":"No error",...}` on each new connect attempt |
 | `{prefix}/centralDevice/timings` | JSON | Connect timing breakdown: `{"connect_ms":N,"esphome_api_ms":N,"ble_ms":N}` |
+| `{prefix}/centralDevice/systemInfo` | JSON | App version, OS, libraries, BLE adapter details — published once on startup |
+| `{prefix}/centralDevice/performanceStats` | JSON | Per-mode timing statistics — published after every poll |
+
+### Poll timing
+
+Published immediately before each poll cycle so clients can compute a countdown.
+
+| Topic | Values | Description |
+|-------|--------|-------------|
+| `{prefix}/centralDevice/pollEpoch` | ISO 8601 timestamp | When the current poll cycle started (UTC) |
+| `{prefix}/centralDevice/pollInterval` | float (seconds) | Current poll interval; `0` = polling disabled |
 
 **Error JSON format:**
 ```json
@@ -99,6 +110,7 @@ The application subscribes to these topics and reacts to incoming messages.
 |-------|---------|--------|
 | `{prefix}/esphomeProxy/control/connect` | any | Connect/reconnect the ESP32 API TCP connection |
 | `{prefix}/esphomeProxy/control/disconnect` | any | Disconnect the ESP32 API TCP connection |
+| `{prefix}/esphomeProxy/control/restart` | any | Reboot the ESP32 (requires `button: platform: restart` in ESPHome YAML) |
 
 ### Runtime configuration
 
