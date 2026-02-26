@@ -507,6 +507,43 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   diagnostic `SensorEntity` with `entity_category: EntityCategory.DIAGNOSTIC`.
   See memory/hacs-todos.md for rationale.
 
+- **HACS: Add multilingual support (EN / DE / FR / IT).**
+  Reference document: [`local-assets/Gemini-Home Assistant Dashboards mit Sprachauswahl.md`](../local-assets/Gemini-Home%20Assistant%20Dashboards%20mit%20Sprachauswahl.md)
+
+  HA uses `strings.json` (master) + `translations/de.json`, `fr.json`, `it.json`.
+  When a user's HA language is set, entity names, config flow labels, and state strings
+  render in that language automatically.
+
+  **Already translated by HA automatically (zero work needed):**
+  - Binary sensor state values — "Frei"/"Erkannt", "Aus"/"An" from HA's device class translations
+  - Timestamp formatting — "in 25 Sekunden", "Vor 8 Sekunden" — HA does this natively
+  - Units like "s", "%", "d"
+
+  **Needs explicit translation strings (~35 strings × 4 languages = ~140 entries):**
+  - All ~20 entity names (`sensor.py`, `binary_sensor.py`, `button.py`) — currently hardcoded as `_attr_name = "User Sitting"` etc.
+  - ~10 config flow field labels ("BLE MAC Address", "ESPHome Proxy Host", …)
+  - ~5 config flow descriptions and error messages
+
+  **Stays untranslated regardless:**
+  - Lovelace card titles ("Live Status", "Descale", "Controls", etc.) — hardcoded in `dashboard.yaml`
+  - Lovelace `name:` overrides — removing these lets HA show the translated entity name instead
+  - Gauge title ("AquaClean Poll Countdown") — hardcoded in dashboard YAML
+  - Template sensor name in `configuration.yaml` — set by the user
+
+  **Files to create/change:**
+
+  | File | Change |
+  |------|--------|
+  | `custom_components/geberit_aquaclean/strings.json` | New — master string definitions |
+  | `custom_components/geberit_aquaclean/translations/en.json` | New |
+  | `custom_components/geberit_aquaclean/translations/de.json` | New |
+  | `custom_components/geberit_aquaclean/translations/fr.json` | New |
+  | `custom_components/geberit_aquaclean/translations/it.json` | New |
+  | `sensor.py`, `binary_sensor.py`, `button.py` | Replace `_attr_name = "..."` with `_attr_translation_key = "..."` |
+  | `lovelace/dashboard.yaml` | Remove `name:` overrides so translated entity names show through |
+
+  **Effort:** moderate code changes + translation content (machine translation is fine for a first pass; native speaker review recommended). ~1 focused session.
+
 - **install.sh: show progress during slow pip steps.** On a Raspberry Pi, the
   `pip install --upgrade pip setuptools wheel` and `pip install --force-reinstall ...`
   steps can take several minutes with no output — users assume it has hung and cancel.
