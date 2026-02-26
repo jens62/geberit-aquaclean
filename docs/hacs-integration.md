@@ -150,7 +150,7 @@ After setup, HA registers three devices under Settings → Devices & Services:
 
 | Type | Entity |
 |------|--------|
-| Binary sensor | Connected, User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
+| Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
 | Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
@@ -160,6 +160,8 @@ After setup, HA registers three devices under Settings → Devices & Services:
 
 | Type | Entity |
 |------|--------|
+| Binary sensor | Connected (device_class: connectivity) |
+| Sensor | Connection — shows `{ESPHome device name} (host:port)` |
 | Button | Restart AquaClean Proxy |
 
 ---

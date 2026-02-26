@@ -46,13 +46,22 @@ views:
     icon: mdi:toilet
     cards:
 
+      # ── ESPHome Proxy ─────────────────────────────────────────────────────
+      # Only relevant when an ESPHome proxy host is configured
+      - type: entities
+        title: ESPHome Proxy
+        icon: mdi:lan
+        entities:
+          - entity: binary_sensor.aquaclean_proxy_connected
+            name: Connected
+          - entity: sensor.aquaclean_proxy_connection
+            name: Connection
+
       # ── Live Status ──────────────────────────────────────────────────────
       - type: entities
         title: Live Status
         icon: mdi:information-outline
         entities:
-          - entity: binary_sensor.geberit_aquaclean_connected
-            name: Connected
           - entity: binary_sensor.geberit_aquaclean_user_sitting
             name: User Sitting
           - entity: binary_sensor.geberit_aquaclean_anal_shower_running

@@ -1,4 +1,4 @@
-"""Binary sensors — live device state."""
+"""Binary sensors — live device state and connection status."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
-from .entity import AquaCleanEntity
+from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
 # (data_key, friendly_name, device_class, icon_on, icon_off)
 BINARY_SENSORS: list[tuple[str, str, BinarySensorDeviceClass | None, str, str]] = [
@@ -32,7 +32,8 @@ async def async_setup_entry(
         AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off)
         for key, name, device_class, icon_on, icon_off in BINARY_SENSORS
     ]
-    entities.append(AquaCleanConnectedSensor(coordinator, entry))
+    if coordinator._esphome_host:
+        entities.append(AquaCleanEspHomeConnectedSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -57,15 +58,15 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
         return bool(self.coordinator.data.get(self._key))
 
 
-class AquaCleanConnectedSensor(AquaCleanEntity, BinarySensorEntity):
-    """Binary sensor reflecting whether the last coordinator poll succeeded."""
+class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
+    """Binary sensor showing whether the ESPHome proxy was reachable on the last poll."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_name = "Connected"
 
     def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_connected"
+        self._attr_unique_id = f"{entry.entry_id}_esphome_connected"
 
     @property
     def available(self) -> bool:
@@ -73,7 +74,7 @@ class AquaCleanConnectedSensor(AquaCleanEntity, BinarySensorEntity):
 
     @property
     def icon(self) -> str:
-        return "mdi:bluetooth-connect" if self.is_on else "mdi:bluetooth-off"
+        return "mdi:lan-connect" if self.is_on else "mdi:lan-disconnect"
 
     @property
     def is_on(self) -> bool:
