@@ -75,11 +75,21 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
 
     @property
     def icon(self) -> str:
-        return "mdi:bluetooth-connect" if self.is_on else "mdi:bluetooth-off"
+        state = self.coordinator.ble_state
+        if state == "connected":
+            return "mdi:bluetooth-connect"
+        if state == "connecting":
+            return "mdi:bluetooth-searching"
+        return "mdi:bluetooth-off"
 
     @property
-    def is_on(self) -> bool:
-        return self.coordinator.last_update_success
+    def is_on(self) -> bool | None:
+        state = self.coordinator.ble_state
+        if state == "connected":
+            return True
+        if state == "connecting":
+            return None  # "Unknown" — HA shows neither on nor off
+        return False  # disconnected or error
 
 
 class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
@@ -98,8 +108,18 @@ class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
 
     @property
     def icon(self) -> str:
-        return "mdi:lan-connect" if self.is_on else "mdi:lan-disconnect"
+        state = self.coordinator.esphome_state
+        if state == "connected":
+            return "mdi:lan-connect"
+        if state == "connecting":
+            return "mdi:lan-pending"
+        return "mdi:lan-disconnect"
 
     @property
-    def is_on(self) -> bool:
-        return self.coordinator.last_update_success
+    def is_on(self) -> bool | None:
+        state = self.coordinator.esphome_state
+        if state == "connected":
+            return True
+        if state == "connecting":
+            return None  # "Unknown"
+        return False  # disconnected or error

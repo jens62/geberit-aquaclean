@@ -45,6 +45,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None  # last known ESPHome device name
         self._ble_name_cache: str | None = None      # last known BLE device name
+        # Real-time connection state — updated mid-poll via async_update_listeners()
+        # Values: "disconnected" | "connecting" | "connected" | "error"
+        self.ble_state: str = "disconnected"
+        self.esphome_state: str = "disconnected"
 
         super().__init__(
             hass,
@@ -75,8 +79,21 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         poll_start = datetime.now(timezone.utc)
         connector = self._make_connector()
         client = AquaCleanClientFactory(connector).create_client()
+
+        # Signal "connecting" at start of every poll cycle
+        if self._esphome_host:
+            self.esphome_state = "connecting"
+        self.ble_state = "connecting"
+        self.async_update_listeners()
+
         try:
             await client.connect_ble_only(self._device_id)
+            # Both TCP (ESPHome) and BLE are now up
+            if self._esphome_host:
+                self.esphome_state = "connected"
+            self.ble_state = "connected"
+            self.async_update_listeners()
+
             if connector.esphome_proxy_name:
                 self._esphome_name_cache = connector.esphome_proxy_name
             if connector.device_name and connector.device_name != "Unknown":
@@ -124,8 +141,19 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "ble_name": self._ble_name_cache,
             }
         except Exception as exc:
+            self.ble_state = "error"
+            if self._esphome_host:
+                self.esphome_state = "error"
+            self.async_update_listeners()
             raise UpdateFailed(f"AquaClean update failed: {exc}") from exc
         finally:
+            # On success the return already happened; signal disconnect after data is delivered.
+            # On error the state was already set to "error" above — leave it until next poll.
+            if self.ble_state != "error":
+                self.ble_state = "disconnected"
+                if self._esphome_host:
+                    self.esphome_state = "disconnected"
+                self.async_update_listeners()
             try:
                 await connector.disconnect()
             except Exception:
