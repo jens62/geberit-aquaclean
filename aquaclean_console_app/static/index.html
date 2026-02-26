@@ -470,6 +470,40 @@
       </dl>
     </div>
 
+    <section id="sysInfoSection" style="margin-top:1.5rem">
+      <h2>
+        <button onclick="toggleSysInfo()"
+          style="background:none;border:none;color:var(--muted);font:inherit;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.1em;cursor:pointer;padding:0;display:flex;align-items:center;gap:0.4rem">
+          <span id="sysInfoChevron" style="display:inline-block;transition:transform 0.2s">&#9654;</span>
+          System Info
+        </button>
+      </h2>
+      <div id="sysInfoPanel" style="display:none">
+        <dl class="info-grid">
+          <dt>App Version</dt>    <dd id="si-app-version">—</dd>
+          <dt>Python</dt>         <dd id="si-python">—</dd>
+          <dt>OS</dt>             <dd id="si-os">—</dd>
+          <dt>Machine</dt>        <dd id="si-machine">—</dd>
+          <dt>Environment</dt>    <dd id="si-env">—</dd>
+          <dt>Docker</dt>         <dd id="si-docker">—</dd>
+          <dt>BLE Address</dt>    <dd id="si-ble-addr">—</dd>
+          <dt>ESPHome</dt>        <dd id="si-esphome">—</dd>
+          <dt>Poll Interval</dt>  <dd id="si-poll">—</dd>
+          <dt>BLE Mode</dt>       <dd id="si-ble-mode">—</dd>
+          <dt>Log Level</dt>      <dd id="si-log">—</dd>
+          <dt>BlueZ</dt>          <dd id="si-bluez">—</dd>
+          <dt>BT Adapter</dt>     <dd id="si-bt-adapter">—</dd>
+          <dt>BT Firmware</dt>    <dd id="si-bt-fw">—</dd>
+          <dt>bleak</dt>          <dd id="si-lib-bleak">—</dd>
+          <dt>aioesphomeapi</dt>  <dd id="si-lib-aioesphomeapi">—</dd>
+          <dt>fastapi</dt>        <dd id="si-lib-fastapi">—</dd>
+          <dt>uvicorn</dt>        <dd id="si-lib-uvicorn">—</dd>
+          <dt>paho-mqtt</dt>      <dd id="si-lib-paho">—</dd>
+          <dt>aiorun</dt>         <dd id="si-lib-aiorun">—</dd>
+        </dl>
+      </div>
+    </section>
+
   </main>
 
   <footer>API: <span id="apiBase"></span> &nbsp;|&nbsp; aquaclean-bridge <span id="bridgeVersion">—</span></footer>
@@ -971,6 +1005,61 @@
           set('info-sap',         d.sap_number);
           set('info-production',  d.production_date);
           set('info-initial',     d.initial_operation_date);
+        })
+        .catch(() => {});
+    }
+
+    // --- System Info panel ---
+    let _sysInfoLoaded = false;
+
+    function toggleSysInfo() {
+      const panel   = document.getElementById('sysInfoPanel');
+      const chevron = document.getElementById('sysInfoChevron');
+      const open    = panel.style.display !== 'none';
+      panel.style.display     = open ? 'none' : '';
+      chevron.style.transform = open ? '' : 'rotate(90deg)';
+      if (!open && !_sysInfoLoaded) loadSysInfo();
+    }
+
+    function loadSysInfo() {
+      fetch(apiBase + '/info/system')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(d => {
+          _sysInfoLoaded = true;
+          const sv = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.textContent = v; };
+          sv('si-app-version', d.app_version);
+          sv('si-python',      d.python_version);
+          sv('si-os',          d.os ? d.os + ' ' + (d.os_release || '') : null);
+          sv('si-machine',     d.machine);
+          sv('si-env',         d.environment);
+          sv('si-docker',      d.docker ? 'yes' : 'no');
+          if (d.config) {
+            sv('si-ble-addr',  d.config.geberit_address);
+            sv('si-esphome',   d.config.esphome_host
+              ? d.config.esphome_host + ':' + d.config.esphome_port : 'disabled');
+            sv('si-poll',      d.config.poll_interval != null ? d.config.poll_interval + ' s' : null);
+            sv('si-ble-mode',  d.config.ble_connection);
+            sv('si-log',       d.config.log_level);
+          }
+          if (d.bluetooth) {
+            const bt = d.bluetooth;
+            sv('si-bluez', bt.bluez_version || bt.note || '—');
+            const adapterStr = [bt.adapter_name, bt.adapter_address, bt.bus, bt.manufacturer]
+              .filter(Boolean).join('  ') || (bt.note || '—');
+            sv('si-bt-adapter', adapterStr);
+            const fwStr = [bt.chip, bt.firmware_file, bt.firmware_version ? 'v' + bt.firmware_version : null]
+              .filter(Boolean).join('  ') || '—';
+            sv('si-bt-fw', fwStr);
+          }
+          if (d.libraries) {
+            const L = d.libraries;
+            sv('si-lib-bleak',         L.bleak);
+            sv('si-lib-aioesphomeapi', L.aioesphomeapi);
+            sv('si-lib-fastapi',       L.fastapi);
+            sv('si-lib-uvicorn',       L.uvicorn);
+            sv('si-lib-paho',          L['paho-mqtt']);
+            sv('si-lib-aiorun',        L.aiorun);
+          }
         })
         .catch(() => {});
     }

@@ -65,6 +65,172 @@ def _get_version() -> str:
 _bridge_version = _get_version()
 
 
+def _safe_run(args: list, timeout: int = 5) -> str:
+    """Run a subprocess and return stripped stdout. Returns '' on any error. Never raises."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(args, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip()
+    except FileNotFoundError:
+        return ""
+    except _sp.TimeoutExpired:
+        return ""
+    except (PermissionError, OSError):
+        return ""
+    except Exception:
+        return ""
+
+
+def get_system_info() -> dict:
+    """
+    Return a structured dict describing the runtime environment.
+    All fields are best-effort — missing/unavailable fields are None.
+    Never raises.
+    """
+    import platform as _pl
+    import sys as _sys
+
+    # --- App / Python / OS ---
+    _pv = _sys.version_info
+    python_version = f"{_pv.major}.{_pv.minor}.{_pv.micro}"
+    os_name    = _pl.system()    # "Linux", "Darwin", "Windows"
+    os_release = _pl.release()   # e.g. "6.1.0-rpi7-rpi-v8"
+    machine    = _pl.machine()   # "aarch64", "x86_64", …
+
+    # --- Environment detection ---
+    # HA add-on: HASSIO_TOKEN or /data/options.json (supervisor volume)
+    if os.environ.get("HASSIO_TOKEN") or os.path.exists("/data/options.json"):
+        environment = "homeassistant_addon"
+        docker = True
+    else:
+        try:
+            import homeassistant as _ha  # noqa: F401
+            environment = "homeassistant_custom_component"
+            docker = os.path.exists("/.dockerenv")
+        except ImportError:
+            environment = "docker_standalone" if os.path.exists("/.dockerenv") else "standalone"
+            docker = os.path.exists("/.dockerenv")
+
+    # --- Config (reads module-level config object) ---
+    def _cfg(section, key, fallback=None):
+        try:
+            return config.get(section, key, fallback=fallback)
+        except Exception:
+            return fallback
+
+    config_info = {
+        "geberit_address":  _cfg("BLE",     "device_id"),
+        "esphome_host":     _cfg("ESPHOME", "host") or None,
+        "esphome_port":     _cfg("ESPHOME", "port", fallback="6053"),
+        "poll_interval":    _cfg("POLL",    "interval", fallback="0"),
+        "ble_connection":   _cfg("SERVICE", "ble_connection", fallback="persistent"),
+        "log_level":        _cfg("LOGGING", "log_level", fallback="DEBUG"),
+    }
+
+    # --- Library versions ---
+    def _pkg(name: str):
+        try:
+            return importlib.metadata.version(name)
+        except Exception:
+            return None
+
+    libraries = {
+        "bleak":         _pkg("bleak"),
+        "aioesphomeapi": _pkg("aioesphomeapi"),
+        "fastapi":       _pkg("fastapi"),
+        "uvicorn":       _pkg("uvicorn"),
+        "paho-mqtt":     _pkg("paho-mqtt"),
+        "aiorun":        _pkg("aiorun"),
+    }
+
+    # --- Bluetooth adapter info (Linux/BlueZ only) ---
+    bluetooth = {
+        "bluez_version":   None,
+        "adapter_name":    None,
+        "adapter_address": None,
+        "connection_type": None,   # "internal" or "USB dongle"
+        "bus":             None,   # "UART" or "USB"
+        "manufacturer":    None,
+        "hci_version":     None,
+        "chip":            None,
+        "firmware_file":   None,
+        "firmware_version": None,
+        "note":            None,
+    }
+
+    if os_name == "Linux":
+        # BlueZ version
+        bv = _safe_run(["bluetoothd", "--version"])
+        if bv:
+            bluetooth["bluez_version"] = bv
+
+        # Adapter info via hciconfig
+        hci = _safe_run(["hciconfig", "-a"])
+        if hci:
+            for line in hci.splitlines():
+                s = line.strip()
+                if not s:
+                    continue
+                if s.startswith("hci0:"):
+                    bluetooth["adapter_name"] = "hci0"
+                    if "Bus: UART" in s:
+                        bluetooth["bus"] = "UART"
+                        bluetooth["connection_type"] = "internal"
+                    elif "Bus: USB" in s:
+                        bluetooth["bus"] = "USB"
+                        bluetooth["connection_type"] = "USB dongle"
+                elif "BD Address:" in s:
+                    # "BD Address: DC:A6:32:XX:XX:XX  ACL MTU: ..."
+                    try:
+                        bluetooth["adapter_address"] = s.split()[2]
+                    except IndexError:
+                        pass
+                elif "Manufacturer:" in s:
+                    bluetooth["manufacturer"] = s.split("Manufacturer:", 1)[1].strip()
+                elif "HCI Version:" in s:
+                    bluetooth["hci_version"] = s.split("HCI Version:", 1)[1].split("(")[0].strip()
+        else:
+            bluetooth["note"] = "hciconfig not available or no adapter found"
+
+        # Firmware info from dmesg
+        dmesg = _safe_run(["dmesg"], timeout=5)
+        if dmesg:
+            for line in dmesg.splitlines():
+                ll = line.lower()
+                if "bluetooth" in ll and ".hcd" in ll:
+                    # "Bluetooth: hci0: BCM4345C0 'brcm/BCM4345C0.hcd' Patch"
+                    m = _re.search(r"'([^']+\.hcd)'", line)
+                    if m:
+                        bluetooth["firmware_file"] = m.group(1)
+                    m2 = _re.search(r"(BCM\w+)", line)
+                    if m2:
+                        bluetooth["chip"] = m2.group(1)
+                elif "bluetooth" in ll and "firmware" in ll and "version" in ll:
+                    # "Bluetooth: hci0: BCM: firmware Patch file version 0190"
+                    parts = line.split()
+                    if parts:
+                        bluetooth["firmware_version"] = parts[-1]
+        bluetooth["geberit_firmware"] = "not yet available"
+
+    elif os_name == "Darwin":
+        bluetooth["note"] = "macOS — CoreBluetooth; no hciconfig/BlueZ info available"
+    else:
+        bluetooth["note"] = f"{os_name} — Bluetooth stack info not collected"
+
+    return {
+        "app_version":    _bridge_version,
+        "python_version": python_version,
+        "os":             os_name,
+        "os_release":     os_release,
+        "machine":        machine,
+        "environment":    environment,
+        "docker":         docker,
+        "config":         config_info,
+        "libraries":      libraries,
+        "bluetooth":      bluetooth,
+    }
+
+
 def _add_logging_level(level_name: str, level_num: int) -> None:
     """Register a custom numeric log level with the logging module."""
     method_name = level_name.lower()
@@ -327,6 +493,15 @@ class ServiceMode:
         await self._publish_esphome_proxy_discovery()
         await self._publish_ha_discovery()
         logger.debug(f"ESPHome proxy mode: enabled={self.esphome_proxy_state['enabled']}, host={self.esphome_proxy_state['host']}")
+
+        # Publish system info once on startup
+        try:
+            await self.mqtt_service.send_data_async(
+                f"{self.mqttConfig['topic']}/centralDevice/systemInfo",
+                json.dumps(get_system_info())
+            )
+        except Exception as _e:
+            logger.debug(f"System info MQTT publish failed (non-critical): {_e}")
 
         # Start ESPHome log streaming if enabled
         await self._start_esphome_log_streaming()
@@ -1189,6 +1364,10 @@ class ApiMode:
             "esphome_api_connection": self.esphome_api_connection,
             "poll_interval": self._poll_interval,
         }
+
+    def get_system_info_data(self) -> dict:
+        """Return static system info dict. Thin wrapper for REST/CLI wiring consistency."""
+        return get_system_info()
 
     async def set_ble_connection(self, value: str) -> dict:
         if value not in ("persistent", "on-demand"):
@@ -2106,6 +2285,20 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "device": DEVICE,
             },
         },
+        # --- Sensor: system info (published once on startup) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/system_info/config",
+            "payload": {
+                "name": "System Info",
+                "unique_id": "geberit_aquaclean_system_info",
+                "state_topic": f"{t}/centralDevice/systemInfo",
+                "value_template": "{{ value_json.app_version }}",
+                "json_attributes_topic": f"{t}/centralDevice/systemInfo",
+                "icon": "mdi:information-variant",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
     ]
 
 
@@ -2253,6 +2446,13 @@ async def run_cli(args):
         print(json.dumps(result, indent=2))
         return
 
+    if args.command == 'system-info':
+        result["status"] = "success"
+        result["message"] = "System info collected"
+        result["data"] = get_system_info()
+        print(json.dumps(result, indent=2))
+        return
+
     # --- Commands that require a BLE connection ---
     client = None
     try:
@@ -2378,6 +2578,35 @@ async def main(args):
             sys.exit(1)
         _py = sys.version_info
         logger.info(f"aquaclean-bridge {_bridge_version} (Python {_py.major}.{_py.minor}.{_py.micro})")
+        try:
+            _si = get_system_info()
+            _bt = _si["bluetooth"]
+            _ll = _si["libraries"]
+            _lines = [f"  environment : {_si['environment']}" + (" (docker)" if _si["docker"] else "")]
+            _lines.append(f"  os          : {_si['os']} {_si['os_release']} ({_si['machine']})")
+            if _bt.get("bluez_version"):
+                _lines.append(f"  bluez       : {_bt['bluez_version']}")
+            if _bt.get("adapter_name"):
+                _lines.append(
+                    f"  bt adapter  : {_bt['adapter_name']}"
+                    + (f"  addr={_bt['adapter_address']}" if _bt.get("adapter_address") else "")
+                    + (f"  bus={_bt['bus']}" if _bt.get("bus") else "")
+                    + (f"  {_bt['manufacturer']}" if _bt.get("manufacturer") else "")
+                )
+            if _bt.get("chip") or _bt.get("firmware_file"):
+                _lines.append(
+                    f"  bt firmware : {_bt.get('chip', '?')}"
+                    + (f"  {_bt['firmware_file']}" if _bt.get("firmware_file") else "")
+                    + (f"  ver={_bt['firmware_version']}" if _bt.get("firmware_version") else "")
+                )
+            if _bt.get("note"):
+                _lines.append(f"  bt          : {_bt['note']}")
+            _lib_str = "  ".join(f"{k}={v}" for k, v in _ll.items() if v)
+            if _lib_str:
+                _lines.append(f"  libs        : {_lib_str}")
+            logger.info("System info:\n" + "\n".join(_lines))
+        except Exception:
+            pass
         _log_startup_config()
     if args.mode == 'service':
         service = ServiceMode()
@@ -2444,6 +2673,7 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command get-config\n"
             "  %(prog)s --mode cli --command publish-ha-discovery\n"
             "  %(prog)s --mode cli --command remove-ha-discovery\n"
+            "  %(prog)s --mode cli --command system-info\n"
             "\n"
             "ESPHome proxy (no BLE required):\n"
             "  %(prog)s --mode cli --command esp32-connect\n"
@@ -2468,6 +2698,8 @@ if __name__ == "__main__":
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
+        # system info (no BLE required)
+        'system-info',
         # ESPHome proxy (no BLE required)
         'esp32-connect', 'esp32-disconnect',
     ])

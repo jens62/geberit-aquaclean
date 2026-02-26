@@ -113,6 +113,10 @@ class RestApiService:
                 "python": f"{_py.major}.{_py.minor}.{_py.micro}",
             }
 
+        @app.get("/info/system")
+        async def get_system_info():
+            return self._api_mode.get_system_info_data()
+
         @app.get("/status")
         async def get_status():
             return await self._api_mode.get_status()
