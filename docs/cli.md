@@ -193,6 +193,69 @@ Removes all Geberit AquaClean entities from Home Assistant by publishing empty p
 python main.py --mode cli --command remove-ha-discovery
 ```
 
+### `system-info`
+
+Returns a snapshot of the runtime environment: app version, Python version, OS, libraries, BLE adapter details, and configuration values.  Useful for diagnosing customer installs without a BLE connection.
+
+```bash
+aquaclean-bridge --mode cli --command system-info
+```
+```json
+{
+  "status": "success",
+  "command": "system-info",
+  "message": "System info collected",
+  "data": {
+    "app_version": "2.4.21",
+    "python_version": "3.11.2",
+    "os": "Linux 6.1.64-v8+",
+    "os_pretty_name": "Kali GNU/Linux Rolling",
+    "os_version": "2025.4",
+    "machine": "aarch64",
+    "environment": "standalone",
+    "docker": false,
+    "config": {
+      "ble_connection": "on-demand",
+      "esphome_api_connection": "on-demand",
+      "poll_interval": 30.0,
+      "device_id": "38:AB:XX:XX:ZZ:67",
+      "esphome_host": "192.168.0.xxx",
+      "log_level": "INFO"
+    },
+    "libraries": {
+      "bleak": "2.0.0",
+      "aioesphomeapi": "24.6.2",
+      "fastapi": "0.115.5",
+      "uvicorn": "0.32.0",
+      "paho-mqtt": "2.1.0",
+      "aiorun": "2024.5.1"
+    },
+    "bluetooth": {
+      "bluez_version": "5.82",
+      "adapter": "hci0",
+      "adapter_bus": "UART",
+      "adapter_address": "DC:A6:32:XX:XX:XX",
+      "adapter_manufacturer": "Cypress Semiconductor",
+      "firmware_version": "BCM4345C0 0190"
+    }
+  }
+}
+```
+
+The same data is also available via `GET /info/system` in `--mode api` and is published to MQTT on startup at `{topic}/centralDevice/systemInfo`.
+
+### `performance-stats`
+
+Returns in-memory timing statistics accumulated since the bridge started.  Data is only meaningful when called against a running `--mode api` service via the REST API (`GET /info/performance`).  The CLI version always returns empty stats since no polls occur in one-shot CLI mode.
+
+Supports `--format markdown` for a human-readable table.
+
+```bash
+aquaclean-bridge --mode cli --command performance-stats --format markdown
+```
+
+The same data is available via `GET /info/performance` (add `?format=markdown` for plain text) and is published to MQTT after every poll at `{topic}/centralDevice/performanceStats`.
+
 ---
 
 ## Error output
