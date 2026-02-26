@@ -36,14 +36,22 @@ views:
         title: Live Status
         icon: mdi:information-outline
         entities:
-          - entity: binary_sensor.geberit_aquaclean_user_sitting
+          - type: template
+            entity: binary_sensor.geberit_aquaclean_user_sitting
             name: User Sitting
+            icon: >-
+              {{ 'geberit:is_user_sitting-on' if is_state('binary_sensor.geberit_aquaclean_user_sitting', 'on') else 'geberit:is_user_sitting-off' }}
           - entity: binary_sensor.geberit_aquaclean_anal_shower_running
             name: Anal Shower
+            icon: geberit:analshower
           - entity: binary_sensor.geberit_aquaclean_lady_shower_running
             name: Lady Shower
-          - entity: binary_sensor.geberit_aquaclean_dryer_running
+            icon: geberit:ladywash
+          - type: template
+            entity: binary_sensor.geberit_aquaclean_dryer_running
             name: Dryer
+            icon: >-
+              {{ 'geberit:dryer-on' if is_state('binary_sensor.geberit_aquaclean_dryer_running', 'on') else 'geberit:dryer-off' }}
 
       # ── Controls ─────────────────────────────────────────────────────────
       - type: grid
