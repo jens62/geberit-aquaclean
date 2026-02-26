@@ -10,9 +10,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_ESPHOME_HOST, CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT
 from .coordinator import AquaCleanCoordinator
-from .entity import AquaCleanEntity
+from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
 # (data_key, friendly_name, unit, device_class, state_class, icon)
 SENSORS: list[tuple] = [
@@ -43,10 +43,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: AquaCleanCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities: list = [
         AquaCleanSensor(coordinator, entry, key, name, unit, device_class, state_class, icon)
         for key, name, unit, device_class, state_class, icon in SENSORS
-    )
+    ]
+    if coordinator._esphome_host:
+        entities.append(AquaCleanEspHomeConnectionSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 class AquaCleanSensor(AquaCleanEntity, SensorEntity):
@@ -67,3 +70,28 @@ class AquaCleanSensor(AquaCleanEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get(self._key)
+
+
+class AquaCleanEspHomeConnectionSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the ESPHome proxy connection string: '{name} (host:port)'."""
+
+    _attr_name = "Connection"
+    _attr_icon = "mdi:lan"
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_esphome_connection"
+        conf = {**entry.data, **entry.options}
+        self._host: str = conf.get(CONF_ESPHOME_HOST, "")
+        self._port: int = conf.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
+
+    @property
+    def available(self) -> bool:
+        return True  # always show the connection string, never Unavailable
+
+    @property
+    def native_value(self) -> str:
+        name = (self.coordinator.data or {}).get("esphome_name") or self.coordinator._esphome_name_cache
+        if name:
+            return f"{name} ({self._host}:{self._port})"
+        return f"{self._host}:{self._port}"
