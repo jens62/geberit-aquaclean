@@ -35,6 +35,37 @@ if [ "$VERSION" = "latest" ]; then
     echo "==> Latest release: ${VERSION}"
 fi
 
+# --- OS / package-manager check ---
+_OS=$(uname -s 2>/dev/null || echo "unknown")
+if [ "$_OS" != "Linux" ]; then
+    echo ""
+    echo "ERROR: This installer requires Linux with apt (Debian, Ubuntu, Raspberry Pi OS, Kali)."
+    echo "       Detected OS: ${_OS}"
+    echo ""
+    echo "       To install manually on any platform:"
+    echo "         pip install \"git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}\""
+    echo ""
+    exit 1
+fi
+
+_HAS_APT=0
+command -v apt >/dev/null 2>&1 && _HAS_APT=1
+
+if [ "$_HAS_APT" = "0" ] && [ ! -d "$VENV" ]; then
+    _DISTRO=$(grep -oP '(?<=PRETTY_NAME=")[^"]+' /etc/os-release 2>/dev/null || echo "unknown distribution")
+    echo ""
+    echo "ERROR: 'apt' not found. This installer requires a Debian-based distribution."
+    echo "       Detected: ${_DISTRO}"
+    echo ""
+    echo "       Install python3-venv and python3-pip using your package manager, then"
+    echo "       re-run this script — the apt step is skipped once the venv exists."
+    echo ""
+    echo "       Or install manually:"
+    echo "         pip install \"git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}\""
+    echo ""
+    exit 1
+fi
+
 if [ ! -d "$VENV" ]; then
     echo "==> Installing system dependencies..."
     sudo apt update
@@ -43,7 +74,11 @@ if [ ! -d "$VENV" ]; then
     echo "==> Creating virtual environment at ${VENV}..."
     python3 -m venv "$VENV"
 else
-    echo "==> Virtual environment already exists at ${VENV}, skipping apt and venv creation."
+    if [ "$_HAS_APT" = "0" ]; then
+        echo "==> WARNING: 'apt' not found, but ${VENV} already exists — skipping system deps."
+    else
+        echo "==> Virtual environment already exists at ${VENV}, skipping apt and venv creation."
+    fi
 fi
 
 echo "==> Upgrading pip, setuptools, wheel..."
