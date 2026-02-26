@@ -483,6 +483,7 @@
           <dt>App Version</dt>    <dd id="si-app-version">—</dd>
           <dt>Python</dt>         <dd id="si-python">—</dd>
           <dt>OS</dt>             <dd id="si-os">—</dd>
+          <dt>OS Distro</dt>      <dd id="si-os-distro">—</dd>
           <dt>Machine</dt>        <dd id="si-machine">—</dd>
           <dt>Environment</dt>    <dd id="si-env">—</dd>
           <dt>Docker</dt>         <dd id="si-docker">—</dd>
@@ -1030,6 +1031,7 @@
           sv('si-app-version', d.app_version);
           sv('si-python',      d.python_version);
           sv('si-os',          d.os ? d.os + ' ' + (d.os_release || '') : null);
+          sv('si-os-distro',   d.os_pretty_name ? d.os_pretty_name + (d.os_version ? '  ' + d.os_version : '') : null);
           sv('si-machine',     d.machine);
           sv('si-env',         d.environment);
           sv('si-docker',      d.docker ? 'yes' : 'no');
