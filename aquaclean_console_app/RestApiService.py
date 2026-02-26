@@ -226,6 +226,10 @@ class RestApiService:
         async def esp32_disconnect():
             return await self._api_mode.esp32_disconnect()
 
+        @app.post("/esphome/restart")
+        async def esp32_restart():
+            return await self._api_mode.esp32_restart()
+
     async def start(self, shutdown_event: asyncio.Event):
         server_config = uvicorn.Config(
             self.app,

@@ -349,6 +349,60 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.silly(f"result: {result}")
 
 
+    async def restart_esp32_async(self):
+        """Press the 'Restart AquaClean Proxy' button on the ESP32 via the native API.
+
+        Opens a dedicated fresh TCP connection — does not touch any active BLE
+        connection or the persistent _esphome_api used for BLE cycling.
+        The ESP32 reboots within a few seconds; the TCP connection drops on its own.
+
+        Raises:
+            ESPHomeConnectionError: if the ESP32 is unreachable.
+            ValueError: if no restart button entity is found (ESP32 not yet flashed
+                        with YAML containing 'button: platform: restart').
+        """
+        from aioesphomeapi import APIClient, ButtonInfo
+
+        api = APIClient(
+            address=self.esphome_host,
+            port=self.esphome_port,
+            password="",
+            noise_psk=self.esphome_noise_psk,
+        )
+        try:
+            await asyncio.wait_for(api.connect(login=True), timeout=10.0)
+        except asyncio.TimeoutError:
+            raise ESPHomeConnectionError(
+                f"Timeout connecting to ESPHome proxy at {self.esphome_host}:{self.esphome_port}",
+                timeout=True,
+            )
+        except Exception as e:
+            raise ESPHomeConnectionError(
+                f"Failed to connect to ESPHome proxy at {self.esphome_host}: {e}",
+                timeout=False,
+            )
+        try:
+            entities, _ = await asyncio.wait_for(api.list_entities_services(), timeout=10.0)
+            restart_key = None
+            for entity in entities:
+                if isinstance(entity, ButtonInfo):
+                    if "restart" in entity.name.lower() or entity.object_id.lower() == "restart":
+                        restart_key = entity.key
+                        logger.debug(f"[BluetoothLeConnector] Found restart button: '{entity.name}' (key={restart_key})")
+                        break
+            if restart_key is None:
+                raise ValueError(
+                    "Restart button not found on ESP32. "
+                    "Flash the ESP32 with updated YAML that includes 'button: platform: restart'."
+                )
+            await api.button_command(restart_key)
+            logger.info(f"[BluetoothLeConnector] ESP32 restart command sent (key={restart_key})")
+        finally:
+            try:
+                await api.disconnect()
+            except Exception:
+                pass
+
     async def disconnect_ble_only(self):
         """BLE-only disconnect — ESP32 API TCP connection stays alive for reuse.
 

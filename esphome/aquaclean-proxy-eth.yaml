@@ -61,6 +61,16 @@ logger:
   level: INFO
 
 # ---------------------------------------------------------------------------
+# Restart button
+# Exposed via the native API so the bridge can trigger a software reboot
+# automatically when the BLE scanner gets stuck (5 consecutive E0002 failures).
+# Also appears in the web UI (port 80) and Home Assistant for manual recovery.
+# ---------------------------------------------------------------------------
+button:
+  - platform: restart
+    name: "Restart AquaClean Proxy"
+
+# ---------------------------------------------------------------------------
 # Optional: simple web interface on port 80 for status and logs
 # ---------------------------------------------------------------------------
 web_server:

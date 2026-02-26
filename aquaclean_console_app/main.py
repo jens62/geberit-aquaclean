@@ -1358,6 +1358,7 @@ class ApiMode:
         self.service.mqtt_service.Disconnect       += self._on_mqtt_disconnect
         self.service.mqtt_service.ConnectESP32          += self._on_mqtt_esp32_connect
         self.service.mqtt_service.DisconnectESP32        += self._on_mqtt_esp32_disconnect
+        self.service.mqtt_service.RestartESP32           += self._on_mqtt_esp32_restart
         service_task = asyncio.create_task(self.service.run())
         poll_task = asyncio.create_task(self._polling_loop())
         try:
@@ -1568,6 +1569,20 @@ class ApiMode:
         """Not applicable in on-demand ESP API mode — each BLE request tears down its own connection."""
         return {"status": "success", "action": "not_applicable", "note": "ESP32 API is on-demand; no persistent connection to disconnect"}
 
+    async def esp32_restart(self) -> dict:
+        """Trigger a software reboot of the ESP32 by pressing its restart button entity."""
+        if not esphome_host:
+            raise self._http_error(400, E1002, "No ESPHome host configured in [ESPHOME] host")
+        connector = BluetoothLeConnector(esphome_host, esphome_port, esphome_noise_psk)
+        try:
+            await connector.restart_esp32_async()
+            return {"status": "success", "action": "restart_sent", "note": "ESP32 will reboot in a few seconds"}
+        except ESPHomeConnectionError as e:
+            error_code_obj = E1001 if e.timeout else E1002
+            raise self._http_error(503, error_code_obj, str(e))
+        except ValueError as e:
+            raise self._http_error(503, E1002, str(e))
+
     async def _on_mqtt_esp32_connect(self):
         try:
             await self.esp32_connect()
@@ -1579,6 +1594,12 @@ class ApiMode:
             await self.esp32_disconnect()
         except Exception as e:
             logger.warning(f"MQTT esp32_disconnect failed: {e}")
+
+    async def _on_mqtt_esp32_restart(self):
+        try:
+            await self.esp32_restart()
+        except Exception as e:
+            logger.warning(f"MQTT esp32_restart failed: {e}")
 
     # --- Data query endpoints ---
 
@@ -2136,6 +2157,19 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
         "model": "Mera Comfort",
         "manufacturer": "Geberit",
     }
+    DEVICE_BRIDGE = {
+        "identifiers": ["geberit_aquaclean_bridge"],
+        "name": "AquaClean Bridge",
+        "manufacturer": "Geberit",
+        "via_device": "geberit_aquaclean",
+    }
+    DEVICE_PROXY = {
+        "identifiers": ["geberit_aquaclean_proxy"],
+        "name": "AquaClean Proxy",
+        "manufacturer": "Espressif",
+        "model": "ESP32 (ESPHome Bluetooth Proxy)",
+        "via_device": "geberit_aquaclean",
+    }
     HA = "homeassistant"
     t = topic_prefix
 
@@ -2321,7 +2355,7 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "state_topic": f"{t}/centralDevice/connected",
                 "icon": "mdi:bluetooth-connect",
                 "entity_category": "diagnostic",
-                "device": DEVICE,
+                "device": DEVICE_BRIDGE,
             },
         },
         {
@@ -2332,7 +2366,7 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "state_topic": f"{t}/centralDevice/error",
                 "icon": "mdi:alert-circle",
                 "entity_category": "diagnostic",
-                "device": DEVICE,
+                "device": DEVICE_BRIDGE,
             },
         },
         # --- Switches: device control (MqttService subscriptions) ---
@@ -2373,7 +2407,7 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "json_attributes_topic": f"{t}/centralDevice/systemInfo",
                 "icon": "mdi:information-variant",
                 "entity_category": "diagnostic",
-                "device": DEVICE,
+                "device": DEVICE_BRIDGE,
             },
         },
         # --- Sensor: performance statistics (published after every poll) ---
@@ -2388,7 +2422,32 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "icon": "mdi:chart-bar",
                 "unit_of_measurement": "samples",
                 "entity_category": "diagnostic",
+                "device": DEVICE_BRIDGE,
+            },
+        },
+        # --- Sensor: SOC application versions (published on explicit REST call) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/soc_versions/config",
+            "payload": {
+                "name": "SOC Versions",
+                "unique_id": "geberit_aquaclean_soc_versions",
+                "state_topic": f"{t}/peripheralDevice/information/SocVersions",
+                "icon": "mdi:chip",
+                "entity_category": "diagnostic",
                 "device": DEVICE,
+            },
+        },
+        # --- Button: ESP32 proxy restart (esphomeProxy/control/restart) ---
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/esp32_restart/config",
+            "payload": {
+                "name": "Restart AquaClean Proxy",
+                "unique_id": "geberit_aquaclean_esp32_restart",
+                "command_topic": f"{t}/esphomeProxy/control/restart",
+                "payload_press": "restart",
+                "icon": "mdi:restart",
+                "entity_category": "config",
+                "device": DEVICE_PROXY,
             },
         },
     ]
