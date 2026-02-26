@@ -32,6 +32,7 @@ async def async_setup_entry(
         AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off)
         for key, name, device_class, icon_on, icon_off in BINARY_SENSORS
     ]
+    entities.append(AquaCleanBleConnectedSensor(coordinator, entry))
     if coordinator._esphome_host:
         entities.append(AquaCleanEspHomeConnectedSensor(coordinator, entry))
     async_add_entities(entities)
@@ -56,6 +57,29 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return bool(self.coordinator.data.get(self._key))
+
+
+class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
+    """Binary sensor showing whether the last poll successfully reached the Geberit via BLE."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_name = "BLE Connected"
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_ble_connected"
+
+    @property
+    def available(self) -> bool:
+        return True  # always show Connected/Disconnected, never Unavailable
+
+    @property
+    def icon(self) -> str:
+        return "mdi:bluetooth-connect" if self.is_on else "mdi:bluetooth-off"
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.last_update_success
 
 
 class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):

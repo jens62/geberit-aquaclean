@@ -44,6 +44,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._noise_psk: str | None = conf.get(CONF_NOISE_PSK) or None
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None  # last known ESPHome device name
+        self._ble_name_cache: str | None = None      # last known BLE device name
 
         super().__init__(
             hass,
@@ -78,6 +79,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             await client.connect_ble_only(self._device_id)
             if connector.esphome_proxy_name:
                 self._esphome_name_cache = connector.esphome_proxy_name
+            if connector.device_name and connector.device_name != "Unknown":
+                self._ble_name_cache = connector.device_name
 
             ident = await client.base_client.get_device_identification_async(0)
             initial_op_date = await client.base_client.get_device_initial_operation_date()
@@ -117,6 +120,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "next_poll": datetime.now(timezone.utc) + self.update_interval,
                 # ESPHome proxy info (for connection status sensors)
                 "esphome_name": self._esphome_name_cache,
+                # BLE device info (for connection status sensors)
+                "ble_name": self._ble_name_cache,
             }
         except Exception as exc:
             raise UpdateFailed(f"AquaClean update failed: {exc}") from exc

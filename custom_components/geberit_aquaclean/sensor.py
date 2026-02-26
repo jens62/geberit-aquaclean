@@ -47,6 +47,7 @@ async def async_setup_entry(
         AquaCleanSensor(coordinator, entry, key, name, unit, device_class, state_class, icon)
         for key, name, unit, device_class, state_class, icon in SENSORS
     ]
+    entities.append(AquaCleanBleConnectionSensor(coordinator, entry))
     if coordinator._esphome_host:
         entities.append(AquaCleanEspHomeConnectionSensor(coordinator, entry))
     async_add_entities(entities)
@@ -70,6 +71,29 @@ class AquaCleanSensor(AquaCleanEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get(self._key)
+
+
+class AquaCleanBleConnectionSensor(AquaCleanEntity, SensorEntity):
+    """Sensor showing the Geberit BLE connection string: '{name} (mac)'."""
+
+    _attr_name = "BLE Connection"
+    _attr_icon = "mdi:bluetooth"
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_ble_connection"
+        self._mac: str = entry.data[CONF_DEVICE_ID]
+
+    @property
+    def available(self) -> bool:
+        return True  # always show the connection string, never Unavailable
+
+    @property
+    def native_value(self) -> str:
+        name = (self.coordinator.data or {}).get("ble_name") or self.coordinator._ble_name_cache
+        if name:
+            return f"{name} ({self._mac})"
+        return self._mac
 
 
 class AquaCleanEspHomeConnectionSensor(AquaCleanProxyEntity, SensorEntity):
