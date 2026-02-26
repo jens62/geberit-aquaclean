@@ -117,6 +117,14 @@ class RestApiService:
         async def get_system_info():
             return self._api_mode.get_system_info_data()
 
+        @app.get("/info/performance")
+        async def get_performance_stats(format: str = "json"):
+            from fastapi.responses import PlainTextResponse
+            data = self._api_mode.get_performance_stats(format)
+            if format == "markdown":
+                return PlainTextResponse(data)
+            return data
+
         @app.get("/status")
         async def get_status():
             return await self._api_mode.get_status()

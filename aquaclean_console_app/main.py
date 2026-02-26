@@ -31,6 +31,7 @@ from aquaclean_console_app.ErrorCodes                                           
     E2001, E2002, E2003, E2004, E2005,
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
+from aquaclean_console_app.PollStats                                                 import PollStats as _PollStats
 from fastapi import HTTPException
 
 # --- Package version (module-level so argparse --version can use it) ---
@@ -469,7 +470,8 @@ class ServiceMode:
         self._connection_allowed = asyncio.Event()
         self._connection_allowed.set()  # auto-connect on startup
         self._shutdown_event = shutdown_event or asyncio.Event()
-        self.on_state_updated = None  # Optional async callback(state_dict)
+        self.on_state_updated = None    # Optional async callback(state_dict)
+        self.record_poll_stats = None  # Optional async callback(mode, esphome_api_ms, ble_ms, poll_ms)
         self._esphome_log_api = None  # Persistent API connection for log streaming
         self._esphome_log_unsub = None  # Log unsubscribe function
 
@@ -791,10 +793,15 @@ class ServiceMode:
 
     async def _on_poll_done(self, millis: int):
         self.device_state["last_poll_ms"] = millis
+        # Capture connect times before resetting (non-zero only on first poll after reconnect)
+        _ble_ms         = self.device_state.get("last_ble_ms")
+        _esphome_api_ms = self.device_state.get("last_esphome_api_ms")
         # Persistent mode reuses the BLE connection — no reconnect cost per poll.
         self.device_state["last_connect_ms"] = 0
         self.device_state["last_esphome_api_ms"] = 0 if esphome_host else None
         self.device_state["last_ble_ms"] = 0 if esphome_host else None
+        if self.record_poll_stats:
+            await self.record_poll_stats("persistent", _esphome_api_ms, _ble_ms, millis)
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -1290,6 +1297,8 @@ class ApiMode:
         self.rest_api = RestApiService(api_host, api_port)
         self.rest_api.set_api_mode(self)
 
+        self._poll_stats = _PollStats()
+
         # Always create ServiceMode so ble_connection can be toggled at runtime.
         self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
         self.service.device_state["ble_connection"] = self.ble_connection
@@ -1331,7 +1340,8 @@ class ApiMode:
         )
 
     async def run(self):
-        self.service.on_state_updated = self.rest_api.broadcast_state
+        self.service.on_state_updated  = self.rest_api.broadcast_state
+        self.service.record_poll_stats = self._on_persistent_poll_complete
         # Wire MQTT inbound control topics → ApiMode handlers
         self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
         self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
@@ -1385,6 +1395,25 @@ class ApiMode:
     def get_system_info_data(self) -> dict:
         """Return static system info dict. Thin wrapper for REST/CLI wiring consistency."""
         return get_system_info()
+
+    async def _on_persistent_poll_complete(self, mode: str, esphome_api_ms, ble_ms, poll_ms) -> None:
+        """Record a completed persistent-mode poll cycle and publish updated stats to MQTT."""
+        self._poll_stats.record(mode, esphome_api_ms, ble_ms, poll_ms)
+        await self._publish_performance_stats_mqtt()
+
+    async def _publish_performance_stats_mqtt(self) -> None:
+        """Publish current in-memory performance statistics to MQTT."""
+        topic = self.service.mqttConfig.get("topic", "Geberit/AquaClean")
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/centralDevice/performanceStats",
+            json.dumps(self._poll_stats.to_dict())
+        )
+
+    def get_performance_stats(self, fmt: str = "json"):
+        """Return performance statistics. fmt='json' → dict, fmt='markdown' → str."""
+        if fmt == "markdown":
+            return self._poll_stats.to_markdown()
+        return self._poll_stats.to_dict()
 
     async def set_ble_connection(self, value: str) -> dict:
         if value not in ("persistent", "on-demand"):
@@ -1963,6 +1992,14 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+                # Record on-demand poll timing stats
+                self._poll_stats.record(
+                    "on-demand",
+                    result.get("_esphome_api_ms"),
+                    result.get("_ble_ms"),
+                    result.get("_query_ms"),
+                )
+                await self._publish_performance_stats_mqtt()
             except ESPHomeConnectionError as e:
                 error_code_obj = E1001 if e.timeout else E1002
                 _consecutive_poll_failures += 1
@@ -2316,6 +2353,21 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "device": DEVICE,
             },
         },
+        # --- Sensor: performance statistics (published after every poll) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/performance_stats/config",
+            "payload": {
+                "name": "Performance Stats",
+                "unique_id": "geberit_aquaclean_performance_stats",
+                "state_topic": f"{t}/centralDevice/performanceStats",
+                "value_template": "{{ value_json['persistent']['sample_count'] + value_json['on-demand']['sample_count'] }}",
+                "json_attributes_topic": f"{t}/centralDevice/performanceStats",
+                "icon": "mdi:chart-bar",
+                "unit_of_measurement": "samples",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
     ]
 
 
@@ -2467,6 +2519,15 @@ async def run_cli(args):
         result["status"] = "success"
         result["message"] = "System info collected"
         result["data"] = get_system_info()
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command == 'performance-stats':
+        result["status"] = "success"
+        result["message"] = "Performance stats (in-memory; only populated in a running --mode api service)"
+        fmt = getattr(args, 'format', None) or 'json'
+        stats = _PollStats()
+        result["data"] = stats.to_markdown() if fmt == 'markdown' else stats.to_dict()
         print(json.dumps(result, indent=2))
         return
 
@@ -2691,6 +2752,8 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command publish-ha-discovery\n"
             "  %(prog)s --mode cli --command remove-ha-discovery\n"
             "  %(prog)s --mode cli --command system-info\n"
+            "  %(prog)s --mode cli --command performance-stats\n"
+            "  %(prog)s --mode cli --command performance-stats --format markdown\n"
             "\n"
             "ESPHome proxy (no BLE required):\n"
             "  %(prog)s --mode cli --command esp32-connect\n"
@@ -2698,6 +2761,7 @@ if __name__ == "__main__":
             "\n"
             "options:\n"
             "  --address 38:AB:XX:XX:ZZ:67   override BLE device address from config.ini\n"
+            "  --format json|markdown         output format for performance-stats (default: json)\n"
             "\n"
             "CLI results and errors are written to stdout as JSON.\n"
             "Log output goes to stderr (redirect with 2>logfile)."
@@ -2715,12 +2779,14 @@ if __name__ == "__main__":
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
-        # system info (no BLE required)
-        'system-info',
+        # system info + performance stats (no BLE required)
+        'system-info', 'performance-stats',
         # ESPHome proxy (no BLE required)
         'esp32-connect', 'esp32-disconnect',
     ])
     parser.add_argument('--address')
+    parser.add_argument('--format', choices=['json', 'markdown'], default='json',
+                        help='Output format for performance-stats (default: json)')
     parser.add_argument('--ha-discovery', default=None,
                         action=argparse.BooleanOptionalAction,
                         dest='ha_discovery',

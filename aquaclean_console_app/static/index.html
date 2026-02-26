@@ -505,6 +505,27 @@
       </div>
     </section>
 
+    <section id="perfSection" style="margin-top:1.5rem">
+      <h2>
+        <button onclick="togglePerf()"
+          style="background:none;border:none;color:var(--muted);font:inherit;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.1em;cursor:pointer;padding:0;display:flex;align-items:center;gap:0.4rem">
+          <span id="perfChevron" style="display:inline-block;transition:transform 0.2s">&#9654;</span>
+          Performance Stats
+        </button>
+      </h2>
+      <div id="perfPanel" style="display:none">
+        <p style="font-size:0.8rem;color:var(--muted);margin:0.25rem 0 0.75rem">
+          In-memory timing statistics accumulated since the bridge started. Connect times (BLE, ESP32)
+          are only counted when a new connection was established.
+        </p>
+        <div id="perfContent" style="overflow-x:auto"></div>
+        <button onclick="loadPerf()" id="perfRefreshBtn"
+          style="margin-top:0.5rem;font-size:0.75rem;padding:0.2rem 0.6rem;cursor:pointer">
+          Refresh
+        </button>
+      </div>
+    </section>
+
   </main>
 
   <footer>API: <span id="apiBase"></span> &nbsp;|&nbsp; aquaclean-bridge <span id="bridgeVersion">—</span></footer>
@@ -1064,6 +1085,59 @@
           }
         })
         .catch(() => {});
+    }
+
+    // --- Performance Stats panel ---
+    function togglePerf() {
+      const panel   = document.getElementById('perfPanel');
+      const chevron = document.getElementById('perfChevron');
+      const open    = panel.style.display !== 'none';
+      panel.style.display     = open ? 'none' : '';
+      chevron.style.transform = open ? '' : 'rotate(90deg)';
+      if (!open) loadPerf();
+    }
+
+    function loadPerf() {
+      const container = document.getElementById('perfContent');
+      fetch(apiBase + '/info/performance')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(data => {
+          const modeLabels = { 'persistent': 'Persistent', 'on-demand': 'On-demand' };
+          const metricLabels = { 'poll_ms': 'Poll (query)', 'ble_ms': 'BLE connect', 'esphome_api_ms': 'ESP32 connect' };
+          const f = v => v != null ? v + ' ms' : '—';
+          let html = '';
+          for (const [mode, modeLabel] of Object.entries(modeLabels)) {
+            const s = data[mode];
+            const n = s ? s.sample_count : 0;
+            html += `<h3 style="font-size:0.85rem;margin:0.75rem 0 0.4rem">${modeLabel} (${n} sample${n !== 1 ? 's' : ''})</h3>`;
+            if (!s || n === 0) {
+              html += `<p style="font-size:0.8rem;color:var(--muted);margin:0">No data collected yet.</p>`;
+              continue;
+            }
+            html += '<table style="font-size:0.8rem;border-collapse:collapse;min-width:28rem">';
+            html += '<thead><tr>' +
+              '<th style="text-align:left;padding:0.2rem 0.6rem;border-bottom:1px solid var(--muted)">Metric</th>' +
+              '<th style="text-align:right;padding:0.2rem 0.6rem;border-bottom:1px solid var(--muted)">Min</th>' +
+              '<th style="text-align:right;padding:0.2rem 0.6rem;border-bottom:1px solid var(--muted)">Avg</th>' +
+              '<th style="text-align:right;padding:0.2rem 0.6rem;border-bottom:1px solid var(--muted)">Max</th>' +
+              '<th style="text-align:right;padding:0.2rem 0.6rem;border-bottom:1px solid var(--muted)">Samples</th>' +
+              '</tr></thead><tbody>';
+            for (const [key, label] of Object.entries(metricLabels)) {
+              const m = s[key];
+              if (!m) continue;
+              html += `<tr>` +
+                `<td style="padding:0.2rem 0.6rem">${label}</td>` +
+                `<td style="text-align:right;padding:0.2rem 0.6rem">${f(m.min_ms)}</td>` +
+                `<td style="text-align:right;padding:0.2rem 0.6rem">${f(m.avg_ms)}</td>` +
+                `<td style="text-align:right;padding:0.2rem 0.6rem">${f(m.max_ms)}</td>` +
+                `<td style="text-align:right;padding:0.2rem 0.6rem">${m.count}</td>` +
+                `</tr>`;
+            }
+            html += '</tbody></table>';
+          }
+          container.innerHTML = html;
+        })
+        .catch(() => { document.getElementById('perfContent').textContent = 'Failed to load performance stats.'; });
     }
 
     function set(id, val) {
