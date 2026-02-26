@@ -551,7 +551,6 @@ class ServiceMode:
 
             self.client.DeviceStateChanged += self.on_device_state_changed
             self.client.SOCApplicationVersions += self.soc_application_versions
-            self.client.FirmwareVersionList += self.firmware_version_list
             self.client.DeviceInitialOperationDate += self.device_initial_operation_date
             self.client.DeviceIdentification += self.on_device_identification
             bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
@@ -1257,13 +1256,6 @@ class ServiceMode:
     async def soc_application_versions(self, sender, args):
         pass
 
-    async def firmware_version_list(self, sender, args):
-        topic = self.mqttConfig['topic']
-        await self.mqtt_service.send_data_async(
-            f"{topic}/peripheralDevice/information/FirmwareVersionList",
-            args.get("raw_hex", "") if isinstance(args, dict) else str(args),
-        )
-
     async def on_toggle_lid_message(self):
         await self.client.toggle_lid_position()
 
@@ -1771,7 +1763,6 @@ class ApiMode:
         return {"soc_versions": str(versions)}
 
     async def get_firmware_version_list(self, payload: bytes = b''):
-        topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
@@ -1779,10 +1770,6 @@ class ApiMode:
             result = await self.service.client.base_client.get_firmware_version_list_async(payload)
         else:
             result = await self._on_demand(lambda c: c.base_client.get_firmware_version_list_async(payload))
-        await self.service.mqtt_service.send_data_async(
-            f"{topic}/peripheralDevice/information/FirmwareVersionList",
-            result.get("raw_hex", ""),
-        )
         return result
 
     async def _fetch_statistics_descale(self, client):
@@ -2824,7 +2811,6 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command identification\n"
             "  %(prog)s --mode cli --command initial-operation-date\n"
             "  %(prog)s --mode cli --command soc-versions\n"
-            "  %(prog)s --mode cli --command firmware-version-list\n"
             "  %(prog)s --mode cli --command statistics-descale\n"
             "\n"
             "device commands (require BLE):\n"
@@ -2859,7 +2845,7 @@ if __name__ == "__main__":
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
-        'info', 'identification', 'initial-operation-date', 'soc-versions', 'firmware-version-list', 'statistics-descale',
+        'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
