@@ -202,7 +202,7 @@ aquaclean-bridge --mode api
 By default (`ha_discovery_on_startup = true` in `config.ini`), all Home Assistant MQTT discovery entities are published automatically on every startup — no manual step needed.  You will see in the log:
 
 ```
-INFO  Published 19 HA discovery entities on startup
+INFO  Published 21 HA discovery entities on startup
 ```
 
 **Disable automatic publishing** (optional):
@@ -223,13 +223,14 @@ This is safe to run while the service is already active — it uses a separate M
 
 ### 3. Verify in Home Assistant
 
-Go to **Settings → Devices & Services → MQTT** — you will see a **Geberit AquaClean** device with 19 entities grouped together:
+Go to **Settings → Devices & Services → MQTT** — you will see a **Geberit AquaClean** device with 21 entities grouped together:
 
 | Type | Entities |
 |------|---------|
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
 | Sensor | SAP Number, Serial Number, Production Date, Description, Initial Operation Date, Connected, Error |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
+| Sensor (diagnostic) | System Info, Performance Stats |
 | Switch | Toggle Lid, Toggle Anal Shower |
 
 ![Descale Statistics in Home Assistant](homeassistant-descale-statistics.png)
