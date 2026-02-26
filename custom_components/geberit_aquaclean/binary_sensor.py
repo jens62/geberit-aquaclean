@@ -91,6 +91,11 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
             return None  # "Unknown" — HA shows neither on nor off
         return False  # disconnected or error
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        connected_at = self.coordinator.ble_connected_at
+        return {"connected_at": connected_at.isoformat() if connected_at else None}
+
 
 class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
     """Binary sensor showing whether the ESPHome proxy was reachable on the last poll."""

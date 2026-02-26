@@ -49,6 +49,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # Values: "disconnected" | "connecting" | "connected" | "error"
         self.ble_state: str = "disconnected"
         self.esphome_state: str = "disconnected"
+        self.ble_connected_at: datetime | None = None  # timestamp of last BLE connect
 
         super().__init__(
             hass,
@@ -92,6 +93,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             if self._esphome_host:
                 self.esphome_state = "connected"
             self.ble_state = "connected"
+            self.ble_connected_at = datetime.now(timezone.utc)
             self.async_update_listeners()
 
             if connector.esphome_proxy_name:
