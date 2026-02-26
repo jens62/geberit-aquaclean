@@ -150,8 +150,9 @@ After setup, HA registers three devices under Settings → Devices & Services:
 
 | Type | Entity |
 |------|--------|
-| Binary sensor | BLE Connected, User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
-| Sensor | BLE Connection — shows `{BLE device name} (MAC address)` |
+| Binary sensor | **BLE Connected** — cycles through connecting (grey) → connected (green) → disconnected within each poll; attribute `connected_at` shows the last connect timestamp |
+| Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
+| Sensor | **BLE Connection** — shows `Connecting to {MAC}…` while connecting, `{BLE device name} (MAC)` once connected |
 | Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
@@ -161,8 +162,8 @@ After setup, HA registers three devices under Settings → Devices & Services:
 
 | Type | Entity |
 |------|--------|
-| Binary sensor | Connected (device_class: connectivity) |
-| Sensor | Connection — shows `{ESPHome device name} (host:port)` |
+| Binary sensor | **Connected** — shows Connected (green) as long as the ESP32 is reachable; only drops to Disconnected when a poll actually fails at the TCP level |
+| Sensor | **Connection** — shows `Connecting to {host}:{port}…` briefly at poll start, then `{ESPHome device name} (host:port)` |
 | Button | Restart AquaClean Proxy |
 
 ---
