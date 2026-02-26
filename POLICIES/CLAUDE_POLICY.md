@@ -23,6 +23,13 @@ New functionality must, by default, be available on **all** supported interfaces
 
 - **Rule 6:** Security: avoid storing secrets or full logs with credentials in memory; redact sensitive values.
 
+- **Rule 7 — Interface Parity (UX similarity):** When implementing a feature on a new interface (e.g. HACS integration), the information shown and the user experience must be as similar as possible to the existing reference interface (the standalone webapp). Specifically:
+  - The same connection panels must exist: ESPHome proxy status (badge + connection string) and Geberit BLE status (badge + device name + address).
+  - The same status states must be represented: connecting / connected / disconnected / error.
+  - The same fields must be shown: device name, address/host:port, error hint.
+  - Missing parity items must be explicitly tracked in the TODO list and in `memory/hacs-connection-status.md`.
+  - Acceptable exceptions: transient states (e.g. `connecting` mid-poll) that are architecturally unavailable on the target interface. Document why they cannot be shown.
+
 #### Operational Notes
 - Policy changes must be made via Pull Request and approved by at least one maintainer.
 - CI must run an automatic interface‑check and block merges on violations.
