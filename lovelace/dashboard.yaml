@@ -53,7 +53,7 @@ views:
         cards:
           - type: button
             name: Toggle Lid
-            icon: mdi:toilet
+            icon: geberit:adjustabletoiletseat
             tap_action:
               action: perform-action
               perform_action: button.press
@@ -62,7 +62,7 @@ views:
 
           - type: button
             name: Anal Shower
-            icon: mdi:shower-head
+            icon: geberit:analshower
             tap_action:
               action: perform-action
               perform_action: button.press
@@ -71,7 +71,7 @@ views:
 
           - type: button
             name: Lady Shower
-            icon: mdi:shower-head
+            icon: geberit:ladywash
             tap_action:
               action: perform-action
               perform_action: button.press
