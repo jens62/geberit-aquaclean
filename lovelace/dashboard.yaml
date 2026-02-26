@@ -48,8 +48,7 @@ views:
 
       # ── Connection Status ─────────────────────────────────────────────────
       # Mirrors the webapp's two connection panels.
-      # Note: "connecting" state is not shown in HACS (on-demand BLE — connects
-      # and disconnects within each poll). Sensors show result of last poll.
+      # Sensors cycle: connecting → connected → disconnected within each poll.
       - type: entities
         title: BLE Connection
         icon: mdi:bluetooth
@@ -58,6 +57,11 @@ views:
             name: Connected
           - entity: sensor.geberit_aquaclean_ble_connection
             name: Connection
+          - type: attribute
+            entity: binary_sensor.geberit_aquaclean_ble_connected
+            attribute: connected_at
+            name: Connected Since
+            icon: mdi:clock-check
 
       # Only relevant when an ESPHome proxy host is configured
       - type: entities
