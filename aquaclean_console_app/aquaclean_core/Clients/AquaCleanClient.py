@@ -98,14 +98,17 @@ class AquaCleanClient(IAquaCleanClient):
         await self.base_client.disconnect()
 
     async def toggle_anal_shower(self):
-        await self.base_client.SetCommandAsync(Commands.Commands.ToggleAnalShower)
+        await self.base_client.SetCommandAsync(Commands.ToggleAnalShower)
 
     async def toggle_lady_shower(self):
-        await self.base_client.SetCommandAsync(Commands.Commands.ToggleLadyShower)
+        await self.base_client.SetCommandAsync(Commands.ToggleLadyShower)
 
     async def toggle_lid_position(self):
         await self.base_client.SetCommandAsync(Commands.ToggleLidPosition)
         await asyncio.sleep(0.01)
+
+    async def toggle_orientation_light(self):
+        await self.base_client.SetCommandAsync(Commands.ToggleOrientationLight)
 
     # --- Restored Original Getter Methods ---
     async def get_anal_shower_position(self):

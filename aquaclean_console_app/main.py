@@ -8,7 +8,7 @@ import traceback
 import sys
 import time
 import importlib.metadata
-from datetime import datetime
+from datetime import datetime, timezone
 from queue  import Queue, Empty
 from aiorun import run, shutdown_waits_for
 
@@ -591,6 +591,7 @@ class ServiceMode:
                 # Record when polling starts so clients can compute a
                 # deterministic countdown regardless of when they connect.
                 self.device_state["poll_epoch"] = time.time()
+                await self._publish_poll_timing(epoch=self.device_state["poll_epoch"])
 
                 # Inner polling loop — stays within this BLE connection.
                 # Reacts to poll-interval changes (set_poll_interval) without
@@ -633,6 +634,8 @@ class ServiceMode:
                         if new_interval > 0:
                             # Reset countdown epoch when re-enabling polling
                             self.device_state["poll_epoch"] = time.time()
+                            await self._publish_poll_timing(epoch=self.device_state["poll_epoch"])
+                        await self._publish_poll_timing(interval=new_interval)
                         continue  # restart inner loop with new interval
 
                     # polling_task finished — re-raise its exception if any
@@ -973,9 +976,30 @@ class ServiceMode:
             await self.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/connected/centralDevice/error", ""
             )
+            # Publish current poll interval so HA sees it immediately on startup
+            await self.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/pollInterval",
+                str(self.device_state.get("poll_interval", 0))
+            )
             logger.debug("Cleared stale retained MQTT topics on startup")
         except Exception as _e:
             logger.debug(f"Stale topic cleanup failed (non-critical): {_e}")
+
+    async def _publish_poll_timing(self, epoch: float | None = None, interval: float | None = None):
+        """Publish poll epoch and/or interval to MQTT for countdown visualisation."""
+        topic = self.mqttConfig['topic']
+        try:
+            if epoch is not None:
+                ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+                await self.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/pollEpoch", ts
+                )
+            if interval is not None:
+                await self.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/pollInterval", str(interval)
+                )
+        except Exception as _e:
+            logger.debug(f"Poll timing MQTT publish failed (non-critical): {_e}")
 
     async def _publish_ha_discovery(self):
         """Publish Home Assistant MQTT discovery messages for all AquaClean entities on startup."""
@@ -1485,6 +1509,8 @@ class ApiMode:
             # Reset the countdown epoch so the webapp starts the countdown immediately
             # rather than resuming from a stale epoch set when polling was previously active.
             self.service.device_state["poll_epoch"] = time.time()
+            await self.service._publish_poll_timing(epoch=self.service.device_state["poll_epoch"])
+        await self.service._publish_poll_timing(interval=value)
         self._poll_wakeup.set()                    # wake on-demand _polling_loop
         self.service._poll_interval_event.set()    # wake persistent-mode inner loop
         await self.rest_api.broadcast_state(self.service.device_state.copy())
@@ -2023,6 +2049,7 @@ class ApiMode:
             # reset to 100% when results arrive — the epoch already lags by the
             # BLE round-trip time (~1-2 s) when the broadcast fires.
             self.service.device_state["poll_epoch"] = time.time()
+            await self.service._publish_poll_timing(epoch=self.service.device_state["poll_epoch"])
             try:
                 if not _identification_fetched:
                     result = await self._on_demand(self._fetch_state_and_info)
@@ -2150,6 +2177,8 @@ class ApiMode:
             await client.toggle_lid_position()
         elif command == "toggle-anal":
             await client.toggle_anal_shower()
+        elif command == "toggle-orientation-light":
+            await client.toggle_orientation_light()
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
 
@@ -2435,6 +2464,33 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "json_attributes_topic": f"{t}/centralDevice/performanceStats",
                 "icon": "mdi:chart-bar",
                 "unit_of_measurement": "samples",
+                "entity_category": "diagnostic",
+                "device": DEVICE_BRIDGE,
+            },
+        },
+        # --- Sensors: poll timing (published before every poll) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/poll_epoch/config",
+            "payload": {
+                "name": "Last Poll",
+                "unique_id": "geberit_aquaclean_poll_epoch",
+                "state_topic": f"{t}/centralDevice/pollEpoch",
+                "device_class": "timestamp",
+                "icon": "mdi:clock-check",
+                "entity_category": "diagnostic",
+                "device": DEVICE_BRIDGE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/poll_interval/config",
+            "payload": {
+                "name": "Poll Interval",
+                "unique_id": "geberit_aquaclean_poll_interval",
+                "state_topic": f"{t}/centralDevice/pollInterval",
+                "unit_of_measurement": "s",
+                "device_class": "duration",
+                "state_class": "measurement",
+                "icon": "mdi:timer-outline",
                 "entity_category": "diagnostic",
                 "device": DEVICE_BRIDGE,
             },
