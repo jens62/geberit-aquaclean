@@ -97,6 +97,21 @@ def get_system_info() -> dict:
     os_release = _pl.release()   # e.g. "6.1.0-rpi7-rpi-v8"
     machine    = _pl.machine()   # "aarch64", "x86_64", …
 
+    # Read PRETTY_NAME and VERSION from /etc/os-release (Linux/macOS)
+    os_pretty_name = None
+    os_version     = None
+    try:
+        with open("/etc/os-release") as _f:
+            for _line in _f:
+                _k, _, _v = _line.strip().partition("=")
+                _v = _v.strip('"\'')
+                if _k == "PRETTY_NAME":
+                    os_pretty_name = _v
+                elif _k == "VERSION":
+                    os_version = _v
+    except OSError:
+        pass
+
     # --- Environment detection ---
     # HA add-on: HASSIO_TOKEN or /data/options.json (supervisor volume)
     if os.environ.get("HASSIO_TOKEN") or os.path.exists("/data/options.json"):
@@ -222,6 +237,8 @@ def get_system_info() -> dict:
         "python_version": python_version,
         "os":             os_name,
         "os_release":     os_release,
+        "os_pretty_name": os_pretty_name,
+        "os_version":     os_version,
         "machine":        machine,
         "environment":    environment,
         "docker":         docker,
