@@ -218,8 +218,8 @@ class AquaCleanBaseClient:
 
         return result
 
-    async def get_firmware_version_list_async(self):
-        api_call = GetFirmwareVersionList()
+    async def get_firmware_version_list_async(self, payload: bytes = b''):
+        api_call = GetFirmwareVersionList(payload)
         logger.trace(f"api_call: {api_call}")
 
         response = await self.send_request(api_call)

@@ -1749,23 +1749,20 @@ class ApiMode:
         versions = await client.base_client.get_soc_application_versions_async()
         return {"soc_versions": str(versions)}
 
-    async def get_firmware_version_list(self):
+    async def get_firmware_version_list(self, payload: bytes = b''):
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
             if self.service.client is None:
                 self._http_error(503, E4003)
-            cached = self.service.client.firmware_version_list or {}
-            result = cached if isinstance(cached, dict) else {"raw_hex": str(cached), "ascii": ""}
+            # Persistent mode: re-fetch with the requested payload (probe mode)
+            result = await self.service.client.base_client.get_firmware_version_list_async(payload)
         else:
-            result = await self._on_demand(self._fetch_firmware_version_list)
+            result = await self._on_demand(lambda c: c.base_client.get_firmware_version_list_async(payload))
         await self.service.mqtt_service.send_data_async(
             f"{topic}/peripheralDevice/information/FirmwareVersionList",
             result.get("raw_hex", ""),
         )
         return result
-
-    async def _fetch_firmware_version_list(self, client):
-        return await client.base_client.get_firmware_version_list_async()
 
     async def _fetch_statistics_descale(self, client):
         sd = await client.base_client.get_statistics_descale_async()

@@ -5,21 +5,21 @@ from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import
 
 
 class GetFirmwareVersionList:
-    def __init__(self):
+    def __init__(self, payload: bytes = b''):
         logger.trace("GetFirmwareVersionList: __init__")
         # Context=0x01, Procedure=0x0E, Node=0x01
-        # C# signature: GetFirmwareVersionList(object arg1, object arg2) — arg types unknown;
-        # starting with empty payload to probe the device response.
+        # C# signature: GetFirmwareVersionList(object arg1, object arg2) — arg types unknown.
+        # Pass payload as hex string via REST ?payload=0000 to probe different argument values.
         self.api_call_attribute = ApiCallAttribute(0x01, 0x0E, 0x01)
+        self._payload = bytearray(payload)
 
     def get_api_call_attribute(self) -> ApiCallAttribute:
         logger.trace("GetFirmwareVersionList: get_api_call_attribute")
         return self.api_call_attribute
 
     def get_payload(self):
-        logger.trace("GetFirmwareVersionList: get_payload")
-        # arg1/arg2 types unknown — empty payload as initial probe
-        return bytearray()
+        logger.trace(f"GetFirmwareVersionList: get_payload -> {self._payload.hex() or '(empty)'}")
+        return self._payload
 
     def result(self, data):
         logger.trace("GetFirmwareVersionList: result")
