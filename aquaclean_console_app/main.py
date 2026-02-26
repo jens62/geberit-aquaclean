@@ -507,7 +507,8 @@ class ServiceMode:
         self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
         self.mqtt_service.Connect += self.request_reconnect
 
-        # Publish initial ESPHome proxy status and Home Assistant discovery
+        # Clear stale retained messages and publish initial status
+        await self._clear_stale_retained_topics()
         await self._publish_esphome_proxy_status()
         await self._publish_esphome_proxy_discovery()
         await self._publish_ha_discovery()
@@ -949,6 +950,32 @@ class ServiceMode:
             f"homeassistant/sensor/aquaclean_{device_id}/esphome_proxy_error/config",
             json.dumps(error_config)
         )
+
+    async def _clear_stale_retained_topics(self):
+        """Clear retained MQTT messages from dead or stale topics on startup.
+
+        Publishing an empty payload with retain=True tells the broker to delete
+        the retained message so clients no longer receive stale data.
+
+        Topics cleared:
+        - centralDevice/error: clear any error from the previous session so the
+          UI shows a clean state immediately (also cleared before each BLE connect
+          in persistent mode, but NOT in on-demand mode).
+        - centralDevice/connected/centralDevice/error: dead topic left over from
+          a bug where the error topic was accidentally nested under connected/.
+          The broker retains the last message; nothing ever publishes here again.
+        """
+        topic = self.mqttConfig['topic']
+        try:
+            await self.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/error", ErrorManager.clear_error()
+            )
+            await self.mqtt_service.send_data_async(
+                f"{topic}/centralDevice/connected/centralDevice/error", ""
+            )
+            logger.debug("Cleared stale retained MQTT topics on startup")
+        except Exception as _e:
+            logger.debug(f"Stale topic cleanup failed (non-critical): {_e}")
 
     async def _publish_ha_discovery(self):
         """Publish Home Assistant MQTT discovery messages for all AquaClean entities on startup."""
