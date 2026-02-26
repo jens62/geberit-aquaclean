@@ -28,10 +28,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: AquaCleanCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities: list = [
         AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off)
         for key, name, device_class, icon_on, icon_off in BINARY_SENSORS
-    )
+    ]
+    entities.append(AquaCleanConnectedSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
@@ -53,3 +55,26 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return bool(self.coordinator.data.get(self._key))
+
+
+class AquaCleanConnectedSensor(AquaCleanEntity, BinarySensorEntity):
+    """Binary sensor reflecting whether the last coordinator poll succeeded."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_name = "Connected"
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_connected"
+
+    @property
+    def available(self) -> bool:
+        return True  # always show Connected/Disconnected, never Unavailable
+
+    @property
+    def icon(self) -> str:
+        return "mdi:bluetooth-connect" if self.is_on else "mdi:bluetooth-off"
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.last_update_success
