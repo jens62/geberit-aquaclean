@@ -434,9 +434,6 @@
         <button onclick="queryGet('/data/soc-versions',          this, clearSocVersions,       onSocVersions)">
           <span class="spinner"></span>SOC Versions
         </button>
-        <button onclick="queryGet('/data/firmware-version-list', this, clearFirmwareVersionList, onFirmwareVersionList)">
-          <span class="spinner"></span>Firmware Version List
-        </button>
         <button onclick="queryGet('/data/statistics-descale',   this, clearStatisticsDescale, onStatisticsDescale)">
           <span class="spinner"></span>Descale Statistics
         </button>
@@ -465,10 +462,6 @@
       </div>
       <dl class="info-grid" id="socVersionsGrid" style="display:none;margin-top:0.75rem">
         <dt>SOC Versions</dt><dd id="info-soc-versions">—</dd>
-      </dl>
-      <dl class="info-grid" id="firmwareVersionListGrid" style="display:none;margin-top:0.75rem">
-        <dt>Firmware (raw hex)</dt><dd id="fw-raw-hex">—</dd>
-        <dt>Firmware (ASCII)</dt>  <dd id="fw-ascii">—</dd>
       </dl>
       <dl class="info-grid" id="descaleStatsGrid" style="display:none;margin-top:0.75rem">
         <dt>Days until next descale</dt>      <dd id="ds-days-next">—</dd>
@@ -875,16 +868,7 @@
       if (grid) grid.style.display = '';
     }
 
-    function clearFirmwareVersionList() {
-      const h = document.getElementById('fw-raw-hex'); if (h) h.textContent = '—';
-      const a = document.getElementById('fw-ascii');   if (a) a.textContent = '—';
-    }
-    function onFirmwareVersionList(data) {
-      const h = document.getElementById('fw-raw-hex'); if (h) h.textContent = data.raw_hex || '—';
-      const a = document.getElementById('fw-ascii');   if (a) a.textContent = data.ascii   || '—';
-      const grid = document.getElementById('firmwareVersionListGrid');
-      if (grid) grid.style.display = '';
-    }
+
 
     function clearStatisticsDescale() {
       ['ds-days-next','ds-days-restricted','ds-cycles-confirm','ds-num-cycles','ds-last-descale','ds-unposted']
