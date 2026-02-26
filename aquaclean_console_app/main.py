@@ -551,6 +551,7 @@ class ServiceMode:
 
             self.client.DeviceStateChanged += self.on_device_state_changed
             self.client.SOCApplicationVersions += self.soc_application_versions
+            self.client.FirmwareVersionList += self.firmware_version_list
             self.client.DeviceInitialOperationDate += self.device_initial_operation_date
             self.client.DeviceIdentification += self.on_device_identification
             bluetooth_connector.connection_status_changed_handlers += self.on_connection_status_changed
@@ -1256,6 +1257,13 @@ class ServiceMode:
     async def soc_application_versions(self, sender, args):
         pass
 
+    async def firmware_version_list(self, sender, args):
+        topic = self.mqttConfig['topic']
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/FirmwareVersionList",
+            args.get("raw_hex", "") if isinstance(args, dict) else str(args),
+        )
+
     async def on_toggle_lid_message(self):
         await self.client.toggle_lid_position()
 
@@ -1740,6 +1748,24 @@ class ApiMode:
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
         return {"soc_versions": str(versions)}
+
+    async def get_firmware_version_list(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            cached = self.service.client.firmware_version_list or {}
+            result = cached if isinstance(cached, dict) else {"raw_hex": str(cached), "ascii": ""}
+        else:
+            result = await self._on_demand(self._fetch_firmware_version_list)
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/FirmwareVersionList",
+            result.get("raw_hex", ""),
+        )
+        return result
+
+    async def _fetch_firmware_version_list(self, client):
+        return await client.base_client.get_firmware_version_list_async()
 
     async def _fetch_statistics_descale(self, client):
         sd = await client.base_client.get_statistics_descale_async()
@@ -2593,6 +2619,8 @@ async def run_cli(args):
         elif args.command == 'soc-versions':
             versions = await client.base_client.get_soc_application_versions_async()
             result["data"] = {"soc_versions": str(versions)}
+        elif args.command == 'firmware-version-list':
+            result["data"] = await client.base_client.get_firmware_version_list_async()
         elif args.command == 'statistics-descale':
             sd = await client.base_client.get_statistics_descale_async()
             result["data"] = ApiMode._statistics_descale_to_dict(sd)
@@ -2740,6 +2768,7 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command identification\n"
             "  %(prog)s --mode cli --command initial-operation-date\n"
             "  %(prog)s --mode cli --command soc-versions\n"
+            "  %(prog)s --mode cli --command firmware-version-list\n"
             "  %(prog)s --mode cli --command statistics-descale\n"
             "\n"
             "device commands (require BLE):\n"
@@ -2774,7 +2803,7 @@ if __name__ == "__main__":
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
-        'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
+        'info', 'identification', 'initial-operation-date', 'soc-versions', 'firmware-version-list', 'statistics-descale',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)

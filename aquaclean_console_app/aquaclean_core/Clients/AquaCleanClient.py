@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class AquaCleanClient(IAquaCleanClient):
     def __init__(self, bluetooth_connector):
         self.SOCApplicationVersions = myEvent.EventHandler()
+        self.FirmwareVersionList = myEvent.EventHandler()
         self.DeviceIdentification = myEvent.EventHandler()
         self.DeviceInitialOperationDate = myEvent.EventHandler()
         self.DeviceStateChanged = myEvent.EventHandler()
@@ -28,6 +29,7 @@ class AquaCleanClient(IAquaCleanClient):
         self.Description = ""
         self.InitialOperationDate = ""
         self.soc_application_versions = None
+        self.firmware_version_list = None
 
     async def connect(self, device_id: str):
         """Standard connection and info fetching. No infinite loop here."""
@@ -37,6 +39,9 @@ class AquaCleanClient(IAquaCleanClient):
         # Fetch Identification Data
         self.soc_application_versions = await self.base_client.get_soc_application_versions_async()
         await self.SOCApplicationVersions.invoke_async(self, self.soc_application_versions)
+
+        self.firmware_version_list = await self.base_client.get_firmware_version_list_async()
+        await self.FirmwareVersionList.invoke_async(self, self.firmware_version_list)
 
         device_identification = await self.base_client.get_device_identification_async(0)
         self.SapNumber = device_identification.sap_number

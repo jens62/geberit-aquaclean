@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -39,6 +40,21 @@ from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
 
 PLATFORMS = ["binary_sensor", "sensor", "button"]
+
+_ICONS_JS = pathlib.Path(__file__).parent / "www" / "geberit-aquaclean-icons.js"
+_ICONS_URL = "/geberit_aquaclean/geberit-aquaclean-icons.js"
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Register the custom icon set as a Lovelace frontend resource."""
+    from homeassistant.components.http import StaticPathConfig
+    from homeassistant.components.frontend import add_extra_js_url
+
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(_ICONS_URL, str(_ICONS_JS), cache_headers=True)]
+    )
+    add_extra_js_url(hass, _ICONS_URL)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

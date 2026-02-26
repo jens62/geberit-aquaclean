@@ -151,6 +151,10 @@ class RestApiService:
         async def get_soc_versions():
             return await self._api_mode.get_soc_versions()
 
+        @app.get("/data/firmware-version-list")
+        async def get_firmware_version_list():
+            return await self._api_mode.get_firmware_version_list()
+
         @app.get("/data/statistics-descale")
         async def get_statistics_descale():
             return await self._api_mode.get_statistics_descale()

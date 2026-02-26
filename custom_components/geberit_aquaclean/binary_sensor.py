@@ -15,10 +15,10 @@ from .entity import AquaCleanEntity
 
 # (data_key, friendly_name, device_class, icon)
 BINARY_SENSORS: list[tuple[str, str, BinarySensorDeviceClass | None, str]] = [
-    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "mdi:human-male"),
-    ("is_anal_shower_running", "Anal Shower Running", None,                               "mdi:shower"),
-    ("is_lady_shower_running", "Lady Shower Running", None,                               "mdi:shower"),
-    ("is_dryer_running",       "Dryer Running",       None,                               "mdi:hair-dryer"),
+    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "geberit:user-sitting"),
+    ("is_anal_shower_running", "Anal Shower Running", None,                               "geberit:analshower"),
+    ("is_lady_shower_running", "Lady Shower Running", None,                               "geberit:ladywash"),
+    ("is_dryer_running",       "Dryer Running",       None,                               "geberit:dryer"),
 ]
 
 
