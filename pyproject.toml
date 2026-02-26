@@ -8,7 +8,7 @@ version = "2.4.20"
 description = "Python bridge between Geberit AquaClean toilet (BLE) and home automation (MQTT/REST)"
 requires-python = ">=3.11"
 dependencies = [
-    "bleak>=2.0.0,<2.1",  # 2.1.x regresses le-connection-abort-by-local on BCM4345C0 + BlueZ 5.84
+    "bleak>=2.0.0,<2.2",  # 2.1.x regresses le-connection-abort-by-local on BCM4345C0 + BlueZ 5.84
                           # Before widening: test BLE connect time < 3 s on raspi-5 local adapter
                           # Confirmed: 2.0.0 = ~1.8 s, 2.1.1 = ~25 s (same HW, same BlueZ 5.84)
                           # See docs/bluetooth-troubleshooting.md for test procedure
