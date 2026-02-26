@@ -152,8 +152,18 @@ class RestApiService:
             return await self._api_mode.get_soc_versions()
 
         @app.get("/data/firmware-version-list")
-        async def get_firmware_version_list():
-            return await self._api_mode.get_firmware_version_list()
+        async def get_firmware_version_list(payload: str = ""):
+            """Probe GetFirmwareVersionList (0x0E).
+            ?payload=  hex string to send as request payload, e.g. ?payload=0000
+            Leave empty for no-argument call (returns empty on the Mera Comfort)."""
+            try:
+                payload_bytes = bytes.fromhex(payload) if payload else b''
+            except ValueError:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail="payload must be a hex string, e.g. 0000")
+            result = await self._api_mode.get_firmware_version_list(payload_bytes)
+            result["payload_sent"] = payload or "(empty)"
+            return result
 
         @app.get("/data/statistics-descale")
         async def get_statistics_descale():
