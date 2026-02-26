@@ -428,6 +428,45 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   (or similar) at the point of mapping in `main.py` so the log file is
   self-contained and error codes can be correlated without cross-referencing MQTT.
 
+- **system-info: distinguish config.ini values from runtime values.**
+  `get_system_info()` currently reads `ble_connection`, `esphome_api_connection`,
+  and `poll_interval` from `config.ini` only. But these can all be changed at
+  runtime via REST API, MQTT, or the webapp — and the runtime values diverge from
+  the file immediately after any such change.
+
+  The fix: split the `config` block in the returned dict into two sub-sections:
+
+  ```json
+  "config": {
+    "from_file": {
+      "ble_connection": "persistent",
+      "poll_interval": "10.5",
+      ...
+    },
+    "runtime": {
+      "ble_connection": "on-demand",   ← may differ after a runtime toggle
+      "poll_interval": 30.0,
+      "esphome_api_connection": "on-demand"
+    }
+  }
+  ```
+
+  The `from_file` values come from `config.ini` (current `get_system_info()`
+  behaviour). The `runtime` values come from `device_state` (or `ApiMode`
+  attributes).
+
+  **Implementation note:** `get_system_info()` is a module-level function with
+  no access to the running `ApiMode` or `ServiceMode` instance. Two options:
+  1. Pass `device_state` as an optional parameter: `get_system_info(device_state=None)`.
+  2. Add a separate `ApiMode.get_system_info_data()` that merges the static dict
+     with live `device_state` fields before returning (already exists as a stub —
+     extend it).
+  Option 2 is cleaner: the REST endpoint (`/info/system`) already calls
+  `self._api_mode.get_system_info_data()`, so runtime values can be merged there
+  without changing the pure module-level function. The CLI `system-info` command
+  (which has no running `ApiMode`) would still show only `from_file` values, which
+  is correct behaviour for a CLI invocation.
+
 ---
 
 ## ESPHome BLE connection — probe results (2026-02-21)
