@@ -412,6 +412,25 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 ## TODO
 
 
+- **HACS: Add "Connected" binary sensor.**
+  The coordinator polls on a fixed interval but gives no direct signal to the dashboard
+  about whether the last poll actually reached the device. Add a `BinarySensorEntity`
+  with `device_class: BinarySensorDeviceClass.CONNECTIVITY` that reflects the
+  coordinator's last-update result:
+  - `True` ("Connected") — last `_async_update_data()` completed without raising an exception
+  - `False` ("Disconnected") — last update raised an exception (BLE error, timeout, etc.)
+
+  **Implementation:**
+  - In `coordinator.py`: track a boolean `self._last_update_ok` — set `True` on success,
+    `False` in the `except` block of `_async_update_data()`. Store it in `coordinator.data`
+    (e.g. `data["connected"] = True`) or as a direct attribute on the coordinator.
+  - In `binary_sensor.py`: add a new entry to `BINARY_SENSORS` using key `"connected"`,
+    name "Connected", `device_class: CONNECTIVITY`, static icons `mdi:bluetooth-connect` /
+    `mdi:bluetooth-off`.
+  - In `lovelace/dashboard.yaml`: add
+    `entity: binary_sensor.geberit_aquaclean_connected` as the first row in the
+    **Live Status** card, name "Connected".
+
 - **Add poll countdown to HACS integration.** The standalone webapp shows a countdown
   bar to the next poll via `poll_epoch` + `poll_interval` from the SSE stream. The
   HACS coordinator (`custom_components/geberit_aquaclean/coordinator.py`) should expose
