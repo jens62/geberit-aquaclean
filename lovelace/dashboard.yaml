@@ -46,7 +46,19 @@ views:
     icon: mdi:toilet
     cards:
 
-      # ── ESPHome Proxy ─────────────────────────────────────────────────────
+      # ── Connection Status ─────────────────────────────────────────────────
+      # Mirrors the webapp's two connection panels.
+      # Note: "connecting" state is not shown in HACS (on-demand BLE — connects
+      # and disconnects within each poll). Sensors show result of last poll.
+      - type: entities
+        title: BLE Connection
+        icon: mdi:bluetooth
+        entities:
+          - entity: binary_sensor.geberit_aquaclean_ble_connected
+            name: Connected
+          - entity: sensor.geberit_aquaclean_ble_connection
+            name: Connection
+
       # Only relevant when an ESPHome proxy host is configured
       - type: entities
         title: ESPHome Proxy

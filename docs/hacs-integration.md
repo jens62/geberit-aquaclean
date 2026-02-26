@@ -150,7 +150,8 @@ After setup, HA registers three devices under Settings → Devices & Services:
 
 | Type | Entity |
 |------|--------|
-| Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
+| Binary sensor | BLE Connected, User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
+| Sensor | BLE Connection — shows `{BLE device name} (MAC address)` |
 | Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
