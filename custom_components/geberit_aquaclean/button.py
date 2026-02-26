@@ -12,9 +12,9 @@ from .entity import AquaCleanEntity
 
 # (command, friendly_name, icon)
 BUTTONS: list[tuple[str, str, str]] = [
-    ("toggle_lid",           "Toggle Lid",           "mdi:toilet"),
-    ("toggle_anal_shower",   "Toggle Anal Shower",   "mdi:shower"),
-    ("toggle_lady_shower",   "Toggle Lady Shower",   "mdi:shower"),
+    ("toggle_lid",           "Toggle Lid",           "geberit:lid"),
+    ("toggle_anal_shower",   "Toggle Anal Shower",   "geberit:analshower"),
+    ("toggle_lady_shower",   "Toggle Lady Shower",   "geberit:ladywash"),
 ]
 
 

@@ -23,6 +23,7 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSOCApplicationVersi
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetDeviceInitialOperationDate  import GetDeviceInitialOperationDate                    
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand                     import SetCommand
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStatisticsDescale           import GetStatisticsDescale
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList         import GetFirmwareVersionList
 
 from aquaclean_console_app.aquaclean_utils                                               import utils   
 
@@ -210,11 +211,24 @@ class AquaCleanBaseClient:
         logger.debug(f"response: {response}")
         logger.debug(f"self.message_context: {self.message_context}")
         logger.debug(f"self.message_context.result_bytes: {self.message_context.result_bytes}")
-        
+
         result = api_call.result(self.message_context.result_bytes)
         logger.debug(f"result: {result}")
         logger.debug(f"response.result: {response.result}")
-        
+
+        return result
+
+    async def get_firmware_version_list_async(self):
+        api_call = GetFirmwareVersionList()
+        logger.trace(f"api_call: {api_call}")
+
+        response = await self.send_request(api_call)
+        logger.debug(f"response: {response}")
+        logger.debug(f"self.message_context.result_bytes: {self.message_context.result_bytes}")
+
+        result = api_call.result(self.message_context.result_bytes)
+        logger.debug(f"result: {result}")
+
         return result
     
 
