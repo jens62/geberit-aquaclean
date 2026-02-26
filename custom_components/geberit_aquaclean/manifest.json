@@ -1,7 +1,7 @@
 {
   "domain": "geberit_aquaclean",
   "name": "Geberit AquaClean",
-  "version": "2.4.25",
+  "version": "2.4.26",
   "documentation": "https://github.com/jens62/geberit-aquaclean",
   "issue_tracker": "https://github.com/jens62/geberit-aquaclean/issues",
   "requirements": [
