@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # bleak is pinned to <2.1 due to a performance regression on BCM4345C0 + BlueZ 5.84.
+    # Dependabot will open a PR when bleak 2.1.x or 2.2.x is released.
+    # Before merging any bleak upgrade PR: test BLE connect time on raspi-5 local adapter.
+    # Pass criteria: connect time < 3 s. Fail: >10 s with le-connection-abort-by-local retries.
+    # See docs/bluetooth-troubleshooting.md for the full test procedure.
