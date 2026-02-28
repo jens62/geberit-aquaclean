@@ -93,8 +93,6 @@ class AquaCleanBleConnectionSensor(AquaCleanEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        if self.coordinator.ble_state == "connecting":
-            return f"Connecting to {self._mac}…"
         name = (self.coordinator.data or {}).get("ble_name") or self.coordinator._ble_name_cache
         if name:
             return f"{name} ({self._mac})"
@@ -120,8 +118,6 @@ class AquaCleanEspHomeConnectionSensor(AquaCleanProxyEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        if self.coordinator.esphome_state == "connecting":
-            return f"Connecting to {self._host}:{self._port}…"
         name = (self.coordinator.data or {}).get("esphome_name") or self.coordinator._esphome_name_cache
         if name:
             return f"{name} ({self._host}:{self._port})"
