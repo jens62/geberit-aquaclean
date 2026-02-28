@@ -45,11 +45,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None  # last known ESPHome device name
         self._ble_name_cache: str | None = None      # last known BLE device name
-        # Real-time connection state — updated mid-poll via async_update_listeners()
-        # Values: "disconnected" | "connecting" | "connected" | "error"
-        self.ble_state: str = "disconnected"
-        self.esphome_state: str = "disconnected"
-        self.ble_connected_at: datetime | None = None  # timestamp of last BLE connect
+        self.ble_connected_at: datetime | None = None  # timestamp of last successful BLE connect
 
         super().__init__(
             hass,
@@ -81,20 +77,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         connector = self._make_connector()
         client = AquaCleanClientFactory(connector).create_client()
 
-        # Signal "connecting" at start of every poll cycle
-        if self._esphome_host:
-            self.esphome_state = "connecting"
-        self.ble_state = "connecting"
-        self.async_update_listeners()
-
         try:
             await client.connect_ble_only(self._device_id)
-            # Both TCP (ESPHome) and BLE are now up
-            if self._esphome_host:
-                self.esphome_state = "connected"
-            self.ble_state = "connected"
             self.ble_connected_at = datetime.now(timezone.utc)
-            self.async_update_listeners()
 
             if connector.esphome_proxy_name:
                 self._esphome_name_cache = connector.esphome_proxy_name
@@ -148,18 +133,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "esphome_wifi_rssi": esphome_wifi_rssi,
             }
         except Exception as exc:
-            self.ble_state = "error"
-            if self._esphome_host:
-                self.esphome_state = "error"
-            self.async_update_listeners()
             raise UpdateFailed(f"AquaClean update failed: {exc}") from exc
         finally:
-            # BLE disconnects after every poll — show that.
-            # ESPHome TCP stays reachable between polls — keep "connected" (last-known-good).
-            # On error both states were already set above — leave them until next poll.
-            if self.ble_state != "error":
-                self.ble_state = "disconnected"
-                self.async_update_listeners()
             try:
                 await connector.disconnect()
             except Exception:

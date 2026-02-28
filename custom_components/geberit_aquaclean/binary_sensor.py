@@ -60,7 +60,7 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
 
 
 class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
-    """Binary sensor showing whether the last poll successfully reached the Geberit via BLE."""
+    """Binary sensor: True when the last poll successfully reached the Geberit via BLE."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_name = "BLE Connected"
@@ -75,21 +75,11 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
 
     @property
     def icon(self) -> str:
-        state = self.coordinator.ble_state
-        if state == "connected":
-            return "mdi:bluetooth-connect"
-        if state == "connecting":
-            return "mdi:bluetooth-searching"
-        return "mdi:bluetooth-off"
+        return "mdi:bluetooth-connect" if self.is_on else "mdi:bluetooth-off"
 
     @property
-    def is_on(self) -> bool | None:
-        state = self.coordinator.ble_state
-        if state == "connected":
-            return True
-        if state == "connecting":
-            return None  # "Unknown" — HA shows neither on nor off
-        return False  # disconnected or error
+    def is_on(self) -> bool:
+        return self.coordinator.last_update_success
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -98,7 +88,7 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
 
 
 class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
-    """Binary sensor showing whether the ESPHome proxy was reachable on the last poll."""
+    """Binary sensor: True when the ESPHome proxy was reachable on the last poll."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_name = "Connected"
@@ -113,18 +103,8 @@ class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
 
     @property
     def icon(self) -> str:
-        state = self.coordinator.esphome_state
-        if state == "connected":
-            return "mdi:lan-connect"
-        if state == "connecting":
-            return "mdi:lan-pending"
-        return "mdi:lan-disconnect"
+        return "mdi:lan-connect" if self.is_on else "mdi:lan-disconnect"
 
     @property
-    def is_on(self) -> bool | None:
-        state = self.coordinator.esphome_state
-        if state == "connected":
-            return True
-        if state == "connecting":
-            return None  # "Unknown"
-        return False  # disconnected or error
+    def is_on(self) -> bool:
+        return self.coordinator.last_update_success
