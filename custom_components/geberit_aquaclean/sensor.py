@@ -34,6 +34,8 @@ SENSORS: list[tuple] = [
     ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check"),
     ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),
     ("next_poll",     "Next Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:calendar-clock"),
+    # Signal strength
+    ("ble_rssi",      "BLE Signal",     "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, "mdi:signal"),
 ]
 
 
@@ -50,6 +52,7 @@ async def async_setup_entry(
     entities.append(AquaCleanBleConnectionSensor(coordinator, entry))
     if coordinator._esphome_host:
         entities.append(AquaCleanEspHomeConnectionSensor(coordinator, entry))
+        entities.append(AquaCleanProxyWifiSignalSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -123,3 +126,23 @@ class AquaCleanEspHomeConnectionSensor(AquaCleanProxyEntity, SensorEntity):
         if name:
             return f"{name} ({self._host}:{self._port})"
         return f"{self._host}:{self._port}"
+
+
+class AquaCleanProxyWifiSignalSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the ESP32 WiFi signal strength in dBm."""
+
+    _attr_name = "WiFi Signal"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:wifi"
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_esphome_wifi_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("esphome_wifi_rssi")

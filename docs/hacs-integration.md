@@ -157,6 +157,7 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
 | Sensor (poll) | Last Poll, Poll Interval, Next Poll |
+| Sensor | **BLE Signal** — Geberit BLE advertisement RSSI in dBm (signal strength between ESP32 and toilet) |
 
 ### AquaClean Proxy *(only when ESPHome host is configured)*
 
@@ -164,6 +165,7 @@ After setup, HA registers three devices under Settings → Devices & Services:
 |------|--------|
 | Binary sensor | **Connected** — shows Connected (green) as long as the ESP32 is reachable; only drops to Disconnected when a poll actually fails at the TCP level |
 | Sensor | **Connection** — shows `Connecting to {host}:{port}…` briefly at poll start, then `{ESPHome device name} (host:port)` |
+| Sensor | **WiFi Signal** — ESP32 WiFi RSSI in dBm (requires `platform: wifi_signal` in ESPHome YAML) |
 | Button | Restart AquaClean Proxy |
 
 ---

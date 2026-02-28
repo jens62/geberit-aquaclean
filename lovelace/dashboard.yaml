@@ -62,6 +62,8 @@ views:
             attribute: connected_at
             name: Connected Since
             icon: mdi:clock-check
+          - entity: sensor.geberit_aquaclean_ble_signal
+            name: BLE Signal
 
       # Only relevant when an ESPHome proxy host is configured
       - type: entities
@@ -72,6 +74,8 @@ views:
             name: Connected
           - entity: sensor.aquaclean_proxy_connection
             name: Connection
+          - entity: sensor.aquaclean_proxy_wifi_signal
+            name: WiFi Signal
 
       # ── Live Status ──────────────────────────────────────────────────────
       - type: entities
