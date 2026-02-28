@@ -50,8 +50,7 @@ Common causes of a silent BLE scanner after flashing:
 
 | Cause | Fix |
 |-------|-----|
-| `Proxy Maintenance Mode` switch restored as ON from NVS | Open the ESPHome web UI (`http://<ip>/`) and turn the switch OFF; add `restore_mode: ALWAYS_OFF` to the YAML and reflash |
-| `sdkconfig_options: CONFIG_BT_BLE_50_FEATURES_SUPPORTED: n` | Remove the `sdkconfig_options` block — this compile-time flag disables BLE 5.0 features that ESPHome's BLE tracker relies on internally, killing the scanner |
+| `Proxy Maintenance Mode` switch restored as ON from NVS | The `on_turn_on` action called `stop_scan` at boot. Current YAMLs have `restore_mode: ALWAYS_OFF` and no actions — reflash with the latest config. If using an older YAML, remove the `on_turn_on`/`on_turn_off` actions or add `restore_mode: ALWAYS_OFF`. |
 | `logger: level: INFO` (default) | BLE scan events are at DEBUG level and not shown at INFO — this is normal, not a fault. Temporarily set `level: DEBUG` and reflash to confirm scanning is active |
 
 > **Note:** the ESPHome API port (6053) remains open and TCP connections succeed even
