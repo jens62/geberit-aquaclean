@@ -26,6 +26,41 @@ ESPHome.  Wait ~60 s and retry, or power-cycle the ESP32.
 
 ---
 
+## First sanity check after flashing — verify BLE scanning is active
+
+After running `esphome run ... --device <ip>`, the terminal stays open and streams
+the live log from the ESP32. Before doing anything else, watch the output for BLE
+scan results. With `logger: level: DEBUG` you should see device MAC addresses appear
+within a few seconds:
+
+```
+[D] [esp32_ble_tracker:...] Found BLE device 38:AB:41:2A:0D:67 RSSI=-72
+[D] [esp32_ble_tracker:...] Found BLE device AA:BB:CC:DD:EE:FF RSSI=-85
+...
+```
+
+**If MAC addresses appear → BLE scanner is running. You can proceed.**
+
+**If the terminal shows sensor updates, API connections, and other messages but
+no BLE device addresses → the BLE scanner is not running.** There is no point
+connecting the bridge or testing the HACS integration until this is resolved.
+Attempting to poll will always time out after 30 seconds.
+
+Common causes of a silent BLE scanner after flashing:
+
+| Cause | Fix |
+|-------|-----|
+| `Proxy Maintenance Mode` switch restored as ON from NVS | Open the ESPHome web UI (`http://<ip>/`) and turn the switch OFF; add `restore_mode: ALWAYS_OFF` to the YAML and reflash |
+| `sdkconfig_options: CONFIG_BT_BLE_50_FEATURES_SUPPORTED: n` | Remove the `sdkconfig_options` block — this compile-time flag disables BLE 5.0 features that ESPHome's BLE tracker relies on internally, killing the scanner |
+| `logger: level: INFO` (default) | BLE scan events are at DEBUG level and not shown at INFO — this is normal, not a fault. Temporarily set `level: DEBUG` and reflash to confirm scanning is active |
+
+> **Note:** the ESPHome API port (6053) remains open and TCP connections succeed even
+> when the BLE scanner is completely dead. A successful API connection does **not**
+> confirm the scanner is running. Only the presence of BLE device addresses in the
+> log (or a successful `ble-scan.py` run) confirms it.
+
+---
+
 ## ESPHome 2026.1 breaking changes
 
 ### `api: password:` has been removed
