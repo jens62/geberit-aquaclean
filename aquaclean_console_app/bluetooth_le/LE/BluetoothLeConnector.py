@@ -67,6 +67,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.last_ble_ms: int | None = None           # Time for BLE scan + handshake to toilet
         self._esphome_api = None          # Persistent ESP32 API TCP connection (reused when persistent_api=true)
         self._esphome_feature_flags = 0   # Cached bluetooth_proxy_feature_flags from device_info
+        self.rssi: int | None = None                  # BLE advertisement RSSI of the Geberit (dBm)
+        self.esphome_wifi_rssi: float | None = None   # ESP32 WiFi signal strength (dBm)
+        self._esphome_wifi_key: int | None = None     # aioesphomeapi entity key for wifi_signal sensor
 
 
     async def connect_async(self, device_id):
@@ -85,7 +88,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         self.device_address = device.address
         self.device_name = device.name
-        logger.debug(f"device.address: {device.address}, device.name: {device.name}")
+        self.rssi = getattr(device, 'rssi', None)
+        logger.debug(f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}")
 
         self.client = BleakClient(address_or_ble_device=device, disconnected_callback=self._on_disconnected)
         await self.client.connect()
@@ -162,6 +166,60 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.debug(f"ESP32 proxy connected: {self.esphome_proxy_name} ({self.last_esphome_api_ms} ms)")
         return api
 
+    async def _read_esphome_wifi_rssi_async(self) -> None:
+        """Read the ESP32's WiFi RSSI via the native API and store in self.esphome_wifi_rssi.
+
+        Requires `wifi_signal` sensor in the ESPHome YAML (platform: wifi_signal).
+        Safe to call while API is connected but BLE is idle (before advertisement scan).
+        Silently skips if the sensor is not configured or the read times out.
+        """
+        api = self._esphome_api
+        if api is None:
+            return
+        try:
+            # Cache the entity key on first call to avoid list_entities_services() every poll.
+            if self._esphome_wifi_key is None:
+                entities, _ = await asyncio.wait_for(api.list_entities_services(), timeout=5.0)
+                self._esphome_wifi_key = next(
+                    (
+                        e.key for e in entities
+                        if getattr(e, 'unit_of_measurement', '') == 'dBm'
+                        and 'wifi' in getattr(e, 'object_id', '').lower()
+                    ),
+                    -1,  # sentinel: -1 = "not found", None = "not yet looked up"
+                )
+                if self._esphome_wifi_key == -1:
+                    logger.debug("No wifi_signal sensor on ESP32 (add platform: wifi_signal to ESPHome YAML)")
+                    return
+
+            if self._esphome_wifi_key == -1:
+                return  # Already confirmed absent
+
+            got = asyncio.Event()
+            captured: list = []
+
+            def _on_state(state) -> None:
+                if getattr(state, 'key', None) == self._esphome_wifi_key and not got.is_set():
+                    captured.append(getattr(state, 'state', None))
+                    got.set()
+
+            unsub = api.subscribe_states(_on_state)
+            try:
+                await asyncio.wait_for(got.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.debug("Timeout reading WiFi RSSI from ESP32")
+            finally:
+                try:
+                    unsub()
+                except Exception:
+                    pass
+
+            if captured and captured[0] is not None:
+                self.esphome_wifi_rssi = round(float(captured[0]), 1)
+                logger.debug(f"ESP32 WiFi RSSI: {self.esphome_wifi_rssi} dBm")
+        except Exception as e:
+            logger.debug(f"Failed to read ESP32 WiFi RSSI: {e}")
+
     async def _connect_via_esphome(self, device_id):
         from aquaclean_console_app.bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
 
@@ -186,6 +244,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             self._esphome_api = None  # Force reconnect on next attempt
             raise
 
+        # Read WiFi signal strength while API is connected and idle (before BLE scan).
+        await self._read_esphome_wifi_rssi_async()
+
         t_ble = time.perf_counter()  # BLE timing starts after ESP32 API is ready
 
         # Scan for BLE device using raw advertisements
@@ -202,6 +263,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     # Capture address_type from advertisement (0=PUBLIC, 1=RANDOM)
                     # If not present in advertisement, defaults to 0 (PUBLIC)
                     address_type = getattr(adv, 'address_type', 0)
+                    self.rssi = getattr(adv, 'rssi', None)
                     found_event.set()
 
         logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")

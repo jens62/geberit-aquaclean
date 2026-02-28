@@ -6,6 +6,9 @@ esp32:
   board: esp32-poe-iso
   framework:
     type: esp-idf   # required — Arduino framework has insufficient memory for a reliable proxy
+    sdkconfig_options:
+      CONFIG_BT_BLE_50_FEATURES_SUPPORTED: n   # disable BLE 5.0 — saves ~40 KB RAM
+      CONFIG_BT_BLE_42_FEATURES_SUPPORTED: y   # keep BLE 4.2 (all that AquaClean needs)
 
 # ---------------------------------------------------------------------------
 # WiFi
@@ -14,6 +17,7 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: NONE   # disable WiFi power-save — avoids BLE/WiFi radio conflict on ESP32
 
 # ---------------------------------------------------------------------------
 # ESPHome native API
@@ -25,25 +29,27 @@ wifi:
 #       key: !secret api_encryption_key   # generate: openssl rand -base64 32
 # ---------------------------------------------------------------------------
 api:
+  reboot_timeout: 15min   # reboot if no API client connects within 15 min (prevents silent hang)
 
 # ---------------------------------------------------------------------------
 # BLE Proxy
 # active: true  — enables full two-way GATT connections, required for AquaClean.
-# connection_slots: 2 — one for AquaClean, one spare. Increase only if needed.
+# connection_slots: 1 — AquaClean only; increase only if other BLE devices are needed.
 #
 # interval/window: WiFi and BLE share the same 2.4 GHz radio on ESP32.
-# Shorter scan windows reduce interference with WiFi; 320/200 ms is a safe
-# starting point.  If BLE range or responsiveness is poor, try 1100/1100.
+# Shorter scan windows reduce interference with WiFi; 320/60 ms is a good balance.
+# If BLE range or responsiveness is poor, try 320/200 ms or 1100/1100.
 # ---------------------------------------------------------------------------
 esp32_ble_tracker:
+  id: ble_tracker_id
   scan_parameters:
     active: true
     interval: 320ms
-    window: 200ms
+    window: 60ms
 
 bluetooth_proxy:
   active: true
-  connection_slots: 2
+  connection_slots: 1
 
 # ---------------------------------------------------------------------------
 # OTA updates
@@ -54,10 +60,12 @@ ota:
     # password: !secret ota_password
 
 # ---------------------------------------------------------------------------
-# Logging — set to INFO for normal use, DEBUG when troubleshooting
+# Logging — set to INFO for normal use, DEBUG when troubleshooting.
+# baud_rate: 0 disables UART logging (saves resources, avoids serial noise).
 # ---------------------------------------------------------------------------
 logger:
   level: INFO
+  baud_rate: 0
 
 # ---------------------------------------------------------------------------
 # Restart button
@@ -68,6 +76,50 @@ logger:
 button:
   - platform: restart
     name: "Restart AquaClean Proxy"
+
+# ---------------------------------------------------------------------------
+# Maintenance mode switch
+# Pauses the BLE scanner to free the radio for firmware flashing or debugging.
+# Toggle via the web UI or Home Assistant before OTA updates.
+# ---------------------------------------------------------------------------
+switch:
+  - platform: template
+    name: "Proxy Maintenance Mode"
+    id: maintenance_mode
+    icon: "mdi:wrench"
+    optimistic: true
+    on_turn_on:
+      - esp32_ble_tracker.stop_scan:
+      - lambda: |-
+          ESP_LOGI("main", "Maintenance Mode ON: BLE scanner paused.");
+    on_turn_off:
+      - esp32_ble_tracker.start_scan:
+      - lambda: |-
+          ESP_LOGI("main", "Maintenance Mode OFF: BLE scanner resumed.");
+
+# ---------------------------------------------------------------------------
+# Required for debug sensors below
+# ---------------------------------------------------------------------------
+debug:
+
+# ---------------------------------------------------------------------------
+# Sensors
+# ---------------------------------------------------------------------------
+sensor:
+  # WiFi signal strength — reported to bridge and HACS integration as ESP32 RSSI
+  - platform: wifi_signal
+    name: "Proxy WiFi Signal"
+    update_interval: 60s
+
+  # Heap diagnostics — useful for spotting memory leaks after long uptime
+  - platform: debug
+    free:
+      name: "Proxy Free Heap"
+    block:
+      name: "Proxy Max Free Block"
+
+  - platform: uptime
+    name: "Proxy Uptime"
 
 # ---------------------------------------------------------------------------
 # Optional: simple web interface on port 80 for status and logs

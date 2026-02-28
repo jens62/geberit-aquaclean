@@ -448,6 +448,7 @@ class ServiceMode:
             "last_esphome_api_ms": None,     # portion: ESP32 API TCP connect (None = local BLE, 0 = reused)
             "last_ble_ms": None,             # portion: BLE scan + handshake to toilet
             "last_poll_ms": None,            # duration of last GetSystemParameterList in ms
+            "ble_rssi": None,                # BLE advertisement RSSI of the Geberit in dBm
             # Device identification — populated on first on-demand poll, cached for /info endpoint
             "sap_number": None,
             "serial_number": None,
@@ -464,6 +465,7 @@ class ServiceMode:
             "error": "No error",
             "error_code": "E0000",
             "error_hint": "",
+            "wifi_rssi": None,               # ESP32 WiFi signal strength in dBm
         }
         self._reconnect_requested = asyncio.Event()
         self._poll_interval_event = asyncio.Event()  # set by set_poll_interval() in persistent mode
@@ -580,12 +582,16 @@ class ServiceMode:
                     })
                 )
 
+                # Update BLE RSSI
+                self.device_state["ble_rssi"] = bluetooth_connector.rssi
+
                 # Update ESPHome proxy status if connected via ESP32
                 if bluetooth_connector.esphome_proxy_connected:
                     await self._update_esphome_proxy_state(
                         connected=True,
                         name=bluetooth_connector.esphome_proxy_name,
-                        error="No error"
+                        error="No error",
+                        wifi_rssi=bluetooth_connector.esphome_wifi_rssi,
                     )
 
                 # Record when polling starts so clients can compute a
@@ -809,7 +815,7 @@ class ServiceMode:
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
-    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None, error_hint=None):
+    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None, error_hint=None, wifi_rssi=None):
         """Update ESPHome proxy state and publish to MQTT."""
         if connected is not None:
             self.esphome_proxy_state["connected"] = connected
@@ -823,6 +829,8 @@ class ServiceMode:
                 self.esphome_proxy_state["error_hint"] = ""  # clear stale hint on success
         if error_hint is not None:
             self.esphome_proxy_state["error_hint"] = error_hint
+        if wifi_rssi is not None:
+            self.esphome_proxy_state["wifi_rssi"] = wifi_rssi
         await self._publish_esphome_proxy_status()
         # Broadcast state change to SSE clients (webapp)
         if self.on_state_updated:
@@ -836,6 +844,7 @@ class ServiceMode:
                 "esphome_proxy_error": self.esphome_proxy_state["error"],
                 "esphome_proxy_error_code": self.esphome_proxy_state["error_code"],
                 "esphome_proxy_error_hint": self.esphome_proxy_state.get("error_hint", ""),
+                "esphome_proxy_wifi_rssi": self.esphome_proxy_state.get("wifi_rssi"),
             })
             await self.on_state_updated(state)
 
@@ -880,6 +889,14 @@ class ServiceMode:
             f"{topic}/esphomeProxy/error",
             error_json
         )
+
+        # Publish WiFi signal strength
+        wifi_rssi = self.esphome_proxy_state.get("wifi_rssi")
+        if wifi_rssi is not None:
+            await self.mqtt_service.send_data_async(
+                f"{topic}/esphomeProxy/wifiRssi",
+                str(wifi_rssi)
+            )
 
     async def _publish_esphome_proxy_discovery(self):
         """Publish Home Assistant MQTT discovery for ESPHome proxy entities."""
@@ -1916,6 +1933,7 @@ class ApiMode:
             self.service.device_state["last_connect_ms"] = connect_ms
             self.service.device_state["last_esphome_api_ms"] = connector.last_esphome_api_ms
             self.service.device_state["last_ble_ms"] = connector.last_ble_ms
+            self.service.device_state["ble_rssi"] = connector.rssi
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
@@ -1923,6 +1941,7 @@ class ApiMode:
                     name=connector.esphome_proxy_name,
                     error="No error",
                     error_code="E0000",
+                    wifi_rssi=connector.esphome_wifi_rssi,
                 )
             await self.service.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/timings",
@@ -2077,6 +2096,8 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+                if self.service.device_state.get("ble_rssi") is not None:
+                    await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/bleRssi", str(self.service.device_state["ble_rssi"]))
                 # Record on-demand poll timing stats
                 self._poll_stats.record(
                     "on-demand",

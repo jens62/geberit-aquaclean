@@ -100,6 +100,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._esphome_name_cache = connector.esphome_proxy_name
             if connector.device_name and connector.device_name != "Unknown":
                 self._ble_name_cache = connector.device_name
+            ble_rssi = connector.rssi
+            esphome_wifi_rssi = connector.esphome_wifi_rssi
 
             ident = await client.base_client.get_device_identification_async(0)
             initial_op_date = await client.base_client.get_device_initial_operation_date()
@@ -141,6 +143,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "esphome_name": self._esphome_name_cache,
                 # BLE device info (for connection status sensors)
                 "ble_name": self._ble_name_cache,
+                # Signal strength
+                "ble_rssi": ble_rssi,
+                "esphome_wifi_rssi": esphome_wifi_rssi,
             }
         except Exception as exc:
             self.ble_state = "error"

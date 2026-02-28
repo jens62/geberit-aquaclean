@@ -6,6 +6,9 @@ esp32:
   board: esp32-poe-iso
   framework:
     type: esp-idf   # required — Arduino framework has insufficient memory for a reliable proxy
+    sdkconfig_options:
+      CONFIG_BT_BLE_50_FEATURES_SUPPORTED: n   # disable BLE 5.0 — reclaims critical SRAM for the Ethernet stack
+      CONFIG_BT_BLE_42_FEATURES_SUPPORTED: y   # keep BLE 4.2 (all that AquaClean needs)
 
 # ---------------------------------------------------------------------------
 # Ethernet (Olimex ESP32-POE-ISO pin mapping)
@@ -31,21 +34,27 @@ ethernet:
 #       key: !secret api_encryption_key   # generate: openssl rand -base64 32
 # ---------------------------------------------------------------------------
 api:
+  reboot_timeout: 15min   # reboot if no API client connects within 15 min (prevents silent hang)
 
 # ---------------------------------------------------------------------------
 # BLE Proxy
 # active: true  — enables full two-way GATT connections, required for AquaClean.
-# connection_slots: 2 — one for AquaClean, one spare. Increase only if needed.
+# connection_slots: 1 — AquaClean only; increase only if other BLE devices are needed.
+#
+# interval/window: 1100/1000 ms provides a 100ms "breather" every cycle that
+# prevents the BLE radio lockup causing the ~6-hour E0002 crash on Ethernet boards.
+# Do NOT set window = interval (1100/1100) — that eliminates the breather.
 # ---------------------------------------------------------------------------
 esp32_ble_tracker:
+  id: ble_tracker_id
   scan_parameters:
     active: true
     interval: 1100ms
-    window: 1100ms
+    window: 1000ms
 
 bluetooth_proxy:
   active: true
-  connection_slots: 2
+  connection_slots: 1
 
 # ---------------------------------------------------------------------------
 # OTA updates
@@ -55,10 +64,12 @@ ota:
     password: !secret ota_password
 
 # ---------------------------------------------------------------------------
-# Logging — set to INFO for normal use, DEBUG when troubleshooting
+# Logging — set to INFO for normal use, DEBUG when troubleshooting.
+# baud_rate: 0 disables UART logging (saves resources, avoids serial noise).
 # ---------------------------------------------------------------------------
 logger:
   level: INFO
+  baud_rate: 0
 
 # ---------------------------------------------------------------------------
 # Restart button
@@ -69,6 +80,47 @@ logger:
 button:
   - platform: restart
     name: "Restart AquaClean Proxy"
+
+# ---------------------------------------------------------------------------
+# Maintenance mode switch
+# Pauses the BLE scanner to free the radio for firmware flashing or debugging.
+# Toggle via the web UI or Home Assistant before OTA updates, or if the
+# "Max Free Block" sensor drops below ~25 KB (memory fragmentation warning).
+# ---------------------------------------------------------------------------
+switch:
+  - platform: template
+    name: "Proxy Maintenance Mode"
+    id: maintenance_mode
+    icon: "mdi:wrench"
+    optimistic: true
+    on_turn_on:
+      - esp32_ble_tracker.stop_scan:
+      - lambda: |-
+          ESP_LOGI("main", "Maintenance Mode ON: BLE scanner paused.");
+    on_turn_off:
+      - esp32_ble_tracker.start_scan:
+      - lambda: |-
+          ESP_LOGI("main", "Maintenance Mode OFF: BLE scanner resumed.");
+
+# ---------------------------------------------------------------------------
+# Required for debug sensors below
+# ---------------------------------------------------------------------------
+debug:
+
+# ---------------------------------------------------------------------------
+# Sensors
+# ---------------------------------------------------------------------------
+sensor:
+  # Heap diagnostics — useful for spotting memory leaks after long uptime.
+  # If "Max Free Block" drops below ~25 KB, enable Maintenance Mode to recover.
+  - platform: debug
+    free:
+      name: "Proxy Free Heap"
+    block:
+      name: "Proxy Max Free Block"
+
+  - platform: uptime
+    name: "Proxy Uptime"
 
 # ---------------------------------------------------------------------------
 # Optional: simple web interface on port 80 for status and logs
