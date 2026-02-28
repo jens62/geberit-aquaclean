@@ -93,14 +93,7 @@ switch:
     id: maintenance_mode
     icon: "mdi:wrench"
     optimistic: true
-    on_turn_on:
-      - esp32_ble_tracker.stop_scan:
-      - lambda: |-
-          ESP_LOGI("main", "Maintenance Mode ON: BLE scanner paused.");
-    on_turn_off:
-      - esp32_ble_tracker.start_scan:
-      - lambda: |-
-          ESP_LOGI("main", "Maintenance Mode OFF: BLE scanner resumed.");
+    restore_mode: ALWAYS_OFF   # always start with scanner running, regardless of last saved state
 
 # ---------------------------------------------------------------------------
 # Required for debug sensors below

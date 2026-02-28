@@ -37,15 +37,15 @@ api:
 # connection_slots: 1 — AquaClean only; increase only if other BLE devices are needed.
 #
 # interval/window: WiFi and BLE share the same 2.4 GHz radio on ESP32.
-# Shorter scan windows reduce interference with WiFi; 320/60 ms is a good balance.
-# If BLE range or responsiveness is poor, try 320/200 ms or 1100/1100.
+# 320/200 ms (62.5% duty cycle) is confirmed working. 60 ms window is too short —
+# Geberit advertisements not found within 30 s at 18.75% duty cycle.
 # ---------------------------------------------------------------------------
 esp32_ble_tracker:
   id: ble_tracker_id
   scan_parameters:
     active: true
     interval: 320ms
-    window: 60ms
+    window: 200ms
 
 bluetooth_proxy:
   active: true
@@ -88,14 +88,7 @@ switch:
     id: maintenance_mode
     icon: "mdi:wrench"
     optimistic: true
-    on_turn_on:
-      - esp32_ble_tracker.stop_scan:
-      - lambda: |-
-          ESP_LOGI("main", "Maintenance Mode ON: BLE scanner paused.");
-    on_turn_off:
-      - esp32_ble_tracker.start_scan:
-      - lambda: |-
-          ESP_LOGI("main", "Maintenance Mode OFF: BLE scanner resumed.");
+    restore_mode: ALWAYS_OFF   # always start with scanner running, regardless of last saved state
 
 # ---------------------------------------------------------------------------
 # Required for debug sensors below
