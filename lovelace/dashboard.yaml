@@ -82,7 +82,7 @@ views:
       - type: markdown
         title: Performance Statistics
         icon: mdi:chart-bar
-        content: >
+        content: |
           | Metric | Min | Avg | Max | Last |
           |--------|----:|----:|----:|-----:|
           | Connect | {{ states('sensor.aquaclean_proxy_min_connect') }} ms | {{ states('sensor.aquaclean_proxy_avg_connect') }} ms | {{ states('sensor.aquaclean_proxy_max_connect') }} ms | {{ states('sensor.aquaclean_proxy_last_connect') }} ms |
