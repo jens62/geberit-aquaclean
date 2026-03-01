@@ -166,6 +166,18 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Binary sensor | **Connected** — shows Connected (green) as long as the ESP32 is reachable; only drops to Disconnected when a poll actually fails at the TCP level |
 | Sensor | **Connection** — shows `{ESPHome device name} (host:port)` after the first successful poll, or just `host:port` until then |
 | Sensor | **WiFi Signal** — ESP32 WiFi RSSI in dBm (requires `platform: wifi_signal` in ESPHome YAML) |
+| Sensor (diagnostic) | **Free Heap** — ESP32 free heap memory in bytes (requires `platform: debug, free:` in ESPHome YAML) |
+| Sensor (diagnostic) | **Max Free Block** — ESP32 max contiguous free block in bytes (requires `platform: debug, block:` in ESPHome YAML) |
+| Sensor (diagnostic) | **Last Connect** — connect time of the last poll cycle in ms |
+| Sensor (diagnostic) | **Last Poll** — GATT data fetch time of the last poll cycle in ms |
+| Sensor (diagnostic) | **Avg Connect** — rolling average connect time since HA started in ms |
+| Sensor (diagnostic) | **Avg Poll** — rolling average GATT fetch time since HA started in ms |
+| Sensor (diagnostic) | **Poll Samples** — number of successful polls since HA started |
+| Sensor (diagnostic) | **Transport** — connection path: `bleak` (local BLE), `esp32-wifi`, or `esp32-eth` |
+| Sensor (diagnostic) | **Avg BLE RSSI** — session average BLE signal strength between ESP32 and toilet (dBm) |
+| Sensor (diagnostic) | **Min BLE RSSI** — session worst BLE signal strength (dBm) |
+| Sensor (diagnostic) | **Avg WiFi RSSI** — session average ESP32 WiFi signal (dBm; `Unavailable` in ETH mode) |
+| Sensor (diagnostic) | **Min WiFi RSSI** — session worst ESP32 WiFi signal (dBm; `Unavailable` in ETH mode) |
 | Button | Restart AquaClean Proxy |
 
 ---

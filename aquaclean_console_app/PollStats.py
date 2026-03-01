@@ -63,43 +63,63 @@ class _MetricStats:
 class _ModeStats:
     """Stats for one connection mode (persistent or on-demand)."""
 
+    TRANSPORTS = ("bleak", "esp32-wifi", "esp32-eth")
+
     def __init__(self):
         self.poll:        _MetricStats = _MetricStats()
         self.ble:         _MetricStats = _MetricStats()
         self.esphome_api: _MetricStats = _MetricStats()
+        self.ble_rssi:    _MetricStats = _MetricStats()   # BLE signal: ESP32 ↔ toilet (dBm)
+        self.wifi_rssi:   _MetricStats = _MetricStats()   # WiFi signal: ESP32 ↔ router (dBm)
+        self._transport_counts: dict[str, int] = {t: 0 for t in self.TRANSPORTS}
 
     @property
     def sample_count(self) -> int:
         return self.poll.count
 
-    def record(self, esphome_api_ms, ble_ms, poll_ms) -> None:
+    def record(self, esphome_api_ms, ble_ms, poll_ms, ble_rssi=None, wifi_rssi=None, transport=None) -> None:
         self.poll.record(poll_ms)
         # Only count connect times when a real connection was established (value > 0)
         if ble_ms is not None and float(ble_ms) > 0:
             self.ble.record(ble_ms)
         if esphome_api_ms is not None and float(esphome_api_ms) > 0:
             self.esphome_api.record(esphome_api_ms)
+        # RSSI: record every sample (instantaneous signal strength per poll)
+        if ble_rssi is not None:
+            self.ble_rssi.record(ble_rssi)
+        if wifi_rssi is not None:
+            self.wifi_rssi.record(wifi_rssi)
+        if transport in self._transport_counts:
+            self._transport_counts[transport] += 1
 
     def to_dict(self) -> dict:
         return {
-            "sample_count":   self.sample_count,
-            "poll_ms":        self.poll.to_dict(),
-            "ble_ms":         self.ble.to_dict(),
-            "esphome_api_ms": self.esphome_api.to_dict(),
+            "sample_count":    self.sample_count,
+            "transport":       self._transport_counts,
+            "poll_ms":         self.poll.to_dict(),
+            "ble_ms":          self.ble.to_dict(),
+            "esphome_api_ms":  self.esphome_api.to_dict(),
+            "ble_rssi_dbm":    self.ble_rssi.to_dict(),
+            "wifi_rssi_dbm":   self.wifi_rssi.to_dict(),
         }
 
     def to_markdown_rows(self) -> list[str]:
         def _f(v):
             return f"{v} ms" if v is not None else "—"
 
+        def _dbm(v):
+            return f"{v} dBm" if v is not None else "—"
+
         rows = []
-        for label, m in [
-            ("Poll (query)",  self.poll),
-            ("BLE connect",   self.ble),
-            ("ESP32 connect", self.esphome_api),
+        for label, m, fmt in [
+            ("Poll (query)",  self.poll,        _f),
+            ("BLE connect",   self.ble,         _f),
+            ("ESP32 connect", self.esphome_api, _f),
+            ("BLE RSSI",      self.ble_rssi,    _dbm),
+            ("WiFi RSSI",     self.wifi_rssi,   _dbm),
         ]:
             rows.append(
-                f"| {label:<16} | {_f(m.min_ms):>10} | {_f(m.avg_ms):>10} | {_f(m.max_ms):>10} | {m.count:>7} |"
+                f"| {label:<16} | {fmt(m.min_ms):>12} | {fmt(m.avg_ms):>12} | {fmt(m.max_ms):>12} | {m.count:>7} |"
             )
         return rows
 
@@ -115,12 +135,18 @@ class PollStats:
     def __init__(self):
         self._modes: dict[str, _ModeStats] = {m: _ModeStats() for m in self.MODES}
 
-    def record(self, mode: str, esphome_api_ms, ble_ms, poll_ms) -> None:
-        """Record one completed poll cycle's timings for the given connection mode."""
+    def record(self, mode: str, esphome_api_ms, ble_ms, poll_ms, ble_rssi=None, wifi_rssi=None, transport=None) -> None:
+        """Record one completed poll cycle's timings and signal strengths for the given connection mode.
+
+        transport: "bleak" | "esp32-wifi" | "esp32-eth"
+          bleak     — local BLE adapter on the bridge host
+          esp32-wifi — ESP32 proxy reachable via WiFi (wifi_rssi present)
+          esp32-eth  — ESP32 proxy reachable via Ethernet (no wifi_rssi)
+        """
         try:
             stats = self._modes.get(mode)
             if stats:
-                stats.record(esphome_api_ms, ble_ms, poll_ms)
+                stats.record(esphome_api_ms, ble_ms, poll_ms, ble_rssi=ble_rssi, wifi_rssi=wifi_rssi, transport=transport)
         except Exception:
             pass
 
@@ -136,6 +162,8 @@ class PollStats:
             "> Connect times (BLE, ESP32) are only counted when a new connection was established.",
             "> In **persistent** mode this means the first poll after each reconnect.",
             "> In **on-demand** mode every poll cycle includes a full connect.",
+            "> RSSI values are recorded every poll (instantaneous signal strength at scan time).",
+            "> Transport: bleak = local BLE adapter; esp32-wifi = ESP32 via WiFi; esp32-eth = ESP32 via Ethernet.",
             "",
         ]
         for mode, stats in self._modes.items():
@@ -146,8 +174,14 @@ class PollStats:
                 lines.append("*No data collected yet.*")
                 lines.append("")
                 continue
-            lines.append(f"| {'Metric':<16} | {'Min':>10} | {'Avg':>10} | {'Max':>10} | {'Samples':>7} |")
-            lines.append(f"|{'-'*18}|{'-'*12}|{'-'*12}|{'-'*12}|{'-'*9}|")
+            # Transport breakdown
+            tc = stats._transport_counts
+            transport_str = "  ".join(f"{t}: {tc[t]}" for t in _ModeStats.TRANSPORTS if tc[t] > 0)
+            if transport_str:
+                lines.append(f"Transport: {transport_str}")
+                lines.append("")
+            lines.append(f"| {'Metric':<16} | {'Min':>12} | {'Avg':>12} | {'Max':>12} | {'Samples':>7} |")
+            lines.append(f"|{'-'*18}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*9}|")
             lines.extend(stats.to_markdown_rows())
             lines.append("")
         return "\n".join(lines)

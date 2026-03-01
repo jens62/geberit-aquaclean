@@ -466,6 +466,8 @@ class ServiceMode:
             "error_code": "E0000",
             "error_hint": "",
             "wifi_rssi": None,               # ESP32 WiFi signal strength in dBm
+            "free_heap": None,               # ESP32 free heap in bytes
+            "max_free_block": None,          # ESP32 max contiguous free block in bytes
         }
         self._reconnect_requested = asyncio.Event()
         self._poll_interval_event = asyncio.Event()  # set by set_poll_interval() in persistent mode
@@ -592,6 +594,8 @@ class ServiceMode:
                         name=bluetooth_connector.esphome_proxy_name,
                         error="No error",
                         wifi_rssi=bluetooth_connector.esphome_wifi_rssi,
+                        free_heap=bluetooth_connector.esphome_free_heap,
+                        max_free_block=bluetooth_connector.esphome_max_free_block,
                     )
 
                 # Record when polling starts so clients can compute a
@@ -811,11 +815,18 @@ class ServiceMode:
         self.device_state["last_esphome_api_ms"] = 0 if esphome_host else None
         self.device_state["last_ble_ms"] = 0 if esphome_host else None
         if self.record_poll_stats:
-            await self.record_poll_stats("persistent", _esphome_api_ms, _ble_ms, millis)
+            _ble_rssi  = self.device_state.get("ble_rssi")
+            _wifi_rssi = self.esphome_proxy_state.get("wifi_rssi") if esphome_host else None
+            if esphome_host:
+                _transport = "esp32-wifi" if _wifi_rssi is not None else "esp32-eth"
+            else:
+                _transport = "bleak"
+            await self.record_poll_stats("persistent", _esphome_api_ms, _ble_ms, millis,
+                                         ble_rssi=_ble_rssi, wifi_rssi=_wifi_rssi, transport=_transport)
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
-    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None, error_hint=None, wifi_rssi=None):
+    async def _update_esphome_proxy_state(self, connected=None, name=None, error=None, error_code=None, error_hint=None, wifi_rssi=None, free_heap=None, max_free_block=None):
         """Update ESPHome proxy state and publish to MQTT."""
         if connected is not None:
             self.esphome_proxy_state["connected"] = connected
@@ -831,6 +842,10 @@ class ServiceMode:
             self.esphome_proxy_state["error_hint"] = error_hint
         if wifi_rssi is not None:
             self.esphome_proxy_state["wifi_rssi"] = wifi_rssi
+        if free_heap is not None:
+            self.esphome_proxy_state["free_heap"] = free_heap
+        if max_free_block is not None:
+            self.esphome_proxy_state["max_free_block"] = max_free_block
         await self._publish_esphome_proxy_status()
         # Broadcast state change to SSE clients (webapp)
         if self.on_state_updated:
@@ -845,6 +860,8 @@ class ServiceMode:
                 "esphome_proxy_error_code": self.esphome_proxy_state["error_code"],
                 "esphome_proxy_error_hint": self.esphome_proxy_state.get("error_hint", ""),
                 "esphome_proxy_wifi_rssi": self.esphome_proxy_state.get("wifi_rssi"),
+                "esphome_proxy_free_heap": self.esphome_proxy_state.get("free_heap"),
+                "esphome_proxy_max_free_block": self.esphome_proxy_state.get("max_free_block"),
             })
             await self.on_state_updated(state)
 
@@ -896,6 +913,20 @@ class ServiceMode:
             await self.mqtt_service.send_data_async(
                 f"{topic}/esphomeProxy/wifiRssi",
                 str(wifi_rssi)
+            )
+
+        # Publish ESP32 memory diagnostics
+        free_heap = self.esphome_proxy_state.get("free_heap")
+        if free_heap is not None:
+            await self.mqtt_service.send_data_async(
+                f"{topic}/esphomeProxy/freeHeap",
+                str(free_heap)
+            )
+        max_free_block = self.esphome_proxy_state.get("max_free_block")
+        if max_free_block is not None:
+            await self.mqtt_service.send_data_async(
+                f"{topic}/esphomeProxy/maxFreeBlock",
+                str(max_free_block)
             )
 
     async def _publish_esphome_proxy_discovery(self):
@@ -1465,9 +1496,9 @@ class ApiMode:
         """Return static system info dict. Thin wrapper for REST/CLI wiring consistency."""
         return get_system_info()
 
-    async def _on_persistent_poll_complete(self, mode: str, esphome_api_ms, ble_ms, poll_ms) -> None:
+    async def _on_persistent_poll_complete(self, mode: str, esphome_api_ms, ble_ms, poll_ms, ble_rssi=None, wifi_rssi=None, transport=None) -> None:
         """Record a completed persistent-mode poll cycle and publish updated stats to MQTT."""
-        self._poll_stats.record(mode, esphome_api_ms, ble_ms, poll_ms)
+        self._poll_stats.record(mode, esphome_api_ms, ble_ms, poll_ms, ble_rssi=ble_rssi, wifi_rssi=wifi_rssi, transport=transport)
         await self._publish_performance_stats_mqtt()
 
     async def _publish_performance_stats_mqtt(self) -> None:
@@ -1942,6 +1973,8 @@ class ApiMode:
                     error="No error",
                     error_code="E0000",
                     wifi_rssi=connector.esphome_wifi_rssi,
+                    free_heap=connector.esphome_free_heap,
+                    max_free_block=connector.esphome_max_free_block,
                 )
             await self.service.mqtt_service.send_data_async(
                 f"{topic}/centralDevice/timings",
@@ -2098,12 +2131,21 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
                 if self.service.device_state.get("ble_rssi") is not None:
                     await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/bleRssi", str(self.service.device_state["ble_rssi"]))
-                # Record on-demand poll timing stats
+                # Record on-demand poll timing and signal stats
+                _od_ble_rssi  = self.service.device_state.get("ble_rssi")
+                _od_wifi_rssi = self.service.esphome_proxy_state.get("wifi_rssi") if esphome_host else None
+                if esphome_host:
+                    _od_transport = "esp32-wifi" if _od_wifi_rssi is not None else "esp32-eth"
+                else:
+                    _od_transport = "bleak"
                 self._poll_stats.record(
                     "on-demand",
                     result.get("_esphome_api_ms"),
                     result.get("_ble_ms"),
                     result.get("_query_ms"),
+                    ble_rssi=_od_ble_rssi,
+                    wifi_rssi=_od_wifi_rssi,
+                    transport=_od_transport,
                 )
                 await self._publish_performance_stats_mqtt()
             except ESPHomeConnectionError as e:
@@ -2538,6 +2580,49 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "payload_press": "restart",
                 "icon": "mdi:restart",
                 "entity_category": "config",
+                "device": DEVICE_PROXY,
+            },
+        },
+        # --- Sensor: ESP32 WiFi signal strength ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/esphome_wifi_rssi/config",
+            "payload": {
+                "name": "WiFi Signal",
+                "unique_id": "geberit_aquaclean_esphome_wifi_rssi",
+                "state_topic": f"{t}/esphomeProxy/wifiRssi",
+                "unit_of_measurement": "dBm",
+                "device_class": "signal_strength",
+                "state_class": "measurement",
+                "icon": "mdi:wifi",
+                "entity_category": "diagnostic",
+                "device": DEVICE_PROXY,
+            },
+        },
+        # --- Sensor: ESP32 free heap memory ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/esphome_free_heap/config",
+            "payload": {
+                "name": "Free Heap",
+                "unique_id": "geberit_aquaclean_esphome_free_heap",
+                "state_topic": f"{t}/esphomeProxy/freeHeap",
+                "unit_of_measurement": "B",
+                "state_class": "measurement",
+                "icon": "mdi:memory",
+                "entity_category": "diagnostic",
+                "device": DEVICE_PROXY,
+            },
+        },
+        # --- Sensor: ESP32 max contiguous free block ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/esphome_max_free_block/config",
+            "payload": {
+                "name": "Max Free Block",
+                "unique_id": "geberit_aquaclean_esphome_max_free_block",
+                "state_topic": f"{t}/esphomeProxy/maxFreeBlock",
+                "unit_of_measurement": "B",
+                "state_class": "measurement",
+                "icon": "mdi:memory",
+                "entity_category": "diagnostic",
                 "device": DEVICE_PROXY,
             },
         },

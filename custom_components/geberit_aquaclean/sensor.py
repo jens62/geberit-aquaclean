@@ -7,6 +7,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -53,6 +54,18 @@ async def async_setup_entry(
     if coordinator._esphome_host:
         entities.append(AquaCleanEspHomeConnectionSensor(coordinator, entry))
         entities.append(AquaCleanProxyWifiSignalSensor(coordinator, entry))
+        entities.append(AquaCleanProxyFreeHeapSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMaxFreeBlockSensor(coordinator, entry))
+        entities.append(AquaCleanProxyLastConnectSensor(coordinator, entry))
+        entities.append(AquaCleanProxyLastPollSensor(coordinator, entry))
+        entities.append(AquaCleanProxyAvgConnectSensor(coordinator, entry))
+        entities.append(AquaCleanProxyAvgPollSensor(coordinator, entry))
+        entities.append(AquaCleanProxyStatCountSensor(coordinator, entry))
+        entities.append(AquaCleanProxyTransportSensor(coordinator, entry))
+        entities.append(AquaCleanProxyAvgBleRssiSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMinBleRssiSensor(coordinator, entry))
+        entities.append(AquaCleanProxyAvgWifiRssiSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMinWifiRssiSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -142,3 +155,245 @@ class AquaCleanProxyWifiSignalSensor(AquaCleanProxyEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("esphome_wifi_rssi")
+
+
+class AquaCleanProxyFreeHeapSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the ESP32 free heap memory in bytes."""
+
+    _attr_name = "Free Heap"
+    _attr_native_unit_of_measurement = "B"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:memory"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_esphome_free_heap"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("esphome_free_heap")
+
+
+class AquaCleanProxyMaxFreeBlockSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the ESP32 largest contiguous free memory block in bytes."""
+
+    _attr_name = "Max Free Block"
+    _attr_native_unit_of_measurement = "B"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:memory"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_esphome_max_free_block"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("esphome_max_free_block")
+
+
+class AquaCleanProxyLastConnectSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the last BLE+ESP32 connect time in milliseconds."""
+
+    _attr_name = "Last Connect"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_last_connect_ms"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("last_connect_ms")
+
+
+class AquaCleanProxyLastPollSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the last GATT data fetch time in milliseconds."""
+
+    _attr_name = "Last Poll"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_last_poll_ms"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("last_poll_ms")
+
+
+class AquaCleanProxyAvgConnectSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the rolling average connect time in milliseconds."""
+
+    _attr_name = "Avg Connect"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-bar"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_avg_connect_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("avg_connect_ms")
+
+
+class AquaCleanProxyAvgPollSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the rolling average poll time in milliseconds."""
+
+    _attr_name = "Avg Poll"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-bar"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_avg_poll_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("avg_poll_ms")
+
+
+class AquaCleanProxyStatCountSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the number of successful polls since HA started."""
+
+    _attr_name = "Poll Samples"
+    _attr_native_unit_of_measurement = "samples"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:counter"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_stat_count"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("stat_count")
+
+
+class AquaCleanProxyTransportSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the transport type: bleak / esp32-wifi / esp32-eth."""
+
+    _attr_name = "Transport"
+    _attr_icon = "mdi:transit-connection-variant"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_transport"
+
+    @property
+    def native_value(self) -> str | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("transport")
+
+
+class AquaCleanProxyAvgBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session average BLE signal strength (ESP32 ↔ toilet)."""
+
+    _attr_name = "Avg BLE RSSI"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:bluetooth"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_avg_ble_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("avg_ble_rssi")
+
+
+class AquaCleanProxyMinBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session worst BLE signal strength (ESP32 ↔ toilet)."""
+
+    _attr_name = "Min BLE RSSI"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:bluetooth-off"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_min_ble_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("min_ble_rssi")
+
+
+class AquaCleanProxyAvgWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session average WiFi signal strength (ESP32 ↔ router)."""
+
+    _attr_name = "Avg WiFi RSSI"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:wifi"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_avg_wifi_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("avg_wifi_rssi")
+
+
+class AquaCleanProxyMinWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session worst WiFi signal strength (ESP32 ↔ router)."""
+
+    _attr_name = "Min WiFi RSSI"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:wifi-off"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_min_wifi_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("min_wifi_rssi")
