@@ -87,8 +87,8 @@ views:
           |--------|----:|----:|----:|-----:|
           | Connect | {{ states('sensor.aquaclean_proxy_min_connect') }} ms | {{ states('sensor.aquaclean_proxy_avg_connect') }} ms | {{ states('sensor.aquaclean_proxy_max_connect') }} ms | {{ states('sensor.aquaclean_proxy_last_connect') }} ms |
           | Poll (GATT) | {{ states('sensor.aquaclean_proxy_min_poll') }} ms | {{ states('sensor.aquaclean_proxy_avg_poll') }} ms | {{ states('sensor.aquaclean_proxy_max_poll') }} ms | {{ states('sensor.aquaclean_proxy_last_poll') }} ms |
-          | BLE RSSI | {{ states('sensor.aquaclean_proxy_min_ble_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_ble_rssi') }} dBm | — | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
-          | WiFi RSSI | {{ states('sensor.aquaclean_proxy_min_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_wifi_rssi') }} dBm | — | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
+          | BLE RSSI | {{ states('sensor.aquaclean_proxy_min_ble_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_ble_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_max_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
+          | WiFi RSSI | {{ states('sensor.aquaclean_proxy_min_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_max_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
 
           Transport: `{{ states('sensor.aquaclean_proxy_transport') }}` &nbsp;·&nbsp; {{ states('sensor.aquaclean_proxy_poll_samples') }} samples this session
 

@@ -68,8 +68,10 @@ async def async_setup_entry(
         entities.append(AquaCleanProxyTransportSensor(coordinator, entry))
         entities.append(AquaCleanProxyAvgBleRssiSensor(coordinator, entry))
         entities.append(AquaCleanProxyMinBleRssiSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMaxBleRssiSensor(coordinator, entry))
         entities.append(AquaCleanProxyAvgWifiRssiSensor(coordinator, entry))
         entities.append(AquaCleanProxyMinWifiRssiSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMaxWifiRssiSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -441,6 +443,27 @@ class AquaCleanProxyMinBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("min_ble_rssi")
 
 
+class AquaCleanProxyMaxBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session best BLE signal strength (ESP32 ↔ toilet)."""
+
+    _attr_name = "Max BLE RSSI"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:bluetooth"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_max_ble_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("max_ble_rssi")
+
+
 class AquaCleanProxyAvgWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
     """Sensor showing the session average WiFi signal strength (ESP32 ↔ router)."""
 
@@ -481,3 +504,24 @@ class AquaCleanProxyMinWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("min_wifi_rssi")
+
+
+class AquaCleanProxyMaxWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session best WiFi signal strength (ESP32 ↔ router)."""
+
+    _attr_name = "Max WiFi RSSI"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:wifi"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_max_wifi_rssi"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("max_wifi_rssi")
