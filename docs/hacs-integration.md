@@ -150,9 +150,9 @@ After setup, HA registers three devices under Settings → Devices & Services:
 
 | Type | Entity |
 |------|--------|
-| Binary sensor | **BLE Connected** — cycles through connecting (grey) → connected (green) → disconnected within each poll; attribute `connected_at` shows the last connect timestamp |
+| Binary sensor | **BLE Connected** — `True` (green) when the last poll reached the Geberit via BLE, `False` (red) when the last poll failed; attribute `connected_at` shows the timestamp of the last successful BLE connect |
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
-| Sensor | **BLE Connection** — shows `Connecting to {MAC}…` while connecting, `{BLE device name} (MAC)` once connected |
+| Sensor | **BLE Connection** — shows `{BLE device name} (MAC)` after the first successful poll, or just the MAC until then |
 | Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
@@ -164,7 +164,7 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Type | Entity |
 |------|--------|
 | Binary sensor | **Connected** — shows Connected (green) as long as the ESP32 is reachable; only drops to Disconnected when a poll actually fails at the TCP level |
-| Sensor | **Connection** — shows `Connecting to {host}:{port}…` briefly at poll start, then `{ESPHome device name} (host:port)` |
+| Sensor | **Connection** — shows `{ESPHome device name} (host:port)` after the first successful poll, or just `host:port` until then |
 | Sensor | **WiFi Signal** — ESP32 WiFi RSSI in dBm (requires `platform: wifi_signal` in ESPHome YAML) |
 | Button | Restart AquaClean Proxy |
 
@@ -209,19 +209,17 @@ template:
     sensor:
       - name: "AquaClean Poll Countdown"
         unit_of_measurement: "%"
+        availability: >
+          {{ states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] }}
         state: >
-          {% if states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] %}
-            {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
-            {% set now_ts = as_timestamp(now()) %}
-            {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
-            {% if nxt_ts and nxt_ts > now_ts %}
-              {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
-              {{ [ [pct | int, 0] | max, 100 ] | min }}
-            {% else %}
-              0
-            {% endif %}
+          {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
+          {% if nxt_ts and nxt_ts > now_ts %}
+            {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
+            {{ [ [pct | int, 0] | max, 100 ] | min }}
           {% else %}
-            unavailable
+            0
           {% endif %}
 ```
 
