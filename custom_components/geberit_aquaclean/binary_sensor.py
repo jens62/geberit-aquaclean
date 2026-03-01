@@ -84,7 +84,11 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         connected_at = self.coordinator.ble_connected_at
-        return {"connected_at": connected_at.isoformat() if connected_at else None}
+        attrs: dict = {"connected_at": connected_at.isoformat() if connected_at else None}
+        if self.coordinator.last_error_code:
+            attrs["error_code"] = self.coordinator.last_error_code
+            attrs["error_hint"] = self.coordinator.last_error_hint
+        return attrs
 
 
 class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
@@ -108,3 +112,11 @@ class AquaCleanEspHomeConnectedSensor(AquaCleanProxyEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self.coordinator.last_update_success
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attrs: dict = {}
+        if self.coordinator.last_error_code:
+            attrs["error_code"] = self.coordinator.last_error_code
+            attrs["error_hint"] = self.coordinator.last_error_hint
+        return attrs
