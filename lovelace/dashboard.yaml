@@ -77,6 +77,21 @@ views:
           - entity: sensor.aquaclean_proxy_wifi_signal
             name: WiFi Signal
 
+      # Performance statistics table — only relevant with ESPHome proxy
+      # All sensors reset to zero when HA restarts (session statistics only).
+      - type: markdown
+        title: Performance Statistics
+        icon: mdi:chart-bar
+        content: >
+          | Metric | Min | Avg | Max | Last |
+          |--------|----:|----:|----:|-----:|
+          | Connect | {{ states('sensor.aquaclean_proxy_min_connect') }} ms | {{ states('sensor.aquaclean_proxy_avg_connect') }} ms | {{ states('sensor.aquaclean_proxy_max_connect') }} ms | {{ states('sensor.aquaclean_proxy_last_connect') }} ms |
+          | Poll (GATT) | {{ states('sensor.aquaclean_proxy_min_poll') }} ms | {{ states('sensor.aquaclean_proxy_avg_poll') }} ms | {{ states('sensor.aquaclean_proxy_max_poll') }} ms | {{ states('sensor.aquaclean_proxy_last_poll') }} ms |
+          | BLE RSSI | {{ states('sensor.aquaclean_proxy_min_ble_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_ble_rssi') }} dBm | — | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
+          | WiFi RSSI | {{ states('sensor.aquaclean_proxy_min_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_wifi_rssi') }} dBm | — | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
+
+          Transport: `{{ states('sensor.aquaclean_proxy_transport') }}` &nbsp;·&nbsp; {{ states('sensor.aquaclean_proxy_poll_samples') }} samples this session
+
       # ── Live Status ──────────────────────────────────────────────────────
       - type: entities
         title: Live Status

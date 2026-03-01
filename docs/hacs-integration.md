@@ -171,7 +171,11 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Sensor (diagnostic) | **Last Connect** — connect time of the last poll cycle in ms |
 | Sensor (diagnostic) | **Last Poll** — GATT data fetch time of the last poll cycle in ms |
 | Sensor (diagnostic) | **Avg Connect** — rolling average connect time since HA started in ms |
+| Sensor (diagnostic) | **Min Connect** — session minimum connect time in ms |
+| Sensor (diagnostic) | **Max Connect** — session maximum connect time in ms |
 | Sensor (diagnostic) | **Avg Poll** — rolling average GATT fetch time since HA started in ms |
+| Sensor (diagnostic) | **Min Poll** — session minimum GATT fetch time in ms |
+| Sensor (diagnostic) | **Max Poll** — session maximum GATT fetch time in ms |
 | Sensor (diagnostic) | **Poll Samples** — number of successful polls since HA started |
 | Sensor (diagnostic) | **Transport** — connection path: `bleak` (local BLE), `esp32-wifi`, or `esp32-eth` |
 | Sensor (diagnostic) | **Avg BLE RSSI** — session average BLE signal strength between ESP32 and toilet (dBm) |

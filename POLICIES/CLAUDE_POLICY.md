@@ -32,6 +32,8 @@ New functionality must, by default, be available on **all** supported interfaces
 
 - **Rule 8 — Check Memory Before Coding:** Before writing any new code, Claude must read `MEMORY.md` and relevant memory topic files to determine whether the feature already exists on some interfaces. Assumptions about what is and is not implemented must be verified against memory, not guessed. Specifically: before planning or implementing a feature, state explicitly which interfaces already have it and which are missing — based on memory, not inference.
 
+- **Rule 9 — Pre-release version suffix:** Pre-release versions must always use the `-pre` suffix in **both** `pyproject.toml` and `custom_components/geberit_aquaclean/manifest.json` (e.g. `2.4.36-pre`). Only stable releases use a plain version number (e.g. `2.4.36`). The GitHub Release must be created with `--prerelease` for `-pre` versions and without it for stable versions. Never bump to a plain version number for a pre-release.
+
 #### Operational Notes
 - Policy changes must be made via Pull Request and approved by at least one maintainer.
 - CI must run an automatic interface‑check and block merges on violations.
