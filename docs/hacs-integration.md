@@ -275,6 +275,38 @@ In the Raw configuration editor, paste the following block directly after the
 
 ---
 
+## Automations
+
+### Error notification when the toilet is unreachable
+
+When a poll fails, `binary_sensor.geberit_aquaclean_ble_connected` turns `off` and its `error_hint` attribute contains a human-readable explanation (e.g. *"Ensure the Geberit AquaClean is powered on and within BLE range…"*).
+
+Use this to send a push notification with the specific hint:
+
+**Settings → Automations & Scenes → Create Automation → Edit in YAML:**
+
+```yaml
+alias: AquaClean — notify on connection error
+trigger:
+  - platform: state
+    entity_id: binary_sensor.geberit_aquaclean_ble_connected
+    to: "off"
+action:
+  - service: notify.mobile_app_your_phone   # replace with your notifier
+    data:
+      title: "AquaClean unreachable"
+      message: >
+        {{ state_attr('binary_sensor.geberit_aquaclean_ble_connected', 'error_hint')
+           | default('Connection failed — check HA logs for details.') }}
+```
+
+> Replace `notify.mobile_app_your_phone` with your actual notifier (e.g. `notify.mobile_app_jens_iphone`).
+> Add a `for: "00:02:00"` condition to the trigger to avoid alerts on transient single-poll failures.
+
+The `error_hint` is also visible directly on the **BLE Connection** and **ESPHome Proxy** dashboard cards — it appears as the **Error Hint** row when a poll has failed and is blank when everything is working.
+
+---
+
 ## Updating
 
 HACS shows a notification when a new version is available (Settings → Devices & Services → HACS shows a badge).

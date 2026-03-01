@@ -64,6 +64,11 @@ views:
             icon: mdi:clock-check
           - entity: sensor.geberit_aquaclean_ble_signal
             name: BLE Signal
+          - type: attribute
+            entity: binary_sensor.geberit_aquaclean_ble_connected
+            attribute: error_hint
+            name: Error Hint
+            icon: mdi:alert-circle-outline
 
       # Only relevant when an ESPHome proxy host is configured
       - type: entities
@@ -76,6 +81,11 @@ views:
             name: Connection
           - entity: sensor.aquaclean_proxy_wifi_signal
             name: WiFi Signal
+          - type: attribute
+            entity: binary_sensor.aquaclean_proxy_connected
+            attribute: error_hint
+            name: Error Hint
+            icon: mdi:alert-circle-outline
 
       # Performance statistics table — only relevant with ESPHome proxy
       # All sensors reset to zero when HA restarts (session statistics only).
