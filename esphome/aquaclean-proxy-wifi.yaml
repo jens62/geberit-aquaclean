@@ -18,6 +18,12 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: NONE   # disable WiFi power-save — avoids BLE/WiFi radio conflict on ESP32
+  # Optional: static IP avoids DHCP renewals (potential WiFi/BLE radio conflict trigger).
+  # Uncomment and fill in if you experience periodic WiFi drops.
+  # manual_ip:
+  #   static_ip: 192.168.0.160
+  #   gateway: 192.168.0.1
+  #   subnet: 255.255.255.0
 
 # ---------------------------------------------------------------------------
 # ESPHome native API
