@@ -68,6 +68,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._wifi_rssi_max: float | None = None
         # Transport type: "bleak" | "esp32-wifi" | "esp32-eth" — set on first successful poll
         self._transport: str | None = None
+        # Last error — cleared on success, set on failure; exposed via binary sensor attributes
+        self.last_error_code: str | None = None
+        self.last_error_hint: str | None = None
 
         super().__init__(
             hass,
@@ -90,18 +93,50 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
     # DataUpdateCoordinator protocol
     # ------------------------------------------------------------------
 
+    def _set_error(self, ec) -> None:
+        self.last_error_code = ec.code
+        self.last_error_hint = ec.hint
+
+    def _clear_error(self) -> None:
+        self.last_error_code = None
+        self.last_error_hint = None
+
     async def _async_update_data(self) -> dict:
+        import asyncio
+
+        from bleak import BleakError
+
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
             AquaCleanClientFactory,
         )
+        from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import (
+            ESPHomeConnectionError,
+            ESPHomeDeviceNotFoundError,
+        )
+        from aquaclean_console_app.ErrorCodes import E0002, E0003, E0004, E1002, E7002
 
         poll_start = datetime.now(timezone.utc)
         connector = self._make_connector()
         client = AquaCleanClientFactory(connector).create_client()
 
         try:
+            # ── Phase 1: connect (ESP32 TCP + BLE scan + BLE GATT) ──────────
             t_connect = time.perf_counter()
-            await client.connect_ble_only(self._device_id)
+            try:
+                await client.connect_ble_only(self._device_id)
+            except ESPHomeConnectionError as exc:
+                self._set_error(E1002)
+                raise UpdateFailed(f"{E1002.code} — {E1002.message}: {exc}") from exc
+            except ESPHomeDeviceNotFoundError as exc:
+                self._set_error(E0002)
+                raise UpdateFailed(f"{E0002.code} — {E0002.message}: {exc}") from exc
+            except BleakError as exc:
+                self._set_error(E0003)
+                raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
+            except asyncio.TimeoutError as exc:
+                self._set_error(E0003)
+                raise UpdateFailed(f"{E0003.code} — {E0003.message}") from exc
+
             connect_ms = int((time.perf_counter() - t_connect) * 1000)
             self._last_connect_ms = connect_ms
             self.ble_connected_at = datetime.now(timezone.utc)
@@ -137,14 +172,25 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 if self._wifi_rssi_max is None or esphome_wifi_rssi > self._wifi_rssi_max:
                     self._wifi_rssi_max = esphome_wifi_rssi
 
+            # ── Phase 2: GATT data fetch ─────────────────────────────────────
             t_poll = time.perf_counter()
-            ident = await client.base_client.get_device_identification_async(0)
-            initial_op_date = await client.base_client.get_device_initial_operation_date()
-            state = await client.base_client.get_system_parameter_list_async(
-                [0, 1, 2, 3, 4, 5, 7, 9]
-            )
-            stats = await client.base_client.get_statistics_descale_async()
-            soc_versions = await client.base_client.get_soc_application_versions_async()
+            try:
+                ident = await client.base_client.get_device_identification_async(0)
+                initial_op_date = await client.base_client.get_device_initial_operation_date()
+                state = await client.base_client.get_system_parameter_list_async(
+                    [0, 1, 2, 3, 4, 5, 7, 9]
+                )
+                stats = await client.base_client.get_statistics_descale_async()
+                soc_versions = await client.base_client.get_soc_application_versions_async()
+            except (BleakError, asyncio.TimeoutError) as exc:
+                self._set_error(E0003)
+                raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
+            except Exception as exc:
+                # Unexpected error during GATT fetch (service not found, decode error, etc.)
+                ec = E0004 if "service" in str(exc).lower() or "gatt" in str(exc).lower() else E7002
+                self._set_error(ec)
+                raise UpdateFailed(f"{ec.code} — {ec.message}: {exc}") from exc
+
             poll_ms = int((time.perf_counter() - t_poll) * 1000)
             self._last_poll_ms = poll_ms
 
@@ -160,6 +206,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._poll_min_ms = poll_ms
             if self._poll_max_ms is None or poll_ms > self._poll_max_ms:
                 self._poll_max_ms = poll_ms
+
+            # Poll succeeded — clear any previous error
+            self._clear_error()
 
             return {
                 # Device identification
@@ -219,8 +268,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 # Transport type
                 "transport": self._transport,
             }
+
+        except UpdateFailed:
+            raise  # already classified above
         except Exception as exc:
-            raise UpdateFailed(f"AquaClean update failed: {exc}") from exc
+            # Safety net for anything not caught by the phase handlers
+            from aquaclean_console_app.ErrorCodes import E7002
+            self._set_error(E7002)
+            raise UpdateFailed(f"{E7002.code} — {E7002.message}: {exc}") from exc
         finally:
             try:
                 await connector.disconnect()
