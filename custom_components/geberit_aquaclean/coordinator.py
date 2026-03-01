@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import logging
+import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -46,6 +47,21 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_name_cache: str | None = None  # last known ESPHome device name
         self._ble_name_cache: str | None = None      # last known BLE device name
         self.ble_connected_at: datetime | None = None  # timestamp of last successful BLE connect
+        # Performance statistics (HACS-only; standalone bridge uses PollStats class)
+        self._last_connect_ms: int | None = None
+        self._last_poll_ms: int | None = None
+        self._stat_count: int = 0
+        self._connect_total_ms: float = 0.0
+        self._poll_total_ms: float = 0.0
+        # RSSI statistics (min/avg per session)
+        self._ble_rssi_count: int = 0
+        self._ble_rssi_total: float = 0.0
+        self._ble_rssi_min: float | None = None
+        self._wifi_rssi_count: int = 0
+        self._wifi_rssi_total: float = 0.0
+        self._wifi_rssi_min: float | None = None
+        # Transport type: "bleak" | "esp32-wifi" | "esp32-eth" — set on first successful poll
+        self._transport: str | None = None
 
         super().__init__(
             hass,
@@ -78,7 +94,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         client = AquaCleanClientFactory(connector).create_client()
 
         try:
+            t_connect = time.perf_counter()
             await client.connect_ble_only(self._device_id)
+            connect_ms = int((time.perf_counter() - t_connect) * 1000)
+            self._last_connect_ms = connect_ms
             self.ble_connected_at = datetime.now(timezone.utc)
 
             if connector.esphome_proxy_name:
@@ -87,7 +106,28 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._ble_name_cache = connector.device_name
             ble_rssi = connector.rssi
             esphome_wifi_rssi = connector.esphome_wifi_rssi
+            esphome_free_heap = connector.esphome_free_heap
+            esphome_max_free_block = connector.esphome_max_free_block
 
+            # Transport detection: bleak / esp32-wifi / esp32-eth
+            if self._esphome_host:
+                self._transport = "esp32-wifi" if esphome_wifi_rssi is not None else "esp32-eth"
+            else:
+                self._transport = "bleak"
+
+            # Accumulate RSSI stats
+            if ble_rssi is not None:
+                self._ble_rssi_count += 1
+                self._ble_rssi_total += ble_rssi
+                if self._ble_rssi_min is None or ble_rssi < self._ble_rssi_min:
+                    self._ble_rssi_min = ble_rssi
+            if esphome_wifi_rssi is not None:
+                self._wifi_rssi_count += 1
+                self._wifi_rssi_total += esphome_wifi_rssi
+                if self._wifi_rssi_min is None or esphome_wifi_rssi < self._wifi_rssi_min:
+                    self._wifi_rssi_min = esphome_wifi_rssi
+
+            t_poll = time.perf_counter()
             ident = await client.base_client.get_device_identification_async(0)
             initial_op_date = await client.base_client.get_device_initial_operation_date()
             state = await client.base_client.get_system_parameter_list_async(
@@ -95,6 +135,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             )
             stats = await client.base_client.get_statistics_descale_async()
             soc_versions = await client.base_client.get_soc_application_versions_async()
+            poll_ms = int((time.perf_counter() - t_poll) * 1000)
+            self._last_poll_ms = poll_ms
+
+            # Accumulate rolling performance stats
+            self._stat_count += 1
+            self._connect_total_ms += connect_ms
+            self._poll_total_ms += poll_ms
 
             return {
                 # Device identification
@@ -131,6 +178,22 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 # Signal strength
                 "ble_rssi": ble_rssi,
                 "esphome_wifi_rssi": esphome_wifi_rssi,
+                # ESP32 memory diagnostics
+                "esphome_free_heap": esphome_free_heap,
+                "esphome_max_free_block": esphome_max_free_block,
+                # Performance statistics
+                "last_connect_ms": connect_ms,
+                "last_poll_ms": poll_ms,
+                "avg_connect_ms": round(self._connect_total_ms / self._stat_count, 1),
+                "avg_poll_ms": round(self._poll_total_ms / self._stat_count, 1),
+                "stat_count": self._stat_count,
+                # RSSI statistics
+                "avg_ble_rssi": round(self._ble_rssi_total / self._ble_rssi_count, 1) if self._ble_rssi_count else None,
+                "min_ble_rssi": self._ble_rssi_min,
+                "avg_wifi_rssi": round(self._wifi_rssi_total / self._wifi_rssi_count, 1) if self._wifi_rssi_count else None,
+                "min_wifi_rssi": self._wifi_rssi_min,
+                # Transport type
+                "transport": self._transport,
             }
         except Exception as exc:
             raise UpdateFailed(f"AquaClean update failed: {exc}") from exc

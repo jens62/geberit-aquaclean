@@ -503,15 +503,24 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   shower manually to confirm the correct command code and procedure ID. Compare against
   the current `SetCommandAsync(Commands.ToggleAnalShower)` implementation.
 
-- **HACS: Add performance statistics sensors.**
-  The HACS coordinator (`coordinator.py`) runs the same connect/poll/disconnect cycle as
-  the standalone bridge but doesn't measure or expose timing. The standalone bridge's
-  `_publish_performance_stats_mqtt()` publishes per-mode min/max/avg connect and poll times.
-  The coordinator could do the same: instrument timing around `connect_ble_only()` and the
-  BLE fetch block, accumulate rolling stats in instance variables, include them in the
-  returned data dict, and expose as diagnostic `SensorEntity` entries in `sensor.py`.
-  Fields: `last_connect_ms`, `last_poll_ms`, `avg_connect_ms`, `avg_poll_ms`, `sample_count`.
-  See memory/hacs-todos.md for rationale.
+- **Add RSSI tracking to performance statistics (all interfaces).**
+  BLE RSSI and WiFi RSSI are correlated with connect/poll timing: weak BLE signal → more
+  link-layer retries → higher `ble_ms`; weak WiFi → TCP retransmits → higher `esphome_api_ms`.
+  Tracking min/avg RSSI alongside timing enables signal-quality diagnosis of slow polls.
+
+  **Standalone bridge (`PollStats.py`):** add `_MetricStats` for `ble_rssi` and `wifi_rssi`;
+  record them alongside timing in `_on_demand_inner()` and `_on_persistent_poll_complete()`.
+  Publish via `centralDevice/performanceStats` JSON (extend `to_dict()`).
+
+  **HACS coordinator:** add `_ble_rssi_total`, `_ble_rssi_min`, `_ble_rssi_count`,
+  `_wifi_rssi_total`, `_wifi_rssi_min`, `_wifi_rssi_count` in `__init__`; accumulate in
+  `_async_update_data()` from `connector.rssi` / `connector.esphome_wifi_rssi`; include
+  `avg_ble_rssi`, `min_ble_rssi`, `avg_wifi_rssi`, `min_wifi_rssi` in return dict.
+
+  **HACS sensor.py:** add `AquaCleanProxyAvgBleRssiSensor`, `AquaCleanProxyMinBleRssiSensor`,
+  `AquaCleanProxyAvgWifiRssiSensor`, `AquaCleanProxyMinWifiRssiSensor` on AquaClean Proxy device.
+
+  See `memory/hacs-todos.md` for full rationale.
 
 - **HACS: Poll countdown gauge — improve accuracy and smoothness.**
   The current template sensor (trigger: time_pattern seconds: "/30") is a best-effort

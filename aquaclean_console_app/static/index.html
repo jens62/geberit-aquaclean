@@ -989,6 +989,9 @@
       const errCode = state.esphome_proxy_error_code && state.esphome_proxy_error_code !== 'E0000'
         ? `[${state.esphome_proxy_error_code}] ` : '';
       const errHint = state.esphome_proxy_error_hint || '';
+      const wifiRssi = state.esphome_proxy_wifi_rssi != null ? ` WiFi: ${state.esphome_proxy_wifi_rssi} dBm` : '';
+      const freeHeap = state.esphome_proxy_free_heap != null ? ` Heap: ${Math.round(state.esphome_proxy_free_heap / 1024)} KB` : '';
+      const maxBlock = state.esphome_proxy_max_free_block != null ? ` Block: ${Math.round(state.esphome_proxy_max_free_block / 1024)} KB` : '';
 
       // Show/hide panel based on enabled status
       if (enabled) {
@@ -999,7 +1002,7 @@
           badge.textContent = 'connected';
           detail.textContent = name + ' (' + host + ':' + port + ')';
           const errorText = error && error !== 'No error' ? errCode + error : '';
-          meta.textContent = errorText + (errorText && errHint ? ' — ' + errHint : '');
+          meta.textContent = (errorText + (errorText && errHint ? ' — ' + errHint : '')) + wifiRssi + freeHeap + maxBlock;
         } else {
           badge.className = 'conn-badge disconnected';
           badge.textContent = 'disconnected';
