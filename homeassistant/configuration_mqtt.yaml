@@ -97,6 +97,33 @@ mqtt:
       unit_of_measurement: "samples"
       entity_category: diagnostic
 
+    - name: "Geberit AquaClean BLE Signal"
+      state_topic: "Geberit/AquaClean/peripheralDevice/monitor/bleRssi"
+      icon: mdi:signal
+      unit_of_measurement: "dBm"
+      device_class: signal_strength
+      entity_category: diagnostic
+
+    # ESPHome proxy sensors (requires ESP32 proxy)
+    - name: "AquaClean Proxy WiFi Signal"
+      state_topic: "Geberit/AquaClean/esphomeProxy/wifiRssi"
+      icon: mdi:wifi
+      unit_of_measurement: "dBm"
+      device_class: signal_strength
+      entity_category: diagnostic
+
+    - name: "AquaClean Proxy Free Heap"
+      state_topic: "Geberit/AquaClean/esphomeProxy/freeHeap"
+      icon: mdi:memory
+      unit_of_measurement: "B"
+      entity_category: diagnostic
+
+    - name: "AquaClean Proxy Max Free Block"
+      state_topic: "Geberit/AquaClean/esphomeProxy/maxFreeBlock"
+      icon: mdi:memory
+      unit_of_measurement: "B"
+      entity_category: diagnostic
+
   switch:
     # Control switch for lid position
     - name: "Geberit AquaClean Toggle Lid"
