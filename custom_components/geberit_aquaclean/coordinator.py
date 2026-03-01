@@ -61,9 +61,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._ble_rssi_count: int = 0
         self._ble_rssi_total: float = 0.0
         self._ble_rssi_min: float | None = None
+        self._ble_rssi_max: float | None = None
         self._wifi_rssi_count: int = 0
         self._wifi_rssi_total: float = 0.0
         self._wifi_rssi_min: float | None = None
+        self._wifi_rssi_max: float | None = None
         # Transport type: "bleak" | "esp32-wifi" | "esp32-eth" — set on first successful poll
         self._transport: str | None = None
 
@@ -125,11 +127,15 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._ble_rssi_total += ble_rssi
                 if self._ble_rssi_min is None or ble_rssi < self._ble_rssi_min:
                     self._ble_rssi_min = ble_rssi
+                if self._ble_rssi_max is None or ble_rssi > self._ble_rssi_max:
+                    self._ble_rssi_max = ble_rssi
             if esphome_wifi_rssi is not None:
                 self._wifi_rssi_count += 1
                 self._wifi_rssi_total += esphome_wifi_rssi
                 if self._wifi_rssi_min is None or esphome_wifi_rssi < self._wifi_rssi_min:
                     self._wifi_rssi_min = esphome_wifi_rssi
+                if self._wifi_rssi_max is None or esphome_wifi_rssi > self._wifi_rssi_max:
+                    self._wifi_rssi_max = esphome_wifi_rssi
 
             t_poll = time.perf_counter()
             ident = await client.base_client.get_device_identification_async(0)
@@ -206,8 +212,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 # RSSI statistics
                 "avg_ble_rssi": round(self._ble_rssi_total / self._ble_rssi_count, 1) if self._ble_rssi_count else None,
                 "min_ble_rssi": self._ble_rssi_min,
+                "max_ble_rssi": self._ble_rssi_max,
                 "avg_wifi_rssi": round(self._wifi_rssi_total / self._wifi_rssi_count, 1) if self._wifi_rssi_count else None,
                 "min_wifi_rssi": self._wifi_rssi_min,
+                "max_wifi_rssi": self._wifi_rssi_max,
                 # Transport type
                 "transport": self._transport,
             }

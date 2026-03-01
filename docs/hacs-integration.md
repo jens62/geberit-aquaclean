@@ -180,8 +180,10 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Sensor (diagnostic) | **Transport** — connection path: `bleak` (local BLE), `esp32-wifi`, or `esp32-eth` |
 | Sensor (diagnostic) | **Avg BLE RSSI** — session average BLE signal strength between ESP32 and toilet (dBm) |
 | Sensor (diagnostic) | **Min BLE RSSI** — session worst BLE signal strength (dBm) |
+| Sensor (diagnostic) | **Max BLE RSSI** — session best BLE signal strength (dBm) |
 | Sensor (diagnostic) | **Avg WiFi RSSI** — session average ESP32 WiFi signal (dBm; `Unavailable` in ETH mode) |
 | Sensor (diagnostic) | **Min WiFi RSSI** — session worst ESP32 WiFi signal (dBm; `Unavailable` in ETH mode) |
+| Sensor (diagnostic) | **Max WiFi RSSI** — session best ESP32 WiFi signal (dBm; `Unavailable` in ETH mode) |
 | Button | Restart AquaClean Proxy |
 
 ---
