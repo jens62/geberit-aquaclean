@@ -30,6 +30,8 @@ New functionality must, by default, be available on **all** supported interfaces
   - Missing parity items must be explicitly tracked in the TODO list and in `memory/hacs-connection-status.md`.
   - Acceptable exceptions: transient states (e.g. `connecting` mid-poll) that are architecturally unavailable on the target interface. Document why they cannot be shown.
 
+- **Rule 8 — Check Memory Before Coding:** Before writing any new code, Claude must read `MEMORY.md` and relevant memory topic files to determine whether the feature already exists on some interfaces. Assumptions about what is and is not implemented must be verified against memory, not guessed. Specifically: before planning or implementing a feature, state explicitly which interfaces already have it and which are missing — based on memory, not inference.
+
 #### Operational Notes
 - Policy changes must be made via Pull Request and approved by at least one maintainer.
 - CI must run an automatic interface‑check and block merges on violations.
