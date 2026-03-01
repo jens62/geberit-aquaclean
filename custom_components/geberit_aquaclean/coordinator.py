@@ -53,6 +53,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._stat_count: int = 0
         self._connect_total_ms: float = 0.0
         self._poll_total_ms: float = 0.0
+        self._connect_min_ms: float | None = None
+        self._connect_max_ms: float | None = None
+        self._poll_min_ms: float | None = None
+        self._poll_max_ms: float | None = None
         # RSSI statistics (min/avg per session)
         self._ble_rssi_count: int = 0
         self._ble_rssi_total: float = 0.0
@@ -142,6 +146,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             self._stat_count += 1
             self._connect_total_ms += connect_ms
             self._poll_total_ms += poll_ms
+            if self._connect_min_ms is None or connect_ms < self._connect_min_ms:
+                self._connect_min_ms = connect_ms
+            if self._connect_max_ms is None or connect_ms > self._connect_max_ms:
+                self._connect_max_ms = connect_ms
+            if self._poll_min_ms is None or poll_ms < self._poll_min_ms:
+                self._poll_min_ms = poll_ms
+            if self._poll_max_ms is None or poll_ms > self._poll_max_ms:
+                self._poll_max_ms = poll_ms
 
             return {
                 # Device identification
@@ -186,6 +198,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "last_poll_ms": poll_ms,
                 "avg_connect_ms": round(self._connect_total_ms / self._stat_count, 1),
                 "avg_poll_ms": round(self._poll_total_ms / self._stat_count, 1),
+                "min_connect_ms": self._connect_min_ms,
+                "max_connect_ms": self._connect_max_ms,
+                "min_poll_ms": self._poll_min_ms,
+                "max_poll_ms": self._poll_max_ms,
                 "stat_count": self._stat_count,
                 # RSSI statistics
                 "avg_ble_rssi": round(self._ble_rssi_total / self._ble_rssi_count, 1) if self._ble_rssi_count else None,

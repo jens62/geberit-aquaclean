@@ -59,7 +59,11 @@ async def async_setup_entry(
         entities.append(AquaCleanProxyLastConnectSensor(coordinator, entry))
         entities.append(AquaCleanProxyLastPollSensor(coordinator, entry))
         entities.append(AquaCleanProxyAvgConnectSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMinConnectSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMaxConnectSensor(coordinator, entry))
         entities.append(AquaCleanProxyAvgPollSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMinPollSensor(coordinator, entry))
+        entities.append(AquaCleanProxyMaxPollSensor(coordinator, entry))
         entities.append(AquaCleanProxyStatCountSensor(coordinator, entry))
         entities.append(AquaCleanProxyTransportSensor(coordinator, entry))
         entities.append(AquaCleanProxyAvgBleRssiSensor(coordinator, entry))
@@ -275,6 +279,86 @@ class AquaCleanProxyAvgPollSensor(AquaCleanProxyEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("avg_poll_ms")
+
+
+class AquaCleanProxyMinConnectSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session minimum connect time in milliseconds."""
+
+    _attr_name = "Min Connect"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_min_connect_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("min_connect_ms")
+
+
+class AquaCleanProxyMaxConnectSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session maximum connect time in milliseconds."""
+
+    _attr_name = "Max Connect"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_max_connect_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("max_connect_ms")
+
+
+class AquaCleanProxyMinPollSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session minimum GATT fetch time in milliseconds."""
+
+    _attr_name = "Min Poll"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_min_poll_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("min_poll_ms")
+
+
+class AquaCleanProxyMaxPollSensor(AquaCleanProxyEntity, SensorEntity):
+    """Sensor showing the session maximum GATT fetch time in milliseconds."""
+
+    _attr_name = "Max Poll"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_max_poll_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("max_poll_ms")
 
 
 class AquaCleanProxyStatCountSensor(AquaCleanProxyEntity, SensorEntity):
