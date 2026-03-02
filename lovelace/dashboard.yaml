@@ -32,8 +32,6 @@ views:
             attribute: connected_at
             name: Connected Since
             icon: mdi:clock-check
-          - entity: sensor.geberit_aquaclean_ble_signal
-            name: BLE Signal
           - type: attribute
             entity: binary_sensor.geberit_aquaclean_ble_connected
             attribute: error_code
@@ -54,8 +52,6 @@ views:
             name: Connected
           - entity: sensor.aquaclean_proxy_connection
             name: Connection
-          - entity: sensor.aquaclean_proxy_wifi_signal
-            name: WiFi Signal
           - type: attribute
             entity: binary_sensor.aquaclean_proxy_connected
             attribute: error_code
@@ -66,6 +62,34 @@ views:
             attribute: error_hint
             name: Error Hint
             icon: mdi:alert-circle-outline
+
+      # ── Signal Strength ───────────────────────────────────────────────────
+      # Color bar: red (< -80 dBm) → orange → yellow-green → green (> -50 dBm)
+      # Requires custom:bar-card — HACS → Frontend → search "Bar Card" → Install → reload browser
+      - type: custom:bar-card
+        title: Signal Strength
+        icon: mdi:signal
+        entities:
+          - entity: sensor.geberit_aquaclean_ble_signal
+            name: BLE Signal
+          - entity: sensor.aquaclean_proxy_wifi_signal
+            name: WiFi Signal (ESP32)
+        min: -100
+        max: -40
+        height: 10px
+        positions:
+          icon: outside
+          name: outside
+          value: outside
+        color_thresholds:
+          - value: -100
+            color: "#f44336"
+          - value: -80
+            color: "#ff9800"
+          - value: -65
+            color: "#8bc34a"
+          - value: -50
+            color: "#4caf50"
 
       # Performance statistics table — only relevant with ESPHome proxy
       # All sensors reset to zero when HA restarts (session statistics only).
