@@ -412,6 +412,26 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 ## TODO
 
 
+- **HACS: Download button for Performance Statistics panel.**
+  HA's Lovelace markdown card has no built-in download mechanism. Three options:
+
+  1. **`custom:button-card` + inline JS** (least effort): add a button card below the
+     markdown card that constructs a `data:text/plain` URI from the same Jinja template
+     and triggers an `<a download>` via a JS action. Works in browsers; does NOT work
+     in the HA companion app. Fragile — inline JS in YAML config.
+
+  2. **HA `downloader` integration + REST sensor** (no custom frontend): expose the
+     stats string via a template sensor or REST endpoint, then use the `downloader`
+     integration to save it to disk on demand. Roundabout and not user-triggered
+     from the dashboard directly.
+
+  3. **Custom Lovelace card** (proper solution): a purpose-built JS module that renders
+     the stats table and adds a native download button. Full control, works in all
+     clients including the companion app. Requires writing and hosting a JS module
+     (or publishing via HACS Frontend).
+
+  Option 1 is the quickest path; option 3 is the cleanest long-term solution.
+
 - ~~**HACS: Add Geberit BLE connection status sensors (Rule 7 — Interface Parity).**~~
   **Done in v2.4.29–30.** `binary_sensor.geberit_aquaclean_ble_connected` and
   `sensor.geberit_aquaclean_ble_connection` are implemented. See MEMORY.md.
