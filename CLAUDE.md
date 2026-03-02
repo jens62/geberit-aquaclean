@@ -412,31 +412,35 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 ## TODO
 
 
-- **HACS: Add Geberit BLE connection status sensors (Rule 7 — Interface Parity).**
-  The webapp's main connection panel shows BLE status (connecting→connected→disconnected),
-  device name, and BLE MAC address. HACS currently has no equivalent. Required by Rule 7.
+- ~~**HACS: Add Geberit BLE connection status sensors (Rule 7 — Interface Parity).**~~
+  **Done in v2.4.29–30.** `binary_sensor.geberit_aquaclean_ble_connected` and
+  `sensor.geberit_aquaclean_ble_connection` are implemented. See MEMORY.md.
 
-  **Webapp reference** (`index.html` `connBadge`/`connDetail`/`connMeta`):
-  - Badge: `connecting` / `connected` / `disconnected` / `error`
-  - Detail: `"{ble_device_name} ({ble_device_address})"` when connected
-  - Meta: `"Connected since {time}"` or error hint
+- **HACS: Add `sensor.geberit_aquaclean_ble_state` for intra-poll BLE cycle tracking.**
+  `binary_sensor.geberit_aquaclean_ble_connected` reflects only the last poll outcome
+  (`last_update_success`). In on-demand mode it is always `on` when polling is healthy —
+  it does NOT cycle through `disconnected → connecting → connected → disconnected` within
+  each poll as the webapp does. Users expect to see the live connection phase.
 
-  **HACS equivalent — two sensors on the Geberit AquaClean toilet device:**
-  - `binary_sensor.geberit_aquaclean_ble_connected` — `device_class: CONNECTIVITY`,
-    `is_on = coordinator.last_update_success`, `available = True` always,
-    icons `mdi:bluetooth-connect` / `mdi:bluetooth-off`
-  - `sensor.geberit_aquaclean_ble_connection` — state: `"{name} ({mac})"` once name known,
-    else just the MAC. Name from `connector.device_name` (set during BLE scan in
-    `connect_ble_only()`). Cache as `coordinator._ble_name_cache` (same pattern as
-    `_esphome_name_cache`).
+  **Implementation:**
+  - Add `self.ble_state: str = "disconnected"` to `AquaCleanCoordinator.__init__`
+  - Update it at key points in `_do_poll()`:
+    - Before `connect_ble_only()` → `"connecting"`
+    - After successful `connect_ble_only()` → `"connected"`
+    - In `finally` block → `"disconnected"`
+    - In error paths → `"error"`
+  - Add `sensor.geberit_aquaclean_ble_state` as a `SensorEntity` with
+    `device_class: SensorDeviceClass.ENUM`,
+    `options: ["disconnected", "connecting", "connected", "error"]`
+  - The sensor reads `coordinator.ble_state` and calls `self.async_write_ha_state()`
+    directly — **do NOT call `coordinator.async_update_listeners()`** mid-poll.
+    That pushes ALL entities, which read `coordinator.data` in a transitional state
+    and caused "Unbekannt" (Unknown/grey) in v2.4.29–33. Only this one sensor
+    needs to self-push.
 
-  **Note on `connecting` state:** in on-demand mode, BLE connects and disconnects within
-  each poll (~5–10 s). There is no persistent "connecting" state visible between polls.
-  The binary sensor shows the result of the last completed poll — this is the
-  architecturally correct approximation. Document in Lovelace card comment.
-
-  **Lovelace:** add a new "Geberit AquaClean BLE" entities card (or add rows to Live Status)
-  showing both sensors, above or alongside the ESPHome Proxy card.
+  **Constraint:** in on-demand mode the connected phase lasts ~5–10 s out of a 30 s
+  interval. The state will visibly cycle in HA — `connecting` for ~2 s, `connected`
+  for ~5 s, then `disconnected` for ~23 s. This is correct and mirrors the webapp.
 
 - **Add poll countdown to HACS integration.** The standalone webapp shows a countdown
   bar to the next poll via `poll_epoch` + `poll_interval` from the SSE stream. The
