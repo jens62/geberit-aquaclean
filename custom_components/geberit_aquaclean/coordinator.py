@@ -22,6 +22,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Circuit breaker constants — match standalone bridge behaviour
+_CIRCUIT_OPEN_THRESHOLD = 5    # consecutive failures before opening circuit
+_CIRCUIT_OPEN_PROBE_SLEEP = 60  # extra seconds before each probe when circuit is open
+_ESP32_RESTART_SLEEP = 30       # seconds to wait after sending ESP32 restart command
+
 
 class AquaCleanCoordinator(DataUpdateCoordinator):
     """Polls the AquaClean device on a fixed interval using an on-demand BLE connection.
@@ -34,6 +39,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
     Commands (toggle_lid, toggle_anal_shower, toggle_lady_shower) are executed via
     async_execute_command(), which follows the same connect/command/disconnect pattern.
+
+    Circuit breaker:
+      After _CIRCUIT_OPEN_THRESHOLD consecutive failures the circuit opens.
+      If an ESPHome host is configured, an ESP32 restart is attempted immediately.
+      While open, each poll waits an extra _CIRCUIT_OPEN_PROBE_SLEEP seconds before
+      attempting to connect, reducing hammering of an unresponsive ESP32.
+      The circuit closes automatically on the next successful poll.
     """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -71,6 +83,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # Last error — cleared on success, set on failure; exposed via binary sensor attributes
         self.last_error_code: str | None = None
         self.last_error_hint: str | None = None
+        # Circuit breaker state
+        self._consecutive_failures: int = 0
+        self._circuit_open: bool = False
 
         super().__init__(
             hass,
@@ -102,6 +117,66 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self.last_error_hint = None
 
     async def _async_update_data(self) -> dict:
+        """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
+        import asyncio
+
+        # When circuit is open: extra sleep before probing to reduce ESP32 hammering
+        if self._circuit_open and self._esphome_host:
+            _LOGGER.debug(
+                "Circuit open (%d consecutive failures) — sleeping %d s before probe",
+                self._consecutive_failures,
+                _CIRCUIT_OPEN_PROBE_SLEEP,
+            )
+            await asyncio.sleep(_CIRCUIT_OPEN_PROBE_SLEEP)
+
+        try:
+            result = await self._do_poll()
+        except UpdateFailed:
+            self._consecutive_failures += 1
+
+            if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host:
+                # Circuit just opened — attempt ESP32 restart
+                self._circuit_open = True
+                _LOGGER.warning(
+                    "Circuit breaker open: %d consecutive poll failures — triggering ESP32 restart",
+                    self._consecutive_failures,
+                )
+                try:
+                    await self.async_restart_esp32()
+                    _LOGGER.info(
+                        "ESP32 restart command sent; waiting %d s for reboot",
+                        _ESP32_RESTART_SLEEP,
+                    )
+                    await asyncio.sleep(_ESP32_RESTART_SLEEP)
+                except Exception as restart_exc:
+                    _LOGGER.warning(
+                        "Failed to send ESP32 restart command (ESP32 may already be rebooting): %s",
+                        restart_exc,
+                    )
+            elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and not self._esphome_host:
+                # No ESP32 — open circuit for backoff only, no restart possible
+                self._circuit_open = True
+                _LOGGER.warning(
+                    "Circuit breaker open: %d consecutive poll failures",
+                    self._consecutive_failures,
+                )
+            elif self._consecutive_failures > _CIRCUIT_OPEN_THRESHOLD:
+                _LOGGER.debug(
+                    "Circuit open — consecutive failure %d", self._consecutive_failures
+                )
+            raise
+        else:
+            # Success — close circuit if it was open
+            if self._consecutive_failures > 0:
+                _LOGGER.info(
+                    "Poll recovered after %d consecutive failure(s)", self._consecutive_failures
+                )
+            self._consecutive_failures = 0
+            self._circuit_open = False
+            return result
+
+    async def _do_poll(self) -> dict:
+        """Connect, fetch all device data, disconnect. Raises UpdateFailed on any error."""
         import asyncio
 
         from bleak import BleakError
@@ -136,6 +211,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             except asyncio.TimeoutError as exc:
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}") from exc
+            except Exception as exc:
+                # Covers aioesphomeapi exceptions not subclassing the types above
+                # (e.g. GATT notify setup timeout: "Timeout waiting for
+                #  BluetoothGATTNotifyResponse … after 10.0s" raised by
+                #  aioesphomeapi during bluetooth_gatt_start_notify).
+                # All Phase-1 exceptions represent a connection-level failure → E0003.
+                self._set_error(E0003)
+                raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
 
             connect_ms = int((time.perf_counter() - t_connect) * 1000)
             self._last_connect_ms = connect_ms

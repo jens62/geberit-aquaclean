@@ -66,6 +66,11 @@ views:
             name: BLE Signal
           - type: attribute
             entity: binary_sensor.geberit_aquaclean_ble_connected
+            attribute: error_code
+            name: Error Code
+            icon: mdi:alert-decagram-outline
+          - type: attribute
+            entity: binary_sensor.geberit_aquaclean_ble_connected
             attribute: error_hint
             name: Error Hint
             icon: mdi:alert-circle-outline
@@ -81,6 +86,11 @@ views:
             name: Connection
           - entity: sensor.aquaclean_proxy_wifi_signal
             name: WiFi Signal
+          - type: attribute
+            entity: binary_sensor.aquaclean_proxy_connected
+            attribute: error_code
+            name: Error Code
+            icon: mdi:alert-decagram-outline
           - type: attribute
             entity: binary_sensor.aquaclean_proxy_connected
             attribute: error_hint
