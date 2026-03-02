@@ -8,36 +8,6 @@
 # If you renamed the device in Settings → Devices, adjust the slugified
 # prefix accordingly (e.g. "my_aquaclean" instead of "geberit_aquaclean").
 #
-# OPTIONAL — Poll countdown gauge:
-#   HA's Raw config editor strips all comments on save, so the commented-out
-#   gauge card below will be gone after your first save.  Add it manually
-#   after saving, or see docs/hacs-integration.md for the complete paste-ready
-#   YAML snippet and the required template sensor (configuration.yaml).
-#
-#   Template sensor (configuration.yaml) — use time_pattern trigger so the
-#   gauge drains smoothly every 30 s instead of only updating once per poll:
-#
-#   template:
-#     - trigger:
-#         - platform: time_pattern
-#           seconds: "/30"
-#       sensor:
-#         - name: "AquaClean Poll Countdown"
-#           unit_of_measurement: "%"
-#           state: >
-#             {% if states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] %}
-#               {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
-#               {% set now_ts = as_timestamp(now()) %}
-#               {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
-#               {% if nxt_ts and nxt_ts > now_ts %}
-#                 {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
-#                 {{ [ [pct | int, 0] | max, 100 ] | min }}
-#               {% else %}
-#                 0
-#               {% endif %}
-#             {% else %}
-#               unavailable
-#             {% endif %}
 
 title: Geberit AquaClean
 views:
@@ -153,6 +123,9 @@ views:
 
       # ── Poll Status ───────────────────────────────────────────────────────
       # sensor.next_poll has device_class: timestamp → HA shows "in X minutes"
+      #
+      # The progress bar (custom:timer-bar-card) must be installed via HACS:
+      #   HACS → Frontend → search "Timer Bar Card" → Install → reload browser
       - type: entities
         title: Poll Status
         icon: mdi:timer-outline
@@ -163,18 +136,22 @@ views:
             name: Last Poll
           - entity: sensor.geberit_aquaclean_poll_interval
             name: Poll Interval
-
-      # Optional gauge — requires the template sensor above
-      # - type: gauge
-      #   title: Next Poll
-      #   entity: sensor.aquaclean_poll_countdown
-      #   min: 0
-      #   max: 100
-      #   needle: true
-      #   severity:
-      #     green: 50
-      #     yellow: 20
-      #     red: 5
+          # Progress bar — drains from last poll to next poll.
+          # active_state: "on" uses the BLE binary sensor to gate visibility:
+          # bar shows when polling is healthy, disappears on connection failure.
+          - type: custom:timer-bar-card
+            entity: binary_sensor.geberit_aquaclean_ble_connected
+            active_state: "on"
+            full_row: true
+            start_time:
+              entity: sensor.geberit_aquaclean_last_poll
+            end_time:
+              entity: sensor.geberit_aquaclean_next_poll
+            text: Nächster Poll in {remaining}
+            bar_height: 15px
+            bar_foreground: "#2196F3"
+            bar_background: "#263238"
+            layout: hide_name
 
       # ── Descale ───────────────────────────────────────────────────────────
       - type: entities
