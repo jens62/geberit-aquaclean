@@ -1,0 +1,61 @@
+# Geberit AquaClean — Home Assistant configuration.yaml additions (HACS integration)
+#
+# Paste these blocks into your existing configuration.yaml.
+# Requires: Home Assistant 2024.1+, Geberit AquaClean HACS integration installed.
+#
+# After saving, reload via:
+#   Developer Tools → YAML → Template Entities → Reload
+#   (or restart Home Assistant)
+
+# ---------------------------------------------------------------------------
+# Template sensors
+# ---------------------------------------------------------------------------
+template:
+
+  # Poll countdown — updates every 30 s so the timer-bar-card drains smoothly.
+  # Requires custom:timer-bar-card installed via HACS Frontend.
+  - trigger:
+      - platform: time_pattern
+        seconds: "/30"
+    sensor:
+      - name: "AquaClean Poll Countdown"
+        unit_of_measurement: "%"
+        availability: >
+          {{ states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] }}
+        state: >
+          {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
+          {% if nxt_ts and nxt_ts > now_ts %}
+            {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
+            {{ [ [pct | int, 0] | max, 100 ] | min }}
+          {% else %}
+            0
+          {% endif %}
+
+  # Signal quality labels — update automatically when the underlying sensor changes.
+  # Thresholds follow standard RF guidelines (separate scales for BLE and WiFi):
+  #   BLE:  Excellent > -55 dBm | Good -55…-70 | Fair -70…-80 | Weak < -80
+  #   WiFi: Excellent > -50 dBm | Good -50…-65 | Fair -65…-75 | Weak < -75
+  - sensor:
+      - name: "BLE Signal Quality"
+        icon: mdi:bluetooth
+        state: >
+          {% set v = states('sensor.geberit_aquaclean_ble_signal') | int(-999) %}
+          {% if v == -999 %}Unavailable
+          {% elif v > -55 %}Excellent ({{ v }} dBm)
+          {% elif v > -70 %}Good ({{ v }} dBm)
+          {% elif v > -80 %}Fair ({{ v }} dBm)
+          {% else %}Weak ({{ v }} dBm)
+          {% endif %}
+
+      - name: "WiFi Signal Quality"
+        icon: mdi:wifi
+        state: >
+          {% set v = states('sensor.aquaclean_proxy_wifi_signal') | float(-999) | int %}
+          {% if v == -999 %}Unavailable
+          {% elif v > -50 %}Excellent ({{ v }} dBm)
+          {% elif v > -65 %}Good ({{ v }} dBm)
+          {% elif v > -75 %}Fair ({{ v }} dBm)
+          {% else %}Weak ({{ v }} dBm)
+          {% endif %}
