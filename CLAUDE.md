@@ -432,6 +432,28 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
   Option 1 is the quickest path; option 3 is the cleanest long-term solution.
 
+- **HACS: Dynamic signal-strength icons for BLE Signal and WiFi Signal rows.**
+  Entities card rows use a static icon set at definition time — HA does not re-render
+  icons dynamically based on sensor state in entities cards. Three options:
+
+  1. **`custom:template-entity-row`** (recommended): HACS Frontend card that allows
+     full Jinja templating on any row property including `icon:`. Replace the static
+     entity row with a templated row and map dBm ranges to icon names:
+     - WiFi: `mdi:wifi-strength-1` … `mdi:wifi-strength-4` (official MDI set)
+     - BLE: no official strength-bar set in MDI; use `mdi:signal-cellular-1` …
+       `mdi:signal-cellular-3` or similar as a workaround.
+     Requires one HACS Frontend install (`custom:template-entity-row`).
+
+  2. **`custom:mushroom-entity-card`** (if Mushroom is already installed): supports
+     dynamic icon and color via templates. Same dBm→icon mapping as above.
+     Slightly heavier dependency if not already in use.
+
+  3. **Native HA** — not possible. Entities card rows do not support icon templates.
+     `device_class: signal_strength` only renders dynamic icons on the entity detail
+     page, not in card rows.
+
+  Option 1 is the minimal-dependency path.
+
 - ~~**HACS: Add Geberit BLE connection status sensors (Rule 7 — Interface Parity).**~~
   **Done in v2.4.29–30.** `binary_sensor.geberit_aquaclean_ble_connected` and
   `sensor.geberit_aquaclean_ble_connection` are implemented. See MEMORY.md.
