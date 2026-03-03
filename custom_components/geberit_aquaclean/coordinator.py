@@ -102,7 +102,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import (
             BluetoothLeConnector,
         )
-        return BluetoothLeConnector(self._esphome_host, self._esphome_port, self._noise_psk)
+        # Pass hass only for the local BLE path so BluetoothLeConnector uses HA's
+        # bluetooth stack (habluetooth / bleak_retry_connector) instead of raw bleak.
+        # The ESPHome path never calls _connect_local(), so hass is irrelevant there.
+        ha = self.hass if not self._esphome_host else None
+        return BluetoothLeConnector(self._esphome_host, self._esphome_port, self._noise_psk, hass=ha)
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator protocol

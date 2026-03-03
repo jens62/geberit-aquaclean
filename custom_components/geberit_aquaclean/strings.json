@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Version {version}\n\nEnter the BLE MAC address of your AquaClean device. Leave ESPHome Proxy Host empty to use a local Bluetooth adapter on this machine. With local BLE, no connection test is performed during setup — the first poll will verify connectivity.",
+        "description": "Version {version}\n\nEnter the BLE MAC address of your AquaClean device. Leave ESPHome Proxy Host empty to use a local Bluetooth adapter on this machine. A connection test is performed on save — allow up to 30 seconds.",
         "data": {
           "device_id": "BLE MAC Address (XX:XX:XX:XX:XX:XX)",
           "esphome_host": "ESPHome Proxy Host (leave empty for local BLE)",
@@ -25,7 +25,7 @@
     "step": {
       "init": {
         "title": "Geberit AquaClean — Settings",
-        "description": "Version {version}\n\nUpdate the device address or proxy settings. A live connection test is performed on save when an ESPHome proxy is configured. With local BLE (no proxy), only adapter presence is checked.",
+        "description": "Version {version}\n\nUpdate the device address or proxy settings. A live connection test is performed on save — allow up to 30 seconds.",
         "data": {
           "device_id": "BLE MAC Address (XX:XX:XX:XX:XX:XX)",
           "esphome_host": "ESPHome Proxy Host (leave empty for local BLE)",
