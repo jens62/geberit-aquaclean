@@ -1,6 +1,7 @@
 """Config flow and options flow for Geberit AquaClean."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import voluptuous as vol
@@ -41,11 +42,11 @@ def _build_schema(defaults: dict) -> vol.Schema:
 
 
 async def _has_local_bluetooth() -> bool:
-    """Return True if a local Bluetooth adapter is accessible."""
+    """Return True if a local Bluetooth adapter is accessible within a short timeout."""
     try:
         from bleak import BleakScanner
         scanner = BleakScanner()
-        await scanner.start()
+        await asyncio.wait_for(scanner.start(), timeout=5.0)
         await scanner.stop()
         return True
     except Exception:
@@ -105,9 +106,23 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             data = _normalise(user_input)
-            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
-                errors["base"] = "no_bluetooth"
+            if not data[CONF_ESPHOME_HOST]:
+                # Local BLE path: only verify that a BT adapter is present.
+                # Skipping a live connect test — bleak conflicts with HA's bluetooth
+                # integration scanner on the shared adapter and hangs the event loop,
+                # which triggers the supervisor watchdog and crashes HA.
+                # The first coordinator poll will verify actual connectivity.
+                if not await _has_local_bluetooth():
+                    errors["base"] = "no_bluetooth"
+                else:
+                    await self.async_set_unique_id(data[CONF_DEVICE_ID])
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=f"AquaClean {data[CONF_DEVICE_ID]}",
+                        data=data,
+                    )
             else:
+                # ESPHome path: perform a live BLE connection test over TCP.
                 try:
                     await _test_connection(
                         data[CONF_DEVICE_ID],
@@ -151,9 +166,14 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             data = _normalise(user_input)
-            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
-                errors["base"] = "no_bluetooth"
+            if not data[CONF_ESPHOME_HOST]:
+                # Local BLE path: only verify adapter presence (see config flow comment).
+                if not await _has_local_bluetooth():
+                    errors["base"] = "no_bluetooth"
+                else:
+                    return self.async_create_entry(title="", data=data)
             else:
+                # ESPHome path: perform a live BLE connection test over TCP.
                 try:
                     await _test_connection(
                         data[CONF_DEVICE_ID],

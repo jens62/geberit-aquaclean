@@ -5,19 +5,20 @@ It is installed via HACS and configured entirely within the Home Assistant UI �
 
 For the alternative MQTT-based setup (standalone bridge on a Raspberry Pi), see [`homeassistant/SETUP_GUIDE.md`](../homeassistant/SETUP_GUIDE.md).
 
-> ### ⚠️ Tested with ESPHome Bluetooth proxy only
+> ### Two connection paths — ESPHome proxy (recommended) or local BLE adapter
 >
-> **This integration has been tested exclusively with an ESP32 running the ESPHome
-> `bluetooth_proxy` component as the BLE-to-TCP bridge.**
+> **ESPHome proxy** (an ESP32 running the ESPHome `bluetooth_proxy` component) is the
+> recommended and well-tested path. It keeps the HA host out of BLE range entirely.
 >
-> The following configurations are **untested and may not work**:
-> - Home Assistant with a built-in Bluetooth adapter (e.g. Raspberry Pi onboard BT)
-> - USB Bluetooth dongles connected to the HA host
-> - HA OS Bluetooth integration (`bluetooth` domain)
+> **Local BLE adapter** (a Bluetooth adapter on the HA host — built-in or USB dongle)
+> is supported but has a known conflict risk: HA's own `bluetooth` integration runs a
+> persistent scanner on the same adapter. Our integration bypasses that stack and drives
+> the adapter directly via bleak. On most HA OS / Supervised installs the two scanners
+> coexist, but interference is possible (especially on busy adapters or older BlueZ).
+> If polling is unreliable without an ESP32, disabling HA's `bluetooth` integration or
+> switching to an ESPHome proxy resolves it.
 >
-> If you do not have an ESP32 ESPHome proxy, set one up first — see the
-> [ESPHome proxy setup](#esphome-proxy) section below.
-> Reports from users testing direct BLE (without ESP32) are welcome via GitHub Issues.
+> Reports from local-BLE users (with or without issues) are welcome via GitHub Issues.
 
 ---
 
@@ -26,9 +27,13 @@ For the alternative MQTT-based setup (standalone bridge on a Raspberry Pi), see 
 ```
 Geberit AquaClean (BLE)
         ↕  Bluetooth Low Energy
-  ESP32 ESPHome proxy
-        ↕  TCP/IP (aioesphomeapi, port 6053)
-  Home Assistant (HAOS)
+  ┌─────────────────────────────────────────┐
+  │  Option A: ESP32 ESPHome proxy          │  (recommended)
+  │  ↕  TCP/IP (aioesphomeapi, port 6053)  │
+  └─────────────────────────────────────────┘
+  ┌─────────────────────────────────────────┐
+  │  Option B: local BLE adapter on HA host │  (supported)
+  └─────────────────────────────────────────┘
         ↕  Internal coordinator
   HA entities (sensors, switches, binary sensors)
 ```
@@ -36,10 +41,9 @@ Geberit AquaClean (BLE)
 ### How the integration connects to the toilet
 
 The integration uses the same `BluetoothLeConnector` code as the standalone bridge.
-It opens a **direct TCP connection** to the ESP32 running the ESPHome `bluetooth_proxy` component, then performs every BLE operation (scan, connect, communicate) over that TCP link.
 
-**Tested configuration:** ESPHome Bluetooth proxy only.
-Direct local BLE (HA hardware with a built-in Bluetooth adapter, no ESP32) has **not been tested**.
+- **With ESPHome proxy:** opens a direct TCP connection to the ESP32 and performs every BLE operation (scan, connect, communicate) over that TCP link.
+- **Without ESPHome proxy:** drives the local BLE adapter directly via `bleak`. Leave the ESPHome Proxy Host field empty during setup.
 
 ### What we bypass — HA's native Bluetooth stack
 
@@ -48,22 +52,22 @@ Home Assistant has its own `bluetooth` integration that manages BLE adapters, ex
 
 | Feature | This integration | HA native Bluetooth |
 |---------|-----------------|---------------------|
-| BLE adapter on HA hardware | Not required | Required |
+| BLE adapter on HA hardware | Optional | Required |
 | Device in HA Bluetooth panel | No | Yes |
 | BLE auto-discovery | No | Yes |
 | ESPHome proxy supported | Yes | Yes (different path) |
-| Hardware cost | ESP32 (~€5–15) only | ESP32 or BT dongle |
+| Hardware cost | ESP32 (~€5–15) optional | ESP32 or BT dongle |
 
 **Why bypass HA's Bluetooth stack?**
 
 | Pro | Con |
 |-----|-----|
 | Same proven code path as standalone bridge — already battle-tested | Toilet does not appear in HA's Bluetooth panel |
-| No Bluetooth adapter needed on the HA machine | No BLE-based auto-discovery of the device |
-| Lower implementation risk (no `habluetooth` / `bleak-esphome` integration layer) | Requires ESPHome proxy (direct local BLE is untested) |
+| Works with or without a BLE adapter on the HA machine | No BLE-based auto-discovery of the device |
+| Lower implementation risk (no `habluetooth` / `bleak-esphome` integration layer) | Local BLE may conflict with HA's `bluetooth` scanner on shared adapter |
 | HA hardware can be in a server room — ESP32 handles BLE proximity | |
 
-The ESP32 ESPHome proxy costs €5–15 and is the recommended (and only tested) path.
+The ESP32 ESPHome proxy (€5–15) is the recommended path. Local BLE is supported as an alternative.
 
 ---
 
@@ -72,8 +76,10 @@ The ESP32 ESPHome proxy costs €5–15 and is the recommended (and only tested)
 - **Home Assistant OS** or Supervised, version **2024.4.1** or newer
 - **HACS** installed (see below)
 - **GitHub account** (required for HACS authentication)
-- **ESP32** running ESPHome with `bluetooth_proxy` and a `restart` button in the YAML (see [`docs/esphome.md`](esphome.md))
-- The ESP32 must be physically close to the toilet (BLE range)
+- **One of the following BLE transports** (choose one):
+  - **ESP32** running ESPHome with `bluetooth_proxy` *(recommended)* — see [`docs/esphome.md`](esphome.md)
+  - **Local Bluetooth adapter** on the HA host (built-in or USB dongle), recognised by HA as a BLE adapter
+- The BLE transport must be physically close to the toilet (BLE range ~10 m, less through walls)
 
 ---
 
@@ -131,14 +137,16 @@ After downloading, Home Assistant must be restarted before the integration appea
 | Field | Description |
 |-------|-------------|
 | **BLE MAC Address** | MAC address of your AquaClean, e.g. `38:AB:41:2A:0D:67` — find it in the Geberit app or via `ble-scan.py` |
-| **ESPHome Proxy Host** | IP address of your ESP32, e.g. `192.168.0.160` |
+| **ESPHome Proxy Host** | IP address of your ESP32, e.g. `192.168.0.160` — **leave empty to use the local BLE adapter** |
 | **ESPHome Proxy Port** | Default: `6053` — only change if you customised the ESPHome port |
 | **ESPHome Encryption Key** | Base64 noise PSK from your ESPHome YAML — leave blank if not set |
 | **Poll Interval (seconds)** | How often to fetch data; default `30` |
 
-5. Click **OK** — the integration performs a live BLE connection test. If it succeeds, the device is registered.
+5. Click **OK** — behaviour depends on the transport:
+   - **ESPHome proxy configured:** a live BLE connection test is performed (connects to the toilet and disconnects). Requires the toilet to be on and the ESP32 reachable. Allow up to 30 seconds.
+   - **ESPHome Proxy Host left empty (local BLE):** only the presence of a local Bluetooth adapter is checked. No live BLE test is performed — the first poll after setup verifies actual connectivity.
 
-> The connection test actually connects to the Geberit via BLE and disconnects. It requires the toilet to be powered on and the ESP32 to be reachable. Allow up to 30 seconds.
+> **No local Bluetooth adapter?** If you leave the ESPHome Proxy Host empty and your HA host has no BLE adapter, setup will fail with "No local Bluetooth adapter found". Either add a USB BT dongle or fill in the ESPHome Proxy Host.
 
 ---
 
