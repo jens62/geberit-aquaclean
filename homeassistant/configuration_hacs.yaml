@@ -12,27 +12,6 @@
 # ---------------------------------------------------------------------------
 template:
 
-  # Poll countdown — updates every 30 s so the timer-bar-card drains smoothly.
-  # Requires custom:timer-bar-card installed via HACS Frontend.
-  - trigger:
-      - platform: time_pattern
-        seconds: "/30"
-    sensor:
-      - name: "AquaClean Poll Countdown"
-        unit_of_measurement: "%"
-        availability: >
-          {{ states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] }}
-        state: >
-          {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
-          {% set now_ts = as_timestamp(now()) %}
-          {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
-          {% if nxt_ts and nxt_ts > now_ts %}
-            {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
-            {{ [ [pct | int, 0] | max, 100 ] | min }}
-          {% else %}
-            0
-          {% endif %}
-
   # Signal quality labels — update automatically when the underlying sensor changes.
   # Thresholds follow standard RF guidelines (separate scales for BLE and WiFi):
   #   BLE:  Excellent > -55 dBm | Good -55…-70 | Fair -70…-80 | Weak < -80

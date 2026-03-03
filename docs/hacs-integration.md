@@ -206,62 +206,34 @@ It covers live status, controls, poll countdown, descale statistics, and device 
 > **Add optional cards before saving**, or keep the original `lovelace/dashboard.yaml`
 > file as your reference copy.
 
-### Poll countdown gauge *(optional, work in progress)*
+### Poll countdown bar *(requires `custom:timer-bar-card`)*
 
-> **⚠️ Work in progress** — the gauge works but may not drain perfectly smoothly in all
-> HA versions. The template sensor formula is a best-effort approximation. Improvements
-> are planned; see the [GitHub issue tracker](https://github.com/jens62/geberit-aquaclean/issues)
-> for updates.
+The Poll Status card includes a `custom:timer-bar-card` that drains smoothly from the
+last poll to the next poll. It requires the **Timer Bar Card** frontend plugin from HACS:
 
-A gauge card can show a draining countdown bar from 100 % down to 0 % as the next poll
-approaches. It requires a helper template sensor that recomputes the percentage every
-30 seconds.
+1. Open **HACS → Frontend**
+2. Search for **Timer Bar Card** → Install → reload browser
 
-**Step 1 — add the template sensor to `configuration.yaml`** and restart HA:
+The bar card reads `sensor.geberit_aquaclean_last_poll` and
+`sensor.geberit_aquaclean_next_poll` directly as start/end timestamps.
+No additional template sensors are needed.
 
-```yaml
-template:
-  - trigger:
-      - platform: time_pattern
-        seconds: "/30"      # recompute every 30 s so the bar drains smoothly
-    sensor:
-      - name: "AquaClean Poll Countdown"
-        unit_of_measurement: "%"
-        availability: >
-          {{ states('sensor.geberit_aquaclean_next_poll') not in ['unknown','unavailable',''] }}
-        state: >
-          {% set nxt_ts = as_timestamp(states('sensor.geberit_aquaclean_next_poll')) %}
-          {% set now_ts = as_timestamp(now()) %}
-          {% set iv = states('sensor.geberit_aquaclean_poll_interval') | float(300) %}
-          {% if nxt_ts and nxt_ts > now_ts %}
-            {% set pct = ((nxt_ts - now_ts) / iv) * 100 %}
-            {{ [ [pct | int, 0] | max, 100 ] | min }}
-          {% else %}
-            0
-          {% endif %}
-```
+### Signal quality labels *(requires `configuration.yaml` additions)*
 
-> **Why `trigger: time_pattern`?**
-> Without a time-pattern trigger the template sensor only re-evaluates when
-> `sensor.geberit_aquaclean_next_poll` changes — i.e. once per poll cycle.
-> The gauge would stay frozen between polls. The 30-second trigger makes it drain visibly.
+The **BLE Connection** and **ESPHome Proxy** dashboard cards display labels such as
+*"Excellent (−62 dBm)"* or *"Fair (−74 dBm)"* for signal strength. These are
+computed by two template sensors that must be added to your Home Assistant
+`configuration.yaml`.
 
-**Step 2 — add the gauge card to your dashboard.**
-In the Raw configuration editor, paste the following block directly after the
-`Poll Status` entities card (search for `title: Poll Status`):
+See [`homeassistant/configuration_hacs.yaml`](../homeassistant/configuration_hacs.yaml)
+for the complete template sensor definitions.
 
-```yaml
-      - type: gauge
-        title: Poll Countdown
-        entity: sensor.aquaclean_poll_countdown
-        min: 0
-        max: 100
-        needle: true
-        severity:
-          green: 50
-          yellow: 20
-          red: 5
-```
+**To add them:**
+
+1. Open your `configuration.yaml`
+2. Paste the `template:` block from
+   [`homeassistant/configuration_hacs.yaml`](../homeassistant/configuration_hacs.yaml)
+3. Reload via **Developer Tools → YAML → Template Entities → Reload**
 
 ---
 
