@@ -112,16 +112,6 @@ views:
               target:
                 entity_id: button.geberit_aquaclean_toggle_lid
 
-          # Only visible when ESPHome proxy is configured
-          - type: button
-            name: Restart Proxy
-            icon: mdi:restart
-            tap_action:
-              action: perform-action
-              perform_action: button.press
-              target:
-                entity_id: button.aquaclean_proxy_restart_aquaclean_proxy
-
       # ── Poll Status ───────────────────────────────────────────────────────
       # sensor.next_poll has device_class: timestamp → HA shows "in X minutes"
       #
@@ -142,16 +132,19 @@ views:
           # bar shows when polling is healthy, disappears on connection failure.
           - type: custom:timer-bar-card
             entity: binary_sensor.geberit_aquaclean_ble_connected
+            invert: true
             active_state: "on"
+            translations:
+              "on": on request
             full_row: true
             start_time:
               entity: sensor.geberit_aquaclean_last_poll
             end_time:
               entity: sensor.geberit_aquaclean_next_poll
             text: Nächster Poll in {remaining}
-            bar_height: 15px
-            bar_foreground: "#2196F3"
-            bar_background: "#263238"
+            bar_height: 10px
+            bar_foreground: var(--state-icon-color)
+            bar_background: transparent
             layout: hide_name
 
       # ── Descale ───────────────────────────────────────────────────────────
