@@ -281,6 +281,20 @@ Because `ha_discovery_on_startup = true` by default, entities are automatically 
 
 ---
 
+## openHAB
+
+The bridge's MQTT discovery messages follow the **Home Assistant MQTT Discovery** format — the same format used by Tasmota, Zigbee2MQTT, and many other devices. openHAB supports this format natively via its **Home Assistant MQTT Components** binding, so no extra work is needed on the bridge side.
+
+To use the bridge with openHAB:
+
+1. Point `[MQTT] server` in `config.ini` at the same MQTT broker that openHAB uses.
+2. Run `aquaclean-bridge --mode cli --command publish-ha-discovery` once (or leave `ha_discovery_on_startup = true`).
+3. In openHAB, install the **MQTT Binding** and enable the **Home Assistant MQTT Components** feature. openHAB will discover the bridge's devices automatically from the `homeassistant/` discovery topics.
+
+> openHAB's HA-format support is well-maintained and widely used. If a specific entity type does not map cleanly into openHAB's model, fall back to the raw MQTT topics documented in [mqtt.md](mqtt.md) and configure them manually in openHAB.
+
+---
+
 ## Manual configuration (alternative)
 
 If you prefer YAML over auto-discovery, see `homeassistant/configuration_mqtt.yaml` for a complete entity configuration.  All MQTT topics are documented in [mqtt.md](mqtt.md).
