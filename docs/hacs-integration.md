@@ -11,12 +11,14 @@ For the alternative MQTT-based setup (standalone bridge on a Raspberry Pi), see 
 > recommended and well-tested path. It keeps the HA host out of BLE range entirely.
 >
 > **Local BLE adapter** (a Bluetooth adapter on the HA host — built-in or USB dongle)
-> is supported but has a known conflict risk: HA's own `bluetooth` integration runs a
-> persistent scanner on the same adapter. Our integration bypasses that stack and drives
-> the adapter directly via bleak. On most HA OS / Supervised installs the two scanners
-> coexist, but interference is possible (especially on busy adapters or older BlueZ).
-> If polling is unreliable without an ESP32, disabling HA's `bluetooth` integration or
-> switching to an ESPHome proxy resolves it.
+> is supported. The integration uses HA's own `bluetooth` stack for local BLE connections
+> (`bluetooth.async_ble_device_from_address()` + `bleak_retry_connector.establish_connection()`),
+> so there is no raw adapter conflict with HA's scanner.
+>
+> **⚠️ Raspberry Pi built-in Bluetooth (BCM4345 chip) is not recommended.**
+> On RPi 3/4/5 with HA OS, GATT connections consistently fail due to hardware constraints —
+> see [Known hardware limitations — local BLE](#known-hardware-limitations--local-ble-adapter).
+> A USB Bluetooth dongle or an ESPHome proxy is the reliable alternative.
 >
 > Reports from local-BLE users (with or without issues) are welcome via GitHub Issues.
 
@@ -43,12 +45,11 @@ Geberit AquaClean (BLE)
 The integration uses the same `BluetoothLeConnector` code as the standalone bridge.
 
 - **With ESPHome proxy:** opens a direct TCP connection to the ESP32 and performs every BLE operation (scan, connect, communicate) over that TCP link.
-- **Without ESPHome proxy:** drives the local BLE adapter directly via `bleak`. Leave the ESPHome Proxy Host field empty during setup.
+- **Without ESPHome proxy:** uses HA's `bluetooth` stack to locate the device in HA's scanner cache, then connects via `bleak_retry_connector`. Leave the ESPHome Proxy Host field empty during setup.
 
-### What we bypass — HA's native Bluetooth stack
+### What we use (and don't use) from HA's Bluetooth stack
 
 Home Assistant has its own `bluetooth` integration that manages BLE adapters, exposes a Bluetooth panel, and lets integrations subscribe to BLE advertisements natively.
-**This integration does not use any of that.**
 
 | Feature | This integration | HA native Bluetooth |
 |---------|-----------------|---------------------|
@@ -57,15 +58,15 @@ Home Assistant has its own `bluetooth` integration that manages BLE adapters, ex
 | BLE auto-discovery | No | Yes |
 | ESPHome proxy supported | Yes | Yes (different path) |
 | Hardware cost | ESP32 (~€5–15) optional | ESP32 or BT dongle |
+| HA scanner cache (local BLE) | **Yes** (`async_ble_device_from_address`) | n/a |
 
-**Why bypass HA's Bluetooth stack?**
+**For local BLE (no ESPHome proxy):** the integration looks up the `BLEDevice` from HA's
+scanner cache and connects via `bleak_retry_connector.establish_connection()`. The BLE adapter
+is managed by HA; no raw BlueZ/DBus conflict. The toilet does not appear in HA's Bluetooth
+panel and there is no BLE-based auto-discovery.
 
-| Pro | Con |
-|-----|-----|
-| Same proven code path as standalone bridge — already battle-tested | Toilet does not appear in HA's Bluetooth panel |
-| Works with or without a BLE adapter on the HA machine | No BLE-based auto-discovery of the device |
-| Lower implementation risk (no `habluetooth` / `bleak-esphome` integration layer) | Local BLE may conflict with HA's `bluetooth` scanner on shared adapter |
-| HA hardware can be in a server room — ESP32 handles BLE proximity | |
+**For ESPHome proxy:** the integration bypasses HA's BLE stack entirely and opens a direct TCP
+connection to the ESP32. The HA host needs no BLE adapter.
 
 The ESP32 ESPHome proxy (€5–15) is the recommended path. Local BLE is supported as an alternative.
 
@@ -336,6 +337,34 @@ aquaclean_console_app: debug
 | All entities unavailable after setup | Coordinator poll failed | Check logs for the actual error; most likely ESP32 or BLE issue |
 | `AttributeError: 'HassLogger' has no attribute 'trace'` | Outdated version (< 2.4.18) | Update to latest via HACS |
 | Duplicate subscription error (`Only one API subscription`) | Previous TCP connection not released | Restart HA; covered by v2.4.15+ fix |
+| E0003 every poll, times out at 36 s, then "not in cache" | Raspberry Pi built-in BT (BCM4345) + bleak 2.1.1 hardware limitation | Use a USB BT dongle or ESPHome proxy — see [Known hardware limitations](#known-hardware-limitations--local-ble-adapter) |
+
+### Known hardware limitations — local BLE adapter
+
+#### Raspberry Pi built-in Bluetooth (BCM4345 chip) — not reliable
+
+Tested on RPi with the built-in BCM4345C0 chip, HA OS, and bleak 2.1.1 (the version HA ships as of early 2026):
+
+**Observed behaviour (log `local-assets/config-hacs-no-esp.log`, 2026-03-03):**
+
+1. **Phase 1 (~5 polls, ~3 min):** Device IS found in HA's scanner cache. `establish_connection` is called but times out at exactly 36 s every attempt. `Finished fetching geberit_aquaclean data in 36.0 seconds (success: False)`.
+2. **Phase 2 (onwards):** Device drops from HA's cache. "Device not in cache yet; waiting up to 30 s for advertisement" — permanent timeout. The first phase's connect attempts suppressed HA's scanner, so no fresh advertisements arrived to renew the cache entry.
+
+**Root causes:**
+
+| # | Problem | Effect |
+|---|---------|--------|
+| 1 | **BCM4345 cannot scan and connect simultaneously** — the chip pauses the active BLE scanner while a GATT connection is being established | Each 36 s failed connect attempt blocks HA's scanner; no advertisements received; Geberit drops from cache after ~5 failures |
+| 2 | **bleak 2.1.1 takes ~25 s per connect attempt** on RPi5 + BCM4345C0 + BlueZ 5.84 (bleak 2.0.0 = ~1.8 s on the same hardware) | `bleak_retry_connector.establish_connection()` has `MAX_CONNECT_TIME = 35 s` — barely enough for one attempt; never completes |
+
+These are not code bugs. They are hardware and driver constraints that cannot be worked around without changing the hardware or BLE library.
+
+**ESPHome proxy is unaffected** — the ESP32's dedicated BLE radio has no scanner/connector conflict and bleak 2.1.1 is not involved.
+
+**Workarounds for local BLE:**
+
+- **USB Bluetooth dongle** — a dedicated adapter avoids the scan/connect scheduler conflict. Tested adapters: *unknown, community reports welcome*.
+- **ESPHome proxy** — the recommended path; an ESP32 (~€5–15) eliminates the problem entirely.
 
 ### ESPHome proxy troubleshooting
 
