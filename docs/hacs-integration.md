@@ -357,6 +357,21 @@ action:
 The automation fires after all integrations have loaded, so `trace`/`silly` are already
 registered when the action runs.
 
+> **Tracing the startup poll (first refresh on HA restart)?**
+> The automation fires *after* `async_setup_entry` and the first coordinator refresh have
+> already run — too late to capture startup behaviour.
+>
+> Instead, set the level dynamically first, then reload only the integration entry:
+>
+> 1. **Settings → Developer Tools → Actions → `logger.set_level`:**
+>    ```yaml
+>    custom_components.geberit_aquaclean: trace
+>    aquaclean_console_app: trace
+>    ```
+> 2. **Settings → Devices & Services → Geberit AquaClean → three dots (⋮) → Reload**
+>
+> This re-runs `async_setup_entry` and the first poll with trace active — no full HA restart needed.
+
 ### Common issues
 
 | Symptom | Cause | Fix |
