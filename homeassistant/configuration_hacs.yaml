@@ -18,6 +18,26 @@
 #   logs:
 #     custom_components.geberit_aquaclean: debug   # integration glue (coordinator, config flow)
 #     aquaclean_console_app: debug                 # BLE protocol library
+#
+# NOTE: the custom levels "trace" and "silly" cannot be set here.
+# HA validates log level names before loading custom integrations, so "trace"/"silly"
+# are not yet registered at config-load time → HA rejects them with an error.
+# Use the automation below instead, or set them dynamically via logger.set_level.
+#
+# ---------------------------------------------------------------------------
+# Trace/silly logging from HA startup (optional)
+# ---------------------------------------------------------------------------
+# Add to your automations.yaml (or create via Settings → Automations):
+#
+# alias: AquaClean — enable trace logging at startup
+# trigger:
+#   - platform: homeassistant
+#     event: started
+# action:
+#   - action: logger.set_level
+#     data:
+#       custom_components.geberit_aquaclean: trace
+#       aquaclean_console_app: trace   # or: silly
 
 # ---------------------------------------------------------------------------
 # Template sensors

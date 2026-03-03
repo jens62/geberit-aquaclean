@@ -316,6 +316,12 @@ logger:
 
 > This setting has no effect on the standalone bridge; it only controls the HACS integration logging.
 
+> **`trace` / `silly` cannot be set in `configuration.yaml`.**
+> HA validates log level names at config load time, before custom integrations are imported.
+> Because `trace` and `silly` are registered by our integration (not by Python's standard
+> `logging` module), HA does not know them yet and rejects the config with an error.
+> Use the dynamic method or the startup automation below instead.
+
 ### Find the logs
 
 **Settings → System → Logs → Show raw logs** — filter for `aquaclean` or `geberit`.
@@ -327,6 +333,29 @@ Or use the dynamic approach (no restart required):
 custom_components.geberit_aquaclean: debug
 aquaclean_console_app: debug
 ```
+
+### Enable trace / silly logging
+
+`trace` and `silly` work via `logger.set_level` once the integration is loaded, but not in
+`configuration.yaml` (see note above). To apply them automatically at every HA start, add
+this automation:
+
+**Settings → Automations & Scenes → Create Automation → Edit in YAML:**
+
+```yaml
+alias: AquaClean — enable trace logging at startup
+trigger:
+  - platform: homeassistant
+    event: started
+action:
+  - action: logger.set_level
+    data:
+      custom_components.geberit_aquaclean: trace
+      aquaclean_console_app: trace   # or: silly
+```
+
+The automation fires after all integrations have loaded, so `trace`/`silly` are already
+registered when the action runs.
 
 ### Common issues
 
