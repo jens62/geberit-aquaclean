@@ -58,6 +58,7 @@ async def _test_connection(
     esphome_host: str | None,
     esphome_port: int,
     noise_psk: str | None,
+    hass=None,
 ) -> None:
     """Attempt a BLE connect to validate the supplied settings."""
     _LOGGER.info(
@@ -67,7 +68,7 @@ async def _test_connection(
     from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
     from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
 
-    connector = BluetoothLeConnector(esphome_host, esphome_port, noise_psk)
+    connector = BluetoothLeConnector(esphome_host, esphome_port, noise_psk, hass=hass)
     client = AquaCleanClientFactory(connector).create_client()
     try:
         await client.connect_ble_only(device_id)
@@ -106,29 +107,22 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             data = _normalise(user_input)
-            if not data[CONF_ESPHOME_HOST]:
-                # Local BLE path: only verify that a BT adapter is present.
-                # Skipping a live connect test — bleak conflicts with HA's bluetooth
-                # integration scanner on the shared adapter and hangs the event loop,
-                # which triggers the supervisor watchdog and crashes HA.
-                # The first coordinator poll will verify actual connectivity.
-                if not await _has_local_bluetooth():
-                    errors["base"] = "no_bluetooth"
-                else:
-                    await self.async_set_unique_id(data[CONF_DEVICE_ID])
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title=f"AquaClean {data[CONF_DEVICE_ID]}",
-                        data=data,
-                    )
+            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
+                errors["base"] = "no_bluetooth"
             else:
-                # ESPHome path: perform a live BLE connection test over TCP.
+                # Both paths perform a live BLE connection test.
+                # Local BLE: BluetoothLeConnector uses HA's bluetooth stack
+                #   (habluetooth + bleak_retry_connector) via the hass= parameter —
+                #   no raw BleakScanner conflict, no event loop hang.
+                # ESPHome: connects over TCP as before.
+                hass = self.hass if not data[CONF_ESPHOME_HOST] else None
                 try:
                     await _test_connection(
                         data[CONF_DEVICE_ID],
                         data[CONF_ESPHOME_HOST],
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
                         data[CONF_NOISE_PSK],
+                        hass=hass,
                     )
                 except Exception:
                     _LOGGER.exception("[AquaClean] Config flow: connection test failed")
@@ -166,20 +160,17 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             data = _normalise(user_input)
-            if not data[CONF_ESPHOME_HOST]:
-                # Local BLE path: only verify adapter presence (see config flow comment).
-                if not await _has_local_bluetooth():
-                    errors["base"] = "no_bluetooth"
-                else:
-                    return self.async_create_entry(title="", data=data)
+            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
+                errors["base"] = "no_bluetooth"
             else:
-                # ESPHome path: perform a live BLE connection test over TCP.
+                hass = self.hass if not data[CONF_ESPHOME_HOST] else None
                 try:
                     await _test_connection(
                         data[CONF_DEVICE_ID],
                         data[CONF_ESPHOME_HOST],
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
                         data[CONF_NOISE_PSK],
+                        hass=hass,
                     )
                 except Exception:
                     _LOGGER.exception("[AquaClean] Options flow: connection test failed")

@@ -8,6 +8,18 @@
 #   (or restart Home Assistant)
 
 # ---------------------------------------------------------------------------
+# Debug logging (optional)
+# ---------------------------------------------------------------------------
+# Uncomment to enable debug logging for the integration.
+# Apply without restart: Settings → Developer Tools → Actions → logger.set_level
+#
+# logger:
+#   default: warning
+#   logs:
+#     custom_components.geberit_aquaclean: debug   # integration glue (coordinator, config flow)
+#     aquaclean_console_app: debug                 # BLE protocol library
+
+# ---------------------------------------------------------------------------
 # Template sensors
 # ---------------------------------------------------------------------------
 template:

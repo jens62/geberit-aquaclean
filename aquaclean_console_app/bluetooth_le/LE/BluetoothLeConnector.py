@@ -49,7 +49,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     BULK_CHAR_BULK_READ_3_UUID = UUID("3334429d-90f3-4c41-a02d-5cb3a83e0000")
     CCC_UUID = UUID("00002902-0000-1000-8000-00805f9b34fb")
 
-    def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None):
+    def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
         self.client = None
         self.read_characteristics = {}
         self.data_received_handlers = myEvent.EventHandler()
@@ -74,6 +74,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._esphome_wifi_key: int | None = None     # aioesphomeapi entity key for wifi_signal sensor
         self._esphome_free_heap_key: int | None = None       # aioesphomeapi entity key for free heap sensor
         self._esphome_max_free_block_key: int | None = None  # aioesphomeapi entity key for max free block sensor
+        self._hass = hass  # Home Assistant instance (HACS integration only); None = standalone bridge
 
 
     async def connect_async(self, device_id):
@@ -86,20 +87,110 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
     async def _connect_local(self, device_id):
         t0 = time.perf_counter()
-        device = await BleakScanner.find_device_by_address(device_id)
-        if device is None:
-            raise BleakError(f"AquaClean device with address {device_id} not found.")
 
-        self.device_address = device.address
-        self.device_name = device.name
-        self.rssi = getattr(device, 'rssi', None)
-        logger.debug(f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}")
+        if self._hass is not None:
+            # HACS integration path: use HA's bluetooth stack.
+            # BleakClient is wrapped globally by habluetooth and requires a BLEDevice
+            # sourced from HA's scanner cache — not from a raw BleakScanner call.
+            # Using bleak_retry_connector for reliable connection as recommended by HA.
+            device = await self._get_ble_device_via_ha(device_id)
+            if device is None:
+                raise BleakError(
+                    f"AquaClean device {device_id} not found by HA bluetooth scanner."
+                )
+            self.device_address = device.address
+            self.device_name = device.name or "Unknown"
+            self.rssi = getattr(device, "rssi", None)
+            logger.debug(
+                f"[HA-BLE] Connecting: address={device.address}, name={self.device_name}, rssi={self.rssi}"
+            )
+            try:
+                from bleak_retry_connector import establish_connection
+                self.client = await establish_connection(
+                    BleakClient,
+                    device,
+                    device.name or device_id,
+                    disconnected_callback=self._on_disconnected,
+                )
+            except ImportError:
+                # bleak_retry_connector not available — fall back to direct connect.
+                # Shouldn't happen on HA OS but safe to handle.
+                self.client = BleakClient(device, disconnected_callback=self._on_disconnected)
+                await self.client.connect()
+        else:
+            # Standalone bridge path: use BleakScanner directly.
+            # No habluetooth interception outside of HA OS.
+            device = await BleakScanner.find_device_by_address(device_id)
+            if device is None:
+                raise BleakError(f"AquaClean device with address {device_id} not found.")
+            self.device_address = device.address
+            self.device_name = device.name
+            self.rssi = getattr(device, "rssi", None)
+            logger.debug(
+                f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}"
+            )
+            self.client = BleakClient(
+                address_or_ble_device=device, disconnected_callback=self._on_disconnected
+            )
+            await self.client.connect()
 
-        self.client = BleakClient(address_or_ble_device=device, disconnected_callback=self._on_disconnected)
-        await self.client.connect()
         self.last_esphome_api_ms = None  # No ESP32 proxy
         self.last_ble_ms = int((time.perf_counter() - t0) * 1000)
         await self._post_connect()
+
+    async def _get_ble_device_via_ha(self, device_id: str):
+        """Get a BLEDevice from HA's bluetooth scanner cache.
+
+        Checks the cache immediately; if the device is not yet known, registers a
+        callback and waits up to 30 seconds for the device to advertise.
+        Returns None if the device is not seen within the timeout.
+
+        Only called when self._hass is set (HACS integration path).
+        The standalone bridge uses BleakScanner.find_device_by_address() directly.
+        """
+        from homeassistant.components import bluetooth
+        from homeassistant.core import callback as ha_callback
+
+        address = device_id.upper()
+
+        # Fast path: device already in HA's scanner cache.
+        device = bluetooth.async_ble_device_from_address(self._hass, address, connectable=True)
+        if device is not None:
+            logger.debug(f"[HA-BLE] Device {address} found in HA bluetooth cache immediately")
+            return device
+
+        # Slow path: wait for HA's scanner to see the device advertise.
+        logger.debug(
+            f"[HA-BLE] Device {address} not in cache yet; waiting up to 30s for advertisement"
+        )
+        found_event = asyncio.Event()
+        found_device: list[BLEDevice | None] = [None]
+
+        @ha_callback
+        def _on_advertisement(service_info, change) -> None:
+            found_device[0] = service_info.device
+            found_event.set()
+
+        cancel = bluetooth.async_register_callback(
+            self._hass,
+            _on_advertisement,
+            {"address": address},
+            bluetooth.BluetoothScanningMode.ACTIVE,
+        )
+        try:
+            await asyncio.wait_for(found_event.wait(), timeout=30.0)
+            logger.debug(
+                f"[HA-BLE] Device {address} seen by HA scanner: {getattr(found_device[0], 'name', 'Unknown')}"
+            )
+            return found_device[0]
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[HA-BLE] Device {address} not seen by HA bluetooth scanner within 30s. "
+                f"Ensure the toilet is powered on and within BLE range."
+            )
+            return None
+        finally:
+            cancel()
 
 
     async def _ensure_esphome_api_connected(self):
