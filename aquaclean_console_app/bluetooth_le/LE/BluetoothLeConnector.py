@@ -100,7 +100,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 )
             self.device_address = device.address
             self.device_name = device.name or "Unknown"
-            self.rssi = getattr(device, "rssi", None)
+            # self.rssi already set by _get_ble_device_via_ha() from service_info.rssi
             logger.debug(
                 f"[HA-BLE] Connecting: address={device.address}, name={self.device_name}, rssi={self.rssi}"
             )
@@ -154,10 +154,13 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         address = device_id.upper()
 
         # Fast path: device already in HA's scanner cache.
-        device = bluetooth.async_ble_device_from_address(self._hass, address, connectable=True)
-        if device is not None:
+        # async_last_service_info returns BluetoothServiceInfoBleak which carries .rssi;
+        # async_ble_device_from_address returns only BLEDevice where .rssi is always None.
+        service_info = bluetooth.async_last_service_info(self._hass, address, connectable=True)
+        if service_info is not None:
             logger.debug(f"[HA-BLE] Device {address} found in HA bluetooth cache immediately")
-            return device
+            self.rssi = service_info.rssi
+            return service_info.device
 
         # Slow path: wait for HA's scanner to see the device advertise.
         logger.debug(
@@ -165,10 +168,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         )
         found_event = asyncio.Event()
         found_device: list[BLEDevice | None] = [None]
+        found_rssi: list[int | None] = [None]
 
         @ha_callback
         def _on_advertisement(service_info, change) -> None:
             found_device[0] = service_info.device
+            found_rssi[0] = service_info.rssi
             found_event.set()
 
         cancel = bluetooth.async_register_callback(
@@ -179,6 +184,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         )
         try:
             await asyncio.wait_for(found_event.wait(), timeout=30.0)
+            self.rssi = found_rssi[0]
             logger.debug(
                 f"[HA-BLE] Device {address} seen by HA scanner: {getattr(found_device[0], 'name', 'Unknown')}"
             )
