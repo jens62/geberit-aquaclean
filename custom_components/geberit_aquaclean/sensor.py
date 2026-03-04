@@ -236,7 +236,7 @@ class AquaCleanLastConnectSensor(AquaCleanEntity, SensorEntity):
 class AquaCleanLastPollSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the last GATT data fetch time in milliseconds."""
 
-    _attr_name = "Last Poll"
+    _attr_name = "Last Poll ms"
     _attr_native_unit_of_measurement = "ms"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:timer-outline"
