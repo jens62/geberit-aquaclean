@@ -3,8 +3,8 @@ from typing import Dict, List, Callable, Any
 from binascii import hexlify
 import logging
 
-from aquaclean_console_app.aquaclean_utils                                     import utils   
-from aquaclean_console_app.myEvent                                             import myEvent   
+from aquaclean_console_app.aquaclean_utils                                     import utils
+from aquaclean_console_app.myEvent                                             import myEvent
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +27,20 @@ class FrameCollector:
     async def start_transaction(self, expected_frames: int):
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
 
+        pending_frames = {}
         with self.sync_obj:
             self.frame_data = {}
             self.expected_frames = expected_frames
             self.bitmap = [0] * 8
             self.transaction_in_progress = True
 
-            for frame_index, payload in self.temp_frame_data.items():
-                await self.add_frame(frame_index, payload)
+            # Collect buffered frames and clear inside the lock; process them outside
+            # to avoid holding the lock during async calls (see add_frame).
+            pending_frames = dict(self.temp_frame_data)
             self.temp_frame_data.clear()
+
+        for frame_index, payload in pending_frames.items():
+            await self.add_frame(frame_index, payload)
 
     def set_bitmap(self, frame_number: int):
         var3 = frame_number // 8
@@ -48,46 +53,54 @@ class FrameCollector:
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         logger.trace(f"frame_index: {frame_index}, Payload: {''.join(f'{b:02X}' for b in payload)}")
 
+        send_control_bitmap = None
+        complete_data = None
+
         with self.sync_obj:
             if not self.transaction_in_progress:
                 logger.trace("not self.transaction_in_progress")
                 self.temp_frame_data[frame_index] = payload
-                #self.sync_obj.release()
-                #RuntimeError: release unlocked lock
                 return
 
             logger.debug(f"Received frame {frame_index + 1} of {self.expected_frames}: Payload={''.join(f'{b:02X}' for b in payload)}")
 
             self.frame_data[frame_index] = payload
             self.set_bitmap(frame_index)
+
             if len(self.frame_data) % 4 == 0 or len(self.frame_data) == self.expected_frames:
-                # bitmap_clone = self.bitmap.copy()
-                bitmap_clone = self.bitmap[:]
-
+                send_control_bitmap = self.bitmap[:]
                 logger.trace(f"len(self.frame_data): {len(self.frame_data)}, len(self.frame_data): {len(self.frame_data)}, self.expected_frames: {self.expected_frames}")
-                logger.debug(f"Raising SendControlFrame with data {''.join(f'{b:02X}' for b in bitmap_clone)}")
-
-                await self.SendControlFrame.invoke_async(self, bytes(bitmap_clone))
+                logger.debug(f"Raising SendControlFrame with data {''.join(f'{b:02X}' for b in send_control_bitmap)}")
 
             logger.trace(f"len(self.frame_data): {len(self.frame_data)}, self.expected_frames: {self.expected_frames}")
-            if len(self.frame_data) != self.expected_frames:
-                return
 
-            # Build message
-            data = bytearray()
-            for i in range(self.expected_frames):
-                data.extend(self.frame_data[i])
+            if len(self.frame_data) == self.expected_frames:
+                # Build the complete message payload inside the lock while all data is consistent.
+                data = bytearray()
+                for i in range(self.expected_frames):
+                    data.extend(self.frame_data[i])
 
-            logger.debug("receive complete")
-            logger.trace(f"receive complete: bytes(data)={''.join(f'{b:02X}' for b in bytes(data))}")
+                logger.debug("receive complete")
+                logger.trace(f"receive complete: bytes(data)={''.join(f'{b:02X}' for b in bytes(data))}")
 
-            self.transaction_in_progress = False
-            self.temp_frame_data.clear()      
+                self.transaction_in_progress = False
+                self.temp_frame_data.clear()
+                complete_data = bytes(data)
 
+        # ── Fire events OUTSIDE the lock ─────────────────────────────────────────
+        # threading.Lock is NOT reentrant and must not be held across an await.
+        # BLE notifications arrive as concurrent asyncio tasks; if a second task
+        # calls add_frame() while the first is awaiting SendControlFrame (which
+        # eventually calls write_gatt_char), the second task's lock.acquire() would
+        # block the event loop thread → deadlock → HA watchdog fires.
+        # Releasing the lock before any await point prevents this entirely.
+
+        if send_control_bitmap is not None:
             logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
             logger.trace(f"len(self.TransactionCompleteFC.get_handlers(): {len(self.TransactionCompleteFC.get_handlers())} for on_transaction_complete")
+            await self.SendControlFrame.invoke_async(self, bytes(send_control_bitmap))
 
-            await self.TransactionCompleteFC.invoke_async(self, bytes(data))
-
-
-
+        if complete_data is not None:
+            logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
+            logger.trace(f"len(self.TransactionCompleteFC.get_handlers(): {len(self.TransactionCompleteFC.get_handlers())} for on_transaction_complete")
+            await self.TransactionCompleteFC.invoke_async(self, complete_data)
