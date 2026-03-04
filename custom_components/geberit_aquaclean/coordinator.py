@@ -9,6 +9,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import BLEPeripheralTimeoutError
+
 from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
@@ -275,7 +277,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     )
                     stats = await client.base_client.get_statistics_descale_async()
                     soc_versions = await client.base_client.get_soc_application_versions_async()
-            except (BleakError, asyncio.TimeoutError) as exc:
+            except (BleakError, asyncio.TimeoutError, BLEPeripheralTimeoutError) as exc:
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
             except Exception as exc:
