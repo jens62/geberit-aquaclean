@@ -45,12 +45,17 @@ views:
             name: Error Hint
             icon: mdi:alert-circle-outline
 
-      # Only shown when an ESPHome proxy is configured (entity absent = direct BLE mode).
+      # Only shown when an ESPHome proxy is configured.
+      # Missing entity → state "unknown"; unavailable entity → state "unavailable".
+      # Both must be excluded to hide this card in direct BLE mode.
       - type: conditional
         conditions:
           - condition: state
             entity: binary_sensor.aquaclean_proxy_connected
             state_not: unavailable
+          - condition: state
+            entity: binary_sensor.aquaclean_proxy_connected
+            state_not: unknown
         card:
           type: entities
           title: ESPHome Proxy
@@ -84,7 +89,7 @@ views:
           | Metric | Min | Avg | Max | Last |
           |--------|----:|----:|----:|-----:|
           | Connect | {{ states('sensor.geberit_aquaclean_min_connect') }} ms | {{ states('sensor.geberit_aquaclean_avg_connect') }} ms | {{ states('sensor.geberit_aquaclean_max_connect') }} ms | {{ states('sensor.geberit_aquaclean_last_connect') }} ms |
-          | Poll (GATT) | {{ states('sensor.geberit_aquaclean_min_poll') }} ms | {{ states('sensor.geberit_aquaclean_avg_poll') }} ms | {{ states('sensor.geberit_aquaclean_max_poll') }} ms | {{ states('sensor.geberit_aquaclean_last_poll') }} ms |
+          | Poll (GATT) | {{ states('sensor.geberit_aquaclean_min_poll') }} ms | {{ states('sensor.geberit_aquaclean_avg_poll') }} ms | {{ states('sensor.geberit_aquaclean_max_poll') }} ms | {{ states('sensor.geberit_aquaclean_last_poll_ms') }} ms |
           | BLE RSSI | {{ states('sensor.geberit_aquaclean_min_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
           {%- if not is_state('binary_sensor.aquaclean_proxy_connected', 'unavailable') %}
           | WiFi RSSI | {{ states('sensor.geberit_aquaclean_min_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
