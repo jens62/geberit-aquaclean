@@ -260,15 +260,21 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     self._wifi_rssi_max = esphome_wifi_rssi
 
             # ── Phase 2: GATT data fetch ─────────────────────────────────────
+            # 30 s hard timeout: the underlying event-based calls have no
+            # built-in timeout and will hang forever if the device ACKs the
+            # request but never sends the response (e.g. rapid reconnect after
+            # config-flow test).  asyncio.TimeoutError is already in the except.
+            _GATT_TIMEOUT = 30
             t_poll = time.perf_counter()
             try:
-                ident = await client.base_client.get_device_identification_async(0)
-                initial_op_date = await client.base_client.get_device_initial_operation_date()
-                state = await client.base_client.get_system_parameter_list_async(
-                    [0, 1, 2, 3, 4, 5, 7, 9]
-                )
-                stats = await client.base_client.get_statistics_descale_async()
-                soc_versions = await client.base_client.get_soc_application_versions_async()
+                async with asyncio.timeout(_GATT_TIMEOUT):
+                    ident = await client.base_client.get_device_identification_async(0)
+                    initial_op_date = await client.base_client.get_device_initial_operation_date()
+                    state = await client.base_client.get_system_parameter_list_async(
+                        [0, 1, 2, 3, 4, 5, 7, 9]
+                    )
+                    stats = await client.base_client.get_statistics_descale_async()
+                    soc_versions = await client.base_client.get_soc_application_versions_async()
             except (BleakError, asyncio.TimeoutError) as exc:
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
