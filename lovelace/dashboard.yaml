@@ -91,7 +91,7 @@ views:
           | Connect | {{ states('sensor.geberit_aquaclean_min_connect') }} ms | {{ states('sensor.geberit_aquaclean_avg_connect') }} ms | {{ states('sensor.geberit_aquaclean_max_connect') }} ms | {{ states('sensor.geberit_aquaclean_last_connect') }} ms |
           | Poll (GATT) | {{ states('sensor.geberit_aquaclean_min_poll') }} ms | {{ states('sensor.geberit_aquaclean_avg_poll') }} ms | {{ states('sensor.geberit_aquaclean_max_poll') }} ms | {{ states('sensor.geberit_aquaclean_last_poll_ms') }} ms |
           | BLE RSSI | {{ states('sensor.geberit_aquaclean_min_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
-          {%- if not is_state('binary_sensor.aquaclean_proxy_connected', 'unavailable') %}
+          {%- if not is_state('binary_sensor.aquaclean_proxy_connected', 'unavailable') and not is_state('binary_sensor.aquaclean_proxy_connected', 'unknown') %}
           | WiFi RSSI | {{ states('sensor.geberit_aquaclean_min_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
           {%- endif %}
 
