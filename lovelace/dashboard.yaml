@@ -45,43 +45,52 @@ views:
             name: Error Hint
             icon: mdi:alert-circle-outline
 
-      # Only relevant when an ESPHome proxy host is configured
-      - type: entities
-        title: ESPHome Proxy
-        icon: mdi:lan
-        entities:
-          - entity: binary_sensor.aquaclean_proxy_connected
-            name: Connected
-          - entity: sensor.aquaclean_proxy_connection
-            name: Connection
-          - entity: sensor.wifi_signal_quality
-            name: WiFi Signal
-          - type: attribute
+      # Only shown when an ESPHome proxy is configured (entity absent = direct BLE mode).
+      - type: conditional
+        conditions:
+          - condition: state
             entity: binary_sensor.aquaclean_proxy_connected
-            attribute: error_code
-            name: Error Code
-            icon: mdi:alert-decagram-outline
-          - type: attribute
-            entity: binary_sensor.aquaclean_proxy_connected
-            attribute: error_hint
-            name: Error Hint
-            icon: mdi:alert-circle-outline
+            state_not: unavailable
+        card:
+          type: entities
+          title: ESPHome Proxy
+          icon: mdi:lan
+          entities:
+            - entity: binary_sensor.aquaclean_proxy_connected
+              name: Connected
+            - entity: sensor.aquaclean_proxy_connection
+              name: Connection
+            - entity: sensor.wifi_signal_quality
+              name: WiFi Signal
+            - type: attribute
+              entity: binary_sensor.aquaclean_proxy_connected
+              attribute: error_code
+              name: Error Code
+              icon: mdi:alert-decagram-outline
+            - type: attribute
+              entity: binary_sensor.aquaclean_proxy_connected
+              attribute: error_hint
+              name: Error Hint
+              icon: mdi:alert-circle-outline
 
 
-      # Performance statistics table — only relevant with ESPHome proxy
-      # All sensors reset to zero when HA restarts (session statistics only).
+      # Performance statistics — session totals, reset on HA restart.
+      # Timing/RSSI sensors are on the toilet device (geberit_aquaclean_*) since v2.4.47-pre.
+      # WiFi RSSI row is hidden automatically when no ESPHome proxy is configured.
       - type: markdown
         title: Performance Statistics
         icon: mdi:chart-bar
         content: |
           | Metric | Min | Avg | Max | Last |
           |--------|----:|----:|----:|-----:|
-          | Connect | {{ states('sensor.aquaclean_proxy_min_connect') }} ms | {{ states('sensor.aquaclean_proxy_avg_connect') }} ms | {{ states('sensor.aquaclean_proxy_max_connect') }} ms | {{ states('sensor.aquaclean_proxy_last_connect') }} ms |
-          | Poll (GATT) | {{ states('sensor.aquaclean_proxy_min_poll') }} ms | {{ states('sensor.aquaclean_proxy_avg_poll') }} ms | {{ states('sensor.aquaclean_proxy_max_poll') }} ms | {{ states('sensor.aquaclean_proxy_last_poll') }} ms |
-          | BLE RSSI | {{ states('sensor.aquaclean_proxy_min_ble_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_ble_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_max_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
-          | WiFi RSSI | {{ states('sensor.aquaclean_proxy_min_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_avg_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_max_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
+          | Connect | {{ states('sensor.geberit_aquaclean_min_connect') }} ms | {{ states('sensor.geberit_aquaclean_avg_connect') }} ms | {{ states('sensor.geberit_aquaclean_max_connect') }} ms | {{ states('sensor.geberit_aquaclean_last_connect') }} ms |
+          | Poll (GATT) | {{ states('sensor.geberit_aquaclean_min_poll') }} ms | {{ states('sensor.geberit_aquaclean_avg_poll') }} ms | {{ states('sensor.geberit_aquaclean_max_poll') }} ms | {{ states('sensor.geberit_aquaclean_last_poll') }} ms |
+          | BLE RSSI | {{ states('sensor.geberit_aquaclean_min_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
+          {%- if not is_state('binary_sensor.aquaclean_proxy_connected', 'unavailable') %}
+          | WiFi RSSI | {{ states('sensor.geberit_aquaclean_min_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
+          {%- endif %}
 
-          Transport: `{{ states('sensor.aquaclean_proxy_transport') }}` &nbsp;·&nbsp; {{ states('sensor.aquaclean_proxy_poll_samples') }} samples this session
+          Transport: `{{ states('sensor.geberit_aquaclean_transport') }}` &nbsp;·&nbsp; {{ states('sensor.geberit_aquaclean_poll_samples') }} samples this session
 
       # ── Live Status ──────────────────────────────────────────────────────
       - type: entities
