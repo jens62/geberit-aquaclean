@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import time
 
 import inspect
 
@@ -28,7 +27,6 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList
 from aquaclean_console_app.aquaclean_utils                                               import utils   
 
 from threading import Lock
-from queue import Queue, Empty
 import re
 import pprint
 
@@ -57,7 +55,7 @@ class AquaCleanBaseClient:
         self.build_context_lookup()
         logger.trace(f"self.context_lookup: {self.context_lookup}")
 
-        self.event_wait_queue = Queue()
+        self._transaction_event = asyncio.Event()
 
         self.message_context = None
         self.call_count = 0
@@ -108,9 +106,9 @@ class AquaCleanBaseClient:
         else:
             logger.trace(f"self.context_lookup not found")
 
-        logger.trace('self.event_wait_queue.put("Transaction finished")')
-        self.event_wait_queue.put("Transaction finished")
-        logger.trace(f"###################### Transaction: set finished...")  
+        logger.trace("self._transaction_event.set()")
+        self._transaction_event.set()
+        logger.trace("###################### Transaction: set finished...")
 
 
     async def connect_async(self, device_id):
@@ -290,215 +288,40 @@ class AquaCleanBaseClient:
         logger.trace(f"frame.serialize().hex(): {frame.serialize().hex()}")
 
         logger.trace(f"vor await self.frame_service.send_frame_async(frame)")
+
+        # Clear the event before sending so we don't pick up a stale signal from
+        # a previous transaction that fired while the event loop was busy.
+        self._transaction_event.clear()
+
         await self.frame_service.send_frame_async(frame)
 
         await asyncio.sleep(0.01)
 
         logger.trace(f"self._threads(): \n{pprint.pformat(self._threads())}\n")
 
-        # We need to wait for data from on_transaction_complete
-        # The request is sent to the devive over bluetooth: "in function BluetoothLeConnector.send_message called by AquaCleanBaseClient.send_data_async"
-        # The response is received over bluetooth: "BluetoothLeConnector: _on_data_received" at any time
-        # When the data for a transaction is complete ()"in function AquaCleanBaseClient.on_transaction_completeForBaseClient called by EventHandler.__call__") "self.event_wait_queue" is filled
-        # and we can continue.
+        # Wait for on_transaction_completeForBaseClient to set _transaction_event.
+        # Using asyncio.Event + asyncio.wait_for instead of threading.Queue.get():
+        #   - does NOT block the event loop between iterations
+        #   - BLE notification callbacks can fire immediately during the await
+        #   - asyncio.timeout() in the caller can cancel cleanly at await points
         #
-        # Typical sequence:
-        #
-        # 2024-12-16 11:50:36,704 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 224 TRACE: in function AquaCleanBaseClient.send_request called by AquaCleanBaseClient.get_system_parameter_list_async
-        # 2024-12-16 11:50:36,709 geberit-aquaclean.aquaclean-core.Message.CrcMessage 59 TRACE: in function CrcMessage.serialize called by AquaCleanBaseClient.send_request
-        # 2024-12-16 11:50:36,709 geberit-aquaclean.aquaclean-core.Message.CrcMessage 59 TRACE: in function CrcMessage.serialize called by AquaCleanBaseClient.send_request
-        # 2024-12-16 11:50:36,711 geberit-aquaclean.aquaclean-core.Frames.FrameService 148 TRACE: in function FrameService.send_frame_async called by AquaCleanBaseClient.send_request
-        # 2024-12-16 11:50:36,712 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 109 TRACE: in function AquaCleanBaseClient.send_data_async called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,713 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 116 TRACE: in function BluetoothLeConnector.send_message called by AquaCleanBaseClient.send_data_async
-        # 2024-12-16 11:50:36,713 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 118 TRACE: Sending data to characteristic 3334429d-90f3-4c41-a02d-5cb3a13e0000 data: 1104FF00116EE101010D0D080001020304050609
-        # 2024-12-16 11:50:36,774 bleak.backends.bluezdbus.client 885 DEBUG: Write Characteristic 3334429d-90f3-4c41-a02d-5cb3a13e0000 | /org/bluez/hci0/dev_38_AB_41_2A_0D_67/service0001/char0002: bytearray(b'\x11\x04\xff\x00\x11n\xe1\x01\x01\r\r\x08\x00\x01\x02\x03\x04\x05\x06\t')
-        # 2024-12-16 11:50:36,774 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 122 TRACE: result: None
-        # 2024-12-16 11:50:36,774 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 112 TRACE:  send_data_async after sleep
-        # 2024-12-16 11:50:36,776 bleak.backends.bluezdbus.manager 872 DEBUG: received D-Bus signal: org.freedesktop.DBus.Properties.PropertiesChanged (/org/bluez/hci0/dev_38_AB_41_2A_0D_67/service0001/char000e): ['org.bluez.GattCharacteristic1', {'Value': <dbus_fast.signature.Variant ('ay', bytearray(b"p\x00\x0c\'\x01\x00\x00\x00\x00\x00\x00\x00\x00\xb7\t\x01\x00\x00\r\xf3"))>}, []]
-        # 2024-12-16 11:50:36,777 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 104 TRACE: BluetoothLeConnector: _on_data_received
-        # 2024-12-16 11:50:36,778 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 105 TRACE: Received data from characteristic 3334429d-90f3-4c41-a02d-5cb3a53e0000 data: 70000C27010000000000000000B7090100000DF3
-        # 2024-12-16 11:50:36,778 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:36,778 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:36,778 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:36,778 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:36,779 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:36,779 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:36,779 geberit-aquaclean.aquaclean-core.Frames.FrameService 66 TRACE: in function FrameService.process_data called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,780 geberit-aquaclean.aquaclean-core.Frames.FrameService 157 TRACE: in function FrameService._handle_control_frame called by FrameService.process_data
-        # 2024-12-16 11:50:36,781 geberit-aquaclean.aquaclean-core.Frames.FrameService 157 TRACE: in function FrameService._handle_control_frame called by FrameService.process_data
-        # 2024-12-16 11:50:36,900 geberit-aquaclean.aquaclean-core.Frames.FrameService 66 TRACE: in function FrameService.process_data called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,901 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 30 TRACE: in function FrameCollector.start_transaction called by FrameService.process_data
-        # 2024-12-16 11:50:36,902 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 50 TRACE: in function FrameCollector.add_frame called by FrameService.process_data
-        # 2024-12-16 11:50:36,902 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 51 TRACE: frame_index: 0, Payload: 0500004210690001010D3D0700000000000100
-        # 2024-12-16 11:50:36,902 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 61 TRACE: Received frame 1 of 4: Payload=0500004210690001010D3D0700000000000100
-        # 2024-12-16 11:50:36,902 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 46 TRACE: Controlling bitmap changed with frameNumber 0 => 00000001 Bitmap: 0100000000000000
-        # 2024-12-16 11:50:36,903 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 74 TRACE: len(self.frame_data): 1, self.expected_frames: 4
-        # 2024-12-16 11:50:36,903 geberit-aquaclean.aquaclean-core.Frames.FrameService 89 TRACE: nach self.frame_collector.add_frame
-        # 2024-12-16 11:50:36,903 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 104 TRACE: BluetoothLeConnector: _on_data_received
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 105 TRACE: Received data from characteristic 3334429d-90f3-4c41-a02d-5cb3a63e0000 data: 1200000002000000000300000000040000000005
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:36,904 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameService 66 TRACE: in function FrameService.process_data called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameService 67 TRACE: process_data, data: b'1200000002000000000300000000040000000005'
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 68 TRACE: in CreateFrameFromBytes
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 70 TRACE: frameType: 0
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 75 TRACE: SINGLE Frame
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameService 76 DEBUG: Processing new Frame: SingleFrame: <class 'geberit-aquaclean.aquaclean-core.Frames.Frames.SingleFrame.SingleFrame'>
-        # 2024-12-16 11:50:36,905 geberit-aquaclean.aquaclean-core.Frames.FrameService 77 TRACE: frame.FrameType: 0
-        # 2024-12-16 11:50:36,906 geberit-aquaclean.aquaclean-core.Frames.FrameService 80 TRACE: Handling frame type SINGLE
-        # 2024-12-16 11:50:36,906 geberit-aquaclean.aquaclean-core.Frames.FrameService 83 TRACE: hexlify(single_frame.Payload): b'00000002000000000300000000040000000005'
-        # 2024-12-16 11:50:36,906 geberit-aquaclean.aquaclean-core.Frames.FrameService 91 TRACE: not is single_frame.IsSubFrameCount:
-        # 2024-12-16 11:50:36,906 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 50 TRACE: in function FrameCollector.add_frame called by FrameService.process_data
-        # 2024-12-16 11:50:36,906 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 51 TRACE: frame_index: 1, Payload: 00000002000000000300000000040000000005
-        # 2024-12-16 11:50:36,907 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 61 TRACE: Received frame 2 of 4: Payload=00000002000000000300000000040000000005
-        # 2024-12-16 11:50:36,907 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 46 TRACE: Controlling bitmap changed with frameNumber 1 => 00000011 Bitmap: 0300000000000000
-        # 2024-12-16 11:50:36,907 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 74 TRACE: len(self.frame_data): 2, self.expected_frames: 4
-        # 2024-12-16 11:50:36,907 geberit-aquaclean.aquaclean-core.Frames.FrameService 93 TRACE: nach self.frame_collector.add_frame
-        # 2024-12-16 11:50:36,908 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 104 TRACE: BluetoothLeConnector: _on_data_received
-        # 2024-12-16 11:50:36,908 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 105 TRACE: Received data from characteristic 3334429d-90f3-4c41-a02d-5cb3a73e0000 data: 1400000000060000000000000000000000000000
-        # 2024-12-16 11:50:36,908 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:36,908 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:36,908 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:36,908 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-core.Frames.FrameService 66 TRACE: in function FrameService.process_data called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-core.Frames.FrameService 67 TRACE: process_data, data: b'1400000000060000000000000000000000000000'
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 68 TRACE: in CreateFrameFromBytes
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 70 TRACE: frameType: 0
-        # 2024-12-16 11:50:36,909 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 75 TRACE: SINGLE Frame
-        # 2024-12-16 11:50:36,910 geberit-aquaclean.aquaclean-core.Frames.FrameService 76 DEBUG: Processing new Frame: SingleFrame: <class 'geberit-aquaclean.aquaclean-core.Frames.Frames.SingleFrame.SingleFrame'>
-        # 2024-12-16 11:50:36,910 geberit-aquaclean.aquaclean-core.Frames.FrameService 77 TRACE: frame.FrameType: 0
-        # 2024-12-16 11:50:36,910 geberit-aquaclean.aquaclean-core.Frames.FrameService 80 TRACE: Handling frame type SINGLE
-        # 2024-12-16 11:50:36,910 geberit-aquaclean.aquaclean-core.Frames.FrameService 83 TRACE: hexlify(single_frame.Payload): b'00000000060000000000000000000000000000'
-        # 2024-12-16 11:50:36,910 geberit-aquaclean.aquaclean-core.Frames.FrameService 91 TRACE: not is single_frame.IsSubFrameCount:
-        # 2024-12-16 11:50:36,910 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 50 TRACE: in function FrameCollector.add_frame called by FrameService.process_data
-        # 2024-12-16 11:50:36,911 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 51 TRACE: frame_index: 2, Payload: 00000000060000000000000000000000000000
-        # 2024-12-16 11:50:36,911 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 61 TRACE: Received frame 3 of 4: Payload=00000000060000000000000000000000000000
-        # 2024-12-16 11:50:36,911 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 46 TRACE: Controlling bitmap changed with frameNumber 2 => 00000111 Bitmap: 0700000000000000
-        # 2024-12-16 11:50:36,911 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 74 TRACE: len(self.frame_data): 3, self.expected_frames: 4
-        # 2024-12-16 11:50:36,911 geberit-aquaclean.aquaclean-core.Frames.FrameService 93 TRACE: nach self.frame_collector.add_frame
-        # 2024-12-16 11:50:36,912 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 104 TRACE: BluetoothLeConnector: _on_data_received
-        # 2024-12-16 11:50:36,912 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 105 TRACE: Received data from characteristic 3334429d-90f3-4c41-a02d-5cb3a83e0000 data: 160000000000000000000000000000006F000000
-        # 2024-12-16 11:50:36,912 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:36,912 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:36,912 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-core.Frames.FrameService 66 TRACE: in function FrameService.process_data called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-core.Frames.FrameService 67 TRACE: process_data, data: b'160000000000000000000000000000006f000000'
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 68 TRACE: in CreateFrameFromBytes
-        # 2024-12-16 11:50:36,913 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 70 TRACE: frameType: 0
-        # 2024-12-16 11:50:36,914 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 75 TRACE: SINGLE Frame
-        # 2024-12-16 11:50:36,914 geberit-aquaclean.aquaclean-core.Frames.FrameService 76 DEBUG: Processing new Frame: SingleFrame: <class 'geberit-aquaclean.aquaclean-core.Frames.Frames.SingleFrame.SingleFrame'>
-        # 2024-12-16 11:50:36,914 geberit-aquaclean.aquaclean-core.Frames.FrameService 77 TRACE: frame.FrameType: 0
-        # 2024-12-16 11:50:36,914 geberit-aquaclean.aquaclean-core.Frames.FrameService 80 TRACE: Handling frame type SINGLE
-        # 2024-12-16 11:50:36,914 geberit-aquaclean.aquaclean-core.Frames.FrameService 83 TRACE: hexlify(single_frame.Payload): b'0000000000000000000000000000006f000000'
-        # 2024-12-16 11:50:36,914 geberit-aquaclean.aquaclean-core.Frames.FrameService 91 TRACE: not is single_frame.IsSubFrameCount:
-        # 2024-12-16 11:50:36,915 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 50 TRACE: in function FrameCollector.add_frame called by FrameService.process_data
-        # 2024-12-16 11:50:36,915 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 51 TRACE: frame_index: 3, Payload: 0000000000000000000000000000006F000000
-        # 2024-12-16 11:50:36,915 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 61 TRACE: Received frame 4 of 4: Payload=0000000000000000000000000000006F000000
-        # 2024-12-16 11:50:36,915 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 46 TRACE: Controlling bitmap changed with frameNumber 3 => 00001111 Bitmap: 0F00000000000000
-        # 2024-12-16 11:50:36,915 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 69 TRACE: len(self.frame_data): 4, len(self.frame_data): 4, self.expected_frames: 4
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 70 TRACE: Raising SendControlFrame with data 0F00000000000000
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:36,916 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:36,917 geberit-aquaclean.aquaclean-core.Frames.FrameService 58 TRACE: in function FrameService.on_send_control_frame called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,917 geberit-aquaclean.aquaclean-core.Frames.FrameService 59 DEBUG: Send control frame: b'\x0f\x00\x00\x00\x00\x00\x00\x00'
-        # 2024-12-16 11:50:36,917 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 102 TRACE: BuildControlFrame: b'0f00000000000000'
-        # 2024-12-16 11:50:36,917 geberit-aquaclean.aquaclean-core.Frames.FrameFactory 110 DEBUG: Bitmask: 0f00000000000000
-        # 2024-12-16 11:50:36,917 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:36,917 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:36,918 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:36,918 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:36,918 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:36,918 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:36,918 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 109 TRACE: in function AquaCleanBaseClient.send_data_async called by EventHandler.invoke_async
-        # 2024-12-16 11:50:36,918 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 110 TRACE: in send_data_async, sender: <geberit-aquaclean.aquaclean-core.Frames.FrameService.FrameService object at 0x7f86ca7670>, data: bytearray(b'p\x00\x08\x00\x0f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
-        # 2024-12-16 11:50:36,919 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 116 TRACE: in function BluetoothLeConnector.send_message called by AquaCleanBaseClient.send_data_async
-        # 2024-12-16 11:50:36,919 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 118 TRACE: Sending data to characteristic 3334429d-90f3-4c41-a02d-5cb3a13e0000 data: 700008000F000000000000000000000000000000
-        # 2024-12-16 11:50:36,993 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 277 TRACE: self.event_wait_queue.get()...
-        # 2024-12-16 11:50:37,093 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 282 TRACE: event_wait_queue_get_result - timeout
-        # 2024-12-16 11:50:37,093 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 283 TRACE: event_wait_queue_get_result: No value yet
-        # 2024-12-16 11:50:37,095 asyncio  1987 WARNING: Executing <Task pending name='Task-2' coro=<shutdown_waits_for.<locals>.coro_proxy() running at /home/kali/homeautomation/geberit-py_bleak/aiorun.py:64> wait_for=<Future pending cb=[Task.task_wakeup()] created at /usr/lib/python3.12/asyncio/base_events.py:448> created at /home/kali/homeautomation/geberit-py_bleak/aiorun.py:75> took 0.102 seconds
-        # 2024-12-16 11:50:37,096 bleak.backends.bluezdbus.client 885 DEBUG: Write Characteristic 3334429d-90f3-4c41-a02d-5cb3a13e0000 | /org/bluez/hci0/dev_38_AB_41_2A_0D_67/service0001/char0002: bytearray(b'p\x00\x08\x00\x0f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
-        # 2024-12-16 11:50:37,096 geberit-aquaclean.aquaclean-uwp-bluetooth-le.LE.BluetoothLeConnector 122 TRACE: result: None
-        # 2024-12-16 11:50:37,096 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 112 TRACE:  send_data_async after sleep
-        # 2024-12-16 11:50:37,096 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 74 TRACE: len(self.frame_data): 4, self.expected_frames: 4
-        # 2024-12-16 11:50:37,097 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 83 TRACE: receive complete
-        # 2024-12-16 11:50:37,097 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 84 TRACE: receive complete: bytes(data)=0500004210690001010D3D070000000000010000000002000000000300000000040000000005000000000600000000000000000000000000000000000000000000000000000000006F000000
-        # 2024-12-16 11:50:37,098 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 89 TRACE: in function FrameCollector.add_frame called by FrameService.process_data
-        # 2024-12-16 11:50:37,098 geberit-aquaclean.aquaclean-core.Frames.FrameCollector 90 TRACE: len(self.TransactionCompleteFC.get_handlers(): 1 for on_transaction_complete
-        # 2024-12-16 11:50:37,098 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 37 TRACE: in invoke_async
-        # 2024-12-16 11:50:37,098 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 39 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:37,098 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 40 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:37,099 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 41 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:37,099 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 42 TRACE: inspect.iscoroutinefunction(handler): True
-        # 2024-12-16 11:50:37,099 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 43 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:37,099 geberit-aquaclean.aquaclean-core.Frames.FrameService 51 TRACE: in function FrameService.on_transaction_complete called by EventHandler.invoke_async
-        # 2024-12-16 11:50:37,099 geberit-aquaclean.aquaclean-core.Frames.FrameService 52 TRACE: len(self.TransactionCompleteFS.get_handlers(): 1 for on_transaction_complete
-        # 2024-12-16 11:50:37,099 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 22 TRACE: inspect.isawaitable(handler): False
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 23 TRACE: inspect.iscoroutine(handler): False
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 24 TRACE: inspect.isfunction(handler): False
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 25 TRACE: inspect.iscoroutinefunction(handler): False
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-console-app.myEvent.myEvent 26 TRACE: inspect.ismethod(handler): True
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 116 TRACE: in function AquaCleanBaseClient.on_transaction_completeForBaseClient called by EventHandler.__call__
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 117 TRACE: on_transaction_completeForBaseClient, sender: <geberit-aquaclean.aquaclean-core.Frames.FrameCollector.FrameCollector object at 0x7f871dc0b0>, data: b'\x05\x00\x00B\x10i\x00\x01\x01\r=\x07\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x02\x00\x00\x00\x00\x03\x00\x00\x00\x00\x04\x00\x00\x00\x00\x05\x00\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00o\x00\x00\x00'
-        # 2024-12-16 11:50:37,100 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 118 TRACE: self.event_wait_handle.clear()...
-        # 2024-12-16 11:50:37,101 geberit-aquaclean.aquaclean-core.Message.MessageService 17 TRACE: in function MessageService.parse_message1 called by AquaCleanBaseClient.on_transaction_completeForBaseClient
-        # 2024-12-16 11:50:37,101 geberit-aquaclean.aquaclean-core.Message.Message 22 TRACE: create_from_stream
-        # 2024-12-16 11:50:37,101 geberit-aquaclean.aquaclean-core.Message.MessageService 22 DEBUG: Parsing data to message with ID=5 Data=0500004210690001010d3d070000000000010000000002000000000300000000040000000005000000000600000000000000000000000000000000000000000000000000000000006f000000
-        # 2024-12-16 11:50:37,101 geberit-aquaclean.aquaclean-core.Message.CrcMessage 79 TRACE: in function CrcMessage.crc16_calculation
-        # 2024-12-16 11:50:37,103 geberit-aquaclean.aquaclean-core.Message.MessageService 44 DEBUG: Parsing message with Context=01, Procedure=0D, Data=07000000000001000000000200000000030000000004000000000500000000060000000000000000000000000000000000000000000000000000000000
-        # 2024-12-16 11:50:37,103 geberit-aquaclean.aquaclean-core.Message.MessageService 46 TRACE: context 01
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Message.MessageService 47 TRACE: procedure 0d
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Message.MessageService 48 TRACE: data.hex() 07000000000001000000000200000000030000000004000000000500000000060000000000000000000000000000000000000000000000000000000000
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Message.MessageService 55 TRACE: msgCtx.context 01
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Message.MessageService 56 TRACE: msgCtx.procedure 0d
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Message.MessageService 57 TRACE: msgCtx.result_bytes 07000000000001000000000200000000030000000004000000000500000000060000000000000000000000000000000000000000000000000000000000
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 125 TRACE: self.context_lookup not found
-        # 2024-12-16 11:50:37,104 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 127 TRACE: self.event_wait_queue.put("Transaction finished")
-        # 2024-12-16 11:50:37,105 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 129 TRACE: ###################### Transaction: set finished...
-        # 2024-12-16 11:50:37,105 geberit-aquaclean.aquaclean-core.Frames.FrameService 93 TRACE: nach self.frame_collector.add_frame
-        # 2024-12-16 11:50:37,196 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 277 TRACE: self.event_wait_queue.get()...
-        # 2024-12-16 11:50:37,196 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 279 TRACE: event_wait_queue_get_result: Transaction finished
-        # 2024-12-16 11:50:37,196 geberit-aquaclean.aquaclean-core.Clients.AquaCleanBaseClient 286 TRACE: nach await self.frame_service.send_frame_async(frame)
-
-        logger.trace(f"self.event_wait_queue.qsize(): {self.event_wait_queue.qsize()}")
-        event_wait_queue_get_result = "No value yet"
         # Normal request/response cycle is ~600 ms; 5 s is a generous safety margin.
         timeout_seconds = 5.0
-        start_time = time.time()
-        while True:
-            try:
-                logger.trace(f"self.event_wait_queue.get()...")
-                event_wait_queue_get_result = self.event_wait_queue.get(timeout=0.1)
-                logger.trace(f"event_wait_queue_get_result: {event_wait_queue_get_result}")
-                break
-            except Empty:
-                logger.trace(f"event_wait_queue_get_result - timeout")
-                logger.trace(f"event_wait_queue_get_result: {event_wait_queue_get_result}")
-                if time.time() - start_time > timeout_seconds:
-                    with self.lock:
-                        self.call_count -= 1
-                    error_msg = (
-                        f"No response from BLE peripheral "
-                        f"'{self.bluetooth_le_connector.device_name}' "
-                        f"({self.bluetooth_le_connector.device_address}). "
-                        f"Usually a restart of the BLE peripheral is required."
-                    )
-                    logger.error(error_msg)
-                    raise BLEPeripheralTimeoutError(error_msg)
-            await asyncio.sleep(0.1)
+        try:
+            logger.trace(f"awaiting _transaction_event (timeout={timeout_seconds}s)...")
+            await asyncio.wait_for(self._transaction_event.wait(), timeout=timeout_seconds)
+            logger.trace(f"_transaction_event set — transaction complete")
+        except asyncio.TimeoutError:
+            with self.lock:
+                self.call_count -= 1
+            error_msg = (
+                f"No response from BLE peripheral "
+                f"'{self.bluetooth_le_connector.device_name}' "
+                f"({self.bluetooth_le_connector.device_address}). "
+                f"Usually a restart of the BLE peripheral is required."
+            )
+            logger.error(error_msg)
+            raise BLEPeripheralTimeoutError(error_msg)
 
         logger.trace(f"nach await self.frame_service.send_frame_async(frame)")
 
