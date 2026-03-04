@@ -51,24 +51,29 @@ async def async_setup_entry(
         for key, name, unit, device_class, state_class, icon in SENSORS
     ]
     entities.append(AquaCleanBleConnectionSensor(coordinator, entry))
+
+    # Performance/timing/BLE RSSI stats — always added regardless of transport.
+    # Valid for both local BLE and ESP32 proxy modes; live on the main toilet device.
+    entities.append(AquaCleanLastConnectSensor(coordinator, entry))
+    entities.append(AquaCleanLastPollSensor(coordinator, entry))
+    entities.append(AquaCleanAvgConnectSensor(coordinator, entry))
+    entities.append(AquaCleanMinConnectSensor(coordinator, entry))
+    entities.append(AquaCleanMaxConnectSensor(coordinator, entry))
+    entities.append(AquaCleanAvgPollSensor(coordinator, entry))
+    entities.append(AquaCleanMinPollSensor(coordinator, entry))
+    entities.append(AquaCleanMaxPollSensor(coordinator, entry))
+    entities.append(AquaCleanStatCountSensor(coordinator, entry))
+    entities.append(AquaCleanTransportSensor(coordinator, entry))
+    entities.append(AquaCleanAvgBleRssiSensor(coordinator, entry))
+    entities.append(AquaCleanMinBleRssiSensor(coordinator, entry))
+    entities.append(AquaCleanMaxBleRssiSensor(coordinator, entry))
+
+    # ESP32 proxy-specific sensors — only when an ESPHome host is configured
     if coordinator._esphome_host:
         entities.append(AquaCleanEspHomeConnectionSensor(coordinator, entry))
         entities.append(AquaCleanProxyWifiSignalSensor(coordinator, entry))
         entities.append(AquaCleanProxyFreeHeapSensor(coordinator, entry))
         entities.append(AquaCleanProxyMaxFreeBlockSensor(coordinator, entry))
-        entities.append(AquaCleanProxyLastConnectSensor(coordinator, entry))
-        entities.append(AquaCleanProxyLastPollSensor(coordinator, entry))
-        entities.append(AquaCleanProxyAvgConnectSensor(coordinator, entry))
-        entities.append(AquaCleanProxyMinConnectSensor(coordinator, entry))
-        entities.append(AquaCleanProxyMaxConnectSensor(coordinator, entry))
-        entities.append(AquaCleanProxyAvgPollSensor(coordinator, entry))
-        entities.append(AquaCleanProxyMinPollSensor(coordinator, entry))
-        entities.append(AquaCleanProxyMaxPollSensor(coordinator, entry))
-        entities.append(AquaCleanProxyStatCountSensor(coordinator, entry))
-        entities.append(AquaCleanProxyTransportSensor(coordinator, entry))
-        entities.append(AquaCleanProxyAvgBleRssiSensor(coordinator, entry))
-        entities.append(AquaCleanProxyMinBleRssiSensor(coordinator, entry))
-        entities.append(AquaCleanProxyMaxBleRssiSensor(coordinator, entry))
         entities.append(AquaCleanProxyAvgWifiRssiSensor(coordinator, entry))
         entities.append(AquaCleanProxyMinWifiRssiSensor(coordinator, entry))
         entities.append(AquaCleanProxyMaxWifiRssiSensor(coordinator, entry))
@@ -203,8 +208,13 @@ class AquaCleanProxyMaxFreeBlockSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("esphome_max_free_block")
 
 
-class AquaCleanProxyLastConnectSensor(AquaCleanProxyEntity, SensorEntity):
-    """Sensor showing the last BLE+ESP32 connect time in milliseconds."""
+# ──────────────────────────────────────────────────────────────────────────────
+# Performance timing sensors — live on the main toilet device.
+# Valid for both local BLE and ESP32 proxy transports; always added.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class AquaCleanLastConnectSensor(AquaCleanEntity, SensorEntity):
+    """Sensor showing the last BLE connect time in milliseconds."""
 
     _attr_name = "Last Connect"
     _attr_native_unit_of_measurement = "ms"
@@ -223,7 +233,7 @@ class AquaCleanProxyLastConnectSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("last_connect_ms")
 
 
-class AquaCleanProxyLastPollSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanLastPollSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the last GATT data fetch time in milliseconds."""
 
     _attr_name = "Last Poll"
@@ -243,7 +253,7 @@ class AquaCleanProxyLastPollSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("last_poll_ms")
 
 
-class AquaCleanProxyAvgConnectSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanAvgConnectSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the rolling average connect time in milliseconds."""
 
     _attr_name = "Avg Connect"
@@ -263,27 +273,7 @@ class AquaCleanProxyAvgConnectSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("avg_connect_ms")
 
 
-class AquaCleanProxyAvgPollSensor(AquaCleanProxyEntity, SensorEntity):
-    """Sensor showing the rolling average poll time in milliseconds."""
-
-    _attr_name = "Avg Poll"
-    _attr_native_unit_of_measurement = "ms"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:chart-bar"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_avg_poll_ms"
-
-    @property
-    def native_value(self) -> float | None:
-        if self.coordinator.data is None:
-            return None
-        return self.coordinator.data.get("avg_poll_ms")
-
-
-class AquaCleanProxyMinConnectSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanMinConnectSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the session minimum connect time in milliseconds."""
 
     _attr_name = "Min Connect"
@@ -303,7 +293,7 @@ class AquaCleanProxyMinConnectSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("min_connect_ms")
 
 
-class AquaCleanProxyMaxConnectSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanMaxConnectSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the session maximum connect time in milliseconds."""
 
     _attr_name = "Max Connect"
@@ -323,7 +313,27 @@ class AquaCleanProxyMaxConnectSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("max_connect_ms")
 
 
-class AquaCleanProxyMinPollSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanAvgPollSensor(AquaCleanEntity, SensorEntity):
+    """Sensor showing the rolling average poll time in milliseconds."""
+
+    _attr_name = "Avg Poll"
+    _attr_native_unit_of_measurement = "ms"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-bar"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_avg_poll_ms"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("avg_poll_ms")
+
+
+class AquaCleanMinPollSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the session minimum GATT fetch time in milliseconds."""
 
     _attr_name = "Min Poll"
@@ -343,7 +353,7 @@ class AquaCleanProxyMinPollSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("min_poll_ms")
 
 
-class AquaCleanProxyMaxPollSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanMaxPollSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the session maximum GATT fetch time in milliseconds."""
 
     _attr_name = "Max Poll"
@@ -363,7 +373,7 @@ class AquaCleanProxyMaxPollSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("max_poll_ms")
 
 
-class AquaCleanProxyStatCountSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanStatCountSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the number of successful polls since HA started."""
 
     _attr_name = "Poll Samples"
@@ -383,7 +393,7 @@ class AquaCleanProxyStatCountSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("stat_count")
 
 
-class AquaCleanProxyTransportSensor(AquaCleanProxyEntity, SensorEntity):
+class AquaCleanTransportSensor(AquaCleanEntity, SensorEntity):
     """Sensor showing the transport type: bleak / esp32-wifi / esp32-eth."""
 
     _attr_name = "Transport"
@@ -401,8 +411,12 @@ class AquaCleanProxyTransportSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("transport")
 
 
-class AquaCleanProxyAvgBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
-    """Sensor showing the session average BLE signal strength (ESP32 ↔ toilet)."""
+# ──────────────────────────────────────────────────────────────────────────────
+# BLE RSSI statistics — live on the main toilet device; always added.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class AquaCleanAvgBleRssiSensor(AquaCleanEntity, SensorEntity):
+    """Sensor showing the session average BLE signal strength."""
 
     _attr_name = "Avg BLE RSSI"
     _attr_native_unit_of_measurement = "dBm"
@@ -422,8 +436,8 @@ class AquaCleanProxyAvgBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("avg_ble_rssi")
 
 
-class AquaCleanProxyMinBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
-    """Sensor showing the session worst BLE signal strength (ESP32 ↔ toilet)."""
+class AquaCleanMinBleRssiSensor(AquaCleanEntity, SensorEntity):
+    """Sensor showing the session worst BLE signal strength."""
 
     _attr_name = "Min BLE RSSI"
     _attr_native_unit_of_measurement = "dBm"
@@ -443,8 +457,8 @@ class AquaCleanProxyMinBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
         return self.coordinator.data.get("min_ble_rssi")
 
 
-class AquaCleanProxyMaxBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
-    """Sensor showing the session best BLE signal strength (ESP32 ↔ toilet)."""
+class AquaCleanMaxBleRssiSensor(AquaCleanEntity, SensorEntity):
+    """Sensor showing the session best BLE signal strength."""
 
     _attr_name = "Max BLE RSSI"
     _attr_native_unit_of_measurement = "dBm"
@@ -463,6 +477,10 @@ class AquaCleanProxyMaxBleRssiSensor(AquaCleanProxyEntity, SensorEntity):
             return None
         return self.coordinator.data.get("max_ble_rssi")
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# WiFi RSSI statistics — ESP32 proxy only; live on the proxy device.
+# ──────────────────────────────────────────────────────────────────────────────
 
 class AquaCleanProxyAvgWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
     """Sensor showing the session average WiFi signal strength (ESP32 ↔ router)."""
