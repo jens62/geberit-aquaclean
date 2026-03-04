@@ -373,7 +373,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"{E7002.code} — {E7002.message}: {exc}") from exc
         finally:
             try:
-                await connector.disconnect()
+                # 5 s hard limit: BlueZ can block for 20-30 s retrying HCI Disconnect
+                # when the BLE peripheral has gone quiet mid-transaction, which blocks
+                # the asyncio event loop and makes HA unresponsive until the watchdog fires.
+                async with asyncio.timeout(5.0):
+                    await connector.disconnect()
             except Exception:
                 pass
 
@@ -408,6 +412,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Unknown command: %s", command)
         finally:
             try:
-                await connector.disconnect()
+                async with asyncio.timeout(5.0):
+                    await connector.disconnect()
             except Exception:
                 pass
