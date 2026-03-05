@@ -650,24 +650,28 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     async def disconnect(self):
         logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         if self.client:
-            # Explicitly stop all GATT notifications before disconnecting.
-            # Without this BlueZ keeps the characteristics "Notifying: True" for ~25-30 s
-            # after physical disconnect.  If the next BLE session starts within that window
-            # (e.g. a scheduled poll 15 s after a fast SetCommand session) start_notify()
-            # fails with [org.bluez.Error.NotPermitted] Notify acquired → E0003.
+            # Log is_connected status — when False (Geberit dropped the BLE link during
+            # the 1 s post-command sleep), bleak's disconnect() returns early without
+            # closing the D-Bus MessageBus, leaving BlueZ with a live notification
+            # subscription that causes "Notify acquired" on the next start_notify call.
+            is_connected = self.client.is_connected
+            logger.debug(f"[disconnect] is_connected={is_connected}, subscribed chars={len(self._subscribed_characteristics)}")
             for char in self._subscribed_characteristics:
                 try:
                     await self.client.stop_notify(char)
-                except Exception:
-                    pass
+                    logger.debug(f"[disconnect] stop_notify OK: {char.uuid}")
+                except Exception as e:
+                    logger.debug(f"[disconnect] stop_notify FAILED: {char.uuid}: {type(e).__name__}: {e}")
             self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             await self.client.disconnect()
-            # Release the BleakClient immediately so BlueZ closes its D-Bus application
-            # and frees the GATT notification subscriptions before the next session.
-            # BleakClient is only ever held by self.client, so setting it to None drops
-            # the refcount to zero and triggers __del__ synchronously — no GC cycle needed.
+            # Release the BleakClient so Python GC can close its D-Bus MessageBus.
+            # bleak's internal GC cycles (MessageBus ↔ signal handlers) require the
+            # cyclic collector — gc.collect() runs it immediately instead of waiting
+            # for the next scheduled GC pass (~60-90 s under HA's allocation pattern).
             self.client = None
+            import gc
+            gc.collect()
         else:
             logger.silly(f"not self.client, no need to disconnect BLE.")
             # No BLE client means the scan timed out (device not found) before BLE connect.
