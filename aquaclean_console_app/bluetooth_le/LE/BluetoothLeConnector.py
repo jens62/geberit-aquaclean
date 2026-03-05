@@ -663,6 +663,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             await self.client.disconnect()
+            # Release the BleakClient immediately so BlueZ closes its D-Bus application
+            # and frees the GATT notification subscriptions before the next session.
+            # BleakClient is only ever held by self.client, so setting it to None drops
+            # the refcount to zero and triggers __del__ synchronously — no GC cycle needed.
+            self.client = None
         else:
             logger.silly(f"not self.client, no need to disconnect BLE.")
             # No BLE client means the scan timed out (device not found) before BLE connect.
