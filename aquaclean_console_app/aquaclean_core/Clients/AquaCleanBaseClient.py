@@ -175,7 +175,12 @@ class AquaCleanBaseClient:
     async def SetCommandAsync(self, command):
         logger.info(f"SetCommandAsync: {command.name} (code={command.value})")
         await self.send_request(SetCommand(command))
-        await asyncio.sleep(1)
+        # No sleep here: send_request() already waits for the ACK from the device,
+        # confirming the command was received and processed.  Sleeping after the ACK
+        # gives the Geberit time to drop the BLE link, which causes bleak's disconnect()
+        # to take the is_connected=False early-return path and NOT close its D-Bus
+        # MessageBus — leaving BlueZ with a stale notification subscription that
+        # triggers "Notify acquired" on the next session's start_notify call (E0003).
 
 
     # not yet implemented
