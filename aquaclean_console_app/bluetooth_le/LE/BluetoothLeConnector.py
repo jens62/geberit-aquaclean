@@ -530,6 +530,17 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     logger.silly(f"got characteristic.uuid {characteristic.uuid}")
                     if characteristic.uuid in str(self.read_characteristics):
                         logger.silly(f"Registering characteristic {characteristic.uuid} for notification.")
+                        # Preemptively release any stale BlueZ notification subscription from
+                        # a previous session.  If stop_notify() in disconnect() failed (e.g.
+                        # because the connection broke mid-command), BlueZ still holds
+                        # "Notifying: True" on the D-Bus characteristic object — the next
+                        # start_notify() then fails with [org.bluez.Error.NotPermitted].
+                        # Calling stop_notify() here before start_notify() clears that state.
+                        # Harmless if the characteristic is not currently notifying.
+                        try:
+                            await self.client.stop_notify(characteristic)
+                        except Exception:
+                            pass
                         await self.client.start_notify(characteristic, self._on_data_received)
                         self._subscribed_characteristics.append(characteristic)
 
