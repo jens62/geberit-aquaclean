@@ -173,7 +173,7 @@ class AquaCleanBaseClient:
 
         
     async def SetCommandAsync(self, command):
-        logger.debug(f"SetCommandAsync: SetCommand.SetCommand(command): {SetCommand(command)}")
+        logger.info(f"SetCommandAsync: {command.name} (code={command.value})")
         await self.send_request(SetCommand(command))
         await asyncio.sleep(1)
 
