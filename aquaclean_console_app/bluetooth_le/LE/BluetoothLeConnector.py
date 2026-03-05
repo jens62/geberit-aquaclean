@@ -75,6 +75,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._esphome_free_heap_key: int | None = None       # aioesphomeapi entity key for free heap sensor
         self._esphome_max_free_block_key: int | None = None  # aioesphomeapi entity key for max free block sensor
         self._hass = hass  # Home Assistant instance (HACS integration only); None = standalone bridge
+        self._subscribed_characteristics: list = []  # BleakGATTCharacteristic objects registered via start_notify()
 
 
     async def connect_async(self, device_id):
@@ -530,6 +531,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     if characteristic.uuid in str(self.read_characteristics):
                         logger.silly(f"Registering characteristic {characteristic.uuid} for notification.")
                         await self.client.start_notify(characteristic, self._on_data_received)
+                        self._subscribed_characteristics.append(characteristic)
 
 
     async def _on_data_received(self, sender, data):
@@ -636,6 +638,17 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     async def disconnect(self):
         logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         if self.client:
+            # Explicitly stop all GATT notifications before disconnecting.
+            # Without this BlueZ keeps the characteristics "Notifying: True" for ~25-30 s
+            # after physical disconnect.  If the next BLE session starts within that window
+            # (e.g. a scheduled poll 15 s after a fast SetCommand session) start_notify()
+            # fails with [org.bluez.Error.NotPermitted] Notify acquired → E0003.
+            for char in self._subscribed_characteristics:
+                try:
+                    await self.client.stop_notify(char)
+                except Exception:
+                    pass
+            self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             await self.client.disconnect()
         else:
