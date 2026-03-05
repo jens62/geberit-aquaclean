@@ -539,8 +539,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         # Harmless if the characteristic is not currently notifying.
                         try:
                             await self.client.stop_notify(characteristic)
-                        except Exception:
-                            pass
+                            logger.debug(f"Preemptive stop_notify OK: {characteristic.uuid}")
+                        except Exception as _stop_exc:
+                            logger.debug(f"Preemptive stop_notify failed (expected if not notifying): {characteristic.uuid}: {type(_stop_exc).__name__}: {_stop_exc}")
                         await self.client.start_notify(characteristic, self._on_data_received)
                         self._subscribed_characteristics.append(characteristic)
 
