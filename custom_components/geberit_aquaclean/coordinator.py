@@ -96,6 +96,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=poll_interval),
         )
 
+        try:
+            from importlib.metadata import version as _pkg_version
+            _LOGGER.info("geberit-aquaclean package version: %s", _pkg_version("geberit-aquaclean"))
+        except Exception:
+            _LOGGER.info("geberit-aquaclean package version: unknown")
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
