@@ -409,14 +409,16 @@ class ManualReconnectRequested(Exception):
 class NullMqttService:
     """Drop-in replacement for MqttService when MQTT is disabled."""
     def __init__(self):
-        self.ToggleLidPosition = myEvent.EventHandler()
-        self.Connect           = myEvent.EventHandler()
-        self.ToggleAnal        = myEvent.EventHandler()
-        self.SetBleConnection  = myEvent.EventHandler()
-        self.SetPollInterval   = myEvent.EventHandler()
-        self.Disconnect        = myEvent.EventHandler()
-        self.ConnectESP32      = myEvent.EventHandler()
+        self.ToggleLidPosition       = myEvent.EventHandler()
+        self.Connect                 = myEvent.EventHandler()
+        self.ToggleAnal              = myEvent.EventHandler()
+        self.SetBleConnection        = myEvent.EventHandler()
+        self.SetEsphomeApiConnection = myEvent.EventHandler()
+        self.SetPollInterval         = myEvent.EventHandler()
+        self.Disconnect              = myEvent.EventHandler()
+        self.ConnectESP32            = myEvent.EventHandler()
         self.DisconnectESP32         = myEvent.EventHandler()
+        self.RestartESP32            = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
