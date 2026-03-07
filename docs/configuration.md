@@ -3,9 +3,10 @@
 All settings live in `aquaclean_console_app/config.ini`.  The file is always resolved relative to `main.py`, so you can invoke the script from any working directory.
 
 ```ini
+; [MQTT] is optional — omit the section or comment out server to disable MQTT.
 [MQTT]
 client   = aquaclean_python
-server   = 192.168.0.xxx     # IP address of your MQTT broker
+server   = 192.168.0.xxx     # IP address of your MQTT broker; comment out to disable MQTT
 port     = 1883
 topic    = Geberit/AquaClean  # root prefix for every published topic
 ; username = monty
@@ -50,10 +51,15 @@ log_level = DEBUG                # DEBUG | INFO | WARNING | TRACE
 
 ### `[MQTT]`
 
+The entire `[MQTT]` section is **optional**. MQTT is disabled automatically when:
+- the `[MQTT]` section is absent, OR
+- `server` is commented out or empty, OR
+- `mqtt_enabled = false` is set in `[SERVICE]`
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `client` | `aquaclean_python` | MQTT client ID (a timestamp is appended at runtime to avoid collisions). |
-| `server` | — | IP address or hostname of the MQTT broker. **Required.** |
+| `server` | — | IP address or hostname of the MQTT broker. Leave empty or comment out to disable MQTT. |
 | `port` | `1883` | MQTT broker port. |
 | `topic` | `Geberit/AquaClean` | Root topic prefix. All published and subscribed topics are prefixed with this value. |
 | `username` | *(commented out)* | Optional MQTT username. |
@@ -71,7 +77,7 @@ A longer interval reduces BLE request frequency, which can help avoid the device
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mqtt_enabled` | `true` | When `true`, every REST API result and every state change is published to the MQTT broker. When `false`, a silent no-op stub is used — no guards are needed in application code. |
+| `mqtt_enabled` | `true` | Explicit MQTT disable switch. When `false`, MQTT is disabled regardless of the `[MQTT]` section. When `true` (default), MQTT is active only if `[MQTT] server` is also set. A no-op stub is used when MQTT is disabled — no guards are needed in application code. |
 | `ble_connection` | `persistent` | Controls the BLE connection strategy in **api mode**. `persistent` keeps a permanent BLE connection and polls on a timer (same as service mode). `on-demand` connects, queries, and disconnects for each request. Can be switched at runtime via `POST /config/ble-connection` or the MQTT topic `centralDevice/config/bleConnection`. Has no effect in service or cli mode. |
 | `ha_discovery_on_startup` | `true` | When `true`, all Home Assistant MQTT discovery entities are (re-)published automatically each time the bridge starts, immediately after MQTT connects. No manual `publish-ha-discovery` command needed. Set to `false` to disable automatic publishing. Can also be overridden per-run with `--ha-discovery` / `--no-ha-discovery` on the command line. |
 
