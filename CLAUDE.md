@@ -411,6 +411,70 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **Fix `send_request()` — `call_count` not decremented on `asyncio.CancelledError`.**
+  **File:** `aquaclean_core/Clients/AquaCleanBaseClient.py`, `send_request()`, lines ~315–334.
+
+  **The bug:** `call_count` is decremented on `asyncio.TimeoutError` and on success, but the
+  `except asyncio.TimeoutError` block does NOT catch `asyncio.CancelledError`. When the asyncio
+  task running `send_request()` is cancelled externally (e.g. by ServiceMode's inner loop when
+  `_poll_interval_event` fires), `CancelledError` propagates out of
+  `await asyncio.wait_for(self._transaction_event.wait(), ...)` and `call_count` stays at 1
+  permanently. Every subsequent `send_request()` call blocks forever on
+  `while self.call_count > 0: await asyncio.sleep(0.1)`.
+
+  **Why this matters:** ServiceMode's inner polling loop cancels the running `polling_task`
+  whenever `_poll_interval_event` is set (e.g. from an MQTT retained `pollInterval` message or
+  a REST `POST /config/poll-interval` call during startup). If the cancellation lands while
+  `polling_task` is inside `send_request()` at `await asyncio.wait_for(...)`, `call_count`
+  freezes at 1. All polling dies permanently until restart. The bridge appears alive (REST,
+  SSE still work) but never polls again.
+
+  **Fix:** replace the two separate `call_count -= 1` sites with a single `finally` block:
+  ```python
+  with self.lock:
+      self.call_count += 1
+  try:
+      # ... build frame, send, sleep ...
+      await asyncio.wait_for(self._transaction_event.wait(), timeout=timeout_seconds)
+  except asyncio.TimeoutError:
+      raise BLEPeripheralTimeoutError(...)
+  finally:
+      with self.lock:
+          self.call_count -= 1   # always decrement — TimeoutError, CancelledError, success
+  ```
+
+  **Confirmed in:** `aquaclean-silly_2026-03-06_16-17-48.log` (v2.4.59rc0, Ubuntu 24.04,
+  `ble_connection=persistent`). See `docs/developer/polling-architecture.md` for full analysis.
+
+- **Fix `wait_for_info_frames_async` — add absolute timeout to prevent indefinite blocking.**
+  **File:** `aquaclean_core/Frames/FrameService.py`, `wait_for_info_frames_async()`.
+
+  On some devices, the InfoFrame flood after a BLE reconnect (not first connect) lasts up to
+  ~3 minutes. `wait_for_info_frames_async` currently exits only when the count has been stable
+  for 20 polls (2s) or reached ≥ 10. If the device floods continuously for minutes, this blocks
+  `connect_async()` and therefore all of ServiceMode, causing every `_polling_loop` attempt to
+  time out during the wait.
+
+  **Why this matters:** The 2m50s block is also the window during which an MQTT retained message
+  or REST call can set `_poll_interval_event`, triggering the `send_request()` race above. A
+  hard cap (e.g. 60s) would:
+  1. Reduce the window during which the trigger can fire
+  2. Allow polling to start sooner (with some InfoFrame noise, which the code already ignores)
+
+  **Suggested fix:** add an absolute wall-clock deadline to `wait_for_info_frames_async`:
+  ```python
+  deadline = asyncio.get_event_loop().time() + 60.0   # 60s hard cap
+  while True:
+      await asyncio.sleep(0.1)
+      if asyncio.get_event_loop().time() >= deadline:
+          logger.warning("wait_for_info_frames_async: hard timeout (60s), proceeding")
+          break
+      # existing stability check...
+  ```
+  The 60s cap is a safe margin: on healthy first connects it finishes in ~1s; on problem
+  reconnects it currently blocks up to 3 minutes.
+
+  **Confirmed in:** same log as above. See `docs/developer/polling-architecture.md`.
 
 - **HACS: Download button for Performance Statistics panel.**
   HA's Lovelace markdown card has no built-in download mechanism. Three options:

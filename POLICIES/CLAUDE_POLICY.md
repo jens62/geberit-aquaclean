@@ -39,3 +39,14 @@ New functionality must, by default, be available on **all** supported interfaces
 - CI must run an automatic interface‑check and block merges on violations.
 - All policy decisions must be logged (plugin log entry id plus brief evidence).
 
+---
+
+### CLAUDE Policy: Plan Before Code
+
+Before writing or modifying any code, Claude must always:
+1. State what it found (relevant files, current behaviour, root cause).
+2. Describe the change it plans to make and why.
+3. Wait for explicit user approval before touching any file.
+
+This applies to all code changes — bug fixes, refactors, new features, and one-liners alike.
+

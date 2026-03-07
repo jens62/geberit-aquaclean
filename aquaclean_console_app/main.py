@@ -479,12 +479,19 @@ class ServiceMode:
         self._esphome_log_api = None  # Persistent API connection for log streaming
         self._esphome_log_unsub = None  # Log unsubscribe function
 
-        if mqtt_enabled:
+        # MQTT is active only when explicitly enabled AND a server address is configured.
+        # Gracefully handles: no [MQTT] section, missing server key, empty server value.
+        mqtt_server = config.get("MQTT", "server", fallback="").strip() if mqtt_enabled else ""
+        if mqtt_server:
             self.mqttConfig = dict(config.items('MQTT'))
             self.mqtt_service = Mqtt(self.mqttConfig)
         else:
             self.mqttConfig = {"topic": config.get("MQTT", "topic", fallback="Geberit/AquaClean")}
             self.mqtt_service = NullMqttService()
+            if not mqtt_enabled:
+                logger.info("MQTT disabled (mqtt_enabled=false)")
+            else:
+                logger.info("MQTT disabled (no server configured in [MQTT] section)")
 
     async def run(self):
         # 1. Initialize MQTT with wait queue (once)
@@ -1407,7 +1414,8 @@ class ApiMode:
             # Start in standby — loop waits on _connection_allowed until switched
             self.service._connection_allowed.clear()
 
-        logger.info(f"API mode: ble_connection={self.ble_connection}, esphome_api_connection={self.esphome_api_connection if esphome_host else 'N/A'}, mqtt_enabled={mqtt_enabled}, {api_host}:{api_port}")
+        mqtt_active = mqtt_enabled and bool(config.get("MQTT", "server", fallback="").strip())
+        logger.info(f"API mode: ble_connection={self.ble_connection}, esphome_api_connection={self.esphome_api_connection if esphome_host else 'N/A'}, mqtt={'enabled' if mqtt_active else 'disabled'}, {api_host}:{api_port}")
 
     @staticmethod
     def _http_error(status_code: int, error_code, details: str = None):
