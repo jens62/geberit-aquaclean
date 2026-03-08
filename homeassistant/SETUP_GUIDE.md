@@ -1,4 +1,10 @@
-# Geberit AquaClean Home Assistant Integration
+# Geberit AquaClean Home Assistant Integration — MQTT Discovery
+
+This guide covers the **standalone bridge + MQTT Discovery** integration path.
+
+> **Looking for the HACS native integration?** A native HA integration (no MQTT broker required)
+> is available and installable directly via HACS.  See
+> [docs/home-assistant.md](../docs/home-assistant.md) for setup instructions.
 
 This guide provides complete setup instructions for integrating a Geberit AquaClean smart toilet with Home Assistant via MQTT.
 
@@ -18,46 +24,43 @@ This guide provides complete setup instructions for integrating a Geberit AquaCl
 
 ## Architecture
 
-### Why MQTT Integration Instead of a Custom Component?
+### Two integration paths
 
-This integration uses **MQTT** rather than a native Home Assistant custom component. This architectural choice is intentional and optimal for Bluetooth LE devices:
+Two integration methods are available — choose the one that matches your setup:
 
-#### The BLE Proximity Challenge
+| | MQTT Discovery (this guide) | HACS native integration |
+|---|---|---|
+| **MQTT broker required** | Yes | No |
+| **Raspberry Pi / Linux server required** | Yes (near toilet) | No |
+| **ESPHome proxy supported** | Yes | Yes |
+| **Works with openHAB / Node-RED** | Yes | No |
+| **Recommended for** | Existing MQTT setups; multi-system environments | Simpler setups; HA-only environments |
 
-The Geberit AquaClean communicates via **Bluetooth Low Energy (BLE)**, which has a limited range (typically 10-30 meters, much less through walls). The device running the AquaClean software **must be physically close to the toilet**.
-
-#### Current Architecture (Optimal)
+#### MQTT Discovery architecture
 
 ```
 AquaClean (BLE) ← → Raspberry Pi (Bridge) → MQTT Broker → Home Assistant
    [Bathroom]           [Bathroom]           [Network]      [Anywhere]
 ```
 
-**Benefits:**
-- ✅ Small, inexpensive Raspberry Pi placed near the toilet handles BLE
-- ✅ MQTT broker distributes data across your network
-- ✅ Home Assistant can run anywhere (cellar, server room, etc.)
-- ✅ Easy to hide a small RPi in the bathroom
-- ✅ Works with any MQTT-capable system (Home Assistant, openHAB, Node-RED)
-- ✅ Decoupled architecture - debug BLE issues without touching HA
-- ✅ Scalable - multiple toilets = multiple Raspberry Pis
+The standalone bridge runs on a Raspberry Pi or Linux server near the toilet and publishes device state to MQTT.  Home Assistant (and any other MQTT-capable system) subscribes to those topics.
 
-#### Why Not a Custom Component?
+#### HACS native integration architecture
 
-A custom Home Assistant component would still require:
-1. A device near the toilet to handle BLE communication
-2. Some protocol (like MQTT) to communicate with Home Assistant
-3. Additional complexity without solving the proximity requirement
+```
+AquaClean (BLE) ← → ESPHome proxy ← → Home Assistant (HACS integration)
+   [Bathroom]           [Bathroom]             [Anywhere]
+```
 
-This MQTT-based approach is the industry-standard pattern for BLE devices, similar to how Philips Hue uses a bridge or Zigbee uses coordinators.
+The HACS integration runs inside Home Assistant and polls the AquaClean directly — via an ESPHome proxy over TCP (recommended) or a local BLE adapter on the HA machine.  No separate bridge process, no MQTT broker required.  See [docs/home-assistant.md](../docs/home-assistant.md) for setup.
 
 ## Prerequisites
 
 - Home Assistant installed (OS, Supervised, Container, or Core)
-- MQTT broker configured and running
+- MQTT broker configured and running (required for this MQTT Discovery path)
 - MQTT integration enabled in Home Assistant
 - Custom Button Card installed from HACS (for advanced dashboard)
-- Geberit AquaClean device publishing to MQTT
+- Geberit AquaClean device publishing to MQTT (via the standalone bridge)
 
 ## Installation
 
@@ -187,6 +190,9 @@ You have **two options** for configuring the entities in Home Assistant:
      - 2 switches (lid control, anal shower)
 
 ## Upgrading
+
+> **Using the HACS integration instead?** Upgrade through HACS → Integrations →
+> Geberit AquaClean → ⋮ → Redownload.  Then restart Home Assistant.
 
 **Upgrade the bridge** (preserves your `config.ini`):
 
