@@ -4,12 +4,12 @@ Two integration methods are available:
 
 | Method | Requires | Status |
 |--------|----------|--------|
-| **HACS native integration** | HACS installed in HA | Beta — see below |
+| **HACS native integration** | HACS installed in HA | Stable |
 | **MQTT Discovery** (standalone bridge) | MQTT broker + Raspberry Pi / server near the toilet | Stable |
 
 ---
 
-## HACS native integration (beta)
+## HACS native integration
 
 No MQTT broker required. The integration talks directly to the AquaClean over BLE
 (local adapter or ESPHome proxy) from within Home Assistant.
@@ -19,15 +19,12 @@ No MQTT broker required. The integration talks directly to the AquaClean over BL
 1. **Add the custom repository** — HACS → ⋮ → **Custom repositories**
    → URL: `https://github.com/jens62/geberit-aquaclean` → category **Integration** → Add
 
-2. **Enable beta versions** — HACS → Settings → enable **Show beta versions**
-   (or "Experimental features", depending on your HACS version)
-
-3. **Install** — HACS → Integrations → search **Geberit AquaClean**
+2. **Install** — HACS → Integrations → search **Geberit AquaClean**
    → Download → select the latest version
 
-4. **Restart Home Assistant**
+3. **Restart Home Assistant**
 
-5. **Configure** — Settings → Devices & Services → **Add Integration**
+4. **Configure** — Settings → Devices & Services → **Add Integration**
    → search **Geberit AquaClean** → fill in:
    - BLE MAC address of your AquaClean (e.g. `38:AB:41:2A:0D:67`)
    - ESPHome Proxy Host (optional — recommended if the toilet is not in BLE range of HA)
@@ -49,6 +46,13 @@ The **ESPHome Proxy Host** field is the only switch:
 No separate toggle exists — the presence of the host determines which path is used.
 The ESPHome port defaults to `6053`; the encryption key is optional (leave blank for
 unencrypted, which is the recommended default on a trusted home LAN).
+
+> **Raspberry Pi built-in adapter (BCM4345 + bleak 2.1.1):** On a Raspberry Pi 5 running
+> HA OS, the built-in Bluetooth chip cannot scan and maintain a GATT connection simultaneously.
+> This causes repeated 36-second timeouts until the device drops from HA's BLE cache, making
+> local BLE unreliable on this hardware.  The **ESPHome proxy is the recommended transport**
+> for Raspberry Pi installations.  A USB Bluetooth dongle on the same machine may also work
+> (untested).
 
 ### Changing settings after setup (options flow)
 
@@ -103,8 +107,15 @@ Useful levels:
 
 ### Dashboard card (button-card)
 
-A ready-made dashboard using [Custom Button Card](https://github.com/custom-cards/button-card)
-is provided at `homeassistant/dashboard_button_card_hacs.yaml`.
+Two ready-made dashboards are provided:
+
+- **`homeassistant/lovelace/dashboard.yaml`** — recommended; uses
+  [custom:button-card](https://github.com/custom-cards/button-card) and
+  [custom:timer-bar-card](https://github.com/rianadon/timer-bar-card) (both installable
+  from HACS Frontend).  Includes poll countdown, BLE / WiFi signal bars, and live status tiles.
+  Also requires the two template sensors from `homeassistant/configuration_hacs.yaml`.
+- **`homeassistant/dashboard_button_card_hacs.yaml`** — simpler alternative; uses only
+  custom:button-card, no timer-bar-card.
 
 **Install the SVG icons first** — the card uses custom Geberit graphics that must be
 copied manually to `/config/www/custom_icons/geberit/` on your HA instance
@@ -132,8 +143,8 @@ different IDs on your instance, check **Developer Tools → States** and update 
 | MQTT version | HACS version |
 |---|---|
 | Toggle Lid / Shower are `switch` entities | They are `button` entities — tapping triggers the action |
-| Connection Status section | Not present — no connected/error sensors |
-| ESPHome Proxy Status section | Not present — proxy handled internally |
+| Connection Status section | `binary_sensor` + `sensor` entities available; see entity list below |
+| ESPHome Proxy Status section | `binary_sensor` + `sensor` entities available; proxy handled internally |
 
 ### Web UI
 
@@ -160,16 +171,20 @@ HA registers three devices under **Settings → Devices & Services**:
 
 | Platform | Entity |
 |----------|--------|
-| Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
+| Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running, BLE Connected |
 | Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
+| Sensor (connection) | BLE Connection (device name + MAC), BLE Signal (dBm) |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
-| Sensor (poll) | Last Poll, Poll Interval, Next Poll |
+| Sensor (poll) | Last Poll ms, Poll Interval, Next Poll |
+| Sensor (stats) | Avg Connect ms, Min Connect ms, Avg Poll ms, Min Poll ms, Avg BLE ms, Min BLE ms, Avg BLE RSSI, Min BLE RSSI, Poll Count, Avg WiFi ms, Min WiFi ms, Avg WiFi RSSI, Min WiFi RSSI |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
 
 **AquaClean Proxy** *(only when ESPHome host is configured)*
 
 | Platform | Entity |
 |----------|--------|
+| Binary sensor | Proxy Connected |
+| Sensor | Proxy Connection (device name + host:port), WiFi Signal (dBm) |
 | Button | Restart AquaClean Proxy |
 
 ---
