@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Update dropdown
-        uses: ShaMan123/gha-form-dropdown-options@master
+        uses: ShaMan123/gha-form-dropdown-options@main
         with:
           file: .github/ISSUE_TEMPLATE/bug_report.yml
           field-id: version # This must match the 'id' in your bug_report.yml
