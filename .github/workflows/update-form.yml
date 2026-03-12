@@ -6,6 +6,9 @@ on:
   release:
     types: [published, deleted]
 
+permissions:
+  contents: write  # This allows the action to commit the changes
+
 jobs:
   update-form:
     runs-on: ubuntu-latest
