@@ -1,0 +1,17 @@
+name: Update Issue Form Versions
+on:
+  release:
+    types: [published, deleted]
+
+jobs:
+  update-form:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update dropdown
+        uses: ShaMan123/gha-form-dropdown-options@v2
+        with:
+          file: .github/ISSUE_TEMPLATE/bug_report.yml
+          field-id: version # This must match the 'id' in your bug_report.yml
+          options: github-releases
+          token: ${{ secrets.GITHUB_TOKEN }}
