@@ -21,9 +21,9 @@ jobs:
           form: .github/ISSUE_TEMPLATE/bug-report.yaml 
           # Changed 'field-id' to 'dropdown'
           dropdown: version 
-          # This is the 'magic' line from the template
+          # We use the 'dynamic' variable syntax here
           options: |
-            -
+            - "{{...}}"
           # Use 'strategy' to actually fetch the data
           strategy: github-tags 
           # Changed 'token' to 'github_token'
