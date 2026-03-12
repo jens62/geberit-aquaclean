@@ -1,17 +1,264 @@
 name: Update Issue Form Versions
 on:
+  push:
+    branches: [ feat/issue-templates ]
+  workflow_dispatch:
   release:
     types: [published, deleted]
+
+permissions:
+  contents: write
 
 jobs:
   update-form:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Update dropdown
-        uses: ShaMan123/gha-form-dropdown-options@v2
-        with:
-          file: .github/ISSUE_TEMPLATE/bug_report.yml
-          field-id: version # This must match the 'id' in your bug_report.yml
-          options: github-releases
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq (optional)
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Fetch latest tags (build JSON array)
+        id: fetch_tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get up to 20 tags (adjust as needed)
+          TAGS_JSON=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/tags?per_page=100" \
+            | jq -r '[.[].name] | map(select(. != null)) | .[:20] | @json')
+          echo "tags=$TAGS_JSON" >> $GITHUB_OUTPUT
+
+      - name: Debug before update
+        env:
+          FILE: .github/ISSUE_TEMPLATE/bug-report.yaml
+          TAGS_JSON: ${{ steps.fetch_tags.outputs.tags }}
+        run: |
+          echo "Working directory: $(pwd)"
+          echo "FILE env: $FILE"
+          echo "TAGS_JSON preview: ${TAGS_JSON:0:200}"
+          echo "List ISSUE_TEMPLATE directory:"
+          ls -la .github/ISSUE_TEMPLATE || true
+
+      - name: Update dropdown options for "id" version (no external deps)
+        env:
+          FILE: .github/ISSUE_TEMPLATE/bug-report.yaml
+          TAGS_JSON: ${{ steps.fetch_tags.outputs.tags }}
+        run: |
+          python3 - <<'PY'
+          import os, json, re, sys
+          from pathlib import Path
+
+          FILE = os.environ.get("FILE")
+          TAGS_JSON = os.environ.get("TAGS_JSON", "[]")
+
+          if not FILE:
+              print("ERROR: FILE env not set")
+              raise SystemExit(1)
+          p = Path(FILE)
+          if not p.exists():
+              print("ERROR: file not found:", p)
+              raise SystemExit(1)
+
+          try:
+              tags = json.loads(TAGS_JSON) if TAGS_JSON and TAGS_JSON != "null" else []
+          except json.JSONDecodeError:
+              print("WARNING: TAGS_JSON invalid, using empty list")
+              tags = []
+
+          tags = [str(t) for t in tags]
+
+          lines = p.read_text().splitlines()
+          out = []
+          i = 0
+          n = len(lines)
+
+          # helpers
+          def indent_of(line):
+              m = re.match(r'^(\s*)', line)
+              return m.group(1) if m else ''
+
+          def is_list_item(line):
+              return re.match(r'^\s*-\s+', line) is not None
+
+          # Find the dropdown block that has id: version
+          found_dropdown = False
+          dropdown_start = None
+          dropdown_indent = None
+          j = 0
+          while j < n:
+              ln = lines[j]
+              # detect start of a field: "- type: dropdown"
+              m = re.match(r'^(\s*)-+\s*type:\s*dropdown\s*$', ln)
+              if m:
+                  # candidate block start
+                  block_indent = m.group(1)
+                  # scan forward inside this block until next top-level field (same indent and leading '- type:')
+                  k = j + 1
+                  has_id_version = False
+                  while k < n:
+                      ln2 = lines[k]
+                      # if we encounter another "- type:" at same indent, block ends
+                      m2 = re.match(r'^(\s*)-+\s*type:\s*\S+', ln2)
+                      if m2 and m2.group(1) == block_indent:
+                          break
+                      # check for id: version (allow spaces)
+                      m_id = re.match(r'^\s*id:\s*version\s*$', ln2)
+                      if m_id:
+                          has_id_version = True
+                          break
+                      k += 1
+                  if has_id_version:
+                      found_dropdown = True
+                      dropdown_start = j
+                      dropdown_indent = block_indent
+                      break
+                  else:
+                      j = k
+                      continue
+              j += 1
+
+          if not found_dropdown:
+              print("WARNING: dropdown with id: version not found. No changes made.")
+              raise SystemExit(0)
+
+          # Now within the dropdown block, find attributes: then options:
+          # block_end: index where next field at same indent starts or end of file
+          block_end = j + 1
+          while block_end < n:
+              ln = lines[block_end]
+              m2 = re.match(r'^(\s*)-+\s*type:\s*\S+', ln)
+              if m2 and m2.group(1) == dropdown_indent:
+                  break
+              block_end += 1
+
+          # search for 'attributes:' and then 'options:' inside [j:block_end)
+          attr_idx = None
+          options_idx = None
+          for k in range(j, block_end):
+              if re.match(r'^\s*attributes:\s*$', lines[k]):
+                  attr_idx = k
+                  # continue searching for options after this
+              if attr_idx is not None and re.match(r'^\s*options:\s*$', lines[k]):
+                  options_idx = k
+                  break
+
+          if options_idx is None:
+              # no options: block — create one under attributes (insert after attributes or after id)
+              insert_at = attr_idx + 1 if attr_idx is not None else (j + 1)
+              # determine indent for options: use attributes indent + two spaces or dropdown indent + 6
+              base_indent = indent_of(lines[insert_at-1]) if insert_at-1 >=0 else dropdown_indent + "  "
+              options_indent = base_indent + "  "
+              block = []
+              block.append(options_indent.rstrip() + "options:")
+              # keep placeholders
+              block.append(options_indent + "- '--- Please select ---'")
+              block.append(options_indent + "- '{{...}}'")
+              block.append(options_indent + "# start-release-choices")
+              for t in tags:
+                  t_escaped = t.replace("'", "''")
+                  block.append(options_indent + f"- '{t_escaped}'")
+              block.append(options_indent + "# end-release-choices")
+              new_lines = lines[:insert_at] + block + lines[insert_at:]
+              p.write_text("\n".join(new_lines) + "\n")
+              print("Inserted new options block for id: version")
+              raise SystemExit(0)
+
+          # We have options_idx. Determine indentation for list items under options:
+          # look for first existing list item after options_idx
+          list_indent = None
+          for k in range(options_idx+1, min(options_idx+20, block_end)):
+              m = re.match(r'^(\s*)- ', lines[k])
+              if m:
+                  list_indent = m.group(1)
+                  break
+          if list_indent is None:
+              # fallback: indent of options line + two spaces
+              list_indent = indent_of(lines[options_idx]) + "  "
+
+          # Now find markers between options_idx and block_end
+          start_marker = "# start-release-choices"
+          end_marker = "# end-release-choices"
+          start_idx = None
+          end_idx = None
+          for k in range(options_idx+1, block_end):
+              if lines[k].strip() == start_marker:
+                  start_idx = k
+              if lines[k].strip() == end_marker:
+                  end_idx = k
+                  if start_idx is not None:
+                      break
+
+          new_lines = []
+          # copy up to start_idx (or up to options_idx+1 if no markers)
+          if start_idx is not None and end_idx is not None and start_idx < end_idx:
+              # copy everything up to start_idx (inclusive)
+              new_lines = lines[:start_idx+1]
+              # insert tags with correct indent
+              for t in tags:
+                  t_escaped = t.replace("'", "''")
+                  new_lines.append(f"{list_indent}- '{t_escaped}'")
+              # append the end_marker line and the rest
+              new_lines.append(lines[end_idx])
+              new_lines.extend(lines[end_idx+1:])
+          else:
+              # no proper markers found: replace the entire options list (keep placeholders if present)
+              # collect existing placeholders (first two list items if they look like placeholders)
+              placeholders = []
+              k = options_idx + 1
+              while k < block_end and is_list_item(lines[k]) and len(placeholders) < 2:
+                  val = lines[k].strip()
+                  if val.startswith("- '--- Please select ---'") or val.startswith("- \"--- Please select ---\"") or "{{...}}" in val:
+                      placeholders.append(lines[k].strip())
+                      k += 1
+                  else:
+                      break
+              # build new options block: keep options: line, then placeholders (if any), then tags
+              new_lines = lines[:options_idx+1]
+              for ph in placeholders:
+                  # preserve same indent as list_indent
+                  # ensure ph has leading '- ' removed if necessary
+                  # but we can just append with list_indent
+                  ph_text = ph
+                  # normalize to single-quoted form
+                  if "Please select" in ph_text:
+                      new_lines.append(f"{list_indent}- '--- Please select ---'")
+                  elif "{{...}}" in ph_text:
+                      new_lines.append(f"{list_indent}- '{{...}}'")
+              # append tags
+              for t in tags:
+                  t_escaped = t.replace("'", "''")
+                  new_lines.append(f"{list_indent}- '{t_escaped}'")
+              # append the rest of the file after the original options block (skip old list items)
+              # find where the old list ended (first non-list-item after options_idx)
+              end_of_old_list = options_idx + 1
+              while end_of_old_list < block_end and is_list_item(lines[end_of_old_list]):
+                  end_of_old_list += 1
+              new_lines.extend(lines[end_of_old_list:])
+
+          p.write_text("\n".join(new_lines) + "\n")
+          print("Updated", p)
+          PY
+
+
+      - name: Show diff
+        run: |
+          git --no-pager diff -- .github/ISSUE_TEMPLATE/bug-report.yaml || true
+
+      - name: Commit and push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/ISSUE_TEMPLATE/bug-report.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update release choices"
+            git push
+          fi
