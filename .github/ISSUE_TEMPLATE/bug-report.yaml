@@ -37,6 +37,26 @@ body:
       options:
         - '--- Please select ---'
         # start-release-choices
+  - 'v2.4.61'
+  - 'v2.4.61-pre'
+  - 'v2.4.60-pre'
+  - 'v2.4.59-pre'
+  - 'v2.4.58-pre'
+  - 'v2.4.57-pre'
+  - 'v2.4.56-pre'
+  - 'v2.4.55-pre'
+  - 'v2.4.54-pre'
+  - 'v2.4.53-pre'
+  - 'v2.4.52-pre'
+  - 'v2.4.51-pre'
+  - 'v2.4.50-pre'
+  - 'v2.4.49-pre'
+  - 'v2.4.48-pre'
+  - 'v2.4.47-pre'
+  - 'v2.4.46-pre'
+  - 'v2.4.45-pre'
+  - 'v2.4.44-pre'
+  - 'v2.4.43-pre'
         # end-release-choices      
     validations:
       required: true
