@@ -22,8 +22,7 @@ jobs:
           # Changed 'field-id' to 'dropdown'
           dropdown: version 
           # We use the 'dynamic' variable syntax here
-          options: |
-            - "{{...}}"
+          options: '["{{...}}"]'
           # Use 'strategy' to actually fetch the data
           strategy: github-tags 
           # Changed 'token' to 'github_token'
