@@ -81,18 +81,31 @@ jobs:
           end_marker = "# end-release-choices"
           found = False
 
+          # Helper: find indentation for list items under options:
+          def detect_list_indent(lines, start_idx):
+              # look forward for first line that starts with optional spaces then '-'
+              for j in range(start_idx+1, min(start_idx+10, len(lines))):
+                  m = re.match(r"^(\s*)- ", lines[j])
+                  if m:
+                      return m.group(1)
+              # fallback: use indentation of the 'options:' line + two spaces
+              m_opt = re.match(r"^(\s*)\S", lines[start_idx])
+              base = m_opt.group(1) if m_opt else ""
+              return base + "  "
+
           while i < len(txt):
               line = txt[i]
               out.append(line)
               if line.strip() == start_marker:
                   found = True
-                  # detect indentation of marker line
-                  indent = re.match(r"^(\s*)", line).group(1)
-                  opt_indent = indent + "  "
-                  # insert tag lines (replace existing block until end_marker)
+                  # determine indentation for the inserted '- item' lines
+                  # try to detect from following lines; if not found, fallback to indent of marker line
+                  list_indent = detect_list_indent(txt, i)
+                  # ensure list_indent ends at column before '-' (no extra spaces)
+                  # insert tag lines with that indentation
                   for t in tags:
                       t_escaped = t.replace("'", "''")
-                      out.append(f"{opt_indent}- '{t_escaped}'")
+                      out.append(f"{list_indent}- '{t_escaped}'")
                   # skip original lines until end_marker
                   j = i + 1
                   while j < len(txt) and txt[j].strip() != end_marker:
@@ -101,7 +114,6 @@ jobs:
                       out.append(txt[j])  # append end_marker
                       i = j
                   else:
-                      # end marker not found in original file; append it
                       out.append(end_marker)
                       i = j
               i += 1
