@@ -1,0 +1,106 @@
+name: 🐞 Bug Report
+description: Report a bug to help us improve.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: model
+    attributes:
+      label: Geberit Model
+      options:
+        - --- Please select ---
+        - Alba
+        - Cama
+        - Mera Series
+        - Sela
+        - Tuma Classic
+        - Tuma Comfort
+        - "4000"
+        - Other
+    validations:
+        required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Geberit Firmware 
+      description: Use the Geberit Home app to determine the Geberit firmware.
+      placeholder: |
+        e.g. RS28.0 TS199
+    validations:
+      required: true        
+  - type: dropdown
+    id: version
+    attributes:
+      label: Software Version
+      options:
+        - --- Please select ---
+        - v1.2.0
+        - v1.1.5
+        - v1.1.0
+        - Nightly/Beta
+    validations:
+        required: true
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: Installation Type
+      options:
+        - --- Please select ---
+        - Standalone bridge
+        - HACS integration
+    validations:
+        required: true
+  - type: dropdown
+    id: connection-type
+    attributes:
+      label: Connection Type
+      options:
+        - --- Please select ---
+        - ESPHome proxy
+        - Local Bluetooth
+    validations:
+        required: true
+  - type: input
+    id: esp-board
+    attributes:
+      label: ESP Board
+      description: In case Connection Type is "ESPHome proxy".    
+      placeholder: |
+        e.g. ESP32-POE-ISO-16MB or ESP32C
+  - type: textarea
+    id: flashed-config
+    attributes:
+      label: Flashed Configuration
+      description: The configuration used to flash the ESPBoard in case Connection Type is "ESPHome proxy".
+      placeholder: |
+        esphome: 
+          name: aquaclean-proxy ...     
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: How did this happen?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Log Output"
+      description: "Please drag and drop your log file here, or paste the content."
+      placeholder: "Drag your .txt or .log file here..."
+      render: shell # This automatically formats the upload as code
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: log-confirmation
+    attributes:
+      label: "Log Upload Confirmation"
+      options:
+        - label: "I have attached the log file above (Required)"
+          required: true      
