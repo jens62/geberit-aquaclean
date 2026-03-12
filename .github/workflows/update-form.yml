@@ -22,6 +22,6 @@ jobs:
           # Changed 'field-id' to 'dropdown'
           dropdown: version 
           # 'options' stays the same
-          options: github-releases 
+          strategy: github-releases 
           # Changed 'token' to 'github_token'
           github_token: ${{ secrets.GITHUB_TOKEN }}
