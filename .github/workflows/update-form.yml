@@ -14,7 +14,11 @@ jobs:
       - name: Update dropdown
         uses: ShaMan123/gha-form-dropdown-options@main
         with:
-          file: .github/ISSUE_TEMPLATE/bug_report.yml
-          field-id: version # This must match the 'id' in your bug_report.yml
-          options: github-releases
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Changed 'file' to 'form'
+          form: .github/ISSUE_TEMPLATE/bug-report.yaml 
+          # Changed 'field-id' to 'dropdown'
+          dropdown: version 
+          # 'options' stays the same
+          options: github-releases 
+          # Changed 'token' to 'github_token'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
