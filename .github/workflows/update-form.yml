@@ -25,6 +25,6 @@ jobs:
           options: |
             --- Fetching Versions ---
           # Use 'strategy' to actually fetch the data
-          strategy: github-releases 
+          strategy: github-tags 
           # Changed 'token' to 'github_token'
           github_token: ${{ secrets.GITHUB_TOKEN }}
