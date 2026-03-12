@@ -1,0 +1,41 @@
+name: "Issue Form Validator"
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  check-placeholders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Scan for placeholder text"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+            const placeholder = "--- Please select ---";
+            
+            if (body.includes(placeholder)) {
+              // 1. Post a polite but firm comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: "👋 Hi there! It looks like you forgot to select an option from one of the dropdown menus (you left it as '--- Please select ---'). \n\n**Please edit your issue and select the correct OS/Version so we can help you faster!**"
+              });
+
+              // 2. Add a 'needs-info' label
+              await github.rest.issues.addLabels({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,a
+                labels: ['needs-info']
+              });
+
+              // 3. (Optional) Close the issue immediately
+              // await github.rest.issues.update({
+              //   issue_number: context.issue.number,
+              //   owner: context.repo.owner,
+              //   repo: context.repo.repo,
+              //   state: 'closed'
+              // });
+            }
