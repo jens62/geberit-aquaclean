@@ -34,8 +34,8 @@ body:
     id: version
     attributes:
       label: Software Version
-      options:
-        - '- "{{...}}"'
+      options: |
+      - "{{...}}"
     validations:
       required: true
   - type: dropdown
