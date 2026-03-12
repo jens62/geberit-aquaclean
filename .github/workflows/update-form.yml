@@ -21,9 +21,9 @@ jobs:
           form: .github/ISSUE_TEMPLATE/bug-report.yaml 
           # Changed 'field-id' to 'dropdown'
           dropdown: version 
-          # Providing a placeholder instead of an empty string
+          # This is the 'magic' line from the template
           options: |
-            --- Fetching Versions ---
+            -
           # Use 'strategy' to actually fetch the data
           strategy: github-tags 
           # Changed 'token' to 'github_token'
