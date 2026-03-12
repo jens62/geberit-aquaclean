@@ -2,28 +2,128 @@ name: Update Issue Form Versions
 on:
   push:
     branches: [ feat/issue-templates ]
-  workflow_dispatch: # This gives you the manual button as a backup
+  workflow_dispatch:
   release:
     types: [published, deleted]
 
 permissions:
-  contents: write  # This allows the action to commit the changes
+  contents: write
 
 jobs:
   update-form:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Update dropdown
-        uses: ShaMan123/gha-form-dropdown-options@main
-        with:
-          # Changed 'file' to 'form'
-          form: .github/ISSUE_TEMPLATE/bug-report.yaml 
-          # Changed 'field-id' to 'dropdown'
-          dropdown: version 
-          # We use the 'dynamic' variable syntax here
-          options: '["{{...}}"]'
-          # Use 'strategy' to actually fetch the data
-          strategy: github-tags 
-          # Changed 'token' to 'github_token'
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq (optional)
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Fetch latest tags (build JSON array)
+        id: fetch_tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get up to 20 tags (adjust as needed)
+          TAGS_JSON=$(curl -s -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/tags?per_page=100" \
+            | jq -r '[.[].name] | map(select(. != null)) | .[:20] | @json')
+          echo "tags=$TAGS_JSON" >> $GITHUB_OUTPUT
+
+      - name: Update dropdown options between markers
+        env:
+          FILE: .github/ISSUE_TEMPLATE/bug-report.yaml
+          TAGS_JSON: ${{ steps.fetch_tags.outputs.tags }}
+        run: |
+          python3 - <<'PY'
+import json, re, sys
+from pathlib import Path
+
+file_path = Path("${FILE}")
+if not file_path.exists():
+    print("File not found:", file_path)
+    sys.exit(1)
+
+tags = json.loads("""${TAGS_JSON}""") if "${TAGS_JSON}" != "null" else []
+# Ensure tags are strings
+tags = [str(t) for t in tags]
+
+txt = file_path.read_text().splitlines()
+out = []
+i = 0
+start_marker = "# start-release-choices"
+end_marker = "# end-release-choices"
+found = False
+
+# Build new option lines: keep the two fixed entries first
+# We'll insert tags after those two entries
+for idx, line in enumerate(txt):
+    out.append(line)
+    if line.strip() == start_marker:
+        found = True
+        # detect indentation from the next line if exists, else from current line
+        # find indentation of the marker line
+        indent = re.match(r"^(\s*)", line).group(1)
+        # build option lines with same indentation + two spaces (common in your file)
+        opt_indent = indent + "  "
+        # insert tag lines
+        for t in tags:
+            # escape single quotes inside tag
+            t_escaped = t.replace("'", "''")
+            out.append(f"{opt_indent}- '{t_escaped}'")
+        # skip ahead until end_marker is encountered in original file
+        j = idx + 1
+        while j < len(txt) and txt[j].strip() != end_marker:
+            j += 1
+        # if end_marker exists, append it and continue after it
+        if j < len(txt):
+            out.append(txt[j])  # append end_marker
+            i = j
+        else:
+            # no end marker found; append it now
+            out.append(end_marker)
+            i = j
+# If markers not found, try to insert a marker block after options: block for id: version
+if not found:
+    # fallback: find the attributes.options block for id: version and replace it entirely
+    new_txt = []
+    skip = False
+    for line in txt:
+        if re.match(r'^\s*- type:\s*dropdown', line):
+            new_txt.append(line)
+            skip = False
+            continue
+        new_txt.append(line)
+    # simple fallback: append markers at end
+    new_txt.append("")
+    new_txt.append("      # start-release-choices")
+    for t in tags:
+        t_escaped = t.replace("'", "''")
+        new_txt.append(f"        - '{t_escaped}'")
+    new_txt.append("      # end-release-choices")
+    out = new_txt
+
+file_path.write_text("\n".join(out) + "\n")
+print("Updated", file_path)
+PY
+
+      - name: Show diff
+        run: |
+          git --no-pager diff -- .github/ISSUE_TEMPLATE/bug-report.yaml || true
+
+      - name: Commit and push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/ISSUE_TEMPLATE/bug-report.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update release choices"
+            git push
+          fi
