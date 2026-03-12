@@ -35,9 +35,7 @@ body:
     attributes:
       label: Software Version
       options:
-        - --- Please select ---
-        # start-release-choices
-        # end-release-choices
+        - '-'
     validations:
       required: true
   - type: dropdown
