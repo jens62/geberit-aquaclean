@@ -34,10 +34,8 @@ body:
       label: Software Version
       options:
         - --- Please select ---
-        - v1.2.0
-        - v1.1.5
-        - v1.1.0
-        - Nightly/Beta
+        # start-release-choices
+        # end-release-choices
     validations:
         required: true
   - type: dropdown
