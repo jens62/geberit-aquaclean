@@ -35,7 +35,7 @@ body:
     attributes:
       label: Software Version
       options:
-        - '-'
+        - '- "{{...}}"'
     validations:
       required: true
   - type: dropdown
