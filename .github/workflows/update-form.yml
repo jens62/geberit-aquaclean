@@ -1,5 +1,8 @@
 name: Update Issue Form Versions
 on:
+  push:
+    branches: [ feat/issue-templates ]
+  workflow_dispatch: # This gives you the manual button as a backup
   release:
     types: [published, deleted]
 
