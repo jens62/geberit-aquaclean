@@ -44,91 +44,97 @@ jobs:
           echo "List ISSUE_TEMPLATE directory:"
           ls -la .github/ISSUE_TEMPLATE || true
 
-      - name: Update dropdown options between markers
+      - name: Update dropdown options for "id" version (preserve formatting)
         env:
           FILE: .github/ISSUE_TEMPLATE/bug-report.yaml
           TAGS_JSON: ${{ steps.fetch_tags.outputs.tags }}
         run: |
           python3 - <<'PY'
-          import os, json, re, sys
+          import os, json, sys
           from pathlib import Path
+          try:
+              from ruamel.yaml import YAML
+          except Exception:
+              import subprocess
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "ruamel.yaml"])
+              from ruamel.yaml import YAML
 
-          # Read env vars (safe with single-quoted heredoc)
-          file_env = os.environ.get("FILE")
-          tags_json = os.environ.get("TAGS_JSON", "[]")
+          FILE = os.environ.get("FILE")
+          TAGS_JSON = os.environ.get("TAGS_JSON", "[]")
 
-          if not file_env:
-              print("ERROR: FILE environment variable is not set")
+          if not FILE:
+              print("ERROR: FILE env not set")
               raise SystemExit(1)
-
-          file_path = Path(file_env)
-          if not file_path.exists():
-              print("File not found:", file_path)
+          p = Path(FILE)
+          if not p.exists():
+              print("ERROR: file not found:", p)
               raise SystemExit(1)
 
           try:
-              tags = json.loads(tags_json) if tags_json and tags_json != "null" else []
+              tags = json.loads(TAGS_JSON) if TAGS_JSON and TAGS_JSON != "null" else []
           except json.JSONDecodeError:
-              print("Warning: TAGS_JSON is not valid JSON, falling back to empty list")
+              print("WARNING: TAGS_JSON invalid, using empty list")
               tags = []
 
           tags = [str(t) for t in tags]
 
-          txt = file_path.read_text().splitlines()
-          out = []
-          i = 0
-          start_marker = "# start-release-choices"
-          end_marker = "# end-release-choices"
-          found = False
+          yaml = YAML()
+          yaml.preserve_quotes = True
+          data = yaml.load(p.read_text())
 
-          # Helper: find indentation for list items under options:
-          def detect_list_indent(lines, start_idx):
-              # look forward for first line that starts with optional spaces then '-'
-              for j in range(start_idx+1, min(start_idx+10, len(lines))):
-                  m = re.match(r"^(\s*)- ", lines[j])
-                  if m:
-                      return m.group(1)
-              # fallback: use indentation of the 'options:' line + two spaces
-              m_opt = re.match(r"^(\s*)\S", lines[start_idx])
-              base = m_opt.group(1) if m_opt else ""
-              return base + "  "
+          # data is expected to be a sequence of form fields
+          updated = False
 
-          while i < len(txt):
-              line = txt[i]
-              out.append(line)
-              if line.strip() == start_marker:
-                  found = True
-                  # determine indentation for the inserted '- item' lines
-                  # try to detect from following lines; if not found, fallback to indent of marker line
-                  list_indent = detect_list_indent(txt, i)
-                  # ensure list_indent ends at column before '-' (no extra spaces)
-                  # insert tag lines with that indentation
-                  for t in tags:
-                      t_escaped = t.replace("'", "''")
-                      out.append(f"{list_indent}- '{t_escaped}'")
-                  # skip original lines until end_marker
-                  j = i + 1
-                  while j < len(txt) and txt[j].strip() != end_marker:
-                      j += 1
-                  if j < len(txt):
-                      out.append(txt[j])  # append end_marker
-                      i = j
-                  else:
-                      out.append(end_marker)
-                      i = j
-              i += 1
+          if isinstance(data, list):
+              for field in data:
+                  # find the dropdown with id == "version"
+                  if isinstance(field, dict) and field.get("id") == "version":
+                      attrs = field.get("attributes")
+                      if attrs is None:
+                          attrs = {}
+                          field["attributes"] = attrs
+                      # ensure options exists and is a list
+                      opts = attrs.get("options")
+                      # If options is a scalar string (bad), convert to list
+                      if isinstance(opts, str):
+                          # try to preserve existing placeholder lines if present
+                          opts = [opts]
+                      if opts is None:
+                          opts = []
+                      # preserve first two fixed entries if present
+                      fixed = []
+                      rest_start = 0
+                      for i, o in enumerate(opts):
+                          if isinstance(o, str) and (o.strip() == '--- Please select ---' or o.strip() == '{{...}}' or o.strip() == '{{...}}'):
+                              fixed.append(o)
+                              rest_start = i + 1
+                          else:
+                              break
+                      # Build new options: keep fixed placeholders, then tags
+                      new_opts = []
+                      # keep placeholders if they existed
+                      if fixed:
+                          new_opts.extend(fixed)
+                      else:
+                          # if no placeholders, keep first two entries if they look like placeholders
+                          pass
+                      # append tags
+                      for t in tags:
+                          new_opts.append(t)
+                      # assign back as YAML sequence (preserve quotes)
+                      attrs["options"] = new_opts
+                      updated = True
+                      break
 
-          if not found:
-              # fallback: append marker block at end of file with reasonable indentation
-              out.append("")
-              out.append("      # start-release-choices")
-              for t in tags:
-                  t_escaped = t.replace("'", "''")
-                  out.append(f"        - '{t_escaped}'")
-              out.append("      # end-release-choices")
-
-          file_path.write_text("\n".join(out) + "\n")
-          print("Updated", file_path)
+          if not updated:
+              print("WARNING: did not find dropdown with id: version; no changes made")
+          else:
+              # write back preserving formatting
+              yaml.indent(mapping=2, sequence=4, offset=2)
+              p.write_text("")
+              with p.open("w") as fh:
+                  yaml.dump(data, fh)
+              print("Updated", p)
           PY
 
       - name: Show diff
