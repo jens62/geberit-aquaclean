@@ -21,7 +21,9 @@ jobs:
           form: .github/ISSUE_TEMPLATE/bug-report.yaml 
           # Changed 'field-id' to 'dropdown'
           dropdown: version 
-          # 'options' stays the same
+          # Keep 'options' because it's required, but leave it empty
+          options: "" 
+          # Use 'strategy' to actually fetch the data
           strategy: github-releases 
           # Changed 'token' to 'github_token'
           github_token: ${{ secrets.GITHUB_TOKEN }}
