@@ -33,22 +33,45 @@ jobs:
             | jq -r '[.[].name] | map(select(. != null)) | .[:20] | @json')
           echo "tags=$TAGS_JSON" >> $GITHUB_OUTPUT
 
+      - name: Debug before update
+        env:
+          FILE: .github/ISSUE_TEMPLATE/bug-report.yaml
+          TAGS_JSON: ${{ steps.fetch_tags.outputs.tags }}
+        run: |
+          echo "Working directory: $(pwd)"
+          echo "FILE env: $FILE"
+          echo "TAGS_JSON preview: ${TAGS_JSON:0:200}"
+          echo "List ISSUE_TEMPLATE directory:"
+          ls -la .github/ISSUE_TEMPLATE || true
+
       - name: Update dropdown options between markers
         env:
           FILE: .github/ISSUE_TEMPLATE/bug-report.yaml
           TAGS_JSON: ${{ steps.fetch_tags.outputs.tags }}
         run: |
           python3 - <<'PY'
-          import json, re, sys
+          import os, json, re, sys
           from pathlib import Path
 
-          file_path = Path("${FILE}")
+          # Read env vars (safe with single-quoted heredoc)
+          file_env = os.environ.get("FILE")
+          tags_json = os.environ.get("TAGS_JSON", "[]")
+
+          if not file_env:
+              print("ERROR: FILE environment variable is not set")
+              raise SystemExit(1)
+
+          file_path = Path(file_env)
           if not file_path.exists():
               print("File not found:", file_path)
-              sys.exit(1)
+              raise SystemExit(1)
 
-          tags = json.loads("""${TAGS_JSON}""") if "${TAGS_JSON}" != "null" else []
-          # Ensure tags are strings
+          try:
+              tags = json.loads(tags_json) if tags_json and tags_json != "null" else []
+          except json.JSONDecodeError:
+              print("Warning: TAGS_JSON is not valid JSON, falling back to empty list")
+              tags = []
+
           tags = [str(t) for t in tags]
 
           txt = file_path.read_text().splitlines()
@@ -58,53 +81,39 @@ jobs:
           end_marker = "# end-release-choices"
           found = False
 
-          # Build new option lines: keep the two fixed entries first
-          # We'll insert tags after those two entries
-          for idx, line in enumerate(txt):
+          while i < len(txt):
+              line = txt[i]
               out.append(line)
               if line.strip() == start_marker:
                   found = True
-                  # detect indentation from the next line if exists, else from current line
-                  # find indentation of the marker line
+                  # detect indentation of marker line
                   indent = re.match(r"^(\s*)", line).group(1)
-                  # build option lines with same indentation + two spaces (common in your file)
                   opt_indent = indent + "  "
-                  # insert tag lines
+                  # insert tag lines (replace existing block until end_marker)
                   for t in tags:
-                      # escape single quotes inside tag
                       t_escaped = t.replace("'", "''")
                       out.append(f"{opt_indent}- '{t_escaped}'")
-                  # skip ahead until end_marker is encountered in original file
-                  j = idx + 1
+                  # skip original lines until end_marker
+                  j = i + 1
                   while j < len(txt) and txt[j].strip() != end_marker:
                       j += 1
-                  # if end_marker exists, append it and continue after it
                   if j < len(txt):
                       out.append(txt[j])  # append end_marker
                       i = j
                   else:
-                      # no end marker found; append it now
+                      # end marker not found in original file; append it
                       out.append(end_marker)
                       i = j
-          # If markers not found, try to insert a marker block after options: block for id: version
+              i += 1
+
           if not found:
-              # fallback: find the attributes.options block for id: version and replace it entirely
-              new_txt = []
-              skip = False
-              for line in txt:
-                  if re.match(r'^\s*- type:\s*dropdown', line):
-                      new_txt.append(line)
-                      skip = False
-                      continue
-                  new_txt.append(line)
-              # simple fallback: append markers at end
-              new_txt.append("")
-              new_txt.append("      # start-release-choices")
+              # fallback: append marker block at end of file with reasonable indentation
+              out.append("")
+              out.append("      # start-release-choices")
               for t in tags:
                   t_escaped = t.replace("'", "''")
-                  new_txt.append(f"        - '{t_escaped}'")
-              new_txt.append("      # end-release-choices")
-              out = new_txt
+                  out.append(f"        - '{t_escaped}'")
+              out.append("      # end-release-choices")
 
           file_path.write_text("\n".join(out) + "\n")
           print("Updated", file_path)
