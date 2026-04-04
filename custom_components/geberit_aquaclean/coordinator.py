@@ -1,6 +1,7 @@
 """DataUpdateCoordinator — polls the AquaClean device on-demand over BLE."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 import time
@@ -88,6 +89,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # Circuit breaker state
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
+        # Serialises poll and command BLE connections.
+        # With bleak, BlueZ transparently shares a single physical BLE connection
+        # across concurrent BleakClient instances.  The ESPHome proxy cannot do this —
+        # each bluetooth_device_connect() request creates a new physical GATT connection.
+        # Two concurrent requests (poll + button press) overwhelm the ESP32.
+        # This lock ensures only one BLE operation is active at a time.
+        self._ble_lock = asyncio.Lock()
 
         super().__init__(
             hass,
@@ -130,9 +138,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
-        import asyncio
-
-        # When circuit is open: extra sleep before probing to reduce ESP32 hammering
+        # When circuit is open: extra sleep before probing to reduce ESP32 hammering.
+        # Sleep happens OUTSIDE the lock so a pending command can still run during backoff.
         if self._circuit_open and self._esphome_host:
             _LOGGER.debug(
                 "Circuit open (%d consecutive failures) — sleeping %d s before probe",
@@ -141,56 +148,55 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             )
             await asyncio.sleep(_CIRCUIT_OPEN_PROBE_SLEEP)
 
-        try:
-            result = await self._do_poll()
-        except UpdateFailed:
-            self._consecutive_failures += 1
+        async with self._ble_lock:
+            try:
+                result = await self._do_poll()
+            except UpdateFailed:
+                self._consecutive_failures += 1
 
-            if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host:
-                # Circuit just opened — attempt ESP32 restart
-                self._circuit_open = True
-                _LOGGER.warning(
-                    "Circuit breaker open: %d consecutive poll failures — triggering ESP32 restart",
-                    self._consecutive_failures,
-                )
-                try:
-                    await self.async_restart_esp32()
-                    _LOGGER.info(
-                        "ESP32 restart command sent; waiting %d s for reboot",
-                        _ESP32_RESTART_SLEEP,
-                    )
-                    await asyncio.sleep(_ESP32_RESTART_SLEEP)
-                except Exception as restart_exc:
+                if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host:
+                    # Circuit just opened — attempt ESP32 restart
+                    self._circuit_open = True
                     _LOGGER.warning(
-                        "Failed to send ESP32 restart command (ESP32 may already be rebooting): %s",
-                        restart_exc,
+                        "Circuit breaker open: %d consecutive poll failures — triggering ESP32 restart",
+                        self._consecutive_failures,
                     )
-            elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and not self._esphome_host:
-                # No ESP32 — open circuit for backoff only, no restart possible
-                self._circuit_open = True
-                _LOGGER.warning(
-                    "Circuit breaker open: %d consecutive poll failures",
-                    self._consecutive_failures,
-                )
-            elif self._consecutive_failures > _CIRCUIT_OPEN_THRESHOLD:
-                _LOGGER.debug(
-                    "Circuit open — consecutive failure %d", self._consecutive_failures
-                )
-            raise
-        else:
-            # Success — close circuit if it was open
-            if self._consecutive_failures > 0:
-                _LOGGER.info(
-                    "Poll recovered after %d consecutive failure(s)", self._consecutive_failures
-                )
-            self._consecutive_failures = 0
-            self._circuit_open = False
-            return result
+                    try:
+                        await self.async_restart_esp32()
+                        _LOGGER.info(
+                            "ESP32 restart command sent; waiting %d s for reboot",
+                            _ESP32_RESTART_SLEEP,
+                        )
+                        await asyncio.sleep(_ESP32_RESTART_SLEEP)
+                    except Exception as restart_exc:
+                        _LOGGER.warning(
+                            "Failed to send ESP32 restart command (ESP32 may already be rebooting): %s",
+                            restart_exc,
+                        )
+                elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and not self._esphome_host:
+                    # No ESP32 — open circuit for backoff only, no restart possible
+                    self._circuit_open = True
+                    _LOGGER.warning(
+                        "Circuit breaker open: %d consecutive poll failures",
+                        self._consecutive_failures,
+                    )
+                elif self._consecutive_failures > _CIRCUIT_OPEN_THRESHOLD:
+                    _LOGGER.debug(
+                        "Circuit open — consecutive failure %d", self._consecutive_failures
+                    )
+                raise
+            else:
+                # Success — close circuit if it was open
+                if self._consecutive_failures > 0:
+                    _LOGGER.info(
+                        "Poll recovered after %d consecutive failure(s)", self._consecutive_failures
+                    )
+                self._consecutive_failures = 0
+                self._circuit_open = False
+                return result
 
     async def _do_poll(self) -> dict:
         """Connect, fetch all device data, disconnect. Raises UpdateFailed on any error."""
-        import asyncio
-
         from bleak import BleakError
 
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
@@ -399,26 +405,33 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         await connector.restart_esp32_async()
 
     async def async_execute_command(self, command: str) -> None:
-        """Execute a device command via a fresh on-demand BLE connection."""
+        """Execute a device command via a fresh on-demand BLE connection.
+
+        Acquires _ble_lock to prevent concurrent BLE connections with the poll loop.
+        With bleak, BlueZ transparently shares the physical BLE connection across
+        concurrent clients; the ESPHome proxy cannot — each request opens a new GATT
+        connection, so two simultaneous connections overwhelm the ESP32.
+        """
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
             AquaCleanClientFactory,
         )
 
-        connector = self._make_connector()
-        client = AquaCleanClientFactory(connector).create_client()
-        try:
-            await client.connect_ble_only(self._device_id)
-            if command == "toggle_lid":
-                await client.toggle_lid_position()
-            elif command == "toggle_anal_shower":
-                await client.toggle_anal_shower()
-            elif command == "toggle_lady_shower":
-                await client.toggle_lady_shower()
-            else:
-                _LOGGER.warning("Unknown command: %s", command)
-        finally:
+        async with self._ble_lock:
+            connector = self._make_connector()
+            client = AquaCleanClientFactory(connector).create_client()
             try:
-                async with asyncio.timeout(5.0):
-                    await connector.disconnect()
-            except Exception:
-                pass
+                await client.connect_ble_only(self._device_id)
+                if command == "toggle_lid":
+                    await client.toggle_lid_position()
+                elif command == "toggle_anal_shower":
+                    await client.toggle_anal_shower()
+                elif command == "toggle_lady_shower":
+                    await client.toggle_lady_shower()
+                else:
+                    _LOGGER.warning("Unknown command: %s", command)
+            finally:
+                try:
+                    async with asyncio.timeout(5.0):
+                        await connector.disconnect()
+                except Exception:
+                    pass
