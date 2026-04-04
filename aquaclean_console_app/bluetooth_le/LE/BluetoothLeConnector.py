@@ -49,6 +49,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     BULK_CHAR_BULK_READ_3_UUID = UUID("3334429d-90f3-4c41-a02d-5cb3a83e0000")
     CCC_UUID = UUID("00002902-0000-1000-8000-00805f9b34fb")
 
+    # Cached BLE address_type per MAC (upper-case string → int).
+    # Populated after the first advertisement scan; cleared on connection failure.
+    # Lets subsequent connections skip subscribe_bluetooth_le_raw_advertisements()
+    # entirely, preventing the rapid unsub→sub cycle that disrupts the ESP32
+    # Bluedroid BLE scanner after a button press triggers an immediate forced repoll.
+    # See docs/developer/ble-esphome-connect-without-advertisement.md
+    _address_type_cache: dict = {}
+
     def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
         self.client = None
         self.read_characteristics = {}
@@ -393,92 +401,99 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         t_ble = time.perf_counter()  # BLE timing starts after ESP32 API is ready
 
-        # Scan for BLE device using raw advertisements
+        mac_str = device_id.upper()
         mac_int = int(device_id.replace(":", ""), 16)
-        found_event = asyncio.Event()
-        device_name = ""
-        address_type = 0  # Default to PUBLIC (0) if not specified
+        cached_address_type = BluetoothLeConnector._address_type_cache.get(mac_str)
 
-        def on_raw_advertisements(resp):
-            nonlocal device_name, address_type
-            for adv in resp.advertisements:
-                if adv.address == mac_int:
-                    device_name = self._parse_local_name(bytes(adv.data))
-                    # Capture address_type from advertisement (0=PUBLIC, 1=RANDOM)
-                    # If not present in advertisement, defaults to 0 (PUBLIC)
-                    address_type = getattr(adv, 'address_type', 0)
-                    self.rssi = getattr(adv, 'rssi', None)
-                    found_event.set()
-
-        logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
-        unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
-        # Store immediately so that disconnect_ble_only() / disconnect() can unsubscribe
-        # even if this coroutine is cancelled (e.g. SIGTERM during the scan window).
-        # Without this, a mid-scan cancellation leaves a dangling subscription on the
-        # ESP32 that blocks the next bridge startup with "Only one API subscription
-        # is allowed at a time".
-        self._esphome_unsub_adv = unsub_adv
-        try:
-            await asyncio.wait_for(found_event.wait(), timeout=30.0)
-            logger.debug(f"Found BLE device {device_id} with name: {device_name or 'Unknown'}, address_type: {address_type}")
-        except asyncio.TimeoutError:
-            unsub_adv()
-            self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
-            raise ESPHomeDeviceNotFoundError(
-                f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
+        if cached_address_type is not None:
+            # Cached path: skip subscribe_bluetooth_le_raw_advertisements() entirely.
+            #
+            # When a button press (e.g. ToggleLid) triggers an immediate forced repoll,
+            # the previous connection has just called unsub_adv and the scanner is in a
+            # rapid stop/start cycle with no settle time.  The ESP32 Bluedroid BLE scanner
+            # enters a confused state in this condition and stops delivering advertisement
+            # events for 60–90 s, causing E0002.
+            #
+            # By skipping the subscription, the scanner is never disturbed.  The ESP32
+            # enters INITIATING state (is_direct=true in esp_ble_gattc_open) and waits
+            # patiently for the next ADV_IND — the same mechanism BlueZ uses at the kernel
+            # level.  The 90 s connect timeout covers the worst-case re-advertisement gap.
+            # See docs/developer/ble-esphome-connect-without-advertisement.md
+            address_type = cached_address_type
+            connect_timeout = 90.0
+            unsub_adv = None
+            self.device_address = device_id
+            self.device_name = "Unknown"
+            logger.debug(
+                f"[ESPHome] Cached address_type={address_type} for {mac_str}; "
+                f"skipping advertisement scan (connect timeout: {connect_timeout}s)"
             )
-        # Advertisement subscription intentionally kept alive until BLE connect completes.
-        # Calling unsub_adv() before bluetooth_device_connect() sends
-        # UnsubscribeBluetoothLEAdvertisementsRequest which clears api_connection_ on the
-        # ESP32, causing it to disconnect any BLE client in CONNECTING state immediately
-        # → "Disconnect before connected, disconnect scheduled" (reason 0x16).
-        # See CLAUDE.md trap 7.
+        else:
+            # First connection: scan for a live advertisement to discover address_type,
+            # then cache it so all subsequent connections can skip this scan.
+            found_event = asyncio.Event()
+            device_name = ""
+            address_type = 0  # Default to PUBLIC (0) if not present in advertisement
 
-        # Create wrapper client and connect to BLE device
-        self.device_address = device_id
-        self.device_name = device_name or "Unknown"
-        logger.debug(f"Creating ESPHomeAPIClient for {device_id}")
+            def on_raw_advertisements(resp):
+                nonlocal device_name, address_type
+                for adv in resp.advertisements:
+                    if adv.address == mac_int:
+                        device_name = self._parse_local_name(bytes(adv.data))
+                        address_type = getattr(adv, 'address_type', 0)
+                        self.rssi = getattr(adv, 'rssi', None)
+                        found_event.set()
 
-        # Try connecting with PUBLIC first, fallback to RANDOM
-        # AquaClean "Geberit AC PRO" uses PUBLIC (0) addressing
-        # RANDOM (1) fails with error 256 for this device
-        address_types_to_try = [0, 1]  # Try PUBLIC first (works for AquaClean), then RANDOM
-        last_error = None
-
-        for attempt, addr_type in enumerate(address_types_to_try, 1):
+            logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
+            unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
+            # Store immediately so that disconnect_ble_only() / disconnect() can unsubscribe
+            # even if this coroutine is cancelled (e.g. SIGTERM during the scan window).
+            # Without this, a mid-scan cancellation leaves a dangling subscription on the
+            # ESP32 that blocks the next bridge startup with "Only one API subscription
+            # is allowed at a time".
+            self._esphome_unsub_adv = unsub_adv
             try:
-                logger.debug(f"BLE connection attempt {attempt}/2 with address_type={addr_type} ({'RANDOM' if addr_type == 1 else 'PUBLIC'})")
+                await asyncio.wait_for(found_event.wait(), timeout=30.0)
+                logger.debug(
+                    f"Found BLE device {device_id}: name={device_name or 'Unknown'}, "
+                    f"address_type={address_type}"
+                )
+            except asyncio.TimeoutError:
+                unsub_adv()
+                self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
+                raise ESPHomeDeviceNotFoundError(
+                    f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
+                )
+            # Advertisement subscription intentionally kept alive until BLE connect completes.
+            # Calling unsub_adv() before bluetooth_device_connect() sends
+            # UnsubscribeBluetoothLEAdvertisementsRequest which clears api_connection_ on the
+            # ESP32, causing it to disconnect any BLE client in CONNECTING state immediately
+            # → "Disconnect before connected, disconnect scheduled" (reason 0x16).
+            # See CLAUDE.md trap 7.
+            BluetoothLeConnector._address_type_cache[mac_str] = address_type
+            logger.debug(f"[ESPHome] Cached address_type={address_type} for {mac_str}")
+            connect_timeout = 30.0
+            self.device_address = device_id
+            self.device_name = device_name or "Unknown"
 
-                # Ensure previous attempt is fully cleaned up before starting new one.
-                # close_api=False: keep the TCP connection alive — we only retry the BLE link.
-                if self.client is not None:
-                    logger.silly(f"Cleaning up previous connection attempt before retry")
-                    try:
-                        await self.client.disconnect(close_api=False)
-                    except Exception as cleanup_error:
-                        logger.silly(f"Cleanup error (expected): {cleanup_error}")
-                    self.client = None
-                    # Give ESP32 a moment to fully process the disconnect
-                    await asyncio.sleep(0.5)
-
-                self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, addr_type, self._esphome_feature_flags)
-                await self.client.connect()
-                # Keep advertisement subscription alive for entire BLE connection lifetime.
-                # Sending UnsubscribeBluetoothLEAdvertisementsRequest while BLE is active
-                # causes the ESP32 to disconnect the BLE client (see CLAUDE.md trap 7).
-                # unsub_adv() is stored and called in disconnect() after BLE is torn down.
-                self._esphome_unsub_adv = unsub_adv
-                logger.info(f"BLE connection successful with address_type={addr_type}")
-                break
-            except Exception as e:
-                last_error = e
-                logger.warning(f"BLE connection attempt {attempt}/2 failed with address_type={addr_type}: {e}")
-                if attempt < len(address_types_to_try):
-                    logger.debug(f"Retrying with alternate address_type")
-                else:
-                    logger.error(f"All BLE connection attempts failed")
-                    unsub_adv()
-                    raise last_error
+        # Connect to BLE device using the known address_type.
+        # On the cached path: no unsub_adv subscription is active, so trap 7 does not apply.
+        # On the scan path: unsub_adv is kept alive through the connect (see trap 7 above).
+        logger.debug(f"Creating ESPHomeAPIClient for {device_id} (address_type={address_type})")
+        self.client = ESPHomeAPIClient(api, device_id, self._on_disconnected, address_type, self._esphome_feature_flags)
+        try:
+            await self.client.connect(timeout=connect_timeout)
+            logger.info(f"BLE connection successful with address_type={address_type}")
+        except Exception as e:
+            BluetoothLeConnector._address_type_cache.pop(mac_str, None)
+            logger.warning(
+                f"BLE connection failed with address_type={address_type}: {e}; "
+                f"cleared address_type cache for {mac_str}"
+            )
+            if unsub_adv is not None:
+                unsub_adv()
+                self._esphome_unsub_adv = None
+            raise
 
         self.last_ble_ms = int((time.perf_counter() - t_ble) * 1000)
         logger.debug(f"BLE connect complete ({self.last_ble_ms} ms)")
