@@ -732,7 +732,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", self.bleConfig['device_id']))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", device_id))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -751,7 +751,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", self.bleConfig['device_id']))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", device_id))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -2105,6 +2105,9 @@ class ApiMode:
         fw = info.get("firmware_versions") or {}
         await self.service.mqtt_service.send_data_async(
             f"{topic}/peripheralDevice/information/firmwareVersion",              str(fw.get("main", "")))
+        fs = info.get("filter_status") or {}
+        if fs:
+            await self._publish_filter_status_to_mqtt(fs)
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -2158,7 +2161,8 @@ class ApiMode:
                     _identification_fetched = True
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
-                              "description", "initial_operation_date", "firmware_versions"):
+                              "description", "initial_operation_date", "firmware_versions",
+                              "filter_status"):
                         self.service.device_state[k] = result.get(k)
                     fw = result.get("firmware_versions") or {}
                     if fw.get("main"):
@@ -2281,6 +2285,7 @@ class ApiMode:
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
         fw = await client.base_client.get_firmware_version_list_async()
+        filter_status = await client.base_client.get_filter_status_async()
         return {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
@@ -2288,6 +2293,7 @@ class ApiMode:
             "description": ident.description,
             "initial_operation_date": str(initial_op_date),
             "firmware_versions": fw,
+            "filter_status": filter_status,
         }
 
     async def _execute_command(self, client, command: str):
