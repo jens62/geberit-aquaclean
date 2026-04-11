@@ -536,6 +536,13 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         logger.silly(f"result: {result}")
 
+    async def send_message_cons(self, data):
+        """Send a CONS frame to WRITE_1 (second BLE write characteristic)."""
+        logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
+        logger.silly(f"Sending CONS data to characteristic {self.BULK_CHAR_BULK_WRITE_1_UUID} data: {''.join(f'{b:02X}' for b in data)}")
+        result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_1_UUID, data)
+        logger.silly(f"result: {result}")
+
 
     async def restart_esp32_async(self):
         """Press the 'Restart AquaClean Proxy' button on the ESP32 via the native API.
