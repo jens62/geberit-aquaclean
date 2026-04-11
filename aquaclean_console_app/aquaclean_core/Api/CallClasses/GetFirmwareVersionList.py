@@ -4,12 +4,16 @@ logger = logging.getLogger(__name__)
 from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
 
 
-# Payload confirmed from iOS PacketLogger capture (2026-04-11):
-# 0x0C = 12 components, then 12 component IDs.
+# Payload confirmed from iOS PacketLogger capture (2026-04-11), verified via ble-decode.py:
+# 0x0C = 12 component slots; component 0x04 appears twice (at positions 4 and 10) — this
+# matches the exact bytes the iOS app sends (0c0103040506070809040a0b0c).
+# Component 0x0E is NOT included here; the iOS app fetches it separately via a second
+# GetFirmwareVersionList call with a different payload format (01 0f 00 00...).
+# Including 0x0E in this payload causes the device to hang and not respond.
 _FIRMWARE_PAYLOAD = bytes([
     0x0C,                                           # count = 12
     0x01, 0x03, 0x04, 0x05, 0x06, 0x07,            # component IDs 1, 3–7
-    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0E,            # component IDs 8–12, 14
+    0x08, 0x09, 0x04, 0x0A, 0x0B, 0x0C,            # component IDs 8, 9, 4 (again), 10–12
 ])
 
 
