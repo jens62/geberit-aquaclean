@@ -4,13 +4,22 @@ logger = logging.getLogger(__name__)
 from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
 
 
+# Payload confirmed from iOS PacketLogger capture (2026-04-11):
+# 0x0C = 12 components, then 12 component IDs.
+_FIRMWARE_PAYLOAD = bytes([
+    0x0C,                                           # count = 12
+    0x01, 0x03, 0x04, 0x05, 0x06, 0x07,            # component IDs 1, 3–7
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0E,            # component IDs 8–12, 14
+])
+
+
 class GetFirmwareVersionList:
-    def __init__(self, payload: bytes = b''):
+
+    # Context=0x01, Procedure=0x0E, Node=0x01
+    api_call_attribute = ApiCallAttribute(0x01, 0x0E, 0x01)
+
+    def __init__(self, payload: bytes = _FIRMWARE_PAYLOAD):
         logger.trace("GetFirmwareVersionList: __init__")
-        # Context=0x01, Procedure=0x0E, Node=0x01
-        # C# signature: GetFirmwareVersionList(object arg1, object arg2) — arg types unknown.
-        # Pass payload as hex string via REST ?payload=0000 to probe different argument values.
-        self.api_call_attribute = ApiCallAttribute(0x01, 0x0E, 0x01)
         self._payload = bytearray(payload)
 
     def get_api_call_attribute(self) -> ApiCallAttribute:
@@ -21,14 +30,45 @@ class GetFirmwareVersionList:
         logger.trace(f"GetFirmwareVersionList: get_payload -> {self._payload.hex() or '(empty)'}")
         return self._payload
 
-    def result(self, data):
+    def result(self, data: bytes) -> dict:
+        """
+        Parse the GetFirmwareVersionList response.
+
+        Response layout (5-byte records):
+            byte 0        : count (number of records)
+            per record:
+              [comp_id][v1][v2][build][reserved]
+
+        Returns:
+            {
+              "components": {
+                  comp_id (int): {"version": str, "build": int},
+                  ...
+              },
+              "main": str | None   # iOS-format main firmware: "RS28.0 TS199"
+            }
+        """
         logger.trace("GetFirmwareVersionList: result")
-        # Return both raw hex and attempted ASCII decode for analysis
-        raw_hex = ''.join(f'{b:02X}' for b in data)
-        try:
-            ascii_str = data.decode('ascii', errors='replace')
-        except Exception:
-            ascii_str = ''
-        logger.debug(f"GetFirmwareVersionList raw: {raw_hex}")
-        logger.debug(f"GetFirmwareVersionList ascii: {ascii_str!r}")
-        return {"raw_hex": raw_hex, "ascii": ascii_str}
+        components = {}
+        if data and len(data) >= 1:
+            count = data[0]
+            pos = 1
+            while pos + 4 <= len(data) and len(components) < count:
+                comp_id = data[pos]
+                v1 = data[pos + 1]
+                v2 = data[pos + 2]
+                build = data[pos + 3]
+                v1c = chr(v1) if 0x20 <= v1 <= 0x7E else f"{v1:02X}"
+                v2c = chr(v2) if 0x20 <= v2 <= 0x7E else f"{v2:02X}"
+                components[comp_id] = {"version": v1c + v2c, "build": build}
+                pos += 5
+
+        # iOS display format for main firmware (component ID 1): "RS{version}.0 TS{build}"
+        # Example: component 1 = version "28", build 199 → "RS28.0 TS199"
+        main = None
+        if 1 in components:
+            c = components[1]
+            main = f"RS{c['version']}.0 TS{c['build']}"
+
+        logger.debug(f"GetFirmwareVersionList: {len(components)} components, main={main}")
+        return {"components": components, "main": main}

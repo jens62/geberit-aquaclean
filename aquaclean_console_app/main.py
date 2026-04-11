@@ -457,6 +457,7 @@ class ServiceMode:
             "production_date": None,
             "description": None,
             "initial_operation_date": None,
+            "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -592,6 +593,15 @@ class ServiceMode:
                         "ble_ms": bluetooth_connector.last_ble_ms,
                     })
                 )
+
+                # Cache firmware versions and log them (device identification at connect time)
+                fw = self.client.firmware_versions or {}
+                self.device_state["firmware_versions"] = fw
+                if fw.get("main"):
+                    logger.info(f"Device firmware: {fw['main']}")
+                await self.mqtt_service.send_data_async(
+                    f"{self.mqttConfig['topic']}/peripheralDevice/information/firmwareVersion",
+                    str(fw.get("main", "")))
 
                 # Update BLE RSSI
                 self.device_state["ble_rssi"] = bluetooth_connector.rssi
@@ -2065,6 +2075,9 @@ class ApiMode:
             f"{topic}/peripheralDevice/information/Identification/Description",   str(info.get("description", "")))
         await self.service.mqtt_service.send_data_async(
             f"{topic}/peripheralDevice/information/initialOperationDate",         str(info.get("initial_operation_date", "")))
+        fw = info.get("firmware_versions") or {}
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/firmwareVersion",              str(fw.get("main", "")))
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -2118,8 +2131,11 @@ class ApiMode:
                     _identification_fetched = True
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
-                              "description", "initial_operation_date"):
+                              "description", "initial_operation_date", "firmware_versions"):
                         self.service.device_state[k] = result.get(k)
+                    fw = result.get("firmware_versions") or {}
+                    if fw.get("main"):
+                        logger.info(f"Device firmware: {fw['main']}")
                     await self._publish_identification_to_mqtt(result)
                 else:
                     result = await self._on_demand(self._fetch_state)
@@ -2237,12 +2253,14 @@ class ApiMode:
     async def _fetch_info(self, client):
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
+        fw = await client.base_client.get_firmware_version_list_async()
         return {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
             "production_date": ident.production_date,
             "description": ident.description,
             "initial_operation_date": str(initial_op_date),
+            "firmware_versions": fw,
         }
 
     async def _execute_command(self, client, command: str):
@@ -2388,6 +2406,18 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "unique_id": "geberit_aquaclean_initial_operation_date",
                 "state_topic": f"{t}/peripheralDevice/information/initialOperationDate",
                 "icon": "mdi:calendar-clock",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensor: firmware version (ServiceMode.connect / ApiMode._fetch_info) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/firmware_version/config",
+            "payload": {
+                "name": "Firmware Version",
+                "unique_id": "geberit_aquaclean_firmware_version",
+                "state_topic": f"{t}/peripheralDevice/information/firmwareVersion",
+                "icon": "mdi:chip",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
             },
