@@ -4,17 +4,15 @@ logger = logging.getLogger(__name__)
 from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
 
 
-# iOS app sends 12 component IDs via a multi-frame request (FIRST on WRITE_0 + CONS on
-# WRITE_1). Our protocol stack only supports single-frame outgoing requests (20-byte BLE
-# limit). A single frame holds at most 9 bytes of payload:
-#   20 (frame) - 1 (type) - 6 (CRC header) - 4 (outer header) = 9 bytes
-# With 1 byte for the count field that leaves room for 8 component IDs.
-# We request the first 8 components from the iOS payload (IDs 1, 3–9); component 1 is
-# the main firmware version used for the "RS28.0 TS199" display string.
-# To get all 12 components, multi-frame outgoing request support would be required.
+# All "get list" procedures (GetSystemParameterList, GetFirmwareVersionList,
+# GetFilterStatus) use a fixed 13-byte payload: 1 count byte + up to 12 ID bytes,
+# zero-padded to 13.  The device rejects shorter payloads with error 0xF7.
+# We request 8 of the 12 component IDs the iOS app requests; component 1 is the
+# main firmware version used for the "RS28.0 TS199" display string.
 _FIRMWARE_PAYLOAD = bytes([
-    0x08,                                           # count = 8 (max for 20-byte single frame)
+    0x08,                                           # count = 8
     0x01, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,  # component IDs 1, 3–9
+    0x00, 0x00, 0x00, 0x00,                         # zero-pad to 13 bytes total
 ])
 
 

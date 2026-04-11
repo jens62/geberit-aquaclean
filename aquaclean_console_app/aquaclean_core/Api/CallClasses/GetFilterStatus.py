@@ -6,18 +6,14 @@ logger = logging.getLogger(__name__)
 from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
 
 
-# Request IDs 0-3 and 7-10 (8 records).
-# The iOS app requests IDs 0–10 (11 records), but that payload is 12 bytes
-# which results in a 22-byte CrcMessage — 3 bytes over the 20-byte BLE single-frame
-# limit of 19 bytes of payload.  A single frame holds at most 9 bytes of payload:
-#   20 (frame) - 1 (type) - 6 (CRC header) - 4 (outer header) = 9 bytes
-# With 1 byte for the count field that leaves room for 8 IDs.
-# IDs 0–3 and 7–10 cover all key fields: status, shower_cycles, and the four
-# filter tracking fields (days_until_filter_change, last_filter_reset,
-# next_filter_change, filter_reset_count).  IDs 4–6 are of unknown purpose.
+# All "get list" procedures use a fixed 13-byte payload: 1 count byte + up to 12
+# ID bytes, zero-padded to 13.  The device rejects shorter payloads with 0xF7.
+# We request IDs 0–3 and 7–10 (8 IDs), covering all key fields:
+# status, shower_cycles, and the four filter tracking fields.  IDs 4–6 unknown.
 _FILTER_PAYLOAD = bytes([
-    0x08,                                           # count = 8 (max for 20-byte single frame)
+    0x08,                                           # count = 8
     0x00, 0x01, 0x02, 0x03, 0x07, 0x08, 0x09, 0x0A,  # IDs 0,1,2,3,7,8,9,10
+    0x00, 0x00, 0x00, 0x00,                         # zero-pad to 13 bytes total
 ])
 
 
