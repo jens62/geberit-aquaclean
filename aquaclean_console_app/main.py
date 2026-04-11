@@ -2107,7 +2107,7 @@ class ApiMode:
             f"{topic}/peripheralDevice/information/firmwareVersion",              str(fw.get("main", "")))
         fs = info.get("filter_status") or {}
         if fs:
-            await self._publish_filter_status_to_mqtt(fs)
+            await self._publish_filter_status_to_mqtt(fs, topic)
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
