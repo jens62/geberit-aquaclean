@@ -41,6 +41,10 @@ mqtt:
       state_topic: "Geberit/AquaClean/peripheralDevice/information/initialOperationDate"
       icon: mdi:calendar-clock
 
+    - name: "Geberit AquaClean Firmware Version"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/firmwareVersion"
+      icon: mdi:chip
+
     # Descale statistics
     - name: "Geberit AquaClean Days Until Next Descale"
       state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/daysUntilNextDescale"
