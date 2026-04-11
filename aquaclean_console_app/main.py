@@ -458,6 +458,7 @@ class ServiceMode:
             "description": None,
             "initial_operation_date": None,
             "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
+            "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -1743,6 +1744,29 @@ class ApiMode:
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
         return result
 
+    async def get_filter_status(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            result = await self.service.client.base_client.get_filter_status_async()
+        else:
+            result = await self._on_demand(self._fetch_filter_status)
+        await self._publish_filter_status_to_mqtt(result, topic)
+        return result
+
+    async def _publish_filter_status_to_mqtt(self, result: dict, topic: str):
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/daysUntilFilterChange",
+            str(result.get("days_until_filter_change", "")))
+        last_reset = result.get("last_filter_reset") or 0
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/lastFilterReset",
+            str(last_reset))
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/filterResetCount",
+            str(result.get("filter_reset_count", "")))
+
     async def get_statistics_descale(self):
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
@@ -1892,6 +1916,9 @@ class ApiMode:
         else:
             result = await self._on_demand(lambda c: c.base_client.get_firmware_version_list_async(payload))
         return result
+
+    async def _fetch_filter_status(self, client):
+        return await client.base_client.get_filter_status_async()
 
     async def _fetch_statistics_descale(self, client):
         sd = await client.base_client.get_statistics_descale_async()
@@ -2422,6 +2449,42 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "device": DEVICE,
             },
         },
+        # --- Sensors: filter status (ApiMode.get_filter_status) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/filter_days_remaining/config",
+            "payload": {
+                "name": "Filter Days Remaining",
+                "unique_id": "geberit_aquaclean_filter_days_remaining",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/daysUntilFilterChange",
+                "icon": "mdi:filter-cog",
+                "unit_of_measurement": "days",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/last_filter_reset/config",
+            "payload": {
+                "name": "Last Filter Reset",
+                "unique_id": "geberit_aquaclean_last_filter_reset",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/lastFilterReset",
+                "value_template": "{% if value | int(0) > 0 %}{{ value | int | timestamp_custom('%d.%m.%Y') }}{% else %}Never{% endif %}",
+                "icon": "mdi:filter-check",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/filter_reset_count/config",
+            "payload": {
+                "name": "Filter Reset Count",
+                "unique_id": "geberit_aquaclean_filter_reset_count",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/filterResetCount",
+                "icon": "mdi:counter",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
         # --- Sensors: descale statistics (ApiMode.get_statistics_descale) ---
         {
             "topic": f"{HA}/sensor/geberit_aquaclean/days_until_next_descale/config",
@@ -2896,6 +2959,8 @@ async def run_cli(args):
         elif args.command == 'statistics-descale':
             sd = await client.base_client.get_statistics_descale_async()
             result["data"] = ApiMode._statistics_descale_to_dict(sd)
+        elif args.command == 'filter-status':
+            result["data"] = await client.base_client.get_filter_status_async()
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
             result["data"] = {"action": "lid_toggled"}
@@ -3075,6 +3140,7 @@ if __name__ == "__main__":
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
+        'filter-status',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)

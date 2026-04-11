@@ -23,6 +23,7 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetDeviceInitialOperat
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand                     import SetCommand
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStatisticsDescale           import GetStatisticsDescale
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList         import GetFirmwareVersionList
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus                import GetFilterStatus
 
 from aquaclean_console_app.aquaclean_utils                                               import utils   
 
@@ -218,6 +219,19 @@ class AquaCleanBaseClient:
         result = api_call.result(self.message_context.result_bytes)
         logger.debug(f"result: {result}")
         logger.debug(f"response.result: {response.result}")
+
+        return result
+
+    async def get_filter_status_async(self):
+        api_call = GetFilterStatus()
+        logger.trace(f"api_call: {api_call}")
+
+        response = await self.send_request(api_call)
+        logger.debug(f"response: {response}")
+        logger.debug(f"self.message_context.result_bytes: {self.message_context.result_bytes}")
+
+        result = api_call.result(self.message_context.result_bytes)
+        logger.debug(f"result: {result}")
 
         return result
 

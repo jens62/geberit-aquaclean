@@ -60,6 +60,7 @@ def entry_point():
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
+        'filter-status',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
