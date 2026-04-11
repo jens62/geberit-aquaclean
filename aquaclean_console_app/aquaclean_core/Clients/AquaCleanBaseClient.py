@@ -239,7 +239,7 @@ class AquaCleanBaseClient:
         api_call = GetFirmwareVersionList() if payload is None else GetFirmwareVersionList(payload)
         logger.trace(f"api_call: {api_call}")
 
-        response = await self.send_request(api_call)
+        response = await self.send_request(api_call, send_as_first_cons=True)
         logger.debug(f"response: {response}")
         logger.debug(f"self.message_context.result_bytes: {self.message_context.result_bytes}")
 
@@ -275,9 +275,9 @@ class AquaCleanBaseClient:
         return d
     
 
-    async def send_request(self, api_call):
+    async def send_request(self, api_call, send_as_first_cons=False):
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
-        logger.debug(f"Sending {api_call.__class__.__name__}")
+        logger.debug(f"Sending {api_call.__class__.__name__}{'as FIRST+CONS' if send_as_first_cons else ''}")
 
         while self.call_count > 0:
             logger.trace(f"self.call_count: {self.call_count} > 0")
@@ -297,6 +297,11 @@ class AquaCleanBaseClient:
         logger.trace(f"message.serialize(): {message.serialize().hex()}")
 
         frame = self.frame_factory.BuildSingleFrame(message.serialize())
+        if send_as_first_cons:
+            # Signal to the device that a CONS frame follows (SubFrameCountOrIndex=1,
+            # IsSubFrameCount=True) so it returns a multi-frame response instead of
+            # a 5-byte error body.  Type byte: SINGLE|HasMsgType|SubCount=1|IsCount → 0x13.
+            frame.SubFrameCountOrIndex = 1
         logger.trace(f"frame: {frame}")
         logger.trace(f"type(frame): {type(frame)}")
 
@@ -313,6 +318,15 @@ class AquaCleanBaseClient:
         self._transaction_event.clear()
 
         await self.frame_service.send_frame_async(frame)
+
+        if send_as_first_cons:
+            # CONS frame on WRITE_1: type byte 0x12 (SINGLE|HasMsgType|SubIndex=1),
+            # followed by 19 zero bytes.  The full CrcMessage fits in the FIRST frame
+            # so the CONS frame carries no payload — the device requires it for the
+            # handshake regardless.
+            cons_frame = bytes([0x12]) + bytes(19)
+            logger.debug(f"Sending CONS frame: {cons_frame.hex()}")
+            await self.bluetooth_le_connector.send_message_cons(cons_frame)
 
         await asyncio.sleep(0.01)
 

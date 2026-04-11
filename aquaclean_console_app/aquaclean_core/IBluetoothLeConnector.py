@@ -22,3 +22,6 @@ class IBluetoothLeConnector:
     async def send_message(self, data):
         pass
 
+    async def send_message_cons(self, data):
+        pass
+
