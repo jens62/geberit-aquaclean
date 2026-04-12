@@ -113,6 +113,8 @@ The integration uses the following MQTT topics:
 - `Geberit/AquaClean/peripheralDevice/information/Identification/SerialNumber`
 - `Geberit/AquaClean/peripheralDevice/information/Identification/Description`
 - `Geberit/AquaClean/peripheralDevice/information/initialOperationDate`
+- `Geberit/AquaClean/peripheralDevice/information/firmwareVersion` — main firmware version string (e.g. `RS28.0 TS199`)
+- `Geberit/AquaClean/peripheralDevice/information/filterStatus` — JSON object with filter status fields (days remaining, last reset timestamp, reset count etc.)
 
 ### Status Topics (State)
 - `Geberit/AquaClean/centralDevice/connected`
