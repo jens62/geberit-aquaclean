@@ -113,6 +113,9 @@ class AquaCleanClient(IAquaCleanClient):
     async def toggle_orientation_light(self):
         await self.base_client.SetCommandAsync(Commands.ToggleOrientationLight)
 
+    async def reset_filter_counter(self):
+        await self.base_client.SetCommandAsync(Commands.ResetFilterCounter)
+
     # --- Restored Original Getter Methods ---
     async def get_anal_shower_position(self):
         return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.AnalShowerPosition)
