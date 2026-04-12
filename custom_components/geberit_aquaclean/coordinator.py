@@ -511,6 +511,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.toggle_anal_shower()
                 elif command == "toggle_lady_shower":
                     await client.toggle_lady_shower()
+                elif command == "reset_filter_counter":
+                    await client.reset_filter_counter()
                 else:
                     _LOGGER.warning("Unknown command: %s", command)
             except ESPHomeConnectionError:
