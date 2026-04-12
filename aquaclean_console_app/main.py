@@ -1382,6 +1382,21 @@ class ServiceMode:
 
     async def on_reset_filter_counter_message(self):
         await self.client.reset_filter_counter()
+        # Re-fetch filter status so device_state, SSE and MQTT reflect the reset immediately.
+        new_fs = await self.client.base_client.get_filter_status_async()
+        self.device_state["filter_status"] = new_fs
+        topic = self.mqttConfig['topic']
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/daysUntilFilterChange",
+            str(new_fs.get("days_until_filter_change", "")))
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/lastFilterReset",
+            str(new_fs.get("last_filter_reset") or 0))
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/filterResetCount",
+            str(new_fs.get("filter_reset_count", "")))
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
 
     def on_connection_status_changed(self, sender, *args):
         values = ", ".join(str(arg) for arg in args)
@@ -2310,6 +2325,12 @@ class ApiMode:
             await client.toggle_orientation_light()
         elif command == "reset-filter-counter":
             await client.reset_filter_counter()
+            # Re-fetch filter status so device_state and SSE reflect the reset immediately.
+            new_fs = await client.base_client.get_filter_status_async()
+            self.service.device_state["filter_status"] = new_fs
+            topic = self.service.mqttConfig['topic']
+            await self._publish_filter_status_to_mqtt(new_fs, topic)
+            await self.rest_api.broadcast_state(self.service.device_state.copy())
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
 
