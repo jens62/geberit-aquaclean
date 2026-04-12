@@ -112,6 +112,7 @@ python main.py --mode cli --command info
 |---------|-------------|
 | `toggle-lid` | Toggle lid open/closed |
 | `toggle-anal` | Toggle anal shower on/off |
+| `reset-filter-counter` | Reset ceramic honeycomb filter counter (sets days back to 365, increments reset count) |
 
 ```bash
 python main.py --mode cli --command toggle-lid

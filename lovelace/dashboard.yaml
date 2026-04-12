@@ -135,6 +135,14 @@ views:
               perform_action: button.press
               target:
                 entity_id: button.geberit_aquaclean_toggle_lid
+          - type: button
+            name: Reset Filter Counter
+            icon: mdi:air-purifier
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.geberit_aquaclean_reset_filter_counter
 
       # ── Poll Status ───────────────────────────────────────────────────────
       # sensor.next_poll has device_class: timestamp → HA shows "in X minutes"

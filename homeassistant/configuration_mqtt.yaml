@@ -148,6 +148,13 @@ mqtt:
       unit_of_measurement: "B"
       entity_category: diagnostic
 
+  button:
+    # Reset ceramic honeycomb filter counter
+    - name: "Geberit AquaClean Reset Filter Counter"
+      command_topic: "Geberit/AquaClean/peripheralDevice/control/resetFilterCounter"
+      payload_press: "true"
+      icon: mdi:air-purifier
+
   switch:
     # Control switch for lid position
     - name: "Geberit AquaClean Toggle Lid"
@@ -157,7 +164,7 @@ mqtt:
       icon: mdi:toilet
       optimistic: true
       retain: false
-  
+
   binary_sensor:
     # Binary sensors for monitor states (on/off display)
     # Note: payload_on and payload_off use "True"/"False" (capitalized)

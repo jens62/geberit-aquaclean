@@ -50,6 +50,7 @@ An interactive Swagger UI is available at `http://<host>:<port>/docs`.
 |--------|------|-------------|
 | `POST` | `/command/toggle-lid` | Toggle lid open/closed |
 | `POST` | `/command/toggle-anal` | Toggle anal shower on/off |
+| `POST` | `/command/reset-filter-counter` | Reset ceramic honeycomb filter counter (sets days back to 365, increments reset count) |
 
 ## Data queries
 
