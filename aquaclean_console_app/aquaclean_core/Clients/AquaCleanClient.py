@@ -28,6 +28,7 @@ class AquaCleanClient(IAquaCleanClient):
         self.Description = ""
         self.InitialOperationDate = ""
         self.soc_application_versions = None
+        self.firmware_versions = None
 
     async def connect(self, device_id: str):
         """Standard connection and info fetching. No infinite loop here."""
@@ -47,6 +48,8 @@ class AquaCleanClient(IAquaCleanClient):
 
         self.InitialOperationDate = await self.base_client.get_device_initial_operation_date()
         await self.DeviceInitialOperationDate.invoke_async(self, self.InitialOperationDate)
+
+        self.firmware_versions = await self.base_client.get_firmware_version_list_async()
 
     async def connect_ble_only(self, device_id: str):
         """Pure BLE handshake — no data fetching. For on-demand mode so that
