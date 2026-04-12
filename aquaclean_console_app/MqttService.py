@@ -31,6 +31,7 @@ class MqttService:
         self.ConnectESP32            = myEvent.EventHandler()
         self.DisconnectESP32         = myEvent.EventHandler()
         self.RestartESP32            = myEvent.EventHandler()
+        self.ResetFilterCounter      = myEvent.EventHandler()
 
 
     async def start_async(self, aquaclean_loop, mqtt_initialized_wait_queue):
@@ -119,6 +120,7 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/connect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/restart")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/resetFilterCounter")
         logger.info("### SUBSCRIBED ###")
 
     def on_message(self, client, userdata, msg):
@@ -148,6 +150,8 @@ class MqttService:
             self.handle_esp32_disconnect_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/esphomeProxy/control/restart":
             self.handle_esp32_restart_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/resetFilterCounter":
+            self.handle_reset_filter_counter_message()
 
 
     def handle_toggleLidPositionMessage(self):
@@ -203,6 +207,12 @@ class MqttService:
     def handle_esp32_restart_message(self):
         logger.trace("in handle_esp32_restart_message")
         for handler in self.RestartESP32.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_reset_filter_counter_message(self):
+        logger.trace("in handle_reset_filter_counter_message")
+        for handler in self.ResetFilterCounter.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
             _ = future.result()
 
