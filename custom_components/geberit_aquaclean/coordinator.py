@@ -348,6 +348,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     )
                     stats = await client.base_client.get_statistics_descale_async()
                     soc_versions = await client.base_client.get_soc_application_versions_async()
+                    firmware_versions = await client.base_client.get_firmware_version_list_async()
+                    filter_status = await client.base_client.get_filter_status_async()
             except (BleakError, asyncio.TimeoutError, BLEPeripheralTimeoutError) as exc:
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
@@ -400,6 +402,16 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 ),
                 "unposted_shower_cycles": stats.unposted_shower_cycles,
                 "soc_versions": str(soc_versions) if soc_versions else None,
+                # Firmware version
+                "firmware_version": (firmware_versions or {}).get("main"),
+                # Filter / honeycomb status
+                "filter_days_remaining": (filter_status or {}).get("days_until_filter_change"),
+                "filter_last_reset": (
+                    datetime.fromtimestamp(ts, tz=timezone.utc)
+                    if (ts := (filter_status or {}).get("last_filter_reset")) and ts > 0
+                    else None
+                ),
+                "filter_reset_count": (filter_status or {}).get("filter_reset_count"),
                 # Poll timing (for countdown visualization)
                 "poll_epoch": poll_start,
                 "poll_interval": self.update_interval.total_seconds(),

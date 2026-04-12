@@ -66,6 +66,8 @@ Each endpoint queries only the relevant parameter from the device.
 | `GET` | `/data/initial-operation-date` | `initial_operation_date` |
 | `GET` | `/data/soc-versions` | `soc_versions` |
 | `GET` | `/data/statistics-descale` | `days_until_next_descale`, `days_until_shower_restricted`, `shower_cycles_until_confirmation`, `number_of_descale_cycles`, `date_time_at_last_descale`, `date_time_at_last_descale_prompt`, `unposted_shower_cycles` |
+| `GET` | `/data/firmware-version-list` | `main` (e.g. `"RS28.0 TS199"`), `components` (dict of component IDs → version records) |
+| `GET` | `/data/filter-status` | `days_until_filter_change`, `last_filter_reset` (Unix timestamp), `filter_reset_count`, `shower_cycles`, plus raw record IDs 0–10 |
 
 ---
 

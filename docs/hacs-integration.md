@@ -162,8 +162,9 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Binary sensor | **BLE Connected** — `True` (green) when the last poll reached the Geberit via BLE, `False` (red) when the last poll failed; attribute `connected_at` shows the timestamp of the last successful BLE connect |
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
 | Sensor | **BLE Connection** — shows `{BLE device name} (MAC)` after the first successful poll, or just the MAC until then |
-| Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions |
+| Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions, **Firmware Version** (e.g. `RS28.0 TS199`) |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
+| Sensor (filter) | **Days Until Filter Change**, **Last Filter Reset** (timestamp), **Filter Reset Count** |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
 | Sensor (poll) | Last Poll, Poll Interval, Next Poll |
 | Sensor | **BLE Signal** — Geberit BLE advertisement RSSI in dBm (signal strength between ESP32 and toilet) |
@@ -382,6 +383,7 @@ registered when the action runs.
 | `AttributeError: 'HassLogger' has no attribute 'trace'` | Outdated version (< 2.4.18) | Update to latest via HACS |
 | Duplicate subscription error (`Only one API subscription`) | Previous TCP connection not released | Restart HA; covered by v2.4.15+ fix |
 | E0003 every poll, times out at 36 s, then "not in cache" | Raspberry Pi built-in BT (BCM4345) + bleak 2.1.1 hardware limitation | Use a USB BT dongle or ESPHome proxy — see [Known hardware limitations](#known-hardware-limitations--local-ble-adapter) |
+| E0002 after Toggle Lid or button press (ESPHome proxy) | On-demand TCP: cold BLE scanner misses device briefly pausing advertising after a command | Fixed in v2.4.62 — update via HACS |
 
 ### Known hardware limitations — local BLE adapter
 

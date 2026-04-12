@@ -83,6 +83,8 @@ python main.py --mode cli --command status
 | `initial-operation-date` | `initial_operation_date` |
 | `soc-versions` | `soc_versions` |
 | `statistics-descale` | `days_until_next_descale`, `days_until_shower_restricted`, `shower_cycles_until_confirmation`, `number_of_descale_cycles`, `date_time_at_last_descale`, `unposted_shower_cycles` |
+| `filter-status` | `days_until_filter_change`, `last_filter_reset` (Unix timestamp), `filter_reset_count`, `shower_cycles`, plus raw record IDs 0–10 |
+| `firmware-version-list` | `main` (e.g. `"RS28.0 TS199"`), `components` (dict of component IDs → version records) |
 
 ```bash
 python main.py --mode cli --command info
