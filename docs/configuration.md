@@ -109,7 +109,7 @@ For full setup instructions see [docs/esphome.md](esphome.md).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `log_level` | `DEBUG` | Python logging level. `TRACE` and `SILLY` are custom levels added by the `haggis` library. `TRACE` logs every function entry/exit which is very verbose. |
+| `log_level` | `DEBUG` | Python logging level. `TRACE` and `SILLY` are custom levels added by this application. `TRACE` logs every function entry/exit which is very verbose. |
 
 ---
 
