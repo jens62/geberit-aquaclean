@@ -16,6 +16,14 @@ views:
     icon: mdi:toilet
     cards:
 
+      # ── Language selector (optional) ──────────────────────────────────────
+      # Requires an input_text.frontend_language helper in HA.
+      - type: markdown
+        content: >
+          {% set lang = states('input_text.frontend_language') %} {% if
+          lang.startswith('de') %} Hallo — aktuelle Sprache: {{ lang }} {% else
+          %} Hello — current language: {{ lang }} {% endif %}
+
       # ── Connection Status ─────────────────────────────────────────────────
       # Mirrors the webapp's two connection panels.
       # Sensors cycle: connecting → connected → disconnected within each poll.
@@ -82,6 +90,8 @@ views:
       # Performance statistics — session totals, reset on HA restart.
       # Timing/RSSI sensors are on the toilet device (geberit_aquaclean_*) since v2.4.47-pre.
       # WiFi RSSI row is hidden automatically when no ESPHome proxy is configured.
+      # NOTE: content: | (literal block) is mandatory — content: > collapses newlines
+      #       and breaks the table rendering.
       - type: markdown
         title: Performance Statistics
         icon: mdi:chart-bar
@@ -179,6 +189,18 @@ views:
           - entity: sensor.geberit_aquaclean_unposted_shower_cycles
             name: Unposted Shower Cycles
 
+      # ── Ceramic Honeycomb Filter ──────────────────────────────────────────
+      - type: entities
+        title: Ceramic Honeycomb Filter
+        icon: mdi:air-purifier
+        entities:
+          - entity: sensor.geberit_aquaclean_days_until_filter_change
+            name: Days Until Filter Change
+          - entity: sensor.geberit_aquaclean_last_filter_reset
+            name: Last Filter Reset
+          - entity: sensor.geberit_aquaclean_filter_reset_count
+            name: Filter Reset Count
+
       # ── Device Information ────────────────────────────────────────────────
       - type: entities
         title: Device Information
@@ -197,3 +219,5 @@ views:
             name: Initial Operation Date
           - entity: sensor.geberit_aquaclean_soc_versions
             name: SOC Versions
+          - entity: sensor.geberit_aquaclean_firmware_version
+            name: Firmware Version
