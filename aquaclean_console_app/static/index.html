@@ -348,6 +348,10 @@
       <dt>SAP Number</dt>      <dd id="info-sap">—</dd>
       <dt>Production Date</dt> <dd id="info-production">—</dd>
       <dt>Initial Operation</dt><dd id="info-initial">—</dd>
+      <dt>Firmware</dt>        <dd id="info-firmware">—</dd>
+      <dt>Filter days left</dt><dd id="info-filter-days">—</dd>
+      <dt>Last filter reset</dt><dd id="info-filter-reset">—</dd>
+      <dt>Filter resets</dt>   <dd id="info-filter-count">—</dd>
     </dl>
 
     <h2>Commands</h2>
@@ -655,6 +659,8 @@
       // Identification arrives via SSE state after the first on-demand poll.
       if (state.sap_number != null) onIdentification(state);
       if (state.initial_operation_date != null) onInitialOpDate(state);
+      if (state.firmware_versions != null) onFirmwareVersions(state.firmware_versions);
+      if (state.filter_status != null) onFilterStatus(state.filter_status);
     }
 
     (function tickCountdown() {
@@ -856,6 +862,17 @@
     }
     function onInitialOpDate(data) {
       set('info-initial', data.initial_operation_date);
+    }
+
+    function onFirmwareVersions(fw) {
+      set('info-firmware', fw && fw.main ? fw.main : '—');
+    }
+
+    function onFilterStatus(fs) {
+      const fmt = ts => ts ? new Date(ts * 1000).toLocaleDateString() : '—';
+      set('info-filter-days',  fs.days_until_filter_change != null ? fs.days_until_filter_change + ' d' : '—');
+      set('info-filter-reset', fmt(fs.last_filter_reset));
+      set('info-filter-count', fs.filter_reset_count != null ? fs.filter_reset_count : '—');
     }
 
     function clearSocVersions() {

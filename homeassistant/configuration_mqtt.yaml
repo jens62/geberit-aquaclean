@@ -41,6 +41,30 @@ mqtt:
       state_topic: "Geberit/AquaClean/peripheralDevice/information/initialOperationDate"
       icon: mdi:calendar-clock
 
+    - name: "Geberit AquaClean Firmware Version"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/firmwareVersion"
+      icon: mdi:chip
+
+    # Filter status
+    - name: "Geberit AquaClean Filter Days Remaining"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/filterStatus/daysUntilFilterChange"
+      icon: mdi:filter-cog
+      unit_of_measurement: "days"
+
+    - name: "Geberit AquaClean Last Filter Reset"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/filterStatus/lastFilterReset"
+      icon: mdi:filter-check
+      value_template: >-
+        {% if value | int(0) > 0 %}
+          {{ value | int | timestamp_custom('%d.%m.%Y') }}
+        {% else %}
+          Never
+        {% endif %}
+
+    - name: "Geberit AquaClean Filter Reset Count"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/filterStatus/filterResetCount"
+      icon: mdi:counter
+
     # Descale statistics
     - name: "Geberit AquaClean Days Until Next Descale"
       state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/daysUntilNextDescale"

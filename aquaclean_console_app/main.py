@@ -457,6 +457,8 @@ class ServiceMode:
             "production_date": None,
             "description": None,
             "initial_operation_date": None,
+            "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
+            "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -593,6 +595,15 @@ class ServiceMode:
                     })
                 )
 
+                # Cache firmware versions and log them (device identification at connect time)
+                fw = self.client.firmware_versions or {}
+                self.device_state["firmware_versions"] = fw
+                if fw.get("main"):
+                    logger.info(f"Device firmware: {fw['main']}")
+                await self.mqtt_service.send_data_async(
+                    f"{self.mqttConfig['topic']}/peripheralDevice/information/firmwareVersion",
+                    str(fw.get("main", "")))
+
                 # Update BLE RSSI
                 self.device_state["ble_rssi"] = bluetooth_connector.rssi
 
@@ -721,7 +732,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", self.bleConfig['device_id']))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", device_id))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -740,7 +751,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0003, msg))
                 await self.mqtt_service.send_data_async(f"{self.mqttConfig['topic']}/centralDevice/connected", str(False))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", self.bleConfig['device_id']))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0003.code, error_hint=E0003.hint.replace("<BT-ADDRESS>", device_id))
                 try:
                     await asyncio.wait_for(self._shutdown_event.wait(), timeout=30)
                 except asyncio.TimeoutError:
@@ -1733,6 +1744,29 @@ class ApiMode:
         await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/information/SocVersions", result["soc_versions"])
         return result
 
+    async def get_filter_status(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            result = await self.service.client.base_client.get_filter_status_async()
+        else:
+            result = await self._on_demand(self._fetch_filter_status)
+        await self._publish_filter_status_to_mqtt(result, topic)
+        return result
+
+    async def _publish_filter_status_to_mqtt(self, result: dict, topic: str):
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/daysUntilFilterChange",
+            str(result.get("days_until_filter_change", "")))
+        last_reset = result.get("last_filter_reset") or 0
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/lastFilterReset",
+            str(last_reset))
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/filterResetCount",
+            str(result.get("filter_reset_count", "")))
+
     async def get_statistics_descale(self):
         topic = self.service.mqttConfig['topic']
         if self.ble_connection == "persistent":
@@ -1882,6 +1916,9 @@ class ApiMode:
         else:
             result = await self._on_demand(lambda c: c.base_client.get_firmware_version_list_async(payload))
         return result
+
+    async def _fetch_filter_status(self, client):
+        return await client.base_client.get_filter_status_async()
 
     async def _fetch_statistics_descale(self, client):
         sd = await client.base_client.get_statistics_descale_async()
@@ -2065,6 +2102,12 @@ class ApiMode:
             f"{topic}/peripheralDevice/information/Identification/Description",   str(info.get("description", "")))
         await self.service.mqtt_service.send_data_async(
             f"{topic}/peripheralDevice/information/initialOperationDate",         str(info.get("initial_operation_date", "")))
+        fw = info.get("firmware_versions") or {}
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/firmwareVersion",              str(fw.get("main", "")))
+        fs = info.get("filter_status") or {}
+        if fs:
+            await self._publish_filter_status_to_mqtt(fs, topic)
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -2118,8 +2161,12 @@ class ApiMode:
                     _identification_fetched = True
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
-                              "description", "initial_operation_date"):
+                              "description", "initial_operation_date", "firmware_versions",
+                              "filter_status"):
                         self.service.device_state[k] = result.get(k)
+                    fw = result.get("firmware_versions") or {}
+                    if fw.get("main"):
+                        logger.info(f"Device firmware: {fw['main']}")
                     await self._publish_identification_to_mqtt(result)
                 else:
                     result = await self._on_demand(self._fetch_state)
@@ -2237,12 +2284,16 @@ class ApiMode:
     async def _fetch_info(self, client):
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
+        fw = await client.base_client.get_firmware_version_list_async()
+        filter_status = await client.base_client.get_filter_status_async()
         return {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
             "production_date": ident.production_date,
             "description": ident.description,
             "initial_operation_date": str(initial_op_date),
+            "firmware_versions": fw,
+            "filter_status": filter_status,
         }
 
     async def _execute_command(self, client, command: str):
@@ -2388,6 +2439,54 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "unique_id": "geberit_aquaclean_initial_operation_date",
                 "state_topic": f"{t}/peripheralDevice/information/initialOperationDate",
                 "icon": "mdi:calendar-clock",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensor: firmware version (ServiceMode.connect / ApiMode._fetch_info) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/firmware_version/config",
+            "payload": {
+                "name": "Firmware Version",
+                "unique_id": "geberit_aquaclean_firmware_version",
+                "state_topic": f"{t}/peripheralDevice/information/firmwareVersion",
+                "icon": "mdi:chip",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: filter status (ApiMode.get_filter_status) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/filter_days_remaining/config",
+            "payload": {
+                "name": "Filter Days Remaining",
+                "unique_id": "geberit_aquaclean_filter_days_remaining",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/daysUntilFilterChange",
+                "icon": "mdi:filter-cog",
+                "unit_of_measurement": "days",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/last_filter_reset/config",
+            "payload": {
+                "name": "Last Filter Reset",
+                "unique_id": "geberit_aquaclean_last_filter_reset",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/lastFilterReset",
+                "value_template": "{% if value | int(0) > 0 %}{{ value | int | timestamp_custom('%d.%m.%Y') }}{% else %}Never{% endif %}",
+                "icon": "mdi:filter-check",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/filter_reset_count/config",
+            "payload": {
+                "name": "Filter Reset Count",
+                "unique_id": "geberit_aquaclean_filter_reset_count",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/filterResetCount",
+                "icon": "mdi:counter",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
             },
@@ -2866,6 +2965,8 @@ async def run_cli(args):
         elif args.command == 'statistics-descale':
             sd = await client.base_client.get_statistics_descale_async()
             result["data"] = ApiMode._statistics_descale_to_dict(sd)
+        elif args.command == 'filter-status':
+            result["data"] = await client.base_client.get_filter_status_async()
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
             result["data"] = {"action": "lid_toggled"}
@@ -3045,6 +3146,7 @@ if __name__ == "__main__":
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
+        'filter-status',
         # device commands
         'toggle-lid', 'toggle-anal',
         # app config / home assistant (no BLE required)
