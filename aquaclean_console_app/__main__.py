@@ -26,10 +26,14 @@ def entry_point():
             "  %(prog)s --mode cli --command identification\n"
             "  %(prog)s --mode cli --command initial-operation-date\n"
             "  %(prog)s --mode cli --command soc-versions\n"
+            "  %(prog)s --mode cli --command statistics-descale\n"
+            "  %(prog)s --mode cli --command filter-status\n"
+            "  %(prog)s --mode cli --command firmware-version-list\n"
             "\n"
             "device commands (require BLE):\n"
             "  %(prog)s --mode cli --command toggle-lid\n"
             "  %(prog)s --mode cli --command toggle-anal\n"
+            "  %(prog)s --mode cli --command reset-filter-counter\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
             "  %(prog)s --mode cli --command check-config\n"
@@ -60,9 +64,9 @@ def entry_point():
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
-        'filter-status',
+        'filter-status', 'firmware-version-list',
         # device commands
-        'toggle-lid', 'toggle-anal',
+        'toggle-lid', 'toggle-anal', 'reset-filter-counter',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # system info + performance stats (no BLE required)

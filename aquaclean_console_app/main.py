@@ -419,6 +419,7 @@ class NullMqttService:
         self.ConnectESP32            = myEvent.EventHandler()
         self.DisconnectESP32         = myEvent.EventHandler()
         self.RestartESP32            = myEvent.EventHandler()
+        self.ResetFilterCounter      = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
@@ -520,6 +521,7 @@ class ServiceMode:
         # Subscribe MQTT handlers once — handlers reference self.client
         # which is updated each iteration of the recovery loop below
         self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
+        self.mqtt_service.ResetFilterCounter += self.on_reset_filter_counter_message
         self.mqtt_service.Connect += self.request_reconnect
 
         # Clear stale retained messages and publish initial status
@@ -1377,6 +1379,24 @@ class ServiceMode:
 
     async def on_toggle_lid_message(self):
         await self.client.toggle_lid_position()
+
+    async def on_reset_filter_counter_message(self):
+        await self.client.reset_filter_counter()
+        # Re-fetch filter status so device_state, SSE and MQTT reflect the reset immediately.
+        new_fs = await self.client.base_client.get_filter_status_async()
+        self.device_state["filter_status"] = new_fs
+        topic = self.mqttConfig['topic']
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/daysUntilFilterChange",
+            str(new_fs.get("days_until_filter_change", "")))
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/lastFilterReset",
+            str(new_fs.get("last_filter_reset") or 0))
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/filterResetCount",
+            str(new_fs.get("filter_reset_count", "")))
+        if self.on_state_updated:
+            await self.on_state_updated(self.device_state.copy())
 
     def on_connection_status_changed(self, sender, *args):
         values = ", ".join(str(arg) for arg in args)
@@ -2303,6 +2323,14 @@ class ApiMode:
             await client.toggle_anal_shower()
         elif command == "toggle-orientation-light":
             await client.toggle_orientation_light()
+        elif command == "reset-filter-counter":
+            await client.reset_filter_counter()
+            # Re-fetch filter status so device_state and SSE reflect the reset immediately.
+            new_fs = await client.base_client.get_filter_status_async()
+            self.service.device_state["filter_status"] = new_fs
+            topic = self.service.mqttConfig['topic']
+            await self._publish_filter_status_to_mqtt(new_fs, topic)
+            await self.rest_api.broadcast_state(self.service.device_state.copy())
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
 
@@ -2608,6 +2636,17 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "icon": "mdi:shower-head",
                 "optimistic": True,
                 "retain": False,
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/reset_filter_counter/config",
+            "payload": {
+                "name": "Reset Filter Counter",
+                "unique_id": "geberit_aquaclean_reset_filter_counter",
+                "command_topic": f"{t}/peripheralDevice/control/resetFilterCounter",
+                "payload_press": "true",
+                "icon": "mdi:air-purifier",
                 "device": DEVICE,
             },
         },
@@ -2973,6 +3012,9 @@ async def run_cli(args):
         elif args.command == 'toggle-anal':
             await client.toggle_anal_shower()
             result["data"] = {"action": "anal_shower_toggled"}
+        elif args.command == 'reset-filter-counter':
+            await client.reset_filter_counter()
+            result["data"] = {"action": "filter_counter_reset"}
 
         result["status"]  = "success"
         result["message"] = f"Command {args.command} completed"
@@ -3112,10 +3154,13 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command initial-operation-date\n"
             "  %(prog)s --mode cli --command soc-versions\n"
             "  %(prog)s --mode cli --command statistics-descale\n"
+            "  %(prog)s --mode cli --command filter-status\n"
+            "  %(prog)s --mode cli --command firmware-version-list\n"
             "\n"
             "device commands (require BLE):\n"
             "  %(prog)s --mode cli --command toggle-lid\n"
             "  %(prog)s --mode cli --command toggle-anal\n"
+            "  %(prog)s --mode cli --command reset-filter-counter\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
             "  %(prog)s --mode cli --command check-config\n"
@@ -3146,9 +3191,9 @@ if __name__ == "__main__":
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
-        'filter-status',
+        'filter-status', 'firmware-version-list',
         # device commands
-        'toggle-lid', 'toggle-anal',
+        'toggle-lid', 'toggle-anal', 'reset-filter-counter',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # system info + performance stats (no BLE required)
