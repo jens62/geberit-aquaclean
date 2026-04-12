@@ -1,6 +1,7 @@
 """DataUpdateCoordinator — polls the AquaClean device on-demand over BLE."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 import time
@@ -33,14 +34,19 @@ _ESP32_RESTART_SLEEP = 30       # seconds to wait after sending ESP32 restart co
 class AquaCleanCoordinator(DataUpdateCoordinator):
     """Polls the AquaClean device on a fixed interval using an on-demand BLE connection.
 
-    Each update cycle:
-      1. Opens a fresh BluetoothLeConnector (local BLE or ESPHome proxy)
-      2. Calls connect_ble_only() — BLE handshake only, no eager data fetches
-      3. Fetches identification, state, and descale statistics
-      4. Disconnects
+    ESPHome proxy path — persistent TCP:
+      The ESP32 API TCP connection is kept alive between polls (same behaviour as the
+      standalone bridge's esphome_api_connection=persistent mode).  Only the BLE GATT
+      link to the Geberit is opened and closed each cycle.  This keeps the ESP32's BLE
+      scanner warm, so the next poll finds the device almost immediately even if it
+      briefly stopped advertising after a command (e.g. ToggleLid).
 
-    Commands (toggle_lid, toggle_anal_shower, toggle_lady_shower) are executed via
-    async_execute_command(), which follows the same connect/command/disconnect pattern.
+    Local BLE path:
+      A fresh BluetoothLeConnector is created per poll (unchanged from before).
+
+    Commands (toggle_lid, …) reuse the same persistent connector as polls via
+    async_execute_command(), which is serialised with _ble_lock to prevent two
+    concurrent bluetooth_device_connect() calls from crashing the ESP32.
 
     Circuit breaker:
       After _CIRCUIT_OPEN_THRESHOLD consecutive failures the circuit opens.
@@ -88,6 +94,17 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # Circuit breaker state
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
+        # Serialises all BLE operations so poll and button-press never run concurrently.
+        # With bleak, BlueZ transparently shares a single physical BLE connection across
+        # concurrent BleakClient instances.  The ESPHome proxy cannot do this — each
+        # bluetooth_device_connect() creates a new physical GATT connection, so two
+        # simultaneous requests overwhelm the ESP32.
+        self._ble_lock = asyncio.Lock()
+        # Persistent ESPHome connector — reused across polls and commands to keep the
+        # ESP32 API TCP connection alive (warm BLE scanner, fast reconnect after commands).
+        # None when the local BLE path is used or after a TCP-level failure.
+        self._esphome_connector = None   # BluetoothLeConnector
+        self._esphome_client = None      # AquaCleanClient paired with _esphome_connector
 
         super().__init__(
             hass,
@@ -107,6 +124,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------
 
     def _make_connector(self):
+        """Create a fresh BluetoothLeConnector for the local BLE path."""
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import (
             BluetoothLeConnector,
         )
@@ -115,6 +133,47 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # The ESPHome path never calls _connect_local(), so hass is irrelevant there.
         ha = self.hass if not self._esphome_host else None
         return BluetoothLeConnector(self._esphome_host, self._esphome_port, self._noise_psk, hass=ha)
+
+    def _get_esphome_connector(self):
+        """Return the persistent ESPHome connector+client, creating them if needed.
+
+        The connector is reused across polls so its internal aioesphomeapi TCP connection
+        stays alive between cycles.  _ensure_esphome_api_connected() (inside the connector)
+        handles reconnection if the TCP link has gone stale (ping timeout, etc.).
+        """
+        from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
+        from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
+
+        if self._esphome_connector is None:
+            self._esphome_connector = BluetoothLeConnector(
+                self._esphome_host, self._esphome_port, self._noise_psk, hass=None
+            )
+            self._esphome_client = AquaCleanClientFactory(self._esphome_connector).create_client()
+            _LOGGER.debug("Created persistent ESPHome connector")
+        return self._esphome_connector, self._esphome_client
+
+    def _reset_esphome_connector(self) -> None:
+        """Discard the persistent ESPHome connector so the next poll starts fresh.
+
+        Called after unrecoverable TCP-level failures (ESPHomeConnectionError) so the
+        next poll does not try to reuse a dead TCP connection.
+        """
+        if self._esphome_connector is not None:
+            _LOGGER.debug("Resetting persistent ESPHome connector")
+        self._esphome_connector = None
+        self._esphome_client = None
+
+    async def async_close(self) -> None:
+        """Full disconnect of the persistent ESPHome connector on integration unload."""
+        if self._esphome_connector is not None:
+            _LOGGER.debug("Closing persistent ESPHome connector on unload")
+            try:
+                async with asyncio.timeout(5.0):
+                    await self._esphome_connector.disconnect()
+            except Exception:
+                pass
+            self._esphome_connector = None
+            self._esphome_client = None
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator protocol
@@ -130,9 +189,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
-        import asyncio
-
-        # When circuit is open: extra sleep before probing to reduce ESP32 hammering
+        # When circuit is open: extra sleep before probing to reduce ESP32 hammering.
+        # Sleep happens OUTSIDE the lock so a pending command can still run during backoff.
         if self._circuit_open and self._esphome_host:
             _LOGGER.debug(
                 "Circuit open (%d consecutive failures) — sleeping %d s before probe",
@@ -141,56 +199,55 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             )
             await asyncio.sleep(_CIRCUIT_OPEN_PROBE_SLEEP)
 
-        try:
-            result = await self._do_poll()
-        except UpdateFailed:
-            self._consecutive_failures += 1
+        async with self._ble_lock:
+            try:
+                result = await self._do_poll()
+            except UpdateFailed:
+                self._consecutive_failures += 1
 
-            if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host:
-                # Circuit just opened — attempt ESP32 restart
-                self._circuit_open = True
-                _LOGGER.warning(
-                    "Circuit breaker open: %d consecutive poll failures — triggering ESP32 restart",
-                    self._consecutive_failures,
-                )
-                try:
-                    await self.async_restart_esp32()
-                    _LOGGER.info(
-                        "ESP32 restart command sent; waiting %d s for reboot",
-                        _ESP32_RESTART_SLEEP,
-                    )
-                    await asyncio.sleep(_ESP32_RESTART_SLEEP)
-                except Exception as restart_exc:
+                if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host:
+                    # Circuit just opened — attempt ESP32 restart
+                    self._circuit_open = True
                     _LOGGER.warning(
-                        "Failed to send ESP32 restart command (ESP32 may already be rebooting): %s",
-                        restart_exc,
+                        "Circuit breaker open: %d consecutive poll failures — triggering ESP32 restart",
+                        self._consecutive_failures,
                     )
-            elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and not self._esphome_host:
-                # No ESP32 — open circuit for backoff only, no restart possible
-                self._circuit_open = True
-                _LOGGER.warning(
-                    "Circuit breaker open: %d consecutive poll failures",
-                    self._consecutive_failures,
-                )
-            elif self._consecutive_failures > _CIRCUIT_OPEN_THRESHOLD:
-                _LOGGER.debug(
-                    "Circuit open — consecutive failure %d", self._consecutive_failures
-                )
-            raise
-        else:
-            # Success — close circuit if it was open
-            if self._consecutive_failures > 0:
-                _LOGGER.info(
-                    "Poll recovered after %d consecutive failure(s)", self._consecutive_failures
-                )
-            self._consecutive_failures = 0
-            self._circuit_open = False
-            return result
+                    try:
+                        await self.async_restart_esp32()
+                        _LOGGER.info(
+                            "ESP32 restart command sent; waiting %d s for reboot",
+                            _ESP32_RESTART_SLEEP,
+                        )
+                        await asyncio.sleep(_ESP32_RESTART_SLEEP)
+                    except Exception as restart_exc:
+                        _LOGGER.warning(
+                            "Failed to send ESP32 restart command (ESP32 may already be rebooting): %s",
+                            restart_exc,
+                        )
+                elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and not self._esphome_host:
+                    # No ESP32 — open circuit for backoff only, no restart possible
+                    self._circuit_open = True
+                    _LOGGER.warning(
+                        "Circuit breaker open: %d consecutive poll failures",
+                        self._consecutive_failures,
+                    )
+                elif self._consecutive_failures > _CIRCUIT_OPEN_THRESHOLD:
+                    _LOGGER.debug(
+                        "Circuit open — consecutive failure %d", self._consecutive_failures
+                    )
+                raise
+            else:
+                # Success — close circuit if it was open
+                if self._consecutive_failures > 0:
+                    _LOGGER.info(
+                        "Poll recovered after %d consecutive failure(s)", self._consecutive_failures
+                    )
+                self._consecutive_failures = 0
+                self._circuit_open = False
+                return result
 
     async def _do_poll(self) -> dict:
         """Connect, fetch all device data, disconnect. Raises UpdateFailed on any error."""
-        import asyncio
-
         from bleak import BleakError
 
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
@@ -203,15 +260,23 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         from aquaclean_console_app.ErrorCodes import E0002, E0003, E0004, E1002, E7002
 
         poll_start = datetime.now(timezone.utc)
-        connector = self._make_connector()
-        client = AquaCleanClientFactory(connector).create_client()
+
+        # ESPHome path: reuse persistent connector (keeps ESP32 TCP alive between polls).
+        # Local BLE path: fresh connector per poll (unchanged).
+        if self._esphome_host:
+            connector, client = self._get_esphome_connector()
+        else:
+            connector = self._make_connector()
+            client = AquaCleanClientFactory(connector).create_client()
 
         try:
-            # ── Phase 1: connect (ESP32 TCP + BLE scan + BLE GATT) ──────────
+            # ── Phase 1: connect (ESP32 TCP reuse or fresh + BLE scan + BLE GATT) ──
             t_connect = time.perf_counter()
             try:
                 await client.connect_ble_only(self._device_id)
             except ESPHomeConnectionError as exc:
+                # TCP-level failure — discard persistent connector so next poll reconnects.
+                self._reset_esphome_connector()
                 self._set_error(E1002)
                 raise UpdateFailed(f"{E1002.code} — {E1002.message}: {exc}") from exc
             except ESPHomeDeviceNotFoundError as exc:
@@ -378,14 +443,22 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             self._set_error(E7002)
             raise UpdateFailed(f"{E7002.code} — {E7002.message}: {exc}") from exc
         finally:
-            try:
-                # 5 s hard limit: BlueZ can block for 20-30 s retrying HCI Disconnect
-                # when the BLE peripheral has gone quiet mid-transaction, which blocks
-                # the asyncio event loop and makes HA unresponsive until the watchdog fires.
-                async with asyncio.timeout(5.0):
-                    await connector.disconnect()
-            except Exception:
-                pass
+            if self._esphome_host:
+                # Keep ESP32 TCP alive — only tear down the BLE GATT link.
+                try:
+                    async with asyncio.timeout(5.0):
+                        await connector.disconnect_ble_only()
+                except Exception:
+                    # disconnect_ble_only failed; TCP is likely dead — reset for next poll.
+                    _LOGGER.debug("disconnect_ble_only failed; resetting persistent ESPHome connector")
+                    self._reset_esphome_connector()
+            else:
+                # Local BLE: full disconnect (no persistent state to preserve).
+                try:
+                    async with asyncio.timeout(5.0):
+                        await connector.disconnect()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Command execution (buttons)
@@ -399,26 +472,49 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         await connector.restart_esp32_async()
 
     async def async_execute_command(self, command: str) -> None:
-        """Execute a device command via a fresh on-demand BLE connection."""
+        """Execute a device command via BLE, serialised with the poll loop via _ble_lock.
+
+        ESPHome path: reuses the persistent connector so TCP stays warm.
+        Local BLE path: fresh connector per command.
+        """
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
             AquaCleanClientFactory,
         )
+        from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import (
+            ESPHomeConnectionError,
+        )
 
-        connector = self._make_connector()
-        client = AquaCleanClientFactory(connector).create_client()
-        try:
-            await client.connect_ble_only(self._device_id)
-            if command == "toggle_lid":
-                await client.toggle_lid_position()
-            elif command == "toggle_anal_shower":
-                await client.toggle_anal_shower()
-            elif command == "toggle_lady_shower":
-                await client.toggle_lady_shower()
+        async with self._ble_lock:
+            if self._esphome_host:
+                connector, client = self._get_esphome_connector()
             else:
-                _LOGGER.warning("Unknown command: %s", command)
-        finally:
+                connector = self._make_connector()
+                client = AquaCleanClientFactory(connector).create_client()
+
             try:
-                async with asyncio.timeout(5.0):
-                    await connector.disconnect()
-            except Exception:
-                pass
+                await client.connect_ble_only(self._device_id)
+                if command == "toggle_lid":
+                    await client.toggle_lid_position()
+                elif command == "toggle_anal_shower":
+                    await client.toggle_anal_shower()
+                elif command == "toggle_lady_shower":
+                    await client.toggle_lady_shower()
+                else:
+                    _LOGGER.warning("Unknown command: %s", command)
+            except ESPHomeConnectionError:
+                self._reset_esphome_connector()
+                raise
+            finally:
+                if self._esphome_host:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await connector.disconnect_ble_only()
+                    except Exception:
+                        _LOGGER.debug("disconnect_ble_only failed after command; resetting connector")
+                        self._reset_esphome_connector()
+                else:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await connector.disconnect()
+                    except Exception:
+                        pass
