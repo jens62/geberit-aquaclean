@@ -90,6 +90,7 @@ class AquaCleanBaseClient:
 
         self.message_context = None
         self.call_count = 0
+        self.profile_settings: dict = {}  # populated by subscribe_notifications_async()
 
         self._cleaner_task_str_re = re.compile(r"\S*site-packages/")
 
@@ -153,15 +154,19 @@ class AquaCleanBaseClient:
 
         Sequence (mirrors iPhone BLE wire traffic exactly):
           4 × Proc(0x01,0x11)  — pre-subscription
-          5 × Proc(0x01,0x13)  — subscription registration (incl. 0x59 GetFilterStatus)
+          4 × Proc(0x01,0x13)  — subscription registration (IDs 1–15, compact range only)
          10 × GetStoredProfileSetting(0x0A)  — post-subscription wake sequence
 
         Required on every BLE connect. Without this, the device may ignore
         GetSystemParameterList if a previous iPhone or bridge session left it
         in a stuck/subscription-only state.
+
+        NOTE: Do NOT add proc codes like 0x59 to Proc_0x13 PAYLOADS.  The
+        subscription ID space is compact (1–15); out-of-range IDs corrupt the
+        device's subscription table and block the affected proc from responding.
         """
         logger.debug(
-            "iPhone init sequence: 4×Proc_0x11 + 5×Proc_0x13 + 10×GetStoredProfileSetting(0x0A)"
+            "iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13 + 10×GetStoredProfileSetting(0x0A)"
         )
         for payload in SubscribeNotifications.PRE_PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x11)
@@ -169,8 +174,11 @@ class AquaCleanBaseClient:
         for payload in SubscribeNotifications.PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x13)
             await self.send_request(api_call)
+        ps = {}
         for sid in _IPHONE_PROFILE_SETTING_IDS:
             await self.send_request(_IPhoneGetProfileCall(sid))
+            ps[sid] = int.from_bytes(bytes(self.message_context.result_bytes[:2]), 'little')
+        self.profile_settings = ps
 
 
     async def get_system_parameter_list_async(self, parameter_list):

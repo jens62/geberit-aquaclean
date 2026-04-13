@@ -462,6 +462,7 @@ class ServiceMode:
             "initial_operation_date": None,
             "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
             "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
+            "profile_settings": None,       # dict {id: value} from GetStoredProfileSetting (proc 0x0A)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
         }
         self.esphome_proxy_state = {
@@ -600,6 +601,9 @@ class ServiceMode:
                         "ble_ms": bluetooth_connector.last_ble_ms,
                     })
                 )
+
+                # Profile settings populated during subscribe_notifications_async() inside connect()
+                self.device_state["profile_settings"] = self.client.base_client.profile_settings
 
                 # Cache firmware versions and log them (device identification at connect time)
                 fw = self.client.firmware_versions or {}
@@ -2070,6 +2074,7 @@ class ApiMode:
             self.service.device_state["last_esphome_api_ms"] = connector.last_esphome_api_ms
             self.service.device_state["last_ble_ms"] = connector.last_ble_ms
             self.service.device_state["ble_rssi"] = connector.rssi
+            self.service.device_state["profile_settings"] = client.base_client.profile_settings
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
