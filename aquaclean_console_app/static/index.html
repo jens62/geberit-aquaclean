@@ -349,6 +349,8 @@
       <dt>Production Date</dt> <dd id="info-production">—</dd>
       <dt>Initial Operation</dt><dd id="info-initial">—</dd>
       <dt>Firmware</dt>        <dd id="info-firmware">—</dd>
+      <dt>Cloud firmware</dt>  <dd id="info-cloud-firmware">—</dd>
+      <dt>Update available</dt><dd id="info-fw-update">—</dd>
       <dt>Filter days left</dt>    <dd id="info-filter-days">—</dd>
       <dt>Last filter reset</dt>   <dd id="info-filter-reset">—</dd>
       <dt>Next filter change</dt>  <dd id="info-filter-next">—</dd>
@@ -668,6 +670,7 @@
       if (state.sap_number != null) onIdentification(state);
       if (state.initial_operation_date != null) onInitialOpDate(state);
       if (state.firmware_versions != null) onFirmwareVersions(state.firmware_versions);
+      if (state.firmware_update != null) onFirmwareUpdate(state.firmware_update);
       if (state.filter_status != null) onFilterStatus(state.filter_status);
     }
 
@@ -874,6 +877,13 @@
 
     function onFirmwareVersions(fw) {
       set('info-firmware', fw && fw.main ? fw.main : '—');
+    }
+
+    function onFirmwareUpdate(fu) {
+      set('info-cloud-firmware', fu.cloud_version || '—');
+      set('info-fw-update', fu.error ? '⚠ ' + fu.error
+                          : fu.update_available ? '✓ Yes'
+                          : 'No');
     }
 
     function onFilterStatus(fs) {
