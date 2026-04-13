@@ -32,15 +32,40 @@ from aquaclean_console_app.aquaclean_utils                                      
 class _IPhoneGetProfileCall:
     """Minimal call object for GetStoredProfileSetting using iPhone wire proc 0x0A.
 
-    The C# enum uses proc 0x53 but the iPhone wire protocol uses 0x0A.
-    The iPhone sends these for setting IDs [2,1,3,4,6,7,5,8,0,9] after
-    Proc_0x13 subscriptions, as part of its full device init sequence.
-    Payload is a single byte: the profile setting index.
+    Proc 0x0A uses a single-byte payload (setting_id only, no profile_id).
+    The iPhone sends these 10 calls after Proc_0x13 as part of its device
+    init/unlock sequence.  The values returned by 0x0A do NOT match the
+    user-visible preferences stored under proc 0x53 (different storage area).
+    Keep these calls for the unlock sequence — discard their results.
     """
     _attr = ApiCallAttribute(0x01, 0x0A, 0x01)
 
     def __init__(self, setting_id: int):
         self._payload = bytes([setting_id])
+
+    def get_api_call_attribute(self) -> ApiCallAttribute:
+        return self._attr
+
+    def get_payload(self) -> bytes:
+        return self._payload
+
+    def result(self, data: bytearray):
+        return bytes(data)
+
+
+class _GetStoredProfileCall53:
+    """Read a stored profile setting using proc 0x53 (C# GetStoredProfileSetting).
+
+    Payload: [profile_id=0, setting_id] (2 bytes).
+    Returns: 2-byte little-endian integer — the actual user preference stored
+    on the device.  This is the value the Geberit iPhone app reads and writes.
+    Confirmed from BLE sniff: proc 0x54 SetStoredProfileSetting (C# wire) writes
+    here; the values match the in-app sliders.  Proc 0x0A reads a different area.
+    """
+    _attr = ApiCallAttribute(0x01, 0x53, 0x01)
+
+    def __init__(self, setting_id: int, profile_id: int = 0):
+        self._payload = bytes([profile_id, setting_id])
 
     def get_api_call_attribute(self) -> ApiCallAttribute:
         return self._attr
@@ -167,6 +192,7 @@ class AquaCleanBaseClient:
         """
         logger.debug(
             "iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13 + 10×GetStoredProfileSetting(0x0A)"
+            " + 10×GetStoredProfileSetting(0x53)"
         )
         for payload in SubscribeNotifications.PRE_PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x11)
@@ -174,9 +200,14 @@ class AquaCleanBaseClient:
         for payload in SubscribeNotifications.PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x13)
             await self.send_request(api_call)
-        ps = {}
+        # 10 × proc 0x0A: part of the iPhone unlock sequence; results discarded.
         for sid in _IPHONE_PROFILE_SETTING_IDS:
             await self.send_request(_IPhoneGetProfileCall(sid))
+        # 10 × proc 0x53: read actual user profile settings (profile_id=0).
+        # These match the values in the Geberit iPhone app — confirmed by BLE sniff.
+        ps = {}
+        for sid in _IPHONE_PROFILE_SETTING_IDS:
+            await self.send_request(_GetStoredProfileCall53(sid))
             ps[sid] = int.from_bytes(bytes(self.message_context.result_bytes[:2]), 'little')
         self.profile_settings = ps
 
