@@ -605,6 +605,13 @@ class ServiceMode:
                 # Profile settings populated during subscribe_notifications_async() inside connect()
                 self.device_state["profile_settings"] = self.client.base_client.profile_settings
 
+                # Filter status — fetch once at connect time so the web UI shows it immediately.
+                try:
+                    self.device_state["filter_status"] = await self.client.base_client.get_filter_status_async()
+                except BLEPeripheralTimeoutError:
+                    logger.warning("GetFilterStatus timed out at connect — filter data will be unavailable")
+                    self.device_state["filter_status"] = None
+
                 # Cache firmware versions and log them (device identification at connect time)
                 fw = self.client.firmware_versions or {}
                 self.device_state["firmware_versions"] = fw
