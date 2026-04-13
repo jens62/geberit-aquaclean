@@ -206,6 +206,8 @@ views:
             name: Days Until Filter Change
           - entity: sensor.geberit_aquaclean_last_filter_reset
             name: Last Filter Reset
+          - entity: sensor.geberit_aquaclean_next_filter_change
+            name: Next Filter Change
           - entity: sensor.geberit_aquaclean_filter_reset_count
             name: Filter Reset Count
 
