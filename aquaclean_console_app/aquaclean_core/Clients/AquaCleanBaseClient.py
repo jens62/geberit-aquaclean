@@ -26,7 +26,36 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus                import GetFilterStatus
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications         import SubscribeNotifications
 
-from aquaclean_console_app.aquaclean_utils                                               import utils   
+from aquaclean_console_app.aquaclean_utils                                               import utils
+
+
+class _IPhoneGetProfileCall:
+    """Minimal call object for GetStoredProfileSetting using iPhone wire proc 0x0A.
+
+    The C# enum uses proc 0x53 but the iPhone wire protocol uses 0x0A.
+    The iPhone sends these for setting IDs [2,1,3,4,6,7,5,8,0,9] after
+    Proc_0x13 subscriptions, as part of its full device init sequence.
+    Payload is a single byte: the profile setting index.
+    """
+    _attr = ApiCallAttribute(0x01, 0x0A, 0x01)
+
+    def __init__(self, setting_id: int):
+        self._payload = bytes([setting_id])
+
+    def get_api_call_attribute(self) -> ApiCallAttribute:
+        return self._attr
+
+    def get_payload(self) -> bytes:
+        return self._payload
+
+    def result(self, data: bytearray):
+        return bytes(data)
+
+
+# iPhone order from BLE log: AnalShowerPressure=2, OscillatorState=1, LadyShowerPressure=3,
+# AnalShowerPosition=4, WaterTemperature=6, WcSeatHeat=7, LadyShowerPosition=5,
+# DryerTemperature=8, OdourExtraction=0, DryerState=9
+_IPHONE_PROFILE_SETTING_IDS = [2, 1, 3, 4, 6, 7, 5, 8, 0, 9]
 
 from threading import Lock
 import re
@@ -120,22 +149,28 @@ class AquaCleanBaseClient:
 
 
     async def subscribe_notifications_async(self):
-        """Send 4 × Proc(0x01,0x11) + 4 × Proc(0x01,0x13) notification subscription calls.
+        """Send the full iPhone device init sequence before GetSystemParameterList.
 
-        Required on every BLE connect, before the first GetSystemParameterList.
-        Mirrors the full iPhone init sequence: Proc_0x11 × 4 first, then Proc_0x13 × 4.
+        Sequence (mirrors iPhone BLE wire traffic exactly):
+          4 × Proc(0x01,0x11)  — pre-subscription
+          5 × Proc(0x01,0x13)  — subscription registration (incl. 0x59 GetFilterStatus)
+         10 × GetStoredProfileSetting(0x0A)  — post-subscription wake sequence
 
-        Sending only Proc_0x13 × 4 fixes the iPhone-force-disconnect stuck state but
-        is insufficient for all stuck-state variants. The full 8-call sequence matches
-        the iPhone wire behaviour and provides more reliable unlock.
+        Required on every BLE connect. Without this, the device may ignore
+        GetSystemParameterList if a previous iPhone or bridge session left it
+        in a stuck/subscription-only state.
         """
-        logger.debug("Subscribing to device notifications (4 × Proc 0x11 + 4 × Proc 0x13)")
+        logger.debug(
+            "iPhone init sequence: 4×Proc_0x11 + 5×Proc_0x13 + 10×GetStoredProfileSetting(0x0A)"
+        )
         for payload in SubscribeNotifications.PRE_PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x11)
             await self.send_request(api_call)
         for payload in SubscribeNotifications.PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x13)
             await self.send_request(api_call)
+        for sid in _IPHONE_PROFILE_SETTING_IDS:
+            await self.send_request(_IPhoneGetProfileCall(sid))
 
 
     async def get_system_parameter_list_async(self, parameter_list):
