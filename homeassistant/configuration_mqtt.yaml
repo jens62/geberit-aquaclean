@@ -65,6 +65,16 @@ mqtt:
       state_topic: "Geberit/AquaClean/peripheralDevice/information/filterStatus/filterResetCount"
       icon: mdi:counter
 
+    - name: "Geberit AquaClean Next Filter Change"
+      state_topic: "Geberit/AquaClean/peripheralDevice/information/filterStatus/nextFilterChange"
+      icon: mdi:filter-plus
+      value_template: >-
+        {% if value | int(0) > 0 %}
+          {{ value | int | timestamp_custom('%d.%m.%Y') }}
+        {% else %}
+          Unknown
+        {% endif %}
+
     # Descale statistics
     - name: "Geberit AquaClean Days Until Next Descale"
       state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/daysUntilNextDescale"

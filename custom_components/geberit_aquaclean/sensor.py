@@ -36,6 +36,7 @@ SENSORS: list[tuple] = [
     ("filter_days_remaining", "Days Until Filter Change",       "d",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,       "mdi:water-check"),
     ("filter_last_reset",     "Last Filter Reset",              None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:calendar-clock"),
     ("filter_reset_count",    "Filter Reset Count",             None, None,                        SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),
+    ("filter_next_change",    "Next Filter Change",             None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:filter-plus"),
     # Poll timing (for countdown visualization)
     ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check"),
     ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),

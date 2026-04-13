@@ -1395,6 +1395,9 @@ class ServiceMode:
         await self.mqtt_service.send_data_async(
             f"{topic}/peripheralDevice/information/filterStatus/filterResetCount",
             str(new_fs.get("filter_reset_count", "")))
+        await self.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/nextFilterChange",
+            str(new_fs.get("next_filter_change") or 0))
         if self.on_state_updated:
             await self.on_state_updated(self.device_state.copy())
 
@@ -1786,6 +1789,10 @@ class ApiMode:
         await self.service.mqtt_service.send_data_async(
             f"{topic}/peripheralDevice/information/filterStatus/filterResetCount",
             str(result.get("filter_reset_count", "")))
+        next_change = result.get("next_filter_change") or 0
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/filterStatus/nextFilterChange",
+            str(next_change))
 
     async def get_statistics_descale(self):
         topic = self.service.mqttConfig['topic']
@@ -2515,6 +2522,18 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "unique_id": "geberit_aquaclean_filter_reset_count",
                 "state_topic": f"{t}/peripheralDevice/information/filterStatus/filterResetCount",
                 "icon": "mdi:counter",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/next_filter_change/config",
+            "payload": {
+                "name": "Next Filter Change",
+                "unique_id": "geberit_aquaclean_next_filter_change",
+                "state_topic": f"{t}/peripheralDevice/information/filterStatus/nextFilterChange",
+                "value_template": "{% if value | int(0) > 0 %}{{ value | int | timestamp_custom('%d.%m.%Y') }}{% else %}Unknown{% endif %}",
+                "icon": "mdi:filter-plus",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
             },
