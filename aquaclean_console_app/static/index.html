@@ -357,6 +357,20 @@
       <dt>Filter resets</dt>       <dd id="info-filter-count">—</dd>
     </dl>
 
+    <h2>User Profile</h2>
+    <dl class="info-grid">
+      <dt>Anal Shower Pressure</dt>  <dd id="ps-anal-pressure">—</dd>
+      <dt>Anal Shower Position</dt>  <dd id="ps-anal-position">—</dd>
+      <dt>Lady Shower Pressure</dt>  <dd id="ps-lady-pressure">—</dd>
+      <dt>Lady Shower Position</dt>  <dd id="ps-lady-position">—</dd>
+      <dt>Water Temperature</dt>     <dd id="ps-water-temp">—</dd>
+      <dt>Seat Heat</dt>             <dd id="ps-seat-heat">—</dd>
+      <dt>Dryer Temperature</dt>     <dd id="ps-dryer-temp">—</dd>
+      <dt>Dryer</dt>                 <dd id="ps-dryer-state">—</dd>
+      <dt>Oscillator</dt>            <dd id="ps-oscillator">—</dd>
+      <dt>Odour Extraction</dt>      <dd id="ps-odour">—</dd>
+    </dl>
+
     <h2>Commands</h2>
     <div class="controls">
       <button onclick="sendPost('/command/toggle-lid', this)">
@@ -672,6 +686,7 @@
       if (state.firmware_versions != null) onFirmwareVersions(state.firmware_versions);
       if (state.firmware_update != null) onFirmwareUpdate(state.firmware_update);
       if (state.filter_status != null) onFilterStatus(state.filter_status);
+      if (state.profile_settings != null) onProfileSettings(state.profile_settings);
     }
 
     (function tickCountdown() {
@@ -892,6 +907,21 @@
       set('info-filter-reset', fmt(fs.last_filter_reset));
       set('info-filter-next',  fmt(fs.next_filter_change));
       set('info-filter-count', fs.filter_reset_count != null ? fs.filter_reset_count : '—');
+    }
+
+    function onProfileSettings(ps) {
+      // ps is {id: value} — IDs match ProfileSettings enum
+      const v = id => ps[id] != null ? ps[id] : '—';
+      set('ps-anal-pressure',  v(2));
+      set('ps-anal-position',  v(4));
+      set('ps-lady-pressure',  v(3));
+      set('ps-lady-position',  v(5));
+      set('ps-water-temp',     v(6));
+      set('ps-seat-heat',      v(7));
+      set('ps-dryer-temp',     v(8));
+      set('ps-dryer-state',    v(9));
+      set('ps-oscillator',     v(1));
+      set('ps-odour',          v(0));
     }
 
     function clearSocVersions() {
