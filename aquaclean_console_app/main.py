@@ -462,7 +462,7 @@ class ServiceMode:
             "initial_operation_date": None,
             "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
             "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
-            "profile_settings": None,       # dict {id: value} from GetStoredProfileSetting (proc 0x0A)
+            "profile_settings": None,       # dict {id: value} from GetStoredProfileSetting (proc 0x53)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
         }
         self.esphome_proxy_state = {
@@ -602,8 +602,12 @@ class ServiceMode:
                     })
                 )
 
-                # Profile settings populated during subscribe_notifications_async() inside connect()
-                self.device_state["profile_settings"] = self.client.base_client.profile_settings
+                # Fetch profile settings via proc 0x53 (actual user preferences).
+                try:
+                    self.device_state["profile_settings"] = await self.client.base_client.get_stored_profile_settings_async()
+                except BLEPeripheralTimeoutError:
+                    logger.warning("GetStoredProfileSettings timed out at connect — profile data will be unavailable")
+                    self.device_state["profile_settings"] = {}
 
                 # Filter status — fetch once at connect time so the web UI shows it immediately.
                 try:
@@ -2081,7 +2085,6 @@ class ApiMode:
             self.service.device_state["last_esphome_api_ms"] = connector.last_esphome_api_ms
             self.service.device_state["last_ble_ms"] = connector.last_ble_ms
             self.service.device_state["ble_rssi"] = connector.rssi
-            self.service.device_state["profile_settings"] = client.base_client.profile_settings
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
@@ -2437,11 +2440,18 @@ class ApiMode:
         self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
         self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
         self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
+        # Fetch profile settings via proc 0x53 on every poll so they stay current.
+        # Moved here from subscribe_notifications_async: adding 10×Proc_0x53 to the
+        # 18-call init sequence (total 28 calls) caused GetSystemParameterList to
+        # timeout on every subsequent poll.
+        profile_settings = await client.base_client.get_stored_profile_settings_async()
+        self.service.device_state["profile_settings"] = profile_settings
         return {
             "is_user_sitting":        self.service.device_state["is_user_sitting"],
             "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
             "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
             "is_dryer_running":       self.service.device_state["is_dryer_running"],
+            "profile_settings":       profile_settings,
         }
 
     async def _fetch_state_and_info(self, client):
