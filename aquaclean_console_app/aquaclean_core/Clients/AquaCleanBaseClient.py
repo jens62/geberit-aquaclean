@@ -367,10 +367,15 @@ class AquaCleanBaseClient:
         except asyncio.TimeoutError:
             with self.lock:
                 self.call_count -= 1
+            _name = self.bluetooth_le_connector.device_name
+            _addr = self.bluetooth_le_connector.device_address
+            _label = (
+                f"'{_name}' ({_addr})"
+                if _name and _name not in ("Unknown", "None")
+                else _addr
+            )
             error_msg = (
-                f"No response from BLE peripheral "
-                f"'{self.bluetooth_le_connector.device_name}' "
-                f"({self.bluetooth_le_connector.device_address}). "
+                f"No response from BLE peripheral {_label}. "
                 f"Usually a restart of the BLE peripheral is required."
             )
             logger.error(error_msg)
