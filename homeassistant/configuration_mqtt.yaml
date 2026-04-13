@@ -108,6 +108,12 @@ mqtt:
       state_topic: "Geberit/AquaClean/peripheralDevice/information/descaleStatistics/unpostedShowerCycles"
       icon: mdi:sync
 
+    - name: "Geberit AquaClean Cloud Firmware Version"
+      state_topic: "Geberit/AquaClean/centralDevice/firmwareUpdate"
+      value_template: "{{ value_json.cloud_version }}"
+      icon: mdi:cloud-check
+      entity_category: diagnostic
+
     - name: "Geberit AquaClean Connected"
       state_topic: "Geberit/AquaClean/centralDevice/connected"
       icon: mdi:bluetooth-connect
@@ -176,11 +182,20 @@ mqtt:
       retain: false
 
   binary_sensor:
+    - name: "Geberit AquaClean Firmware Update Available"
+      state_topic: "Geberit/AquaClean/centralDevice/firmwareUpdate"
+      value_template: "{{ value_json.update_available }}"
+      payload_on: "True"
+      payload_off: "False"
+      device_class: update
+      icon: mdi:chip-arrow-up
+      entity_category: diagnostic
+
     # Binary sensors for monitor states (on/off display)
     # Note: payload_on and payload_off use "True"/"False" (capitalized)
     # to match the MQTT messages from the Geberit device.
     # Adjust to "true"/"false" (lowercase) if your device differs.
-    
+
     - name: "Geberit AquaClean User Sitting"
       state_topic: "Geberit/AquaClean/peripheralDevice/monitor/isUserSitting"
       payload_on: "True"
