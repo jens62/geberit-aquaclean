@@ -2431,7 +2431,7 @@ class ApiMode:
         except asyncio.CancelledError:
             return
 
-    async def _fetch_state(self, client):
+    async def _fetch_state(self, client, _skip_profile: bool = False):
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
         result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 7, 9])
         # Update device_state before _on_demand's finally fires so the
@@ -2440,25 +2440,36 @@ class ApiMode:
         self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
         self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
         self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
-        # Fetch profile settings via proc 0x53 on every poll so they stay current.
-        # Moved here from subscribe_notifications_async: adding 10×Proc_0x53 to the
-        # 18-call init sequence (total 28 calls) caused GetSystemParameterList to
-        # timeout on every subsequent poll.
-        profile_settings = await client.base_client.get_stored_profile_settings_async()
-        self.service.device_state["profile_settings"] = profile_settings
-        return {
+        state = {
             "is_user_sitting":        self.service.device_state["is_user_sitting"],
             "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
             "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
             "is_dryer_running":       self.service.device_state["is_dryer_running"],
-            "profile_settings":       profile_settings,
         }
+        if _skip_profile:
+            return state
+        # Fetch profile settings via proc 0x53 on every regular poll so they stay current.
+        # Skipped on the first poll (_fetch_state_and_info path) so GetFilterStatus is
+        # reached before the device is exhausted by 10 extra Proc_0x53 calls.
+        profile_settings = await client.base_client.get_stored_profile_settings_async()
+        self.service.device_state["profile_settings"] = profile_settings
+        return {**state, "profile_settings": profile_settings}
 
     async def _fetch_state_and_info(self, client):
-        """Used for the first on-demand poll only: fetch state + identification in one BLE session."""
-        state = await self._fetch_state(client)
+        """Used for the first on-demand poll only: fetch state + identification in one BLE session.
+
+        Call order keeps GetFilterStatus early (position ~23 in the session) so the
+        device has not yet been exhausted by the 10×Proc_0x53 profile reads.
+        Profile settings come last — after filter status is safely captured.
+        Session call count: init(18) + SPL(1) + ident(1) + date(1) + fw(1) + filter(1)
+                            + profile(10) = 33 total; filter at #23, profile at #24-33.
+        """
+        state = await self._fetch_state(client, _skip_profile=True)
         info  = await self._fetch_info(client)
-        return {**state, **info}
+        # Profile settings last — after GetFilterStatus — to avoid exhausting the device.
+        profile_settings = await client.base_client.get_stored_profile_settings_async()
+        self.service.device_state["profile_settings"] = profile_settings
+        return {**state, **info, "profile_settings": profile_settings}
 
     async def _fetch_info(self, client):
         ident = await client.base_client.get_device_identification_async(0)
