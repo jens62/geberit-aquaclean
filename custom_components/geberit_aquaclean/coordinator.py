@@ -412,6 +412,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     else None
                 ),
                 "filter_reset_count": (filter_status or {}).get("filter_reset_count"),
+                "filter_next_change": (
+                    datetime.fromtimestamp(ts, tz=timezone.utc)
+                    if (ts := (filter_status or {}).get("next_filter_change")) and ts > 0
+                    else None
+                ),
                 # Poll timing (for countdown visualization)
                 "poll_epoch": poll_start,
                 "poll_interval": self.update_interval.total_seconds(),

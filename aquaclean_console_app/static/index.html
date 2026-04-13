@@ -349,9 +349,10 @@
       <dt>Production Date</dt> <dd id="info-production">—</dd>
       <dt>Initial Operation</dt><dd id="info-initial">—</dd>
       <dt>Firmware</dt>        <dd id="info-firmware">—</dd>
-      <dt>Filter days left</dt><dd id="info-filter-days">—</dd>
-      <dt>Last filter reset</dt><dd id="info-filter-reset">—</dd>
-      <dt>Filter resets</dt>   <dd id="info-filter-count">—</dd>
+      <dt>Filter days left</dt>    <dd id="info-filter-days">—</dd>
+      <dt>Last filter reset</dt>   <dd id="info-filter-reset">—</dd>
+      <dt>Next filter change</dt>  <dd id="info-filter-next">—</dd>
+      <dt>Filter resets</dt>       <dd id="info-filter-count">—</dd>
     </dl>
 
     <h2>Commands</h2>
@@ -879,6 +880,7 @@
       const fmt = ts => ts ? new Date(ts * 1000).toLocaleDateString() : '—';
       set('info-filter-days',  fs.days_until_filter_change != null ? fs.days_until_filter_change + ' d' : '—');
       set('info-filter-reset', fmt(fs.last_filter_reset));
+      set('info-filter-next',  fmt(fs.next_filter_change));
       set('info-filter-count', fs.filter_reset_count != null ? fs.filter_reset_count : '—');
     }
 
