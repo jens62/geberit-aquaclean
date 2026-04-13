@@ -24,6 +24,7 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand            
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStatisticsDescale           import GetStatisticsDescale
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList         import GetFirmwareVersionList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus                import GetFilterStatus
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications         import SubscribeNotifications
 
 from aquaclean_console_app.aquaclean_utils                                               import utils   
 
@@ -116,6 +117,20 @@ class AquaCleanBaseClient:
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         await self.bluetooth_le_connector.connect_async(device_id)
         await self.frame_service.wait_for_info_frames_async()
+
+
+    async def subscribe_notifications_async(self):
+        """Send all 4 × Proc(0x01,0x13) notification subscription calls.
+
+        Required on every BLE connect, before the first GetSystemParameterList.
+        Registers this client as the notification subscriber. Without this, the
+        device silently ignores GetSystemParameterList when a previous session
+        (e.g. iPhone Geberit Home App) ended without unsubscribing.
+        """
+        logger.debug("Subscribing to device notifications (4 × Proc 0x13)")
+        for payload in SubscribeNotifications.PAYLOADS:
+            api_call = SubscribeNotifications(payload)
+            await self.send_request(api_call)
 
 
     async def get_system_parameter_list_async(self, parameter_list):
