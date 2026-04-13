@@ -32,12 +32,14 @@ class SubscribeNotifications:
 
     # Proc_0x13 payloads — sent after Proc_0x11.  Exact iPhone wire bytes.
     # Format: [count, id0, id1, ...] — device echoes back [count, id0, 0...]
+    # IDs 1–15 are the valid compact subscription space; do NOT add proc codes
+    # like 0x59 here — out-of-range IDs corrupt the subscription table and cause
+    # the corresponding proc to stop responding (confirmed v2.4.68-pre regression).
     PAYLOADS = [
         bytes([0x04, 0x01, 0x03, 0x04, 0x05]),
         bytes([0x04, 0x06, 0x07, 0x08, 0x09]),
         bytes([0x04, 0x0a, 0x0b, 0x0c, 0x0e]),
         bytes([0x02, 0x0f, 0x0d, 0x00, 0x00]),  # includes 0x0d = GetSystemParameterList
-        bytes([0x01, 0x59, 0x00, 0x00, 0x00]),  # 0x59 = GetFilterStatus
     ]
 
     def __init__(self, payload: bytes, proc: int = 0x13):
