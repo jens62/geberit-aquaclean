@@ -90,10 +90,22 @@ python3 -m venv ~/venv
 ~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@<version>
 ```
 
-**Upgrading an existing install** (preserves your `config.ini`):
+**Upgrading an existing install** (preserves your `config.ini`, stops/restarts the service automatically):
 
 ```bash
-bash operation_support/update-to-branch.sh latest
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/update.sh | bash
+```
+
+To upgrade to a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/main/operation_support/update.sh | bash -s -- v2.4.63
+```
+
+Or if you have the repo cloned:
+
+```bash
+bash operation_support/update.sh latest
 ```
 
 <details>
