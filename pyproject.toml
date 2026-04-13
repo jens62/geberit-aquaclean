@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geberit-aquaclean"
-version = "2.4.69-pre"
+version = "2.4.70-pre"
 description = "Python bridge between Geberit AquaClean toilet (BLE) and home automation (MQTT/REST)"
 requires-python = ">=3.11"
 dependencies = [
