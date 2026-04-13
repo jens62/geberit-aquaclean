@@ -120,16 +120,21 @@ class AquaCleanBaseClient:
 
 
     async def subscribe_notifications_async(self):
-        """Send all 4 × Proc(0x01,0x13) notification subscription calls.
+        """Send 4 × Proc(0x01,0x11) + 4 × Proc(0x01,0x13) notification subscription calls.
 
         Required on every BLE connect, before the first GetSystemParameterList.
-        Registers this client as the notification subscriber. Without this, the
-        device silently ignores GetSystemParameterList when a previous session
-        (e.g. iPhone Geberit Home App) ended without unsubscribing.
+        Mirrors the full iPhone init sequence: Proc_0x11 × 4 first, then Proc_0x13 × 4.
+
+        Sending only Proc_0x13 × 4 fixes the iPhone-force-disconnect stuck state but
+        is insufficient for all stuck-state variants. The full 8-call sequence matches
+        the iPhone wire behaviour and provides more reliable unlock.
         """
-        logger.debug("Subscribing to device notifications (4 × Proc 0x13)")
+        logger.debug("Subscribing to device notifications (4 × Proc 0x11 + 4 × Proc 0x13)")
+        for payload in SubscribeNotifications.PRE_PAYLOADS:
+            api_call = SubscribeNotifications(payload, proc=0x11)
+            await self.send_request(api_call)
         for payload in SubscribeNotifications.PAYLOADS:
-            api_call = SubscribeNotifications(payload)
+            api_call = SubscribeNotifications(payload, proc=0x13)
             await self.send_request(api_call)
 
 

@@ -5,24 +5,32 @@ from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import
 
 
 class SubscribeNotifications:
-    """Proc(0x01, 0x13) — register notification subscriptions with the device.
+    """Proc(0x01, 0x11) + Proc(0x01, 0x13) — register notification subscriptions.
 
-    Must be sent (all 4 payloads, in order) after every BLE connect, before
-    the first GetSystemParameterList call.
+    The iPhone sends 4×Proc_0x11 followed by 4×Proc_0x13 on every BLE connect,
+    before the first GetSystemParameterList call.
 
-    Without this, the device ignores GetSystemParameterList when a previous
-    BLE session (e.g. iPhone Geberit Home App) ended without properly
+    Without this sequence, the device ignores GetSystemParameterList when a
+    previous BLE session (e.g. iPhone Geberit Home App) ended without properly
     unsubscribing. The device holds the old session's subscription open and
     does not deliver responses to the new client.
 
-    The 4 payloads cover all known notification IDs, including 0x0D
-    (GetSystemParameterList) in the final call.
-
-    Confirmed by probe testing (2026-04-13): all 4 calls are required;
-    sending only the last one (02,0f,0d,00,00) is not sufficient.
+    Confirmed by probe testing (2026-04-13):
+    - All 4 × Proc_0x13 calls are required (sending only the last is insufficient)
+    - Proc_0x11 × 4 precedes Proc_0x13 × 4 in the full iPhone init sequence
+    - Sending only Proc_0x13 works for some stuck states but not all
     """
 
-    # Full subscription payload set observed from iPhone (exact wire bytes).
+    # Proc_0x11 payloads — sent before Proc_0x13.  Note the last entry differs:
+    # count=1, only ID 0x0f (vs Proc_0x13's count=2, IDs 0x0f + 0x0d).
+    PRE_PAYLOADS = [
+        bytes([0x04, 0x01, 0x03, 0x04, 0x05]),
+        bytes([0x04, 0x06, 0x07, 0x08, 0x09]),
+        bytes([0x04, 0x0a, 0x0b, 0x0c, 0x0e]),
+        bytes([0x01, 0x0f, 0x00, 0x00, 0x00]),  # only 0x0f, no 0x0d here
+    ]
+
+    # Proc_0x13 payloads — sent after Proc_0x11.  Exact iPhone wire bytes.
     # Format: [count, id0, id1, ...] — device echoes back [count, id0, 0...]
     PAYLOADS = [
         bytes([0x04, 0x01, 0x03, 0x04, 0x05]),
@@ -31,8 +39,8 @@ class SubscribeNotifications:
         bytes([0x02, 0x0f, 0x0d, 0x00, 0x00]),  # includes 0x0d = GetSystemParameterList
     ]
 
-    def __init__(self, payload: bytes):
-        self.api_call_attribute = ApiCallAttribute(0x01, 0x13, 0x01)
+    def __init__(self, payload: bytes, proc: int = 0x13):
+        self.api_call_attribute = ApiCallAttribute(0x01, proc, 0x01)
         self._payload = payload
 
     def get_api_call_attribute(self) -> ApiCallAttribute:
