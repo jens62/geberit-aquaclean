@@ -32,6 +32,7 @@ from aquaclean_console_app.ErrorCodes                                           
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
 from aquaclean_console_app.PollStats                                                 import PollStats as _PollStats
+from aquaclean_console_app.FirmwareUpdateService                                     import check_firmware_update
 from fastapi import HTTPException
 
 # --- Package version (module-level so argparse --version can use it) ---
@@ -432,7 +433,8 @@ class NullMqttService:
 
 
 class ServiceMode:
-    def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None):
+    def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None,
+                 firmware_version_ready_event: asyncio.Event | None = None):
         self.client = None
         self.mqtt_initialized_wait_queue = Queue()
         self.device_state = {
@@ -460,6 +462,7 @@ class ServiceMode:
             "initial_operation_date": None,
             "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
             "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
+            "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -479,6 +482,7 @@ class ServiceMode:
         self._connection_allowed = asyncio.Event()
         self._connection_allowed.set()  # auto-connect on startup
         self._shutdown_event = shutdown_event or asyncio.Event()
+        self._firmware_version_ready_event = firmware_version_ready_event  # set when firmware_versions is first populated
         self.on_state_updated = None    # Optional async callback(state_dict)
         self.record_poll_stats = None  # Optional async callback(mode, esphome_api_ms, ble_ms, poll_ms)
         self._esphome_log_api = None  # Persistent API connection for log streaming
@@ -602,6 +606,8 @@ class ServiceMode:
                 self.device_state["firmware_versions"] = fw
                 if fw.get("main"):
                     logger.info(f"Device firmware: {fw['main']}")
+                    if self._firmware_version_ready_event:
+                        self._firmware_version_ready_event.set()
                 await self.mqtt_service.send_data_async(
                     f"{self.mqttConfig['topic']}/peripheralDevice/information/firmwareVersion",
                     str(fw.get("main", "")))
@@ -1430,9 +1436,10 @@ class ApiMode:
         except Exception:
             self._poll_interval = 0.0
 
-        self._shutdown_event = asyncio.Event()
-        self._on_demand_lock = asyncio.Lock()
-        self._poll_wakeup    = asyncio.Event()
+        self._shutdown_event        = asyncio.Event()
+        self._on_demand_lock        = asyncio.Lock()
+        self._poll_wakeup           = asyncio.Event()
+        self._firmware_version_ready = asyncio.Event()  # set once firmware_versions is populated
         self._esphome_connector: "BluetoothLeConnector | None" = None  # Persistent connector (esphome_api_connection=persistent)
         self._esphome_client = None  # Paired client — created once so data_received_handlers don't accumulate
         self.esphome_api_connection = esphome_api_connection  # runtime-mutable: "persistent" | "on-demand"
@@ -1442,7 +1449,8 @@ class ApiMode:
         self._poll_stats = _PollStats()
 
         # Always create ServiceMode so ble_connection can be toggled at runtime.
-        self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event)
+        self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event,
+                                   firmware_version_ready_event=self._firmware_version_ready)
         self.service.device_state["ble_connection"] = self.ble_connection
         self.service.device_state["esphome_api_connection"] = self.esphome_api_connection
         self.service.device_state["poll_interval"]  = self._poll_interval
@@ -1496,6 +1504,7 @@ class ApiMode:
         self.service.mqtt_service.RestartESP32           += self._on_mqtt_esp32_restart
         service_task = asyncio.create_task(self.service.run())
         poll_task = asyncio.create_task(self._polling_loop())
+        fw_check_task = asyncio.create_task(self._firmware_check_loop())
         try:
             await self.rest_api.start(self._shutdown_event)
         finally:
@@ -1504,7 +1513,7 @@ class ApiMode:
             # Let the service exit gracefully via the shutdown event —
             # it needs to publish MQTT status before BLE disconnect.
             # Only cancel as a last resort if it doesn't finish in time.
-            tasks = {service_task, poll_task}
+            tasks = {service_task, poll_task, fw_check_task}
             done, pending = await asyncio.wait(tasks, timeout=5.0)
             for t in pending:
                 t.cancel()
@@ -1944,6 +1953,16 @@ class ApiMode:
             result = await self._on_demand(lambda c: c.base_client.get_firmware_version_list_async(payload))
         return result
 
+    async def get_firmware_update_status(self) -> dict:
+        """Return cached firmware update check result (no BLE connection needed)."""
+        cached = self.service.device_state.get("firmware_update")
+        if cached is not None:
+            return cached
+        # Not yet available: firmware_versions not yet fetched from BLE
+        return {"update_available": False, "device_version": None,
+                "cloud_version": None, "series": None,
+                "error": "Firmware update check not yet performed"}
+
     async def _fetch_filter_status(self, client):
         return await client.base_client.get_filter_status_async()
 
@@ -2194,6 +2213,7 @@ class ApiMode:
                     fw = result.get("firmware_versions") or {}
                     if fw.get("main"):
                         logger.info(f"Device firmware: {fw['main']}")
+                        self._firmware_version_ready.set()
                     await self._publish_identification_to_mqtt(result)
                 else:
                     result = await self._on_demand(self._fetch_state)
@@ -2285,6 +2305,48 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/centralDevice/error", ErrorManager.to_json(E7002, str(e)))
                 if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
                     logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
+
+    async def _firmware_check_loop(self):
+        """Background task: check Geberit cloud for firmware updates on startup and every hour.
+
+        Waits for the _firmware_version_ready event (set by ServiceMode.run() in
+        persistent mode, or by _polling_loop in on-demand mode) before the first
+        check, so it fires immediately when firmware_versions is first available.
+        Subsequent checks run every hour via asyncio.wait_for on the shutdown event.
+        """
+        _CHECK_INTERVAL = 3600   # seconds between cloud checks
+        logger.info("Firmware check loop started")
+        try:
+            # Wait until the first BLE poll has populated firmware_versions.
+            await self._firmware_version_ready.wait()
+
+            while True:
+                if self._shutdown_event.is_set():
+                    return
+                fw = self.service.device_state.get("firmware_versions")
+                firmware_main = (fw or {}).get("main")
+                if firmware_main:
+                    try:
+                        result = await check_firmware_update(firmware_main)
+                        self.service.device_state["firmware_update"] = result
+                        topic = self.service.mqttConfig['topic']
+                        await self.service.mqtt_service.send_data_async(
+                            f"{topic}/centralDevice/firmwareUpdate",
+                            json.dumps(result),
+                        )
+                        await self.rest_api.broadcast_state(self.service.device_state.copy())
+                    except Exception as exc:
+                        logger.warning("Firmware check error: %s", exc)
+
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(), timeout=_CHECK_INTERVAL
+                    )
+                    return  # shutdown during sleep
+                except asyncio.TimeoutError:
+                    pass    # time for next check
+        except asyncio.CancelledError:
+            return
 
     async def _fetch_state(self, client):
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
@@ -2486,6 +2548,32 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "unique_id": "geberit_aquaclean_firmware_version",
                 "state_topic": f"{t}/peripheralDevice/information/firmwareVersion",
                 "icon": "mdi:chip",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Firmware update (ApiMode._firmware_check_loop) ---
+        {
+            "topic": f"{HA}/binary_sensor/geberit_aquaclean/firmware_update_available/config",
+            "payload": {
+                "name": "Firmware Update Available",
+                "unique_id": "geberit_aquaclean_firmware_update_available",
+                "state_topic": f"{t}/centralDevice/firmwareUpdate",
+                "value_template": "{{ 'ON' if value_json.update_available else 'OFF' }}",
+                "device_class": "update",
+                "icon": "mdi:chip-arrow-up",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/cloud_firmware_version/config",
+            "payload": {
+                "name": "Cloud Firmware Version",
+                "unique_id": "geberit_aquaclean_cloud_firmware_version",
+                "state_topic": f"{t}/centralDevice/firmwareUpdate",
+                "value_template": "{{ value_json.cloud_version }}",
+                "icon": "mdi:cloud-check",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
             },

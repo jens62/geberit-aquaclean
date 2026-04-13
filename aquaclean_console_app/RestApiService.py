@@ -175,6 +175,10 @@ class RestApiService:
             result["payload_sent"] = payload or "(empty)"
             return result
 
+        @app.get("/info/firmware-update")
+        async def get_firmware_update_status():
+            return await self._api_mode.get_firmware_update_status()
+
         @app.get("/data/filter-status")
         async def get_filter_status():
             return await self._api_mode.get_filter_status()
