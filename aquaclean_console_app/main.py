@@ -2374,7 +2374,11 @@ class ApiMode:
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
         fw = await client.base_client.get_firmware_version_list_async()
-        filter_status = await client.base_client.get_filter_status_async()
+        try:
+            filter_status = await client.base_client.get_filter_status_async()
+        except BLEPeripheralTimeoutError:
+            logger.warning("GetFilterStatus (0x59) timed out — device may be stuck for this proc; skipping, filter_status=None")
+            filter_status = None
         return {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
