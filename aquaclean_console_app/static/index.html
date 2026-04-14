@@ -902,7 +902,7 @@
     }
 
     function onFilterStatus(fs) {
-      const fmt = ts => ts ? new Date(ts * 1000).toLocaleDateString() : '—';
+      const fmt = ts => ts == null ? '—' : ts > 0 ? new Date(ts * 1000).toLocaleDateString() : 'Not scheduled';
       set('info-filter-days',  fs.days_until_filter_change != null ? fs.days_until_filter_change + ' d' : '—');
       set('info-filter-reset', fmt(fs.last_filter_reset));
       set('info-filter-next',  fmt(fs.next_filter_change));
