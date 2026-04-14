@@ -123,6 +123,10 @@ class AquaCleanClient(IAquaCleanClient):
         ps = ProfileSettings(setting_id)
         await self.base_client.set_stored_profile_setting_async(ps, value)
 
+    async def set_stored_common_setting(self, setting_id: int, value: int):
+        """Write a single common (device-wide) setting by numeric ID."""
+        await self.base_client.set_stored_common_setting_async(setting_id, value)
+
     # --- Restored Original Getter Methods ---
     async def get_anal_shower_position(self):
         return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.AnalShowerPosition)

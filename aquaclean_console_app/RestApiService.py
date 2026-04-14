@@ -29,6 +29,11 @@ class ProfileSettingUpdate(BaseModel):
     value: int
 
 
+class CommonSettingUpdate(BaseModel):
+    setting_id: int
+    value: int
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -239,6 +244,14 @@ class RestApiService:
         @app.post("/config/profile-setting")
         async def set_profile_setting(body: ProfileSettingUpdate):
             return await self._api_mode.set_profile_setting(body.setting_id, body.value)
+
+        @app.post("/config/common-setting")
+        async def set_common_setting(body: CommonSettingUpdate):
+            return await self._api_mode.set_common_setting(body.setting_id, body.value)
+
+        @app.get("/data/common-settings")
+        async def get_common_settings():
+            return await self._api_mode.get_common_settings()
 
 
         @app.post("/connect")
