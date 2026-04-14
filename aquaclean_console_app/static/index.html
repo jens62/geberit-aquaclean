@@ -140,6 +140,8 @@
 
     .info-grid dt { color: var(--muted); white-space: nowrap; }
     .info-grid dd { font-weight: 500; word-break: break-all; }
+    .ps-inp { width:4rem;padding:0.25rem 0.4rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.85rem;font-weight:500; }
+    .ps-btn { min-width:auto;padding:0.25rem 0.55rem;font-size:0.78rem;margin-left:0.35rem; }
 
     /* Connection status badge */
     .conn-panel {
@@ -359,16 +361,16 @@
 
     <h2>User Profile</h2>
     <dl class="info-grid">
-      <dt>Anal Shower Pressure</dt>  <dd id="ps-anal-pressure">—</dd>
-      <dt>Anal Shower Position</dt>  <dd id="ps-anal-position">—</dd>
-      <dt>Lady Shower Pressure</dt>  <dd id="ps-lady-pressure">—</dd>
-      <dt>Lady Shower Position</dt>  <dd id="ps-lady-position">—</dd>
-      <dt>Water Temperature</dt>     <dd id="ps-water-temp">—</dd>
-      <dt>Seat Heat</dt>             <dd id="ps-seat-heat">—</dd>
-      <dt>Dryer Temperature</dt>     <dd id="ps-dryer-temp">—</dd>
-      <dt>Dryer</dt>                 <dd id="ps-dryer-state">—</dd>
-      <dt>Oscillator</dt>            <dd id="ps-oscillator">—</dd>
-      <dt>Odour Extraction</dt>      <dd id="ps-odour">—</dd>
+      <dt>Anal Shower Pressure</dt>  <dd><input id="ps-inp-2" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(2,'ps-inp-2',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Anal Shower Position</dt>  <dd><input id="ps-inp-4" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(4,'ps-inp-4',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Lady Shower Pressure</dt>  <dd><input id="ps-inp-3" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(3,'ps-inp-3',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Lady Shower Position</dt>  <dd><input id="ps-inp-5" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(5,'ps-inp-5',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Water Temperature</dt>     <dd><input id="ps-inp-6" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(6,'ps-inp-6',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Seat Heat</dt>             <dd><input id="ps-inp-7" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(7,'ps-inp-7',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Dryer Temperature</dt>     <dd><input id="ps-inp-8" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(8,'ps-inp-8',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Dryer</dt>                 <dd><input id="ps-inp-9" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(9,'ps-inp-9',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Oscillator</dt>            <dd><input id="ps-inp-1" type="number" min="0" max="1"  step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(1,'ps-inp-1',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Odour Extraction</dt>      <dd><input id="ps-inp-0" type="number" min="0" max="1"  step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(0,'ps-inp-0',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
     </dl>
 
     <h2>Commands</h2>
@@ -911,17 +913,38 @@
 
     function onProfileSettings(ps) {
       // ps is {id: value} — IDs match ProfileSettings enum
-      const v = id => ps[id] != null ? ps[id] : '—';
-      set('ps-anal-pressure',  v(2));
-      set('ps-anal-position',  v(4));
-      set('ps-lady-pressure',  v(3));
-      set('ps-lady-position',  v(5));
-      set('ps-water-temp',     v(6));
-      set('ps-seat-heat',      v(7));
-      set('ps-dryer-temp',     v(8));
-      set('ps-dryer-state',    v(9));
-      set('ps-oscillator',     v(1));
-      set('ps-odour',          v(0));
+      // Fill inputs with current values (only when not currently focused by user)
+      [0,1,2,3,4,5,6,7,8,9].forEach(id => {
+        const el = document.getElementById('ps-inp-' + id);
+        if (el && document.activeElement !== el && ps[id] != null) el.value = ps[id];
+      });
+    }
+
+    async function setProfileSetting(settingId, inputId, btn) {
+      const inp = document.getElementById(inputId);
+      const val = parseInt(inp.value, 10);
+      if (isNaN(val) || val < parseInt(inp.min) || val > parseInt(inp.max)) {
+        inp.style.borderColor = 'var(--error)';
+        setTimeout(() => inp.style.borderColor = '', 2000);
+        return;
+      }
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.classList.remove('success', 'error');
+      try {
+        const r = await fetch(apiBase + '/config/profile-setting', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ setting_id: settingId, value: val }),
+        });
+        btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        btn.classList.add('error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
     }
 
     function clearSocVersions() {
