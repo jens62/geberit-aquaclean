@@ -1533,6 +1533,7 @@ class ApiMode:
         self.service.on_state_updated  = self.rest_api.broadcast_state
         self.service.record_poll_stats = self._on_persistent_poll_complete
         # Wire MQTT inbound control topics → ApiMode handlers
+        self.service.mqtt_service.SetProfileSetting      += self._on_mqtt_set_profile_setting
         self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
         self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
@@ -1669,6 +1670,12 @@ class ApiMode:
         return {"status": "success", "poll_interval": value}
 
     # --- MQTT inbound handlers ---
+
+    async def _on_mqtt_set_profile_setting(self, setting_id: int, value: int):
+        try:
+            await self.set_profile_setting(setting_id, value)
+        except Exception as e:
+            logger.warning(f"MQTT set_profile_setting({setting_id}, {value}) failed: {e}")
 
     async def _on_mqtt_toggle_anal(self):
         try:
@@ -2031,6 +2038,31 @@ class ApiMode:
         self.service.device_state["profile_settings"] = result
         await self._publish_profile_settings_to_mqtt(result, topic)
         return result
+
+    async def set_profile_setting(self, setting_id: int, value: int) -> dict:
+        from aquaclean_console_app.aquaclean_core.Clients.ProfileSettings import ProfileSettings
+        try:
+            ProfileSettings(setting_id)
+        except ValueError:
+            self._http_error(400, E4001, f"Invalid setting_id {setting_id}. Valid IDs: 0-9")
+        if not isinstance(value, int) or value < 0 or value > 65535:
+            self._http_error(400, E4002, f"Value {value} out of range (0-65535)")
+
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            await self.service.client.set_stored_profile_setting(setting_id, value)
+        else:
+            await self._on_demand(lambda client: client.set_stored_profile_setting(setting_id, value))
+
+        # Update cached state and broadcast
+        ps = dict(self.service.device_state.get("profile_settings") or {})
+        ps[setting_id] = value
+        self.service.device_state["profile_settings"] = ps
+        topic = self.service.mqttConfig['topic']
+        await self._publish_profile_settings_to_mqtt(ps, topic)
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "setting_id": setting_id, "value": value}
 
     async def _publish_profile_settings_to_mqtt(self, ps: dict, topic: str):
         for sid, key in _PROFILE_SETTING_MQTT_KEYS.items():
@@ -2784,117 +2816,35 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "device": DEVICE,
             },
         },
-        # --- Sensors: user profile settings (ApiMode.get_profile_settings) ---
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_anal_shower_pressure/config",
-            "payload": {
-                "name": "Anal Shower Pressure",
-                "unique_id": "geberit_aquaclean_ps_anal_shower_pressure",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/analShowerPressure",
-                "icon": "mdi:water-boiler",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_lady_shower_pressure/config",
-            "payload": {
-                "name": "Lady Shower Pressure",
-                "unique_id": "geberit_aquaclean_ps_lady_shower_pressure",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/ladyShowerPressure",
-                "icon": "mdi:water-boiler",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_anal_shower_position/config",
-            "payload": {
-                "name": "Anal Shower Position",
-                "unique_id": "geberit_aquaclean_ps_anal_shower_position",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/analShowerPosition",
-                "icon": "mdi:arrow-left-right",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_lady_shower_position/config",
-            "payload": {
-                "name": "Lady Shower Position",
-                "unique_id": "geberit_aquaclean_ps_lady_shower_position",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/ladyShowerPosition",
-                "icon": "mdi:arrow-left-right",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_water_temperature/config",
-            "payload": {
-                "name": "Water Temperature",
-                "unique_id": "geberit_aquaclean_ps_water_temperature",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/waterTemperature",
-                "icon": "mdi:thermometer-water",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_wc_seat_heat/config",
-            "payload": {
-                "name": "WC Seat Heat",
-                "unique_id": "geberit_aquaclean_ps_wc_seat_heat",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/wcSeatHeat",
-                "icon": "mdi:heat-wave",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_dryer_temperature/config",
-            "payload": {
-                "name": "Dryer Temperature",
-                "unique_id": "geberit_aquaclean_ps_dryer_temperature",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/dryerTemperature",
-                "icon": "mdi:hair-dryer",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_odour_extraction/config",
-            "payload": {
-                "name": "Odour Extraction",
-                "unique_id": "geberit_aquaclean_ps_odour_extraction",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/odourExtraction",
-                "icon": "mdi:air-filter",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_oscillator_state/config",
-            "payload": {
-                "name": "Oscillator State",
-                "unique_id": "geberit_aquaclean_ps_oscillator_state",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/oscillatorState",
-                "icon": "mdi:rotate-360",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
-        {
-            "topic": f"{HA}/sensor/geberit_aquaclean/ps_dryer_state/config",
-            "payload": {
-                "name": "Dryer State",
-                "unique_id": "geberit_aquaclean_ps_dryer_state",
-                "state_topic": f"{t}/peripheralDevice/information/profileSettings/dryerState",
-                "icon": "mdi:hair-dryer",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            },
-        },
+        # --- Numbers: user profile settings (writable via MQTT) ---
+        # command_template embeds setting_id so a single command_topic handles all settings.
+        *[
+            {
+                "topic": f"{HA}/number/geberit_aquaclean/ps_{key}/config",
+                "payload": {
+                    "name": name,
+                    "unique_id": f"geberit_aquaclean_ps_{key}",
+                    "state_topic": f"{t}/peripheralDevice/information/profileSettings/{mqtt_key}",
+                    "command_topic": f"{t}/peripheralDevice/config/profileSetting",
+                    "command_template": '{{"setting_id": {sid}, "value": {{{{ value | int }}}}}}'.format(sid=sid),
+                    "min": 0, "max": 10, "step": 1,
+                    "icon": icon,
+                    "device": DEVICE,
+                },
+            }
+            for key, name, mqtt_key, sid, icon in [
+                ("anal_shower_pressure", "Anal Shower Pressure",  "analShowerPressure", 2, "mdi:water-boiler"),
+                ("lady_shower_pressure", "Lady Shower Pressure",  "ladyShowerPressure", 3, "mdi:water-boiler"),
+                ("anal_shower_position", "Anal Shower Position",  "analShowerPosition", 4, "mdi:arrow-left-right"),
+                ("lady_shower_position", "Lady Shower Position",  "ladyShowerPosition", 5, "mdi:arrow-left-right"),
+                ("water_temperature",    "Water Temperature",     "waterTemperature",   6, "mdi:thermometer-water"),
+                ("wc_seat_heat",         "WC Seat Heat",          "wcSeatHeat",         7, "mdi:heat-wave"),
+                ("dryer_temperature",    "Dryer Temperature",     "dryerTemperature",   8, "mdi:hair-dryer"),
+                ("odour_extraction",     "Odour Extraction",      "odourExtraction",    0, "mdi:air-filter"),
+                ("oscillator_state",     "Oscillator State",      "oscillatorState",    1, "mdi:rotate-360"),
+                ("dryer_state",          "Dryer State",           "dryerState",         9, "mdi:hair-dryer"),
+            ]
+        ],
         # --- Sensors: descale statistics (ApiMode.get_statistics_descale) ---
         {
             "topic": f"{HA}/sensor/geberit_aquaclean/days_until_next_descale/config",
