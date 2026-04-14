@@ -544,16 +544,17 @@ def _time_from_str(s: str) -> Optional[datetime]:
 # Markdown rendering
 # ---------------------------------------------------------------------------
 
-# GetSystemParameterList index → human label (indices [0,1,2,3,4,5,7,9] in practice)
+# GetSystemParameterList index → human label (from GetSystemParameterList.py comments)
 _SPL_PARAM_NAMES = {
-    0: "is_user_sitting",
-    1: "is_anal_shower_running",
-    2: "is_lady_shower_running",
-    3: "is_dryer_running",
-    4: "param_4",
-    5: "param_5",
+    0: "user_sitting",
+    1: "anal_shower",
+    2: "lady_shower",
+    3: "dryer",
+    4: "descaling_state",
+    5: "descaling_min",
+    6: "last_error",
     7: "param_7",
-    9: "param_9",
+    9: "orientation_light",
 }
 
 _PHASE_SUMMARIES = {
@@ -640,11 +641,19 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
     if (ctx, proc) == (0x01, 0x0D):
         if frame.is_response:
             if frame.result:
-                # SPL response format: first byte varies by firmware; remaining bytes
-                # are records but exact stride (4 vs 5 bytes) isn't confirmed from logs.
-                # Show record count conservatively rather than risk misaligned parsing.
-                n_records = max(0, len(frame.result) // 5)
-                return f"OK — {n_records} state record(s)"
+                # Replicate Deserializer.py exactly: divisor=5, start_pos=1 (after 'a' byte).
+                # idx at result[i*5+1], value LE uint32 at result[i*5+2:i*5+6].
+                import struct as _struct
+                result = frame.result
+                parts = []
+                i = 0
+                while i * 5 + 5 < len(result):
+                    idx = result[i * 5 + 1]
+                    val = _struct.unpack_from('<I', result, i * 5 + 2)[0]
+                    label = _SPL_PARAM_NAMES.get(idx, f"idx{idx}")
+                    parts.append(f"{label}={val}")
+                    i += 1
+                return ", ".join(parts) if parts else "OK"
             return "OK"
         return "Polling live device state"
 
