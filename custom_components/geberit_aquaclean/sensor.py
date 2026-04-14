@@ -37,6 +37,17 @@ SENSORS: list[tuple] = [
     ("filter_last_reset",     "Last Filter Reset",              None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:calendar-clock"),
     ("filter_reset_count",    "Filter Reset Count",             None, None,                        SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),
     ("filter_next_change",    "Next Filter Change",             None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:filter-plus"),
+    # User profile settings
+    ("ps_anal_shower_pressure", "Anal Shower Pressure",  None, None, SensorStateClass.MEASUREMENT, "mdi:water-boiler"),
+    ("ps_lady_shower_pressure", "Lady Shower Pressure",  None, None, SensorStateClass.MEASUREMENT, "mdi:water-boiler"),
+    ("ps_anal_shower_position", "Anal Shower Position",  None, None, SensorStateClass.MEASUREMENT, "mdi:arrow-left-right"),
+    ("ps_lady_shower_position", "Lady Shower Position",  None, None, SensorStateClass.MEASUREMENT, "mdi:arrow-left-right"),
+    ("ps_water_temperature",    "Water Temperature",     None, None, SensorStateClass.MEASUREMENT, "mdi:thermometer-water"),
+    ("ps_wc_seat_heat",         "WC Seat Heat",          None, None, SensorStateClass.MEASUREMENT, "mdi:heat-wave"),
+    ("ps_dryer_temperature",    "Dryer Temperature",     None, None, SensorStateClass.MEASUREMENT, "mdi:hair-dryer"),
+    ("ps_odour_extraction",     "Odour Extraction",      None, None, SensorStateClass.MEASUREMENT, "mdi:air-filter"),
+    ("ps_oscillator_state",     "Oscillator State",      None, None, SensorStateClass.MEASUREMENT, "mdi:rotate-360"),
+    ("ps_dryer_state",          "Dryer State",           None, None, SensorStateClass.MEASUREMENT, "mdi:hair-dryer"),
     # Poll timing (for countdown visualization)
     ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check"),
     ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),

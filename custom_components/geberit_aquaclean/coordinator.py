@@ -337,7 +337,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             # built-in timeout and will hang forever if the device ACKs the
             # request but never sends the response (e.g. rapid reconnect after
             # config-flow test).  asyncio.TimeoutError is already in the except.
-            _GATT_TIMEOUT = 30
+            _GATT_TIMEOUT = 45  # raised from 30 — profile_settings adds 10 BLE calls (~1-2 s)
             t_poll = time.perf_counter()
             try:
                 async with asyncio.timeout(_GATT_TIMEOUT):
@@ -350,6 +350,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     soc_versions = await client.base_client.get_soc_application_versions_async()
                     firmware_versions = await client.base_client.get_firmware_version_list_async()
                     filter_status = await client.base_client.get_filter_status_async()
+                    profile_settings = await client.base_client.get_stored_profile_settings_async()
             except (BleakError, asyncio.TimeoutError, BLEPeripheralTimeoutError) as exc:
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
@@ -417,6 +418,17 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     if (ts := (filter_status or {}).get("next_filter_change")) and ts > 0
                     else None
                 ),
+                # User profile settings (ProfileSettings IDs 0-9)
+                "ps_odour_extraction":     (profile_settings or {}).get(0),
+                "ps_oscillator_state":     (profile_settings or {}).get(1),
+                "ps_anal_shower_pressure": (profile_settings or {}).get(2),
+                "ps_lady_shower_pressure": (profile_settings or {}).get(3),
+                "ps_anal_shower_position": (profile_settings or {}).get(4),
+                "ps_lady_shower_position": (profile_settings or {}).get(5),
+                "ps_water_temperature":    (profile_settings or {}).get(6),
+                "ps_wc_seat_heat":         (profile_settings or {}).get(7),
+                "ps_dryer_temperature":    (profile_settings or {}).get(8),
+                "ps_dryer_state":          (profile_settings or {}).get(9),
                 # Poll timing (for countdown visualization)
                 "poll_epoch": poll_start,
                 "poll_interval": self.update_interval.total_seconds(),
