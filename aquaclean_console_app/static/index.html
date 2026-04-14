@@ -142,6 +142,9 @@
     .info-grid dd { font-weight: 500; word-break: break-all; }
     .ps-inp { width:4rem;padding:0.25rem 0.4rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.85rem;font-weight:500; }
     .ps-btn { min-width:auto;padding:0.25rem 0.55rem;font-size:0.78rem;margin-left:0.35rem; }
+    .cs-swatch { display:inline-block;width:1.4rem;height:1.4rem;border-radius:50%;margin:0 0.2rem;cursor:pointer;border:2px solid transparent;vertical-align:middle;transition:transform 0.15s,border-color 0.15s; }
+    .cs-swatch:hover { transform:scale(1.2); }
+    .cs-swatch.active { border-color:#fff;transform:scale(1.15); }
 
     /* Connection status badge */
     .conn-panel {
@@ -361,16 +364,42 @@
 
     <h2>User Profile</h2>
     <dl class="info-grid">
-      <dt>Anal Shower Pressure</dt>  <dd><input id="ps-inp-2" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(2,'ps-inp-2',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Anal Shower Position</dt>  <dd><input id="ps-inp-4" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(4,'ps-inp-4',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Lady Shower Pressure</dt>  <dd><input id="ps-inp-3" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(3,'ps-inp-3',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Lady Shower Position</dt>  <dd><input id="ps-inp-5" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(5,'ps-inp-5',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Water Temperature</dt>     <dd><input id="ps-inp-6" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(6,'ps-inp-6',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Seat Heat</dt>             <dd><input id="ps-inp-7" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(7,'ps-inp-7',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Dryer Temperature</dt>     <dd><input id="ps-inp-8" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(8,'ps-inp-8',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Dryer</dt>                 <dd><input id="ps-inp-9" type="number" min="0" max="10" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(9,'ps-inp-9',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Oscillator</dt>            <dd><input id="ps-inp-1" type="number" min="0" max="1"  step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(1,'ps-inp-1',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Odour Extraction</dt>      <dd><input id="ps-inp-0" type="number" min="0" max="1"  step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(0,'ps-inp-0',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Anal Shower Pressure</dt>  <dd><input id="ps-inp-2" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(2,'ps-inp-2',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Anal Shower Position</dt>  <dd><input id="ps-inp-4" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(4,'ps-inp-4',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Lady Shower Pressure</dt>  <dd><input id="ps-inp-3" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(3,'ps-inp-3',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Lady Shower Position</dt>  <dd><input id="ps-inp-5" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(5,'ps-inp-5',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Water Temperature</dt>     <dd><input id="ps-inp-6" type="number" min="0" max="5" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(6,'ps-inp-6',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Seat Heat</dt>             <dd><input id="ps-inp-7" type="number" min="0" max="5" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(7,'ps-inp-7',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Dryer Temperature</dt>     <dd><input id="ps-inp-8" type="number" min="0" max="5" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(8,'ps-inp-8',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Dryer</dt>                 <dd><input id="ps-inp-9" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(9,'ps-inp-9',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Oscillator</dt>            <dd><input id="ps-inp-1" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(1,'ps-inp-1',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Odour Extraction</dt>      <dd><input id="ps-inp-0" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(0,'ps-inp-0',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+    </dl>
+
+    <h2>Orientation Light</h2>
+    <dl class="info-grid">
+      <dt>Activation</dt>
+      <dd>
+        <select id="cs-sel-2" class="ps-inp" onchange="setCommonSetting(2,parseInt(this.value),this)">
+          <option value="0">On</option>
+          <option value="1">Off</option>
+          <option value="2">When Approached</option>
+        </select>
+      </dd>
+      <dt>Brightness</dt>
+      <dd><input id="cs-inp-1" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setCommonSetting(1,parseInt(document.getElementById('cs-inp-1').value),this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
+      <dt>Color</dt>
+      <dd id="cs-color-3">
+        <span class="cs-swatch" data-val="0" style="background:#fff1d8" title="Warm White (0)"    onclick="setCommonSetting(3,0,this)"></span>
+        <span class="cs-swatch" data-val="1" style="background:#117aff" title="Blue (1)"          onclick="setCommonSetting(3,1,this)"></span>
+        <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta (2)"       onclick="setCommonSetting(3,2,this)"></span>
+        <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange (3)"        onclick="setCommonSetting(3,3,this)"></span>
+        <span class="cs-swatch" data-val="4" style="background:#e4efff" title="Cold White (4)"    onclick="setCommonSetting(3,4,this)"></span>
+        <span class="cs-swatch" data-val="5" style="background:#96f3f3" title="Turquoise (5)"     onclick="setCommonSetting(3,5,this)"></span>
+        <span class="cs-swatch" data-val="6" style="background:#ffee7c" title="Yellow (6)"        onclick="setCommonSetting(3,6,this)"></span>
+      </dd>
+      <dt>Odour Run-On</dt>
+      <dd><input id="cs-inp-0" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setCommonSetting(0,parseInt(document.getElementById('cs-inp-0').value),this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
     </dl>
 
     <h2>Commands</h2>
@@ -689,6 +718,7 @@
       if (state.firmware_update != null) onFirmwareUpdate(state.firmware_update);
       if (state.filter_status != null) onFilterStatus(state.filter_status);
       if (state.profile_settings != null) onProfileSettings(state.profile_settings);
+      if (state.common_settings != null) onCommonSettings(state.common_settings);
     }
 
     (function tickCountdown() {
@@ -944,6 +974,63 @@
         btn.disabled = false;
         btn.classList.remove('loading');
         setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+      }
+    }
+
+    function onCommonSettings(cs) {
+      // cs is {id: value} — IDs from _COMMON_SETTING_MQTT_KEYS
+      // id=0: odour run-on, id=1: brightness, id=2: activation, id=3: color
+      if (cs[1] != null) {
+        const el = document.getElementById('cs-inp-1');
+        if (el && document.activeElement !== el) el.value = cs[1];
+      }
+      if (cs[2] != null) {
+        const sel = document.getElementById('cs-sel-2');
+        if (sel && document.activeElement !== sel) sel.value = cs[2];
+      }
+      if (cs[3] != null) {
+        document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
+          s.classList.toggle('active', parseInt(s.dataset.val) === cs[3]);
+        });
+      }
+      if (cs[0] != null) {
+        const el = document.getElementById('cs-inp-0');
+        if (el && document.activeElement !== el) el.value = cs[0];
+      }
+    }
+
+    async function setCommonSetting(settingId, value, triggerEl) {
+      if (isNaN(value)) return;
+      // For color swatches: optimistic UI update
+      if (settingId === 3) {
+        document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
+          s.classList.toggle('active', parseInt(s.dataset.val) === value);
+        });
+      }
+      // Find a nearby button to show feedback, or use triggerEl directly
+      let btn = triggerEl;
+      if (btn && btn.tagName === 'SELECT') btn = null; // selects give no btn feedback
+      if (btn && btn.tagName === 'SPAN') btn = null;   // swatches give no btn feedback
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.classList.remove('success', 'error');
+      }
+      try {
+        const r = await fetch(apiBase + '/config/common-setting', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ setting_id: settingId, value: value }),
+        });
+        if (btn) btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        if (btn) btn.classList.add('error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        }
       }
     }
 
