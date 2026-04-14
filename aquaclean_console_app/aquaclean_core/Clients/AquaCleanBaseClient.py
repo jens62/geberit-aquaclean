@@ -29,30 +29,6 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications
 from aquaclean_console_app.aquaclean_utils                                               import utils
 
 
-class _IPhoneGetProfileCall:
-    """Minimal call object for GetStoredProfileSetting using iPhone wire proc 0x0A.
-
-    Proc 0x0A uses a single-byte payload (setting_id only, no profile_id).
-    The iPhone sends these 10 calls after Proc_0x13 as part of its device
-    init/unlock sequence.  The values returned by 0x0A do NOT match the
-    user-visible preferences stored under proc 0x53 (different storage area).
-    Keep these calls for the unlock sequence — discard their results.
-    """
-    _attr = ApiCallAttribute(0x01, 0x0A, 0x01)
-
-    def __init__(self, setting_id: int):
-        self._payload = bytes([setting_id])
-
-    def get_api_call_attribute(self) -> ApiCallAttribute:
-        return self._attr
-
-    def get_payload(self) -> bytes:
-        return self._payload
-
-    def result(self, data: bytearray):
-        return bytes(data)
-
-
 class _GetStoredProfileCall53:
     """Read a stored profile setting using proc 0x53 (C# GetStoredProfileSetting).
 
@@ -175,12 +151,11 @@ class AquaCleanBaseClient:
 
 
     async def subscribe_notifications_async(self):
-        """Send the full iPhone device init sequence before GetSystemParameterList.
+        """Send the BLE device init sequence before GetSystemParameterList.
 
-        Sequence (mirrors iPhone BLE wire traffic exactly):
+        Sequence (confirmed working — matches v2.4.63 baseline):
           4 × Proc(0x01,0x11)  — pre-subscription
           4 × Proc(0x01,0x13)  — subscription registration (IDs 1–15, compact range only)
-         10 × GetStoredProfileSetting(0x0A)  — post-subscription wake/unlock sequence
 
         Required on every BLE connect. Without this, the device may ignore
         GetSystemParameterList if a previous iPhone or bridge session left it
@@ -190,26 +165,19 @@ class AquaCleanBaseClient:
         subscription ID space is compact (1–15); out-of-range IDs corrupt the
         device's subscription table and block the affected proc from responding.
 
-        NOTE: Do NOT add Proc_0x53 (GetStoredProfileSetting C#) reads here.
-        Adding 10×Proc_0x53 after the 18-call init sequence brings the total to
-        28 rapid BLE calls, which causes the device to stop responding to the
-        subsequent GetSystemParameterList (5 s timeout observed in
-        aquaclean-f71805a…-TRACE-filtersettings-missing-profile-ok.log).
-        Profile settings are instead fetched via get_stored_profile_settings_async()
-        in _fetch_state, after GetSystemParameterList succeeds.
+        NOTE: Do NOT add Proc_0x0A or Proc_0x53 calls here.  Adding 10×Proc_0x0A
+        pushes GetFilterStatus from position #13 to #23, causing it to time out.
+        Adding 10×Proc_0x53 after that brings the total to 28 rapid BLE calls,
+        causing GetSystemParameterList itself to time out.  Profile settings are
+        fetched via get_stored_profile_settings_async() in _fetch_state instead.
         """
-        logger.debug(
-            "iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13 + 10×GetStoredProfileSetting(0x0A)"
-        )
+        logger.debug("iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13")
         for payload in SubscribeNotifications.PRE_PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x11)
             await self.send_request(api_call)
         for payload in SubscribeNotifications.PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x13)
             await self.send_request(api_call)
-        # 10 × proc 0x0A: part of the iPhone unlock sequence; results discarded.
-        for sid in _IPHONE_PROFILE_SETTING_IDS:
-            await self.send_request(_IPhoneGetProfileCall(sid))
 
     async def get_stored_profile_settings_async(self) -> dict:
         """Read all user profile settings via proc 0x53 (C# GetStoredProfileSetting).
