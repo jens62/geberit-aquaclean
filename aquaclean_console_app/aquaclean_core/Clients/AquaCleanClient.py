@@ -118,6 +118,11 @@ class AquaCleanClient(IAquaCleanClient):
     async def reset_filter_counter(self):
         await self.base_client.SetCommandAsync(Commands.ResetFilterCounter)
 
+    async def set_stored_profile_setting(self, setting_id: int, value: int):
+        """Write a single user profile setting by numeric ID (0-9)."""
+        ps = ProfileSettings(setting_id)
+        await self.base_client.set_stored_profile_setting_async(ps, value)
+
     # --- Restored Original Getter Methods ---
     async def get_anal_shower_position(self):
         return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.AnalShowerPosition)
