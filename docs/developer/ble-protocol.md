@@ -178,24 +178,29 @@ This is what `Deserializer.py` does: `data_array[i] = LE(result[i*5+2:i*5+6])`.
 
 **Known parameter indices (from `GetSystemParameterList.py` docstring — authoritative):**
 
-| Index | Name | Notes |
-|-------|------|-------|
-| 0 | userIsSitting | boolean |
-| 1 | analShowerIsRunning | boolean |
-| 2 | ladyShowerIsRunning | boolean |
-| 3 | dryerIsRunning | boolean |
-| 4 | descalingState | enum |
-| 5 | descalingDurationInMinutes | integer |
-| 6 | lastErrorCode | integer |
-| 7 | *unnamed* | polled by our bridge; semantics unknown |
-| 8 | *unknown* | polled by iPhone only |
-| 9 | orientationLightState | boolean |
-| 10 | *unknown* | polled by iPhone only |
-| 11 | *unknown* | polled by iPhone only |
+| Index | Name | Observed idle value | Notes |
+|-------|------|---------------------|-------|
+| 0 | userIsSitting | 0 | 0 = not sitting |
+| 1 | analShowerIsRunning | **1280** | NOT boolean — idle ≠ 0 |
+| 2 | ladyShowerIsRunning | **2** | NOT boolean — idle ≠ 0 |
+| 3 | dryerIsRunning | **3** | NOT boolean — idle ≠ 0 |
+| 4 | descalingState | 4 | enum; idle = 4 |
+| 5 | descalingDurationInMinutes | 5 | integer |
+| 6 | lastErrorCode | 6 | integer |
+| 7 | *unnamed* | 7 | polled by bridge; semantics unknown |
+| 8 | *pos 8 = duplicate of idx 4* | 11 (0x0b) | iPhone request has idx 4 twice |
+| 9 | orientationLightState | 0 | 0 = off |
+| 10 | *unknown* | 0 | polled by iPhone only |
+| 11 | *unknown* | 0 | polled by iPhone only |
 
 Our bridge polls `[0,1,2,3,4,5,7,9]` (8 params). The iPhone polls
 `[0,1,2,3,4,5,6,7,4,8,9,10]` (12 params, index 4 duplicated).
-Indices 8, 10, 11 are not yet observed in any known log with a meaningful value.
+
+**⚠ Params 1–7 are NOT simple booleans — their idle values are non-zero.**
+Source: `Connect-Toggle-Lid-shutdown-app.txt` — all 36 SPL responses across the
+full session are byte-for-byte identical, before and after the ToggleLid command.
+This also confirms: **lid state is not tracked by any GetSystemParameterList parameter.**
+To understand active vs idle encoding, a log with a shower actively running is needed.
 
 ---
 
