@@ -8,12 +8,13 @@ from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import
 
 # All "get list" procedures use a fixed 13-byte payload: 1 count byte + up to 12
 # ID bytes, zero-padded to 13.  The device rejects shorter payloads with 0xF7.
-# We request IDs 0–3 and 7–10 (8 IDs), covering all key fields:
-# status, shower_cycles, and the four filter tracking fields.  IDs 4–6 unknown.
+# WARNING: the iPhone sends 12 IDs [0,1,2,3,4,5,6,7,4(dup),8,9,10] but the device
+# times out on that payload (confirmed: aquaclean-f2a96f1-TRACE-no-filter-data.log).
+# Use 8 IDs only — confirmed working in aquaclean-latest-TRACE-filter-works.log.
 _FILTER_PAYLOAD = bytes([
-    0x08,                                           # count = 8
-    0x00, 0x01, 0x02, 0x03, 0x07, 0x08, 0x09, 0x0A,  # IDs 0,1,2,3,7,8,9,10
-    0x00, 0x00, 0x00, 0x00,                         # zero-pad to 13 bytes total
+    0x08,                                                        # count = 8
+    0x00, 0x01, 0x02, 0x03, 0x07, 0x08, 0x09, 0x0a,           # IDs 0,1,2,3,7,8,9,10
+    0x00, 0x00, 0x00, 0x00,                                      # zero-pad to 13 bytes
 ])
 
 
