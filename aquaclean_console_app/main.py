@@ -432,6 +432,22 @@ class NullMqttService:
         pass
 
 
+# Profile settings MQTT sub-topic names keyed by ProfileSettings enum ID.
+# Used by both ServiceMode (persistent mode) and ApiMode (on-demand mode).
+_PROFILE_SETTING_MQTT_KEYS = {
+    0: "odourExtraction",
+    1: "oscillatorState",
+    2: "analShowerPressure",
+    3: "ladyShowerPressure",
+    4: "analShowerPosition",
+    5: "ladyShowerPosition",
+    6: "waterTemperature",
+    7: "wcSeatHeat",
+    8: "dryerTemperature",
+    9: "dryerState",
+}
+
+
 class ServiceMode:
     def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None,
                  firmware_version_ready_event: asyncio.Event | None = None):
@@ -608,6 +624,14 @@ class ServiceMode:
                 except BLEPeripheralTimeoutError:
                     logger.warning("GetStoredProfileSettings timed out at connect — profile data will be unavailable")
                     self.device_state["profile_settings"] = {}
+                ps = self.device_state.get("profile_settings") or {}
+                if ps:
+                    _t = self.mqttConfig['topic']
+                    for _sid, _key in _PROFILE_SETTING_MQTT_KEYS.items():
+                        _val = ps.get(_sid)
+                        if _val is not None:
+                            await self.mqtt_service.send_data_async(
+                                f"{_t}/peripheralDevice/information/profileSettings/{_key}", str(_val))
 
                 # Filter status — fetch once at connect time so the web UI shows it immediately.
                 try:
@@ -1993,6 +2017,29 @@ class ApiMode:
     async def _fetch_filter_status(self, client):
         return await client.base_client.get_filter_status_async()
 
+    async def _fetch_profile_settings(self, client):
+        return await client.base_client.get_stored_profile_settings_async()
+
+    async def get_profile_settings(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            result = await self.service.client.base_client.get_stored_profile_settings_async()
+        else:
+            result = await self._on_demand(self._fetch_profile_settings)
+        self.service.device_state["profile_settings"] = result
+        await self._publish_profile_settings_to_mqtt(result, topic)
+        return result
+
+    async def _publish_profile_settings_to_mqtt(self, ps: dict, topic: str):
+        for sid, key in _PROFILE_SETTING_MQTT_KEYS.items():
+            val = ps.get(sid)
+            if val is not None:
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/peripheralDevice/information/profileSettings/{key}",
+                    str(val))
+
     async def _fetch_statistics_descale(self, client):
         sd = await client.base_client.get_statistics_descale_async()
         return self._statistics_descale_to_dict(sd)
@@ -2233,6 +2280,9 @@ class ApiMode:
         fs = info.get("filter_status") or {}
         if fs:
             await self._publish_filter_status_to_mqtt(fs, topic)
+        ps = info.get("profile_settings") or {}
+        if ps:
+            await self._publish_profile_settings_to_mqtt(ps, topic)
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -2291,7 +2341,7 @@ class ApiMode:
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
                               "description", "initial_operation_date", "firmware_versions",
-                              "filter_status"):
+                              "filter_status", "profile_settings"):
                         self.service.device_state[k] = result.get(k)
                     fw = result.get("firmware_versions") or {}
                     if fw.get("main"):
@@ -2316,6 +2366,9 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+                ps = result.get("profile_settings") or {}
+                if ps:
+                    await self._publish_profile_settings_to_mqtt(ps, topic)
                 if self.service.device_state.get("ble_rssi") is not None:
                     await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/bleRssi", str(self.service.device_state["ble_rssi"]))
                 # Record on-demand poll timing and signal stats
@@ -2727,6 +2780,117 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "state_topic": f"{t}/peripheralDevice/information/filterStatus/nextFilterChange",
                 "value_template": "{% if value | int(0) > 0 %}{{ value | int | timestamp_custom('%d.%m.%Y') }}{% else %}Unknown{% endif %}",
                 "icon": "mdi:filter-plus",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: user profile settings (ApiMode.get_profile_settings) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_anal_shower_pressure/config",
+            "payload": {
+                "name": "Anal Shower Pressure",
+                "unique_id": "geberit_aquaclean_ps_anal_shower_pressure",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/analShowerPressure",
+                "icon": "mdi:water-boiler",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_lady_shower_pressure/config",
+            "payload": {
+                "name": "Lady Shower Pressure",
+                "unique_id": "geberit_aquaclean_ps_lady_shower_pressure",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/ladyShowerPressure",
+                "icon": "mdi:water-boiler",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_anal_shower_position/config",
+            "payload": {
+                "name": "Anal Shower Position",
+                "unique_id": "geberit_aquaclean_ps_anal_shower_position",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/analShowerPosition",
+                "icon": "mdi:arrow-left-right",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_lady_shower_position/config",
+            "payload": {
+                "name": "Lady Shower Position",
+                "unique_id": "geberit_aquaclean_ps_lady_shower_position",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/ladyShowerPosition",
+                "icon": "mdi:arrow-left-right",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_water_temperature/config",
+            "payload": {
+                "name": "Water Temperature",
+                "unique_id": "geberit_aquaclean_ps_water_temperature",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/waterTemperature",
+                "icon": "mdi:thermometer-water",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_wc_seat_heat/config",
+            "payload": {
+                "name": "WC Seat Heat",
+                "unique_id": "geberit_aquaclean_ps_wc_seat_heat",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/wcSeatHeat",
+                "icon": "mdi:heat-wave",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_dryer_temperature/config",
+            "payload": {
+                "name": "Dryer Temperature",
+                "unique_id": "geberit_aquaclean_ps_dryer_temperature",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/dryerTemperature",
+                "icon": "mdi:hair-dryer",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_odour_extraction/config",
+            "payload": {
+                "name": "Odour Extraction",
+                "unique_id": "geberit_aquaclean_ps_odour_extraction",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/odourExtraction",
+                "icon": "mdi:air-filter",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_oscillator_state/config",
+            "payload": {
+                "name": "Oscillator State",
+                "unique_id": "geberit_aquaclean_ps_oscillator_state",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/oscillatorState",
+                "icon": "mdi:rotate-360",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_dryer_state/config",
+            "payload": {
+                "name": "Dryer State",
+                "unique_id": "geberit_aquaclean_ps_dryer_state",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/dryerState",
+                "icon": "mdi:hair-dryer",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
             },
@@ -3218,6 +3382,8 @@ async def run_cli(args):
             result["data"] = ApiMode._statistics_descale_to_dict(sd)
         elif args.command == 'filter-status':
             result["data"] = await client.base_client.get_filter_status_async()
+        elif args.command == 'profile-settings':
+            result["data"] = await client.base_client.get_stored_profile_settings_async()
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
             result["data"] = {"action": "lid_toggled"}
@@ -3403,7 +3569,7 @@ if __name__ == "__main__":
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
-        'filter-status', 'firmware-version-list',
+        'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
         'toggle-lid', 'toggle-anal', 'reset-filter-counter',
         # app config / home assistant (no BLE required)
