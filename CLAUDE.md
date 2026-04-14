@@ -445,6 +445,17 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **Investigate E0002 / E0003 failure after iPhone app closes BLE connection.**
+  After the Geberit iPhone app connects and then is closed, the bridge cannot
+  reconnect to the device. Sequence observed in log:
+  E0002 (device not found) × 4 → circuit breaker fires → ESP32 restarted →
+  E0003 (device visible but no response) — bridge stuck until device power-cycles.
+  Hypothesis: device holds a BLE GATT connection to the iPhone for a timeout
+  period after the app closes; the ESP32 scanner sees no advertisements during
+  that window (Geberit does not advertise while connected to another host).
+  **Log:** `local-assets/geberit-aquaclean-logs/standalone/aquaclean-ec6186bb342b2f4e93fd82c672a5f13a450011c3-TRACE-setting-the-lady-shower-pressure-work-locked-after-access-with-iphone.log`
+  (E0002 sequence starts at line 49128, E0003 at line 64499)
+
 - **Fix `send_request()` — `call_count` not decremented on `asyncio.CancelledError`.**
   **File:** `aquaclean_core/Clients/AquaCleanBaseClient.py`, `send_request()`, lines ~315–334.
 
