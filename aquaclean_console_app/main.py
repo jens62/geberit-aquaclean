@@ -2,6 +2,7 @@ import json
 import asyncio
 import logging
 import os
+import re
 import configparser
 import argparse
 import traceback
@@ -294,8 +295,7 @@ if log_level not in ('TRACE', 'SILLY'):
 # ESP32 log messages contain color codes (e.g. \033[1;31m) that appear as
 # garbled literal escape sequences in log files when aioesphomeapi logs the
 # raw protobuf payload at DEBUG level.
-import re as _re
-_ansi_re = _re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
+_ansi_re = re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
 
 class _AnsiFilter(logging.Filter):
     def filter(self, record):
@@ -432,6 +432,22 @@ class NullMqttService:
         pass
 
 
+# Profile settings MQTT sub-topic names keyed by ProfileSettings enum ID.
+# Used by both ServiceMode (persistent mode) and ApiMode (on-demand mode).
+_PROFILE_SETTING_MQTT_KEYS = {
+    0: "odourExtraction",
+    1: "oscillatorState",
+    2: "analShowerPressure",
+    3: "ladyShowerPressure",
+    4: "analShowerPosition",
+    5: "ladyShowerPosition",
+    6: "waterTemperature",
+    7: "wcSeatHeat",
+    8: "dryerTemperature",
+    9: "dryerState",
+}
+
+
 class ServiceMode:
     def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None,
                  firmware_version_ready_event: asyncio.Event | None = None):
@@ -462,6 +478,7 @@ class ServiceMode:
             "initial_operation_date": None,
             "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
             "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
+            "profile_settings": None,       # dict {id: value} from GetStoredProfileSetting (proc 0x53)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
         }
         self.esphome_proxy_state = {
@@ -600,6 +617,28 @@ class ServiceMode:
                         "ble_ms": bluetooth_connector.last_ble_ms,
                     })
                 )
+
+                # Fetch profile settings via proc 0x53 (actual user preferences).
+                try:
+                    self.device_state["profile_settings"] = await self.client.base_client.get_stored_profile_settings_async()
+                except BLEPeripheralTimeoutError:
+                    logger.warning("GetStoredProfileSettings timed out at connect — profile data will be unavailable")
+                    self.device_state["profile_settings"] = {}
+                ps = self.device_state.get("profile_settings") or {}
+                if ps:
+                    _t = self.mqttConfig['topic']
+                    for _sid, _key in _PROFILE_SETTING_MQTT_KEYS.items():
+                        _val = ps.get(_sid)
+                        if _val is not None:
+                            await self.mqtt_service.send_data_async(
+                                f"{_t}/peripheralDevice/information/profileSettings/{_key}", str(_val))
+
+                # Filter status — fetch once at connect time so the web UI shows it immediately.
+                try:
+                    self.device_state["filter_status"] = await self.client.base_client.get_filter_status_async()
+                except BLEPeripheralTimeoutError:
+                    logger.warning("GetFilterStatus timed out at connect — filter data will be unavailable")
+                    self.device_state["filter_status"] = None
 
                 # Cache firmware versions and log them (device identification at connect time)
                 fw = self.client.firmware_versions or {}
@@ -1521,6 +1560,18 @@ class ApiMode:
                     await t
                 except asyncio.CancelledError:
                     pass
+            # Explicitly close the persistent ESP32 API connection so the
+            # UnsubscribeBluetoothLEAdvertisementsRequest is sent before the
+            # process exits.  Without this the TCP socket is closed by the OS
+            # and the ESP32 may not release the BLE subscription before the
+            # new bridge polls (~10 s after restart), causing
+            # "Only one API subscription is allowed at a time".
+            if self._esphome_connector is not None:
+                try:
+                    await asyncio.wait_for(self._esphome_connector.disconnect(), timeout=3.0)
+                except Exception:
+                    pass
+                self._esphome_connector = None
 
     # --- Config endpoints ---
 
@@ -1966,6 +2017,29 @@ class ApiMode:
     async def _fetch_filter_status(self, client):
         return await client.base_client.get_filter_status_async()
 
+    async def _fetch_profile_settings(self, client):
+        return await client.base_client.get_stored_profile_settings_async()
+
+    async def get_profile_settings(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            result = await self.service.client.base_client.get_stored_profile_settings_async()
+        else:
+            result = await self._on_demand(self._fetch_profile_settings)
+        self.service.device_state["profile_settings"] = result
+        await self._publish_profile_settings_to_mqtt(result, topic)
+        return result
+
+    async def _publish_profile_settings_to_mqtt(self, ps: dict, topic: str):
+        for sid, key in _PROFILE_SETTING_MQTT_KEYS.items():
+            val = ps.get(sid)
+            if val is not None:
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/peripheralDevice/information/profileSettings/{key}",
+                    str(val))
+
     async def _fetch_statistics_descale(self, client):
         sd = await client.base_client.get_statistics_descale_async()
         return self._statistics_descale_to_dict(sd)
@@ -2133,6 +2207,58 @@ class ApiMode:
         if _exc is not None:
             ApiMode._http_error(503, _ec, str(_exc))
 
+    async def _trigger_esphome_restart(self, failure_count: int) -> bool:
+        """Press the restart button on the ESP32 via aioesphomeapi.
+
+        Requires 'button: platform: restart' to be present in the ESPHome YAML.
+        Uses a fresh API connection so it never interferes with ongoing BLE ops.
+
+        Returns True if the restart was triggered, False if the button was not
+        found or the connection failed.
+
+        Grep for these log lines to trace restart events:
+          grep "Triggering ESP32 restart\\|ESP32 restart triggered\\|ESP32 restart button not found\\|ESP32 restart failed" /var/log/aquaclean/aquaclean.log
+        """
+        from aioesphomeapi import APIClient, ButtonInfo
+        logger.warning(
+            f"Triggering ESP32 restart — BLE scanner stuck "
+            f"({failure_count} consecutive failures)"
+        )
+        api = APIClient(
+            address=esphome_host,
+            port=esphome_port,
+            password="",
+            noise_psk=esphome_noise_psk or None,
+        )
+        try:
+            await api.connect(login=True)
+            entities, _ = await api.list_entities_services()
+            button = next(
+                (e for e in entities
+                 if isinstance(e, ButtonInfo) and "restart" in e.name.lower()),
+                None,
+            )
+            if button is None:
+                logger.warning(
+                    "ESP32 restart button not found — add "
+                    "'button: platform: restart' to your ESPHome YAML and reflash"
+                )
+                return False
+            await api.button_command(button.key)
+            logger.warning(
+                f"ESP32 restart triggered successfully (button: '{button.name}') — "
+                "waiting for reboot before next probe"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"ESP32 restart failed: {e}")
+            return False
+        finally:
+            try:
+                await api.disconnect()
+            except Exception:
+                pass
+
     async def _publish_identification_to_mqtt(self, info: dict):
         """Publish device identification fields to their MQTT topics.
         Mirrors what ServiceMode.on_device_identification / device_initial_operation_date
@@ -2154,6 +2280,9 @@ class ApiMode:
         fs = info.get("filter_status") or {}
         if fs:
             await self._publish_filter_status_to_mqtt(fs, topic)
+        ps = info.get("profile_settings") or {}
+        if ps:
+            await self._publish_profile_settings_to_mqtt(ps, topic)
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -2164,7 +2293,7 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         _identification_fetched = False  # fetch identification on the first poll, then state-only
         _consecutive_poll_failures = 0
-        _CIRCUIT_OPEN_THRESHOLD = 5    # failures before circuit opens
+        _CIRCUIT_OPEN_THRESHOLD = 3    # failures before circuit opens (3 × 10s scan = 30s max lag)
         _CIRCUIT_OPEN_SLEEP     = 60   # seconds between probe attempts when open
         _first_poll = True  # poll immediately on startup; then sleep between cycles
 
@@ -2194,6 +2323,10 @@ class ApiMode:
 
             # Circuit breaker: after threshold failures, probe at a longer interval.
             if _consecutive_poll_failures >= _CIRCUIT_OPEN_THRESHOLD:
+                # On first opening, attempt to recover by restarting the ESP32.
+                # The subsequent _CIRCUIT_OPEN_SLEEP gives it time to reboot.
+                if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD and esphome_host:
+                    await self._trigger_esphome_restart(_consecutive_poll_failures)
                 await asyncio.sleep(_CIRCUIT_OPEN_SLEEP)
 
             # Set poll_epoch before the poll so the web UI countdown does not
@@ -2208,7 +2341,7 @@ class ApiMode:
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
                               "description", "initial_operation_date", "firmware_versions",
-                              "filter_status"):
+                              "filter_status", "profile_settings"):
                         self.service.device_state[k] = result.get(k)
                     fw = result.get("firmware_versions") or {}
                     if fw.get("main"):
@@ -2233,6 +2366,9 @@ class ApiMode:
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isAnalShowerRunning", str(result.get("is_anal_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isLadyShowerRunning", str(result.get("is_lady_shower_running")))
                 await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/isDryerRunning",      str(result.get("is_dryer_running")))
+                ps = result.get("profile_settings") or {}
+                if ps:
+                    await self._publish_profile_settings_to_mqtt(ps, topic)
                 if self.service.device_state.get("ble_rssi") is not None:
                     await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/bleRssi", str(self.service.device_state["ble_rssi"]))
                 # Record on-demand poll timing and signal stats
@@ -2348,7 +2484,7 @@ class ApiMode:
         except asyncio.CancelledError:
             return
 
-    async def _fetch_state(self, client):
+    async def _fetch_state(self, client, _skip_profile: bool = False):
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
         result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 7, 9])
         # Update device_state before _on_demand's finally fires so the
@@ -2357,24 +2493,46 @@ class ApiMode:
         self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
         self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
         self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
-        return {
+        state = {
             "is_user_sitting":        self.service.device_state["is_user_sitting"],
             "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
             "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
             "is_dryer_running":       self.service.device_state["is_dryer_running"],
         }
+        if _skip_profile:
+            return state
+        # Fetch profile settings via proc 0x53 on every regular poll so they stay current.
+        # Skipped on the first poll (_fetch_state_and_info path) so GetFilterStatus is
+        # reached before the device is exhausted by 10 extra Proc_0x53 calls.
+        profile_settings = await client.base_client.get_stored_profile_settings_async()
+        self.service.device_state["profile_settings"] = profile_settings
+        return {**state, "profile_settings": profile_settings}
 
     async def _fetch_state_and_info(self, client):
-        """Used for the first on-demand poll only: fetch state + identification in one BLE session."""
-        state = await self._fetch_state(client)
+        """Used for the first on-demand poll only: fetch state + identification in one BLE session.
+
+        Call order keeps GetFilterStatus early (position ~23 in the session) so the
+        device has not yet been exhausted by the 10×Proc_0x53 profile reads.
+        Profile settings come last — after filter status is safely captured.
+        Session call count: init(18) + SPL(1) + ident(1) + date(1) + fw(1) + filter(1)
+                            + profile(10) = 33 total; filter at #23, profile at #24-33.
+        """
+        state = await self._fetch_state(client, _skip_profile=True)
         info  = await self._fetch_info(client)
-        return {**state, **info}
+        # Profile settings last — after GetFilterStatus — to avoid exhausting the device.
+        profile_settings = await client.base_client.get_stored_profile_settings_async()
+        self.service.device_state["profile_settings"] = profile_settings
+        return {**state, **info, "profile_settings": profile_settings}
 
     async def _fetch_info(self, client):
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
         fw = await client.base_client.get_firmware_version_list_async()
-        filter_status = await client.base_client.get_filter_status_async()
+        try:
+            filter_status = await client.base_client.get_filter_status_async()
+        except BLEPeripheralTimeoutError:
+            logger.warning("GetFilterStatus (0x59) timed out — device may be stuck for this proc; skipping, filter_status=None")
+            filter_status = None
         return {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
@@ -2622,6 +2780,117 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 "state_topic": f"{t}/peripheralDevice/information/filterStatus/nextFilterChange",
                 "value_template": "{% if value | int(0) > 0 %}{{ value | int | timestamp_custom('%d.%m.%Y') }}{% else %}Unknown{% endif %}",
                 "icon": "mdi:filter-plus",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        # --- Sensors: user profile settings (ApiMode.get_profile_settings) ---
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_anal_shower_pressure/config",
+            "payload": {
+                "name": "Anal Shower Pressure",
+                "unique_id": "geberit_aquaclean_ps_anal_shower_pressure",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/analShowerPressure",
+                "icon": "mdi:water-boiler",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_lady_shower_pressure/config",
+            "payload": {
+                "name": "Lady Shower Pressure",
+                "unique_id": "geberit_aquaclean_ps_lady_shower_pressure",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/ladyShowerPressure",
+                "icon": "mdi:water-boiler",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_anal_shower_position/config",
+            "payload": {
+                "name": "Anal Shower Position",
+                "unique_id": "geberit_aquaclean_ps_anal_shower_position",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/analShowerPosition",
+                "icon": "mdi:arrow-left-right",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_lady_shower_position/config",
+            "payload": {
+                "name": "Lady Shower Position",
+                "unique_id": "geberit_aquaclean_ps_lady_shower_position",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/ladyShowerPosition",
+                "icon": "mdi:arrow-left-right",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_water_temperature/config",
+            "payload": {
+                "name": "Water Temperature",
+                "unique_id": "geberit_aquaclean_ps_water_temperature",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/waterTemperature",
+                "icon": "mdi:thermometer-water",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_wc_seat_heat/config",
+            "payload": {
+                "name": "WC Seat Heat",
+                "unique_id": "geberit_aquaclean_ps_wc_seat_heat",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/wcSeatHeat",
+                "icon": "mdi:heat-wave",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_dryer_temperature/config",
+            "payload": {
+                "name": "Dryer Temperature",
+                "unique_id": "geberit_aquaclean_ps_dryer_temperature",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/dryerTemperature",
+                "icon": "mdi:hair-dryer",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_odour_extraction/config",
+            "payload": {
+                "name": "Odour Extraction",
+                "unique_id": "geberit_aquaclean_ps_odour_extraction",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/odourExtraction",
+                "icon": "mdi:air-filter",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_oscillator_state/config",
+            "payload": {
+                "name": "Oscillator State",
+                "unique_id": "geberit_aquaclean_ps_oscillator_state",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/oscillatorState",
+                "icon": "mdi:rotate-360",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/sensor/geberit_aquaclean/ps_dryer_state/config",
+            "payload": {
+                "name": "Dryer State",
+                "unique_id": "geberit_aquaclean_ps_dryer_state",
+                "state_topic": f"{t}/peripheralDevice/information/profileSettings/dryerState",
+                "icon": "mdi:hair-dryer",
                 "entity_category": "diagnostic",
                 "device": DEVICE,
             },
@@ -3113,6 +3382,8 @@ async def run_cli(args):
             result["data"] = ApiMode._statistics_descale_to_dict(sd)
         elif args.command == 'filter-status':
             result["data"] = await client.base_client.get_filter_status_async()
+        elif args.command == 'profile-settings':
+            result["data"] = await client.base_client.get_stored_profile_settings_async()
         elif args.command == 'toggle-lid':
             await client.toggle_lid_position()
             result["data"] = {"action": "lid_toggled"}
@@ -3298,7 +3569,7 @@ if __name__ == "__main__":
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
-        'filter-status', 'firmware-version-list',
+        'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
         'toggle-lid', 'toggle-anal', 'reset-filter-counter',
         # app config / home assistant (no BLE required)

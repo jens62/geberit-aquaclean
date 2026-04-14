@@ -21,6 +21,8 @@ Options
     --filter-status  shorthand for --filter 0x59 (GetFilterStatus)
     --decode-filter  parse and pretty-print filter status records from GetFilterStatus
     --impl           after each decoded procedure, show Python CallClass implementation hint
+    --markdown       render the full session as annotated markdown (grouped by logical phase)
+    --output FILE    write markdown output to FILE instead of stdout (requires --markdown)
 
 Log line format (PacketLogger text export)
     Apr 11 12:52:36.909  ATT Send  0x0403  38:AB:41:2A:0D:67  <desc>  <full hex>
@@ -64,10 +66,12 @@ FIRST+CONS assembly
 """
 
 import argparse
+import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Protocol tables
@@ -83,6 +87,8 @@ PROCEDURES = {
     (0x01, 0x0B): "SetStoredProfileSetting",
     (0x01, 0x0D): "GetSystemParameterList",
     (0x01, 0x0E): "GetFirmwareVersionList",
+    (0x01, 0x11): "SubscribeNotifications_Pre",
+    (0x01, 0x13): "SubscribeNotifications",
     (0x01, 0x45): "GetStatisticsDescale",
     (0x01, 0x51): "GetStoredCommonSetting",
     (0x01, 0x53): "GetStoredProfileSetting_C#",
@@ -261,9 +267,16 @@ def _fmt_response(counter: int, ctx: int, proc: int, status: int, result: bytes)
 
 
 FILTER_STATUS_NAMES = {
-    7: "days_until_filter_change",
-    8: "last_filter_reset (unix ts)",
-    9: "next_filter_change (unix ts)",
+    0:  "status",
+    1:  "shower_cycles",
+    2:  "unknown_02",
+    3:  "unknown_03",
+    4:  "unknown_ts_04",
+    5:  "unknown_05",
+    6:  "unknown_06",
+    7:  "days_until_filter_change",
+    8:  "last_filter_reset (unix ts)",
+    9:  "next_filter_change (unix ts)",
     10: "filter_reset_count",
 }
 
@@ -528,6 +541,352 @@ def _time_from_str(s: str) -> Optional[datetime]:
 
 
 # ---------------------------------------------------------------------------
+# Markdown rendering
+# ---------------------------------------------------------------------------
+
+# GetSystemParameterList index → human label
+# Source: GetSystemParameterList.py docstring (authoritative); indices 7–11 unnamed there.
+# Our bridge polls [0,1,2,3,4,5,7,9]. iPhone polls [0,1,2,3,4,5,6,7,4,8,9,10].
+_SPL_PARAM_NAMES = {
+    0: "user_sitting",
+    1: "anal_shower",
+    2: "lady_shower",
+    3: "dryer",
+    4: "descaling_state",
+    5: "descaling_min",
+    6: "last_error",
+    7: "unknown7",
+    8: "unknown8",
+    9: "orientation_light",
+    10: "unknown10",
+    11: "unknown11",
+}
+
+_PHASE_SUMMARIES = {
+    "Init":
+        "iPhone sends pre-subscription and notification subscription commands "
+        "to open the BLE communication channel.",
+    "Identification":
+        "iPhone reads static device metadata: model, serial number, "
+        "firmware versions, and installation date.",
+    "State Poll":
+        "iPhone reads the current live device state (seat occupied, showers, dryer).",
+    "Filter Status":
+        "iPhone checks the ceramic honeycomb filter replacement countdown.",
+    "Profile Settings":
+        "iPhone reads stored user preference settings via proc 0x53 "
+        "(the correct storage area that matches the in-app sliders).",
+    "Firmware Versions":
+        "iPhone reads detailed firmware component versions.",
+    "Descale Statistics":
+        "iPhone reads descale cycle history and statistics.",
+}
+
+
+@dataclass
+class _MdFrame:
+    ts_short: str
+    direction: str      # "→" or "←"
+    handle_name: str
+    ctx: int
+    proc: int
+    is_response: bool
+    status: int = 0
+    args: bytes = b""   # request argument bytes
+    result: bytes = b"" # response result bytes
+    decoded: str = ""   # fallback text from existing decoder
+
+
+def _extract_ascii(data: bytes, min_len: int = 4) -> str:
+    """Extract printable ASCII runs from binary data, joined with ' | '."""
+    runs = re.findall(rb'[ -~]{' + str(min_len).encode() + rb',}', data)
+    return " | ".join(r.decode('ascii', errors='replace') for r in runs)
+
+
+def _md_annotate(frame: _MdFrame, counters: dict) -> str:
+    """Return a human-readable one-line annotation for a decoded BLE frame."""
+    ctx, proc = frame.ctx, frame.proc
+
+    if (ctx, proc) == (0x01, 0x11):
+        if frame.is_response:
+            return "ACK"
+        n = counters.get("0x11", 0) + 1
+        counters["0x11"] = n
+        return f"Pre-subscription handshake ({n} of 4)"
+
+    if (ctx, proc) == (0x01, 0x13):
+        if frame.is_response:
+            return "ACK"
+        n = counters.get("0x13", 0) + 1
+        counters["0x13"] = n
+        return f"Notification subscription ({n} of 4)"
+
+    if (ctx, proc) == (0x00, 0x82):
+        if frame.is_response:
+            if frame.result:
+                return "Device: " + (_extract_ascii(frame.result) or "OK")
+            return "OK"
+        return "Reading device model and SAP number"
+
+    if (ctx, proc) == (0x00, 0x86):
+        if frame.is_response:
+            if frame.result:
+                return "Date: " + (_extract_ascii(frame.result, min_len=3) or "OK")
+            return "OK"
+        return "Reading installation date"
+
+    if (ctx, proc) == (0x01, 0x81):
+        if frame.is_response and len(frame.result) >= 3:
+            v1 = chr(frame.result[0]) if 0x20 <= frame.result[0] <= 0x7E else f"\\x{frame.result[0]:02x}"
+            v2 = chr(frame.result[1]) if 0x20 <= frame.result[1] <= 0x7E else f"\\x{frame.result[1]:02x}"
+            build = frame.result[2]
+            return f"Firmware: {v1}{v2}.{build}"
+        return "ACK" if frame.is_response else "Reading firmware versions (RS/TS build numbers)"
+
+    if (ctx, proc) == (0x01, 0x0D):
+        if not frame.is_response:
+            # Parse the requested param list and store for positional response decoding.
+            if frame.args and len(frame.args) >= 1:
+                count = frame.args[0]
+                params = list(frame.args[1:1 + count])
+                counters["last_spl_params"] = params
+                return f"Polling {count} params: [{', '.join(str(p) for p in params)}]"
+            return "Polling live device state"
+        # Response: use the stored request param list for positional label lookup.
+        # Value layout (from Deserializer.py): result[0]=a_byte, then for each record i:
+        #   result[i*5+1] = echoed param id (may be 0 on some firmware — do NOT rely on it)
+        #   result[i*5+2:i*5+6] = LE uint32 value  ← positional, matches request order
+        if frame.result:
+            import struct as _struct
+            result = frame.result
+            params = counters.get("last_spl_params", list(range(12)))
+            parts = []
+            i = 0
+            while i * 5 + 5 < len(result):
+                param_id = params[i] if i < len(params) else i
+                val = _struct.unpack_from('<I', result, i * 5 + 2)[0]
+                label = _SPL_PARAM_NAMES.get(param_id, f"unknown{param_id}")
+                parts.append(f"{param_id}: {label} = {val}")
+                i += 1
+            return "<br>".join(parts) if parts else "OK"
+        return "OK"
+
+    if (ctx, proc) == (0x01, 0x59):
+        if frame.is_response:
+            if frame.result:
+                import struct
+                count = frame.result[0]
+                days = cycles = reset_count = None
+                pos = 1
+                while pos + 4 < len(frame.result):
+                    rid = frame.result[pos]
+                    val = struct.unpack_from('<I', frame.result, pos + 1)[0]
+                    if rid == 7:
+                        days = val
+                    elif rid == 1:
+                        cycles = val
+                    elif rid == 10:
+                        reset_count = val
+                    pos += 5
+                parts = []
+                if days is not None:
+                    parts.append(f"days_remaining={days}")
+                if cycles is not None:
+                    parts.append(f"cycles={cycles}")
+                if reset_count is not None:
+                    parts.append(f"resets={reset_count}")
+                summary = f"{count} record(s)"
+                if parts:
+                    summary += ": " + ", ".join(parts)
+                return summary
+            return "ACK"
+        return "Checking ceramic filter replacement status"
+
+    if (ctx, proc) == (0x01, 0x53):
+        # payload: [profile_id, setting_id]
+        setting_id = frame.args[1] if len(frame.args) >= 2 else (frame.args[0] if frame.args else -1)
+        setting_name = PROFILE_SETTINGS.get(setting_id, f"setting_{setting_id}")
+        if frame.is_response:
+            val = int.from_bytes(frame.result[:2], "little") if len(frame.result) >= 2 else "?"
+            return f"→ {val}"
+        profile_id = frame.args[0] if frame.args else 0
+        return f"Reading {setting_name} (profile {profile_id})"
+
+    if (ctx, proc) == (0x01, 0x0A):
+        # payload: [setting_id]  — iPhone init/unlock storage area, different from 0x53
+        setting_id = frame.args[0] if frame.args else -1
+        setting_name = PROFILE_SETTINGS.get(setting_id, f"setting_{setting_id}")
+        if frame.is_response:
+            val = int.from_bytes(frame.result[:2], "little") if len(frame.result) >= 2 else "?"
+            return f"→ {val} *(init area — not user preference)*"
+        return f"Init-unlock read: {setting_name} *(proc 0x0A — different storage from 0x53)*"
+
+    if (ctx, proc) == (0x01, 0x0B):
+        setting_id = frame.args[0] if frame.args else -1
+        setting_name = PROFILE_SETTINGS.get(setting_id, f"setting_{setting_id}")
+        if frame.is_response:
+            return "ACK"
+        val = int.from_bytes(frame.args[1:3], "little") if len(frame.args) >= 3 else "?"
+        return f"Init-unlock write: {setting_name} = {val} *(proc 0x0B)*"
+
+    if (ctx, proc) == (0x01, 0x54):
+        # payload: [profile_id, setting_id, val_lo, val_hi]
+        if len(frame.args) >= 4:
+            setting_name = PROFILE_SETTINGS.get(frame.args[1], f"setting_{frame.args[1]}")
+            val = int.from_bytes(frame.args[2:4], "little")
+            return "ACK" if frame.is_response else f"**Changing {setting_name} → {val}**"
+        return "ACK" if frame.is_response else "Changing profile setting"
+
+    if (ctx, proc) == (0x01, 0x09):
+        if frame.is_response:
+            return "ACK"
+        cmd_name = COMMANDS.get(frame.args[0] if frame.args else -1,
+                                 f"cmd=0x{frame.args.hex() if frame.args else '??'}")
+        return f"**Triggering {cmd_name}**"
+
+    if (ctx, proc) == (0x01, 0x0E):
+        if frame.is_response and frame.result:
+            parts = []
+            pos = 1
+            while pos + 4 <= len(frame.result):
+                cid = frame.result[pos]
+                v1 = chr(frame.result[pos+1]) if 0x20 <= frame.result[pos+1] <= 0x7E else "?"
+                v2 = chr(frame.result[pos+2]) if 0x20 <= frame.result[pos+2] <= 0x7E else "?"
+                build = frame.result[pos+3]
+                parts.append(f"FW{cid:02X}:{v1}{v2}.{build}")
+                pos += 5
+            if parts:
+                display = " | ".join(parts[:4])
+                if len(parts) > 4:
+                    display += f" (+{len(parts)-4} more)"
+                return display
+        return "Reading detailed firmware component versions"
+
+    if (ctx, proc) == (0x01, 0x45):
+        if frame.is_response and frame.result:
+            return f"Descale stats: {len(frame.result)} bytes"
+        return "ACK" if frame.is_response else "Reading descale cycle statistics"
+
+    if (ctx, proc) == (0x01, 0x51):
+        setting_id = frame.args[0] if frame.args else -1
+        if frame.is_response:
+            if frame.result and len(frame.result) >= 2:
+                val = int.from_bytes(frame.result[:2], "little")
+                return f"Common setting value={val}"
+            return "ACK"
+        return f"Reading common setting id={setting_id} (mapping TBD)"
+
+    if (ctx, proc) == (0x01, 0x56):
+        return "ACK" if frame.is_response else f"Setting device registration level (args={frame.args.hex()})"
+
+    name = PROCEDURES.get((ctx, proc), f"Proc({ctx:#04x},{proc:#04x})")
+    return f"*(unknown: {name})*"
+
+
+def _md_phase(ctx: int, proc: int, args: bytes) -> str:
+    """Map a request's (ctx, proc) to a logical phase name."""
+    if (ctx, proc) in ((0x01, 0x11), (0x01, 0x13)):
+        return "Init"
+    if (ctx, proc) in ((0x00, 0x82), (0x00, 0x86), (0x01, 0x81)):
+        return "Identification"
+    if (ctx, proc) == (0x01, 0x0D):
+        return "State Poll"
+    if (ctx, proc) == (0x01, 0x59):
+        return "Filter Status"
+    if (ctx, proc) in ((0x01, 0x53), (0x01, 0x0A), (0x01, 0x0B)):
+        return "Profile Settings"
+    if (ctx, proc) == (0x01, 0x54):
+        setting_name = PROFILE_SETTINGS.get(args[1] if len(args) > 1 else -1, "Setting")
+        return f"User Action: Change {setting_name}"
+    if (ctx, proc) == (0x01, 0x09):
+        cmd_name = COMMANDS.get(args[0] if args else -1, "Command")
+        return f"User Action: {cmd_name}"
+    if (ctx, proc) == (0x01, 0x0E):
+        return "Firmware Versions"
+    if (ctx, proc) == (0x01, 0x45):
+        return "Descale Statistics"
+    name = PROCEDURES.get((ctx, proc), f"Proc({ctx:#04x},{proc:#04x})")
+    return name
+
+
+def render_markdown(md_frames: List[_MdFrame], logfile: str, mac: str) -> str:
+    """Group decoded frames into logical phases and render as annotated markdown."""
+    if not md_frames:
+        return "*(no frames decoded)*\n"
+
+    out: List[str] = []
+    basename = os.path.basename(logfile)
+    ts_first = md_frames[0].ts_short
+    ts_last = md_frames[-1].ts_short
+
+    out.append(f"# BLE Traffic Analysis: {basename}")
+    out.append(f"**Device:** `{mac}` &nbsp; **Time window:** {ts_first} – {ts_last}")
+    out.append("")
+
+    # Group frames into (phase_name, [frames]) segments.
+    # A new phase starts whenever a *request* frame carries a different phase label.
+    # Response frames are always appended to the current phase.
+    phases: List[Tuple[str, List[_MdFrame]]] = []
+    current_phase_name: Optional[str] = None
+    current_phase_frames: List[_MdFrame] = []
+
+    for frame in md_frames:
+        if not frame.is_response:
+            phase = _md_phase(frame.ctx, frame.proc, frame.args)
+            if phase != current_phase_name:
+                if current_phase_name is not None:
+                    phases.append((current_phase_name, current_phase_frames))
+                current_phase_name = phase
+                current_phase_frames = [frame]
+            else:
+                current_phase_frames.append(frame)
+        else:
+            current_phase_frames.append(frame)
+
+    if current_phase_name is not None:
+        phases.append((current_phase_name, current_phase_frames))
+
+    # Render each phase as a markdown section.
+    phase_occurrence: dict = {}
+    ann_counters: dict = {}
+
+    for phase_name, p_frames in phases:
+        phase_occurrence[phase_name] = phase_occurrence.get(phase_name, 0) + 1
+        occurrence = phase_occurrence[phase_name]
+
+        suffix = f" #{occurrence}" if occurrence > 1 else ""
+        ts_range = p_frames[0].ts_short
+        if len(p_frames) > 1:
+            ts_range += f" – {p_frames[-1].ts_short}"
+        n_frames = len(p_frames)
+        heading = f"## {phase_name}{suffix} ({ts_range}, {n_frames} frame{'s' if n_frames != 1 else ''})"
+
+        out.append("---")
+        out.append("")
+        out.append(heading)
+
+        summary = _PHASE_SUMMARIES.get(phase_name)
+        if not summary and phase_name.startswith("User Action"):
+            summary = "User triggered an action on the device."
+        if summary:
+            out.append(f"*{summary}*")
+        out.append("")
+
+        out.append("| Time | Dir | Procedure | Annotation |")
+        out.append("|------|-----|-----------|------------|")
+
+        for frame in p_frames:
+            proc_name = PROCEDURES.get((frame.ctx, frame.proc),
+                                       f"Proc({frame.ctx:#04x},{frame.proc:#04x})")
+            annotation = _md_annotate(frame, ann_counters)
+            out.append(f"| {frame.ts_short} | {frame.direction} | {proc_name} | {annotation} |")
+
+        out.append("")
+
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -558,6 +917,10 @@ def main():
                         help="Print result hex for all responses")
     parser.add_argument("--raw", action="store_true",
                         help="Print every raw 20-byte Geberit frame without decoding")
+    parser.add_argument("--markdown", action="store_true",
+                        help="Render session as annotated markdown grouped by logical phase")
+    parser.add_argument("--output", metavar="FILE",
+                        help="Write markdown to FILE instead of stdout (requires --markdown)")
     args = parser.parse_args()
 
     if args.firmware:
@@ -581,7 +944,10 @@ def main():
             print(f"Warning: no procedures matched filter '{args.filter_proc}'", file=sys.stderr)
 
     # Per-device, per-direction assemblers: key = (mac, "R") or (mac, "W")
-    assemblers: dict[tuple, Assembler] = {}
+    assemblers: dict = {}
+
+    # Frames collected for --markdown mode
+    md_frames: List[_MdFrame] = []
 
     try:
         with open(args.logfile, encoding="utf-8", errors="replace") as f:
@@ -643,21 +1009,41 @@ def main():
                             continue
 
                         decoded = decode_assembled_body(assembled, is_response)
-                        print(f"{ts_short}  {dir_arrow}  {handle_name:8s}  {decoded}")
 
-                        if args.decode_fw and (ctx, proc) == (0x01, 0x0E) and is_response:
-                            print(decode_firmware_records(result_data))
+                        if not args.markdown:
+                            print(f"{ts_short}  {dir_arrow}  {handle_name:8s}  {decoded}")
 
-                        if args.decode_filter and (ctx, proc) == (0x01, 0x59) and is_response:
-                            print(decode_filter_status_records(result_data))
+                            if args.decode_fw and (ctx, proc) == (0x01, 0x0E) and is_response:
+                                print(decode_firmware_records(result_data))
 
-                        if args.impl:
-                            hint = IMPL_HINTS.get((ctx, proc))
-                            if hint:
-                                print(hint)
+                            if args.decode_filter and (ctx, proc) == (0x01, 0x59) and is_response:
+                                print(decode_filter_status_records(result_data))
 
-                        if args.verbose and result_data:
-                            print(f"          result_hex={result_data.hex()}")
+                            if args.impl:
+                                hint = IMPL_HINTS.get((ctx, proc))
+                                if hint:
+                                    print(hint)
+
+                            if args.verbose and result_data:
+                                print(f"          result_hex={result_data.hex()}")
+
+                        if args.markdown:
+                            if is_response:
+                                status_byte = assembled[0] if assembled else 0
+                                md_result = assembled[5:5 + result_len] if len(assembled) > 5 else b""
+                                md_frames.append(_MdFrame(
+                                    ts_short=ts_short, direction=dir_arrow,
+                                    handle_name=handle_name, ctx=ctx, proc=proc,
+                                    is_response=True, status=status_byte,
+                                    result=md_result, decoded=decoded,
+                                ))
+                            else:
+                                md_args = assembled[4:4 + arg_len]
+                                md_frames.append(_MdFrame(
+                                    ts_short=ts_short, direction=dir_arrow,
+                                    handle_name=handle_name, ctx=ctx, proc=proc,
+                                    is_response=False, args=md_args, decoded=decoded,
+                                ))
                     continue
 
                 if kind in ("CONTROL", "INFO"):
@@ -680,34 +1066,64 @@ def main():
                         continue
 
                     decoded = decode_single_frame(frame, direction)
-                    print(f"{ts_short}  {dir_arrow}  {handle_name:8s}  {decoded}")
 
-                    # Decode firmware versions inline
-                    if args.decode_fw and (ctx, proc) == (0x01, 0x0E) and msg_type == 0x05:
-                        result_data = payload[11:11 + payload[10]] if len(payload) > 10 else b""
-                        print(decode_firmware_records(result_data))
+                    if not args.markdown:
+                        print(f"{ts_short}  {dir_arrow}  {handle_name:8s}  {decoded}")
 
-                    if args.decode_filter and (ctx, proc) == (0x01, 0x59) and msg_type == 0x05:
-                        result_data = payload[11:11 + payload[10]] if len(payload) > 10 else b""
-                        print(decode_filter_status_records(result_data))
+                        # Decode firmware versions inline
+                        if args.decode_fw and (ctx, proc) == (0x01, 0x0E) and msg_type == 0x05:
+                            result_data = payload[11:11 + payload[10]] if len(payload) > 10 else b""
+                            print(decode_firmware_records(result_data))
 
-                    if args.impl:
-                        hint = IMPL_HINTS.get((ctx, proc))
-                        if hint:
-                            print(hint)
+                        if args.decode_filter and (ctx, proc) == (0x01, 0x59) and msg_type == 0x05:
+                            result_data = payload[11:11 + payload[10]] if len(payload) > 10 else b""
+                            print(decode_filter_status_records(result_data))
 
-                    if args.verbose and msg_type == 0x05:
-                        result_len = payload[10] if len(payload) > 10 else 0
-                        result_data = payload[11:11 + result_len]
-                        if result_data:
-                            print(f"          result_hex={result_data.hex()}")
+                        if args.impl:
+                            hint = IMPL_HINTS.get((ctx, proc))
+                            if hint:
+                                print(hint)
 
+                        if args.verbose and msg_type == 0x05:
+                            result_len = payload[10] if len(payload) > 10 else 0
+                            result_data = payload[11:11 + result_len]
+                            if result_data:
+                                print(f"          result_hex={result_data.hex()}")
+
+                    if args.markdown:
+                        if msg_type == 0x04:
+                            arg_len_s = payload[9]
+                            md_args = payload[10:10 + arg_len_s]
+                            md_frames.append(_MdFrame(
+                                ts_short=ts_short, direction=dir_arrow,
+                                handle_name=handle_name, ctx=ctx, proc=proc,
+                                is_response=False, args=md_args, decoded=decoded,
+                            ))
+                        elif msg_type == 0x05:
+                            md_status = payload[6]
+                            md_result_len = payload[10] if len(payload) > 10 else 0
+                            md_result = payload[11:11 + md_result_len]
+                            md_frames.append(_MdFrame(
+                                ts_short=ts_short, direction=dir_arrow,
+                                handle_name=handle_name, ctx=ctx, proc=proc,
+                                is_response=True, status=md_status,
+                                result=md_result, decoded=decoded,
+                            ))
 
     except FileNotFoundError:
         print(f"Error: file not found: {args.logfile}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         pass
+
+    if args.markdown:
+        md_output = render_markdown(md_frames, args.logfile, mac_filter)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(md_output)
+            print(f"Written to {args.output}", file=sys.stderr)
+        else:
+            print(md_output)
 
 
 if __name__ == "__main__":

@@ -183,6 +183,10 @@ class RestApiService:
         async def get_filter_status():
             return await self._api_mode.get_filter_status()
 
+        @app.get("/data/profile-settings")
+        async def get_profile_settings():
+            return await self._api_mode.get_profile_settings()
+
         @app.get("/data/statistics-descale")
         async def get_statistics_descale():
             return await self._api_mode.get_statistics_descale()

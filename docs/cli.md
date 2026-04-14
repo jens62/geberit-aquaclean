@@ -85,6 +85,7 @@ python main.py --mode cli --command status
 | `statistics-descale` | `days_until_next_descale`, `days_until_shower_restricted`, `shower_cycles_until_confirmation`, `number_of_descale_cycles`, `date_time_at_last_descale`, `unposted_shower_cycles` |
 | `filter-status` | `days_until_filter_change`, `last_filter_reset` (Unix timestamp), `filter_reset_count`, `shower_cycles`, plus raw record IDs 0–10 |
 | `firmware-version-list` | `main` (e.g. `"RS28.0 TS199"`), `components` (dict of component IDs → version records) |
+| `profile-settings` | dict of ProfileSettings ID → value: `0`=OdourExtraction, `1`=OscillatorState, `2`=AnalShowerPressure, `3`=LadyShowerPressure, `4`=AnalShowerPosition, `5`=LadyShowerPosition, `6`=WaterTemperature, `7`=WcSeatHeat, `8`=DryerTemperature, `9`=DryerState |
 
 ```bash
 python main.py --mode cli --command info
