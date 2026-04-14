@@ -24,6 +24,11 @@ class PollIntervalUpdate(BaseModel):
     value: float
 
 
+class ProfileSettingUpdate(BaseModel):
+    setting_id: int
+    value: int
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -230,6 +235,10 @@ class RestApiService:
         @app.post("/config/poll-interval")
         async def set_poll_interval(body: PollIntervalUpdate):
             return await self._api_mode.set_poll_interval(body.value)
+
+        @app.post("/config/profile-setting")
+        async def set_profile_setting(body: ProfileSettingUpdate):
+            return await self._api_mode.set_profile_setting(body.setting_id, body.value)
 
 
         @app.post("/connect")
