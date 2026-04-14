@@ -240,13 +240,54 @@ Requires `send_as_first_cons=True` — the device mirrors the multi-frame reques
 
 ## Notification Subscription Sequence (connect unlock)
 
-On every `connect_ble_only()` and `connect()`, the bridge sends 4× Proc(0x01,0x13)
-(SubscribeNotifications) to unlock the device for polling. Without this, the device
-returns only ACKs (CONTROL frames) and sends no data frames in response to
-GetSystemParameterList. See `_subscribe_notifications()` in `AquaCleanBaseClient.py`.
+On every `connect_ble_only()` and `connect()`, the bridge sends 4× Proc(0x01,0x11)
+followed by 4× Proc(0x01,0x13) to unlock the device for polling. Without this, a
+device whose previous BLE session (e.g. the iPhone Geberit Home app) ended without
+properly unsubscribing holds the old subscription open and returns only CONTROL ACKs
+in response to GetSystemParameterList — no data frames arrive.
 
-The 4 calls use component groups: `[0x01,0x03,0x04,0x05]`, `[0x06,0x07,0x08,0x09]`,
-`[0x0A,0x0B,0x0C,0x0E]`, `[0x0F,0x0D]`.
+See `_subscribe_notifications()` in `AquaCleanBaseClient.py`.
+
+**Proc(0x01,0x11) payloads — PRE_PAYLOADS (sent first):**
+```
+[0x04, 0x01, 0x03, 0x04, 0x05]
+[0x04, 0x06, 0x07, 0x08, 0x09]
+[0x04, 0x0a, 0x0b, 0x0c, 0x0e]
+[0x01, 0x0f, 0x00, 0x00, 0x00]   ← count=1, only 0x0f (no 0x0d here)
+```
+
+**Proc(0x01,0x13) payloads — PAYLOADS (sent after):**
+```
+[0x04, 0x01, 0x03, 0x04, 0x05]
+[0x04, 0x06, 0x07, 0x08, 0x09]
+[0x04, 0x0a, 0x0b, 0x0c, 0x0e]
+[0x02, 0x0f, 0x0d, 0x00, 0x00]   ← includes 0x0d = GetSystemParameterList
+```
+
+All 4 calls of each proc are required — sending only the last is insufficient.
+Format: `[count, id0, id1, ...]` (5 bytes; device echoes back `[count, id0, 0...]`).
+
+**⚠ Do NOT add procedure codes like 0x59 to the 0x13 payloads.** IDs must stay in
+the range 0x01–0x0F (compact subscription space). Out-of-range IDs corrupt the
+subscription table and cause the corresponding procedure to stop responding.
+
+### `SubscribeNotifications` CallClass design
+
+`SubscribeNotifications` in `CallClasses/` follows the standard CallClass interface
+(`get_api_call_attribute()`, `get_payload()`, `result()`) but differs from other
+CallClasses in one intentional way: **the payload is injected at construction time**
+rather than being self-contained.
+
+```python
+SubscribeNotifications(payload=SubscribeNotifications.PAYLOADS[i], proc=0x13)
+```
+
+This is the right design for a procedure that must be called 8 times (4×0x11 + 4×0x13)
+with 8 different payloads. The class keeps both payload lists as class attributes
+(`PRE_PAYLOADS`, `PAYLOADS`) so the caller never deals with raw bytes.
+
+`result()` returns `bytes(data)` — no DTO needed. The response is a minimal ACK
+echo with no structured data to extract.
 
 ---
 
