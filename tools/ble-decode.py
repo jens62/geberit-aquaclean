@@ -591,6 +591,12 @@ class _MdFrame:
     decoded: str = ""   # fallback text from existing decoder
 
 
+def _extract_ascii(data: bytes, min_len: int = 4) -> str:
+    """Extract printable ASCII runs from binary data, joined with ' | '."""
+    runs = re.findall(rb'[ -~]{' + str(min_len).encode() + rb',}', data)
+    return " | ".join(r.decode('ascii', errors='replace') for r in runs)
+
+
 def _md_annotate(frame: _MdFrame, counters: dict) -> str:
     """Return a human-readable one-line annotation for a decoded BLE frame."""
     ctx, proc = frame.ctx, frame.proc
@@ -610,10 +616,18 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
         return f"Notification subscription ({n} of 4)"
 
     if (ctx, proc) == (0x00, 0x82):
-        return "ACK" if frame.is_response else "Reading device model and SAP number"
+        if frame.is_response:
+            if frame.result:
+                return "Device: " + (_extract_ascii(frame.result) or "OK")
+            return "OK"
+        return "Reading device model and SAP number"
 
     if (ctx, proc) == (0x00, 0x86):
-        return "ACK" if frame.is_response else "Reading installation date"
+        if frame.is_response:
+            if frame.result:
+                return "Date: " + (_extract_ascii(frame.result, min_len=3) or "OK")
+            return "OK"
+        return "Reading installation date"
 
     if (ctx, proc) == (0x01, 0x81):
         if frame.is_response and len(frame.result) >= 3:
@@ -626,31 +640,41 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
     if (ctx, proc) == (0x01, 0x0D):
         if frame.is_response:
             if frame.result:
-                # Format: [a(1)][index(1)][uint32 LE(4)] × N records
-                # Parsed by Deserializer: data_array[i] = LE32 at offset i*5+2
-                # Skip complex parsing here; report record count
-                n_records = max(0, (len(frame.result) - 1) // 5)
-                return f"OK — {n_records} parameter record(s)"
+                # SPL response format: first byte varies by firmware; remaining bytes
+                # are records but exact stride (4 vs 5 bytes) isn't confirmed from logs.
+                # Show record count conservatively rather than risk misaligned parsing.
+                n_records = max(0, len(frame.result) // 5)
+                return f"OK — {n_records} state record(s)"
             return "OK"
         return "Polling live device state"
 
     if (ctx, proc) == (0x01, 0x59):
         if frame.is_response:
             if frame.result:
-                count = frame.result[0]
-                # Extract key values for a concise summary
                 import struct
-                days = None
+                count = frame.result[0]
+                days = cycles = reset_count = None
                 pos = 1
                 while pos + 4 < len(frame.result):
                     rid = frame.result[pos]
                     val = struct.unpack_from('<I', frame.result, pos + 1)[0]
                     if rid == 7:
                         days = val
+                    elif rid == 1:
+                        cycles = val
+                    elif rid == 10:
+                        reset_count = val
                     pos += 5
-                summary = f"{count} record(s)"
+                parts = []
                 if days is not None:
-                    summary += f"; days_until_filter_change={days}"
+                    parts.append(f"days_remaining={days}")
+                if cycles is not None:
+                    parts.append(f"cycles={cycles}")
+                if reset_count is not None:
+                    parts.append(f"resets={reset_count}")
+                summary = f"{count} record(s)"
+                if parts:
+                    summary += ": " + ", ".join(parts)
                 return summary
             return "ACK"
         return "Checking ceramic filter replacement status"
@@ -698,14 +722,36 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
         return f"**Triggering {cmd_name}**"
 
     if (ctx, proc) == (0x01, 0x0E):
-        return "ACK" if frame.is_response else "Reading detailed firmware component versions"
+        if frame.is_response and frame.result:
+            parts = []
+            pos = 1
+            while pos + 4 <= len(frame.result):
+                cid = frame.result[pos]
+                v1 = chr(frame.result[pos+1]) if 0x20 <= frame.result[pos+1] <= 0x7E else "?"
+                v2 = chr(frame.result[pos+2]) if 0x20 <= frame.result[pos+2] <= 0x7E else "?"
+                build = frame.result[pos+3]
+                parts.append(f"FW{cid:02X}:{v1}{v2}.{build}")
+                pos += 5
+            if parts:
+                display = " | ".join(parts[:4])
+                if len(parts) > 4:
+                    display += f" (+{len(parts)-4} more)"
+                return display
+        return "Reading detailed firmware component versions"
 
     if (ctx, proc) == (0x01, 0x45):
+        if frame.is_response and frame.result:
+            return f"Descale stats: {len(frame.result)} bytes"
         return "ACK" if frame.is_response else "Reading descale cycle statistics"
 
     if (ctx, proc) == (0x01, 0x51):
         setting_id = frame.args[0] if frame.args else -1
-        return "ACK" if frame.is_response else f"Reading common setting id={setting_id} (mapping TBD)"
+        if frame.is_response:
+            if frame.result and len(frame.result) >= 2:
+                val = int.from_bytes(frame.result[:2], "little")
+                return f"Common setting value={val}"
+            return "ACK"
+        return f"Reading common setting id={setting_id} (mapping TBD)"
 
     if (ctx, proc) == (0x01, 0x56):
         return "ACK" if frame.is_response else f"Setting device registration level (args={frame.args.hex()})"
