@@ -25,6 +25,7 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStatisticsDescale  
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList         import GetFirmwareVersionList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus                import GetFilterStatus
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications         import SubscribeNotifications
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredProfileSetting        import SetStoredProfileSetting
 
 from aquaclean_console_app.aquaclean_utils                                               import utils
 
@@ -272,9 +273,14 @@ class AquaCleanBaseClient:
     #     api_call = GetStoredProfileSetting(0, profile_setting)
     #     return (await self.send_request(api_call)).result(self.message_context.ResultBytes)
 
-    # async def set_stored_profile_setting_async(self, profile_setting, setting_value):
-    #     api_call = SetStoredProfileSetting(profile_setting, setting_value)
-    #     await self.send_request(api_call)
+    async def set_stored_profile_setting_async(self, profile_setting, setting_value: int):
+        """Write a single user profile setting via proc 0x54.
+
+        profile_setting: ProfileSettings enum member
+        setting_value:   integer value (LE 2-byte, as written by the iPhone app)
+        """
+        api_call = SetStoredProfileSetting(profile_setting, setting_value)
+        await self.send_request(api_call)
 
     async def get_statistics_descale_async(self):
         api_call = GetStatisticsDescale()

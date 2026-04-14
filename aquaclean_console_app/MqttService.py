@@ -32,6 +32,7 @@ class MqttService:
         self.DisconnectESP32         = myEvent.EventHandler()
         self.RestartESP32            = myEvent.EventHandler()
         self.ResetFilterCounter      = myEvent.EventHandler()
+        self.SetProfileSetting       = myEvent.EventHandler()
 
 
     async def start_async(self, aquaclean_loop, mqtt_initialized_wait_queue):
@@ -121,6 +122,7 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/restart")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/resetFilterCounter")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/config/profileSetting")
         logger.info("### SUBSCRIBED ###")
 
     def on_message(self, client, userdata, msg):
@@ -152,6 +154,8 @@ class MqttService:
             self.handle_esp32_restart_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/resetFilterCounter":
             self.handle_reset_filter_counter_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/config/profileSetting":
+            self.handle_set_profile_setting_message(msg.payload.decode().strip())
 
 
     def handle_toggleLidPositionMessage(self):
@@ -214,6 +218,21 @@ class MqttService:
         logger.trace("in handle_reset_filter_counter_message")
         for handler in self.ResetFilterCounter.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_set_profile_setting_message(self, payload: str):
+        """Payload: JSON {"setting_id": <int>, "value": <int>}"""
+        import json
+        logger.trace(f"in handle_set_profile_setting_message: {payload!r}")
+        try:
+            data = json.loads(payload)
+            setting_id = int(data["setting_id"])
+            value = int(data["value"])
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            logger.warning(f"Invalid profile setting MQTT payload {payload!r}: {e}")
+            return
+        for handler in self.SetProfileSetting.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(setting_id, value), self.aquaclean_loop)
             _ = future.result()
 
     def handle_set_poll_interval_message(self, value: str):
