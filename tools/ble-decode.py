@@ -545,19 +545,19 @@ def _time_from_str(s: str) -> Optional[datetime]:
 # ---------------------------------------------------------------------------
 
 # GetSystemParameterList index → human label
-# Source: ble-protocol-wire-format.md + AquaCleanClient._state_changed_timer_elapsed()
-# Indices 6, 8, 10, 11 are not polled by our bridge — names TBD via iPhone log analysis.
+# Source: GetSystemParameterList.py docstring (authoritative); indices 7–11 unnamed there.
+# Our bridge polls [0,1,2,3,4,5,7,9]. iPhone polls [0,1,2,3,4,5,6,7,4,8,9,10].
 _SPL_PARAM_NAMES = {
     0: "user_sitting",
     1: "anal_shower",
     2: "lady_shower",
     3: "dryer",
-    4: "lid_open",
-    5: "unknown5",
-    6: "unknown6",
+    4: "descaling_state",
+    5: "descaling_min",
+    6: "last_error",
     7: "unknown7",
     8: "unknown8",
-    9: "unknown9",
+    9: "orientation_light",
     10: "unknown10",
     11: "unknown11",
 }
