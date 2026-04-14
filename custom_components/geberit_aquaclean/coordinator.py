@@ -500,6 +500,43 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         connector = self._make_connector()
         await connector.restart_esp32_async()
 
+    async def async_set_profile_setting(self, setting_id: int, value: int) -> None:
+        """Write a user profile setting via BLE, serialised with the poll loop."""
+        from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
+            AquaCleanClientFactory,
+        )
+        from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import (
+            ESPHomeConnectionError,
+        )
+
+        async with self._ble_lock:
+            if self._esphome_host:
+                connector, client = self._get_esphome_connector()
+            else:
+                connector = self._make_connector()
+                client = AquaCleanClientFactory(connector).create_client()
+
+            try:
+                await client.connect_ble_only(self._device_id)
+                await client.set_stored_profile_setting(setting_id, value)
+            except ESPHomeConnectionError:
+                self._reset_esphome_connector()
+                raise
+            finally:
+                if self._esphome_host:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await connector.disconnect_ble_only()
+                    except Exception:
+                        _LOGGER.debug("disconnect_ble_only failed after set_profile_setting; resetting connector")
+                        self._reset_esphome_connector()
+                else:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await connector.disconnect()
+                    except Exception:
+                        pass
+
     async def async_execute_command(self, command: str) -> None:
         """Execute a device command via BLE, serialised with the poll loop via _ble_lock.
 

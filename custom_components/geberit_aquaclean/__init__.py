@@ -39,7 +39,7 @@ _register_custom_log_levels()
 from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
 
-PLATFORMS = ["binary_sensor", "sensor", "button"]
+PLATFORMS = ["binary_sensor", "sensor", "button", "number"]
 
 _ICONS_JS = pathlib.Path(__file__).parent / "www" / "geberit-aquaclean-icons.js"
 _ICONS_URL = "/geberit_aquaclean/geberit-aquaclean-icons.js"
