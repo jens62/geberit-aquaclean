@@ -544,17 +544,22 @@ def _time_from_str(s: str) -> Optional[datetime]:
 # Markdown rendering
 # ---------------------------------------------------------------------------
 
-# GetSystemParameterList index → human label (from GetSystemParameterList.py comments)
+# GetSystemParameterList index → human label
+# Source: ble-protocol-wire-format.md + AquaCleanClient._state_changed_timer_elapsed()
+# Indices 6, 8, 10, 11 are not polled by our bridge — names TBD via iPhone log analysis.
 _SPL_PARAM_NAMES = {
     0: "user_sitting",
     1: "anal_shower",
     2: "lady_shower",
     3: "dryer",
-    4: "descaling_state",
-    5: "descaling_min",
-    6: "last_error",
-    7: "param_7",
-    9: "orientation_light",
+    4: "lid_open",
+    5: "unknown5",
+    6: "unknown6",
+    7: "unknown7",
+    8: "unknown8",
+    9: "unknown9",
+    10: "unknown10",
+    11: "unknown11",
 }
 
 _PHASE_SUMMARIES = {
@@ -639,23 +644,32 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
         return "ACK" if frame.is_response else "Reading firmware versions (RS/TS build numbers)"
 
     if (ctx, proc) == (0x01, 0x0D):
-        if frame.is_response:
-            if frame.result:
-                # Replicate Deserializer.py exactly: divisor=5, start_pos=1 (after 'a' byte).
-                # idx at result[i*5+1], value LE uint32 at result[i*5+2:i*5+6].
-                import struct as _struct
-                result = frame.result
-                parts = []
-                i = 0
-                while i * 5 + 5 < len(result):
-                    idx = result[i * 5 + 1]
-                    val = _struct.unpack_from('<I', result, i * 5 + 2)[0]
-                    label = _SPL_PARAM_NAMES.get(idx, f"idx{idx}")
-                    parts.append(f"{label}={val}")
-                    i += 1
-                return ", ".join(parts) if parts else "OK"
-            return "OK"
-        return "Polling live device state"
+        if not frame.is_response:
+            # Parse the requested param list and store for positional response decoding.
+            if frame.args and len(frame.args) >= 1:
+                count = frame.args[0]
+                params = list(frame.args[1:1 + count])
+                counters["last_spl_params"] = params
+                return f"Polling {count} params: [{', '.join(str(p) for p in params)}]"
+            return "Polling live device state"
+        # Response: use the stored request param list for positional label lookup.
+        # Value layout (from Deserializer.py): result[0]=a_byte, then for each record i:
+        #   result[i*5+1] = echoed param id (may be 0 on some firmware — do NOT rely on it)
+        #   result[i*5+2:i*5+6] = LE uint32 value  ← positional, matches request order
+        if frame.result:
+            import struct as _struct
+            result = frame.result
+            params = counters.get("last_spl_params", list(range(12)))
+            parts = []
+            i = 0
+            while i * 5 + 5 < len(result):
+                param_id = params[i] if i < len(params) else i
+                val = _struct.unpack_from('<I', result, i * 5 + 2)[0]
+                label = _SPL_PARAM_NAMES.get(param_id, f"unknown{param_id}")
+                parts.append(f"{param_id}: {label} = {val}")
+                i += 1
+            return "<br>".join(parts) if parts else "OK"
+        return "OK"
 
     if (ctx, proc) == (0x01, 0x59):
         if frame.is_response:
