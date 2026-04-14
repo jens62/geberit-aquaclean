@@ -238,6 +238,21 @@ views:
           - entity: number.geberit_aquaclean_oscillator_state
             name: Oscillator State
 
+      # ── Orientation Light (common/device-wide settings) ───────────────────
+      # number entities render as sliders in HA — tap to set a new value.
+      - type: entities
+        title: Orientation Light
+        icon: mdi:lightbulb-outline
+        entities:
+          - entity: number.geberit_aquaclean_orientation_light_activation
+            name: Activation (0=On, 1=Off, 2=When Approached)
+          - entity: number.geberit_aquaclean_orientation_light_brightness
+            name: Brightness
+          - entity: number.geberit_aquaclean_orientation_light_color
+            name: Color (1=Blue, 2=Magenta, …)
+          - entity: number.geberit_aquaclean_odour_extraction_run_on
+            name: Odour Extraction Run-On
+
       # ── Device Information ────────────────────────────────────────────────
       - type: entities
         title: Device Information

@@ -421,6 +421,8 @@ class NullMqttService:
         self.DisconnectESP32         = myEvent.EventHandler()
         self.RestartESP32            = myEvent.EventHandler()
         self.ResetFilterCounter      = myEvent.EventHandler()
+        self.SetProfileSetting       = myEvent.EventHandler()
+        self.SetCommonSetting        = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
@@ -445,6 +447,39 @@ _PROFILE_SETTING_MQTT_KEYS = {
     7: "wcSeatHeat",
     8: "dryerTemperature",
     9: "dryerState",
+}
+
+# Valid [min, max] ranges for each profile setting ID.
+# Confirmed from Profile-Settings.xlsx (Excel file provided by user).
+_PROFILE_SETTING_RANGES = {
+    0: (0, 1),   # OdourExtraction: boolean (Off/On)
+    1: (0, 1),   # OscillatorState: boolean (Off/On)
+    2: (0, 4),   # AnalShowerPressure (shower spray intensity)
+    3: (0, 4),   # LadyShowerPressure (lady shower spray intensity)
+    4: (0, 4),   # AnalShowerPosition
+    5: (0, 4),   # LadyShowerPosition
+    6: (0, 5),   # WaterTemperature
+    7: (0, 5),   # WcSeatHeat (seat heating temperature)
+    8: (0, 5),   # DryerTemperature (dryer air temperature)
+    9: (0, 1),   # DryerState: boolean (Off/On)
+}
+
+# Common settings MQTT sub-topic names keyed by common setting ID.
+# Only orientation light IDs (0-3) are exposed; IDs 4-9 not yet confirmed.
+_COMMON_SETTING_MQTT_KEYS = {
+    0: "odourExtractionRunOn",
+    1: "orientationLightBrightness",
+    2: "orientationLightActivation",
+    3: "orientationLightColor",
+}
+
+# Valid [min, max] ranges for each common setting ID.
+# Confirmed from BLE log (iPhone orientation-light session) + Excel.
+_COMMON_SETTING_RANGES = {
+    0: (0, 1),   # Odour extraction run-on time: boolean
+    1: (0, 4),   # Orientation light brightness
+    2: (0, 2),   # Orientation light activation: 0=On, 1=Off, 2=when approached
+    3: (0, 6),   # Orientation light color
 }
 
 
@@ -479,6 +514,7 @@ class ServiceMode:
             "firmware_versions": None,      # dict {"components": {id: {...}}, "main": "RS28.0 TS199"}
             "filter_status": None,          # dict from GetFilterStatus (proc 0x59)
             "profile_settings": None,       # dict {id: value} from GetStoredProfileSetting (proc 0x53)
+            "common_settings": None,        # dict {id: value} from GetStoredCommonSetting (proc 0x51)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
         }
         self.esphome_proxy_state = {
@@ -632,6 +668,21 @@ class ServiceMode:
                         if _val is not None:
                             await self.mqtt_service.send_data_async(
                                 f"{_t}/peripheralDevice/information/profileSettings/{_key}", str(_val))
+
+                # Common settings (orientation light, odour run-on) — fetch once at connect.
+                try:
+                    self.device_state["common_settings"] = await self.client.base_client.get_stored_common_settings_async()
+                except BLEPeripheralTimeoutError:
+                    logger.warning("GetStoredCommonSettings timed out at connect — common settings will be unavailable")
+                    self.device_state["common_settings"] = {}
+                cs = self.device_state.get("common_settings") or {}
+                if cs:
+                    _t = self.mqttConfig['topic']
+                    for _sid, _key in _COMMON_SETTING_MQTT_KEYS.items():
+                        _val = cs.get(_sid)
+                        if _val is not None:
+                            await self.mqtt_service.send_data_async(
+                                f"{_t}/peripheralDevice/information/commonSettings/{_key}", str(_val))
 
                 # Filter status — fetch once at connect time so the web UI shows it immediately.
                 try:
@@ -1534,6 +1585,7 @@ class ApiMode:
         self.service.record_poll_stats = self._on_persistent_poll_complete
         # Wire MQTT inbound control topics → ApiMode handlers
         self.service.mqtt_service.SetProfileSetting      += self._on_mqtt_set_profile_setting
+        self.service.mqtt_service.SetCommonSetting       += self._on_mqtt_set_common_setting
         self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
         self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
@@ -1676,6 +1728,12 @@ class ApiMode:
             await self.set_profile_setting(setting_id, value)
         except Exception as e:
             logger.warning(f"MQTT set_profile_setting({setting_id}, {value}) failed: {e}")
+
+    async def _on_mqtt_set_common_setting(self, setting_id: int, value: int):
+        try:
+            await self.set_common_setting(setting_id, value)
+        except Exception as e:
+            logger.warning(f"MQTT set_common_setting({setting_id}, {value}) failed: {e}")
 
     async def _on_mqtt_toggle_anal(self):
         try:
@@ -2045,8 +2103,9 @@ class ApiMode:
             ProfileSettings(setting_id)
         except ValueError:
             self._http_error(400, E4001, f"Invalid setting_id {setting_id}. Valid IDs: 0-9")
-        if not isinstance(value, int) or value < 0 or value > 65535:
-            self._http_error(400, E4002, f"Value {value} out of range (0-65535)")
+        rng = _PROFILE_SETTING_RANGES.get(setting_id, (0, 65535))
+        if not isinstance(value, int) or value < rng[0] or value > rng[1]:
+            self._http_error(400, E4002, f"Value {value} out of range ({rng[0]}-{rng[1]}) for setting_id {setting_id}")
 
         if self.ble_connection == "persistent":
             if self.service.client is None:
@@ -2070,6 +2129,47 @@ class ApiMode:
             if val is not None:
                 await self.service.mqtt_service.send_data_async(
                     f"{topic}/peripheralDevice/information/profileSettings/{key}",
+                    str(val))
+
+    async def set_common_setting(self, setting_id: int, value: int) -> dict:
+        if setting_id not in _COMMON_SETTING_RANGES:
+            self._http_error(400, E4001, f"Invalid setting_id {setting_id}. Valid IDs: {sorted(_COMMON_SETTING_RANGES)}")
+        rng = _COMMON_SETTING_RANGES[setting_id]
+        if not isinstance(value, int) or value < rng[0] or value > rng[1]:
+            self._http_error(400, E4002, f"Value {value} out of range ({rng[0]}-{rng[1]}) for setting_id {setting_id}")
+
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            await self.service.client.set_stored_common_setting(setting_id, value)
+        else:
+            await self._on_demand(lambda client: client.set_stored_common_setting(setting_id, value))
+
+        # Update cached state and broadcast
+        cs = dict(self.service.device_state.get("common_settings") or {})
+        cs[setting_id] = value
+        self.service.device_state["common_settings"] = cs
+        topic = self.service.mqttConfig['topic']
+        await self._publish_common_settings_to_mqtt(cs, topic)
+        await self.rest_api.broadcast_state(self.service.device_state.copy())
+        return {"status": "success", "setting_id": setting_id, "value": value}
+
+    async def get_common_settings(self):
+        if self.ble_connection == "persistent" and self.service.client is not None:
+            result = await self.service.client.base_client.get_stored_common_settings_async()
+        else:
+            result = await self._on_demand(lambda client: client.base_client.get_stored_common_settings_async())
+        self.service.device_state["common_settings"] = result
+        topic = self.service.mqttConfig['topic']
+        await self._publish_common_settings_to_mqtt(result, topic)
+        return result
+
+    async def _publish_common_settings_to_mqtt(self, cs: dict, topic: str):
+        for sid, key in _COMMON_SETTING_MQTT_KEYS.items():
+            val = cs.get(sid)
+            if val is not None:
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/peripheralDevice/information/commonSettings/{key}",
                     str(val))
 
     async def _fetch_statistics_descale(self, client):
@@ -2315,6 +2415,9 @@ class ApiMode:
         ps = info.get("profile_settings") or {}
         if ps:
             await self._publish_profile_settings_to_mqtt(ps, topic)
+        cs = info.get("common_settings") or {}
+        if cs:
+            await self._publish_common_settings_to_mqtt(cs, topic)
 
     async def _polling_loop(self):
         """Background poll: query GetSystemParameterList every _poll_interval seconds
@@ -2373,7 +2476,7 @@ class ApiMode:
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
                               "description", "initial_operation_date", "firmware_versions",
-                              "filter_status", "profile_settings"):
+                              "filter_status", "profile_settings", "common_settings"):
                         self.service.device_state[k] = result.get(k)
                     fw = result.get("firmware_versions") or {}
                     if fw.get("main"):
@@ -2401,6 +2504,9 @@ class ApiMode:
                 ps = result.get("profile_settings") or {}
                 if ps:
                     await self._publish_profile_settings_to_mqtt(ps, topic)
+                cs = result.get("common_settings") or {}
+                if cs:
+                    await self._publish_common_settings_to_mqtt(cs, topic)
                 if self.service.device_state.get("ble_rssi") is not None:
                     await self.service.mqtt_service.send_data_async(f"{topic}/peripheralDevice/monitor/bleRssi", str(self.service.device_state["ble_rssi"]))
                 # Record on-demand poll timing and signal stats
@@ -2554,7 +2660,13 @@ class ApiMode:
         # Profile settings last — after GetFilterStatus — to avoid exhausting the device.
         profile_settings = await client.base_client.get_stored_profile_settings_async()
         self.service.device_state["profile_settings"] = profile_settings
-        return {**state, **info, "profile_settings": profile_settings}
+        try:
+            common_settings = await client.base_client.get_stored_common_settings_async()
+        except BLEPeripheralTimeoutError:
+            logger.warning("GetStoredCommonSettings timed out — common_settings will be unavailable for this poll")
+            common_settings = {}
+        self.service.device_state["common_settings"] = common_settings
+        return {**state, **info, "profile_settings": profile_settings, "common_settings": common_settings}
 
     async def _fetch_info(self, client):
         ident = await client.base_client.get_device_identification_async(0)
@@ -2818,6 +2930,7 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
         },
         # --- Numbers: user profile settings (writable via MQTT) ---
         # command_template embeds setting_id so a single command_topic handles all settings.
+        # Ranges from _PROFILE_SETTING_RANGES (confirmed against Profile-Settings.xlsx).
         *[
             {
                 "topic": f"{HA}/number/geberit_aquaclean/ps_{key}/config",
@@ -2827,22 +2940,46 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                     "state_topic": f"{t}/peripheralDevice/information/profileSettings/{mqtt_key}",
                     "command_topic": f"{t}/peripheralDevice/config/profileSetting",
                     "command_template": '{{"setting_id": {sid}, "value": {{{{ value | int }}}}}}'.format(sid=sid),
-                    "min": 0, "max": 10, "step": 1,
+                    "min": min_val, "max": max_val, "step": 1,
                     "icon": icon,
                     "device": DEVICE,
                 },
             }
-            for key, name, mqtt_key, sid, icon in [
-                ("anal_shower_pressure", "Anal Shower Pressure",  "analShowerPressure", 2, "mdi:water-boiler"),
-                ("lady_shower_pressure", "Lady Shower Pressure",  "ladyShowerPressure", 3, "mdi:water-boiler"),
-                ("anal_shower_position", "Anal Shower Position",  "analShowerPosition", 4, "mdi:arrow-left-right"),
-                ("lady_shower_position", "Lady Shower Position",  "ladyShowerPosition", 5, "mdi:arrow-left-right"),
-                ("water_temperature",    "Water Temperature",     "waterTemperature",   6, "mdi:thermometer-water"),
-                ("wc_seat_heat",         "WC Seat Heat",          "wcSeatHeat",         7, "mdi:heat-wave"),
-                ("dryer_temperature",    "Dryer Temperature",     "dryerTemperature",   8, "mdi:hair-dryer"),
-                ("odour_extraction",     "Odour Extraction",      "odourExtraction",    0, "mdi:air-filter"),
-                ("oscillator_state",     "Oscillator State",      "oscillatorState",    1, "mdi:rotate-360"),
-                ("dryer_state",          "Dryer State",           "dryerState",         9, "mdi:hair-dryer"),
+            for key, name, mqtt_key, sid, icon, min_val, max_val in [
+                ("anal_shower_pressure", "Anal Shower Pressure",  "analShowerPressure", 2, "mdi:water-boiler",      0, 4),
+                ("lady_shower_pressure", "Lady Shower Pressure",  "ladyShowerPressure", 3, "mdi:water-boiler",      0, 4),
+                ("anal_shower_position", "Anal Shower Position",  "analShowerPosition", 4, "mdi:arrow-left-right",  0, 4),
+                ("lady_shower_position", "Lady Shower Position",  "ladyShowerPosition", 5, "mdi:arrow-left-right",  0, 4),
+                ("water_temperature",    "Water Temperature",     "waterTemperature",   6, "mdi:thermometer-water", 0, 5),
+                ("wc_seat_heat",         "WC Seat Heat",          "wcSeatHeat",         7, "mdi:heat-wave",         0, 5),
+                ("dryer_temperature",    "Dryer Temperature",     "dryerTemperature",   8, "mdi:hair-dryer",        0, 5),
+                ("odour_extraction",     "Odour Extraction",      "odourExtraction",    0, "mdi:air-filter",        0, 1),
+                ("oscillator_state",     "Oscillator State",      "oscillatorState",    1, "mdi:rotate-360",        0, 1),
+                ("dryer_state",          "Dryer State",           "dryerState",         9, "mdi:hair-dryer",        0, 1),
+            ]
+        ],
+        # --- Numbers: common (device-wide) settings — orientation light ---
+        # command_template embeds setting_id so a single command_topic handles all settings.
+        # Ranges from _COMMON_SETTING_RANGES (confirmed from BLE log analysis).
+        *[
+            {
+                "topic": f"{HA}/number/geberit_aquaclean/cs_{key}/config",
+                "payload": {
+                    "name": name,
+                    "unique_id": f"geberit_aquaclean_cs_{key}",
+                    "state_topic": f"{t}/peripheralDevice/information/commonSettings/{mqtt_key}",
+                    "command_topic": f"{t}/peripheralDevice/config/commonSetting",
+                    "command_template": '{{"setting_id": {sid}, "value": {{{{ value | int }}}}}}'.format(sid=sid),
+                    "min": min_val, "max": max_val, "step": 1,
+                    "icon": icon,
+                    "device": DEVICE,
+                },
+            }
+            for key, name, mqtt_key, sid, icon, min_val, max_val in [
+                ("orientation_light_brightness",  "Orientation Light Brightness",  "orientationLightBrightness",  1, "mdi:brightness-6",       0, 4),
+                ("orientation_light_activation",  "Orientation Light Activation",  "orientationLightActivation",  2, "mdi:motion-sensor",       0, 2),
+                ("orientation_light_color",       "Orientation Light Color",       "orientationLightColor",       3, "mdi:palette",             0, 6),
+                ("odour_extraction_run_on",       "Odour Extraction Run-On",       "odourExtractionRunOn",        0, "mdi:air-purifier",        0, 1),
             ]
         ],
         # --- Sensors: descale statistics (ApiMode.get_statistics_descale) ---

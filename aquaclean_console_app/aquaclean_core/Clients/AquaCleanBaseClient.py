@@ -26,6 +26,8 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus                import GetFilterStatus
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications         import SubscribeNotifications
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredProfileSetting        import SetStoredProfileSetting
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStoredCommonSetting         import GetStoredCommonSetting
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredCommonSetting         import SetStoredCommonSetting
 
 from aquaclean_console_app.aquaclean_utils                                               import utils
 
@@ -280,6 +282,28 @@ class AquaCleanBaseClient:
         setting_value:   integer value (LE 2-byte, as written by the iPhone app)
         """
         api_call = SetStoredProfileSetting(profile_setting, setting_value)
+        await self.send_request(api_call)
+
+    async def get_stored_common_settings_async(self) -> dict:
+        """Read orientation light common settings via proc 0x51.
+
+        Returns a dict mapping setting_id → value for IDs 0-3.
+        IDs confirmed from BLE log (iPhone orientation-light session):
+          0: Odour extraction run-on time (bool)
+          1: Orientation light brightness (0-4)
+          2: Orientation light activation (0=On, 1=Off, 2=when approached)
+          3: Orientation light color      (0-6; 1=Blue, 2=Magenta confirmed)
+        """
+        cs = {}
+        for sid in [2, 1, 3, 0]:  # iPhone read order from BLE log
+            api_call = GetStoredCommonSetting(sid)
+            await self.send_request(api_call)
+            cs[sid] = api_call.result(self.message_context.result_bytes)
+        return cs
+
+    async def set_stored_common_setting_async(self, setting_id: int, value: int):
+        """Write a single common (device-wide) setting via proc 0x52."""
+        api_call = SetStoredCommonSetting(setting_id, value)
         await self.send_request(api_call)
 
     async def get_statistics_descale_async(self):

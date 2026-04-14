@@ -337,7 +337,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             # built-in timeout and will hang forever if the device ACKs the
             # request but never sends the response (e.g. rapid reconnect after
             # config-flow test).  asyncio.TimeoutError is already in the except.
-            _GATT_TIMEOUT = 45  # raised from 30 — profile_settings adds 10 BLE calls (~1-2 s)
+            _GATT_TIMEOUT = 55  # raised from 45 — common_settings adds 4 BLE calls (~1 s)
             t_poll = time.perf_counter()
             try:
                 async with asyncio.timeout(_GATT_TIMEOUT):
@@ -351,6 +351,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     firmware_versions = await client.base_client.get_firmware_version_list_async()
                     filter_status = await client.base_client.get_filter_status_async()
                     profile_settings = await client.base_client.get_stored_profile_settings_async()
+                    common_settings = await client.base_client.get_stored_common_settings_async()
             except (BleakError, asyncio.TimeoutError, BLEPeripheralTimeoutError) as exc:
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
@@ -429,6 +430,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "ps_wc_seat_heat":         (profile_settings or {}).get(7),
                 "ps_dryer_temperature":    (profile_settings or {}).get(8),
                 "ps_dryer_state":          (profile_settings or {}).get(9),
+                # Common (device-wide) settings (IDs 0-3)
+                # id=0: odour extraction run-on, id=1: brightness, id=2: activation, id=3: color
+                "cs_odour_extraction_run_on":      (common_settings or {}).get(0),
+                "cs_orientation_light_brightness": (common_settings or {}).get(1),
+                "cs_orientation_light_activation": (common_settings or {}).get(2),
+                "cs_orientation_light_color":      (common_settings or {}).get(3),
                 # Poll timing (for countdown visualization)
                 "poll_epoch": poll_start,
                 "poll_interval": self.update_interval.total_seconds(),
@@ -529,6 +536,43 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                             await connector.disconnect_ble_only()
                     except Exception:
                         _LOGGER.debug("disconnect_ble_only failed after set_profile_setting; resetting connector")
+                        self._reset_esphome_connector()
+                else:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await connector.disconnect()
+                    except Exception:
+                        pass
+
+    async def async_set_common_setting(self, setting_id: int, value: int) -> None:
+        """Write a common (device-wide) setting via BLE, serialised with the poll loop."""
+        from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import (
+            AquaCleanClientFactory,
+        )
+        from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import (
+            ESPHomeConnectionError,
+        )
+
+        async with self._ble_lock:
+            if self._esphome_host:
+                connector, client = self._get_esphome_connector()
+            else:
+                connector = self._make_connector()
+                client = AquaCleanClientFactory(connector).create_client()
+
+            try:
+                await client.connect_ble_only(self._device_id)
+                await client.set_stored_common_setting(setting_id, value)
+            except ESPHomeConnectionError:
+                self._reset_esphome_connector()
+                raise
+            finally:
+                if self._esphome_host:
+                    try:
+                        async with asyncio.timeout(5.0):
+                            await connector.disconnect_ble_only()
+                    except Exception:
+                        _LOGGER.debug("disconnect_ble_only failed after set_common_setting; resetting connector")
                         self._reset_esphome_connector()
                 else:
                     try:
