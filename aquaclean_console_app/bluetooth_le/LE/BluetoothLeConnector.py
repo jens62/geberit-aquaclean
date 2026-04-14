@@ -416,7 +416,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # is allowed at a time".
         self._esphome_unsub_adv = unsub_adv
         try:
-            await asyncio.wait_for(found_event.wait(), timeout=30.0)
+            await asyncio.wait_for(found_event.wait(), timeout=10.0)
             logger.debug(
                 f"Found BLE device {device_id}: name={device_name or 'Unknown'}, "
                 f"address_type={address_type}"

@@ -24,8 +24,39 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetCommand            
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStatisticsDescale           import GetStatisticsDescale
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList         import GetFirmwareVersionList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus                import GetFilterStatus
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications         import SubscribeNotifications
 
-from aquaclean_console_app.aquaclean_utils                                               import utils   
+from aquaclean_console_app.aquaclean_utils                                               import utils
+
+
+class _GetStoredProfileCall53:
+    """Read a stored profile setting using proc 0x53 (C# GetStoredProfileSetting).
+
+    Payload: [profile_id=0, setting_id] (2 bytes).
+    Returns: 2-byte little-endian integer — the actual user preference stored
+    on the device.  This is the value the Geberit iPhone app reads and writes.
+    Confirmed from BLE sniff: proc 0x54 SetStoredProfileSetting (C# wire) writes
+    here; the values match the in-app sliders.  Proc 0x0A reads a different area.
+    """
+    _attr = ApiCallAttribute(0x01, 0x53, 0x01)
+
+    def __init__(self, setting_id: int, profile_id: int = 0):
+        self._payload = bytes([profile_id, setting_id])
+
+    def get_api_call_attribute(self) -> ApiCallAttribute:
+        return self._attr
+
+    def get_payload(self) -> bytes:
+        return self._payload
+
+    def result(self, data: bytearray):
+        return bytes(data)
+
+
+# iPhone order from BLE log: AnalShowerPressure=2, OscillatorState=1, LadyShowerPressure=3,
+# AnalShowerPosition=4, WaterTemperature=6, WcSeatHeat=7, LadyShowerPosition=5,
+# DryerTemperature=8, OdourExtraction=0, DryerState=9
+_IPHONE_PROFILE_SETTING_IDS = [2, 1, 3, 4, 6, 7, 5, 8, 0, 9]
 
 from threading import Lock
 import re
@@ -60,6 +91,7 @@ class AquaCleanBaseClient:
 
         self.message_context = None
         self.call_count = 0
+        self.profile_settings: dict = {}  # populated by subscribe_notifications_async()
 
         self._cleaner_task_str_re = re.compile(r"\S*site-packages/")
 
@@ -116,6 +148,56 @@ class AquaCleanBaseClient:
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         await self.bluetooth_le_connector.connect_async(device_id)
         await self.frame_service.wait_for_info_frames_async()
+
+
+    async def subscribe_notifications_async(self):
+        """Send the BLE device init sequence before GetSystemParameterList.
+
+        Sequence (confirmed working — matches v2.4.63 baseline):
+          4 × Proc(0x01,0x11)  — pre-subscription
+          4 × Proc(0x01,0x13)  — subscription registration (IDs 1–15, compact range only)
+
+        Required on every BLE connect. Without this, the device may ignore
+        GetSystemParameterList if a previous iPhone or bridge session left it
+        in a stuck/subscription-only state.
+
+        NOTE: Do NOT add proc codes like 0x59 to Proc_0x13 PAYLOADS.  The
+        subscription ID space is compact (1–15); out-of-range IDs corrupt the
+        device's subscription table and block the affected proc from responding.
+
+        NOTE: Do NOT add Proc_0x0A or Proc_0x53 calls here.  Adding 10×Proc_0x0A
+        pushes GetFilterStatus from position #13 to #23, causing it to time out.
+        Adding 10×Proc_0x53 after that brings the total to 28 rapid BLE calls,
+        causing GetSystemParameterList itself to time out.  Profile settings are
+        fetched via get_stored_profile_settings_async() in _fetch_state instead.
+        """
+        logger.debug("iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13")
+        for payload in SubscribeNotifications.PRE_PAYLOADS:
+            api_call = SubscribeNotifications(payload, proc=0x11)
+            await self.send_request(api_call)
+        for payload in SubscribeNotifications.PAYLOADS:
+            api_call = SubscribeNotifications(payload, proc=0x13)
+            await self.send_request(api_call)
+
+    async def get_stored_profile_settings_async(self) -> dict:
+        """Read all user profile settings via proc 0x53 (C# GetStoredProfileSetting).
+
+        Returns a dict mapping setting_id → value (little-endian 2-byte int).
+        These match the Geberit iPhone app slider values — confirmed by BLE sniff
+        of SetStoredProfileSetting_C# (proc 0x54) writing to the same storage area.
+        Proc 0x0A (init sequence) reads a *different* storage area and returns
+        incorrect values; always use proc 0x53 for the actual user preferences.
+
+        Called from _fetch_state (every poll) so profile settings stay current.
+        Not called in subscribe_notifications_async — adding 10 extra calls there
+        caused GetSystemParameterList to time out after the 18-call init sequence.
+        """
+        ps = {}
+        for sid in _IPHONE_PROFILE_SETTING_IDS:
+            await self.send_request(_GetStoredProfileCall53(sid))
+            ps[sid] = int.from_bytes(bytes(self.message_context.result_bytes[:2]), 'little')
+        self.profile_settings = ps
+        return ps
 
 
     async def get_system_parameter_list_async(self, parameter_list):
@@ -347,10 +429,15 @@ class AquaCleanBaseClient:
         except asyncio.TimeoutError:
             with self.lock:
                 self.call_count -= 1
+            _name = self.bluetooth_le_connector.device_name
+            _addr = self.bluetooth_le_connector.device_address
+            _label = (
+                f"'{_name}' ({_addr})"
+                if _name and _name not in ("Unknown", "None")
+                else _addr
+            )
             error_msg = (
-                f"No response from BLE peripheral "
-                f"'{self.bluetooth_le_connector.device_name}' "
-                f"({self.bluetooth_le_connector.device_address}). "
+                f"No response from BLE peripheral {_label}. "
                 f"Usually a restart of the BLE peripheral is required."
             )
             logger.error(error_msg)

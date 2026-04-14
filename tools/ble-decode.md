@@ -37,6 +37,8 @@ names, command codes, and profile setting names.
 | `--impl` | After each decoded procedure, show Python CallClass implementation hint |
 | `--verbose` | Also print raw result hex bytes for every response |
 | `--raw` | Print every raw 20-byte Geberit frame without decoding |
+| `--markdown` | Render the full session as annotated markdown, grouped by logical phase |
+| `--output FILE` | Write markdown output to FILE instead of stdout (requires `--markdown`) |
 
 ### Examples
 
@@ -58,7 +60,11 @@ names, command codes, and profile setting names.
 /Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --verbose
 
 # Show raw 20-byte frames (useful when investigating new/unknown frame types)
-/Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --raw
+/Users/jens/venv/bin/python tools/ble-decode.py session.txt --raw
+
+# Annotated markdown — full session grouped by logical phase (stdout or file)
+/Users/jens/venv/bin/python tools/ble-decode.py session.txt --markdown
+/Users/jens/venv/bin/python tools/ble-decode.py session.txt --markdown --output session-analysis.md
 
 # Firmware version list (shorthand + parsed records)
 /Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --firmware
