@@ -211,6 +211,32 @@ views:
           - entity: sensor.geberit_aquaclean_filter_reset_count
             name: Filter Reset Count
 
+      # ── User Profile Settings ─────────────────────────────────────────────
+      - type: entities
+        title: User Profile
+        icon: mdi:account-cog
+        entities:
+          - entity: sensor.geberit_aquaclean_anal_shower_pressure
+            name: Anal Shower Pressure
+          - entity: sensor.geberit_aquaclean_lady_shower_pressure
+            name: Lady Shower Pressure
+          - entity: sensor.geberit_aquaclean_anal_shower_position
+            name: Anal Shower Position
+          - entity: sensor.geberit_aquaclean_lady_shower_position
+            name: Lady Shower Position
+          - entity: sensor.geberit_aquaclean_water_temperature
+            name: Water Temperature
+          - entity: sensor.geberit_aquaclean_wc_seat_heat
+            name: WC Seat Heat
+          - entity: sensor.geberit_aquaclean_dryer_temperature
+            name: Dryer Temperature
+          - entity: sensor.geberit_aquaclean_dryer_state
+            name: Dryer State
+          - entity: sensor.geberit_aquaclean_odour_extraction
+            name: Odour Extraction
+          - entity: sensor.geberit_aquaclean_oscillator_state
+            name: Oscillator State
+
       # ── Device Information ────────────────────────────────────────────────
       - type: entities
         title: Device Information
