@@ -447,6 +447,46 @@ _PROFILE_SETTING_MQTT_KEYS = {
     7: "wcSeatHeat",
     8: "dryerTemperature",
     9: "dryerState",
+    13: "dryerSprayIntensity",
+}
+
+# Valid [min, max] ranges for each profile setting ID.
+# Confirmed from Profile-Settings.xlsx (Excel file provided by user).
+_PROFILE_SETTING_RANGES = {
+    0: (0, 1),   # OdourExtraction: boolean (Off/On)
+    1: (0, 1),   # OscillatorState: boolean (Off/On)
+    2: (0, 4),   # AnalShowerPressure (shower spray intensity)
+    3: (0, 4),   # LadyShowerPressure (lady shower spray intensity)
+    4: (0, 4),   # AnalShowerPosition
+    5: (0, 4),   # LadyShowerPosition
+    6: (0, 5),   # WaterTemperature
+    7: (0, 5),   # WcSeatHeat (seat heating temperature)
+    8: (0, 5),   # DryerTemperature (dryer air temperature)
+    9: (0, 1),   # DryerState: boolean (Off/On)
+    13: (0, 4),  # DryerSprayIntensity (confirmed via BLE log 2026-04-15)
+}
+
+# Common settings MQTT sub-topic names keyed by common setting ID.
+_COMMON_SETTING_MQTT_KEYS = {
+    0: "odourExtractionRunOn",
+    1: "orientationLightBrightness",
+    2: "orientationLightColor",       # id=2 = color (confirmed via BLE log 2026-04-15)
+    3: "orientationLightActivation",  # id=3 = activation (confirmed via BLE log 2026-04-15)
+    4: "wcLidSensorSensitivity",
+    6: "wcLidOpenAutomatically",
+    7: "wcLidCloseAutomatically",
+}
+
+# Valid [min, max] ranges for each common setting ID.
+# Confirmed from BLE log analysis.
+_COMMON_SETTING_RANGES = {
+    0: (0, 1),   # Odour extraction run-on time: boolean
+    1: (0, 4),   # Orientation light brightness
+    2: (0, 6),   # Orientation light color: 0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite
+    3: (0, 2),   # Orientation light activation: 0=Off, 1=On, 2=WhenApproached
+    4: (0, 4),   # WC Lid sensor sensitivity (confirmed 2026-04-15)
+    6: (0, 1),   # WC Lid open automatically: boolean (confirmed 2026-04-15)
+    7: (0, 1),   # WC Lid close automatically: boolean (confirmed 2026-04-15)
 }
 
 # Valid [min, max] ranges for each profile setting ID.
@@ -2952,10 +2992,11 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
                 ("lady_shower_position", "Lady Shower Position",  "ladyShowerPosition", 5, "mdi:arrow-left-right",  0, 4),
                 ("water_temperature",    "Water Temperature",     "waterTemperature",   6, "mdi:thermometer-water", 0, 5),
                 ("wc_seat_heat",         "WC Seat Heat",          "wcSeatHeat",         7, "mdi:heat-wave",         0, 5),
-                ("dryer_temperature",    "Dryer Temperature",     "dryerTemperature",   8, "mdi:hair-dryer",        0, 5),
-                ("odour_extraction",     "Odour Extraction",      "odourExtraction",    0, "mdi:air-filter",        0, 1),
-                ("oscillator_state",     "Oscillator State",      "oscillatorState",    1, "mdi:rotate-360",        0, 1),
-                ("dryer_state",          "Dryer State",           "dryerState",         9, "mdi:hair-dryer",        0, 1),
+                ("dryer_temperature",      "Dryer Temperature",      "dryerTemperature",    8,  "mdi:hair-dryer",        0, 5),
+                ("dryer_spray_intensity", "Dryer Spray Intensity",  "dryerSprayIntensity", 13, "mdi:hair-dryer",        0, 4),
+                ("odour_extraction",      "Odour Extraction",       "odourExtraction",     0,  "mdi:air-filter",        0, 1),
+                ("oscillator_state",      "Oscillator State",       "oscillatorState",     1,  "mdi:rotate-360",        0, 1),
+                ("dryer_state",           "Dryer State",            "dryerState",          9,  "mdi:hair-dryer",        0, 1),
             ]
         ],
         # --- Numbers: common (device-wide) settings — orientation light ---
@@ -2977,9 +3018,12 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
             }
             for key, name, mqtt_key, sid, icon, min_val, max_val in [
                 ("orientation_light_brightness",  "Orientation Light Brightness",  "orientationLightBrightness",  1, "mdi:brightness-6",       0, 4),
-                ("orientation_light_activation",  "Orientation Light Activation",  "orientationLightActivation",  2, "mdi:motion-sensor",       0, 2),
-                ("orientation_light_color",       "Orientation Light Color",       "orientationLightColor",       3, "mdi:palette",             0, 6),
+                ("orientation_light_activation",  "Orientation Light Activation",  "orientationLightActivation",  3, "mdi:motion-sensor",       0, 2),
+                ("orientation_light_color",       "Orientation Light Color",       "orientationLightColor",       2, "mdi:palette",             0, 6),
                 ("odour_extraction_run_on",       "Odour Extraction Run-On",       "odourExtractionRunOn",        0, "mdi:air-purifier",        0, 1),
+                ("wc_lid_sensor_sensitivity",     "WC Lid Sensor Sensitivity",     "wcLidSensorSensitivity",      4, "mdi:motion-sensor",       0, 4),
+                ("wc_lid_open_automatically",     "WC Lid Open Automatically",     "wcLidOpenAutomatically",      6, "mdi:door-open",           0, 1),
+                ("wc_lid_close_automatically",    "WC Lid Close Automatically",    "wcLidCloseAutomatically",     7, "mdi:door-closed",         0, 1),
             ]
         ],
         # --- Sensors: descale statistics (ApiMode.get_statistics_descale) ---

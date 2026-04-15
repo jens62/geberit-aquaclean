@@ -48,6 +48,9 @@ class IAquaCleanClient:
     async def get_dryer_temperature(self) -> Awaitable[int]:
         pass
 
+    async def get_dryer_spray_intensity(self) -> Awaitable[int]:
+        pass
+
     async def get_wc_seat_heat(self) -> Awaitable[int]:
         pass
 

@@ -559,7 +559,11 @@
         </div>
         <div class="ps-row">
           <span>Dryer Spray Intensity</span>
-          <span class="ps-not-avail">not mapped</span>
+          <div class="ps-stepper" data-id="13" data-kind="profile" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-13">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
         </div>
       </div>
 
@@ -568,9 +572,9 @@
         <div class="ps-section-title">Orientation Light</div>
         <div class="ps-row">
           <span>Activation</span>
-          <select id="cs-sel-2" class="ps-sel" onchange="setCommonSetting(2,parseInt(this.value),this)">
-            <option value="0">On</option>
-            <option value="1">Off</option>
+          <select id="cs-sel-3" class="ps-sel" onchange="setCommonSetting(3,parseInt(this.value),this)">
+            <option value="0">Off</option>
+            <option value="1">On</option>
             <option value="2">When Approached</option>
           </select>
         </div>
@@ -584,14 +588,14 @@
         </div>
         <div class="ps-row">
           <span>Colour</span>
-          <div id="cs-color-3" style="display:flex;gap:0.4rem;flex-wrap:wrap">
-            <span class="cs-swatch" data-val="0" style="background:#fff1d8" title="Warm White"  onclick="setCommonSetting(3,0,this)"></span>
-            <span class="cs-swatch" data-val="6" style="background:#ffee7c" title="Yellow"      onclick="setCommonSetting(3,6,this)"></span>
-            <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange"      onclick="setCommonSetting(3,3,this)"></span>
-            <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta"     onclick="setCommonSetting(3,2,this)"></span>
-            <span class="cs-swatch" data-val="4" style="background:#e4efff" title="Cold White"  onclick="setCommonSetting(3,4,this)"></span>
-            <span class="cs-swatch" data-val="5" style="background:#96f3f3" title="Turquoise"   onclick="setCommonSetting(3,5,this)"></span>
-            <span class="cs-swatch" data-val="1" style="background:#117aff" title="Blue"        onclick="setCommonSetting(3,1,this)"></span>
+          <div id="cs-color-2" style="display:flex;gap:0.4rem;flex-wrap:wrap">
+            <span class="cs-swatch" data-val="5" style="background:#fff1d8" title="Warm White"  onclick="setCommonSetting(2,5,this)"></span>
+            <span class="cs-swatch" data-val="4" style="background:#ffee7c" title="Yellow"      onclick="setCommonSetting(2,4,this)"></span>
+            <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange"      onclick="setCommonSetting(2,3,this)"></span>
+            <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta"     onclick="setCommonSetting(2,2,this)"></span>
+            <span class="cs-swatch" data-val="6" style="background:#e4efff" title="Cold White"  onclick="setCommonSetting(2,6,this)"></span>
+            <span class="cs-swatch" data-val="1" style="background:#96f3f3" title="Turquoise"   onclick="setCommonSetting(2,1,this)"></span>
+            <span class="cs-swatch" data-val="0" style="background:#117aff" title="Blue"        onclick="setCommonSetting(2,0,this)"></span>
           </div>
         </div>
       </div>
@@ -620,15 +624,25 @@
         <div class="ps-section-title">WC Lid</div>
         <div class="ps-row">
           <span>Sensor Sensitivity</span>
-          <span class="ps-not-avail">not mapped</span>
+          <div class="ps-stepper" data-id="4" data-kind="common" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="cs-sv-4">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
         </div>
         <div class="ps-row">
           <span>Open Automatically</span>
-          <span class="ps-not-avail">not mapped</span>
+          <label class="ios-toggle">
+            <input type="checkbox" id="cs-tog-6" onchange="setCommonSetting(6,this.checked?1:0,null)">
+            <span class="ios-toggle-track"></span>
+          </label>
         </div>
         <div class="ps-row">
           <span>Close Automatically</span>
-          <span class="ps-not-avail">not mapped</span>
+          <label class="ios-toggle">
+            <input type="checkbox" id="cs-tog-7" onchange="setCommonSetting(7,this.checked?1:0,null)">
+            <span class="ios-toggle-track"></span>
+          </label>
         </div>
         <div class="ps-row">
           <span>Maximum Lid Position</span>
@@ -1258,7 +1272,7 @@
     }
 
     function onCommonSettings(cs) {
-      // cs is {id: value} — id=0: odour run-on, id=1: brightness, id=2: activation, id=3: color
+      // cs is {id: value} — see _COMMON_SETTING_MQTT_KEYS for full mapping
       if (cs[0] != null) {
         const tog = document.getElementById('cs-tog-0');
         if (tog) tog.checked = cs[0] === 1;
@@ -1267,22 +1281,34 @@
         const sv = document.getElementById('cs-sv-1');
         if (sv) sv.textContent = cs[1];
       }
-      if (cs[2] != null) {
-        const sel = document.getElementById('cs-sel-2');
-        if (sel && document.activeElement !== sel) sel.value = cs[2];
-      }
       if (cs[3] != null) {
-        document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
-          s.classList.toggle('active', parseInt(s.dataset.val) === cs[3]);
+        const sel = document.getElementById('cs-sel-3');
+        if (sel && document.activeElement !== sel) sel.value = cs[3];
+      }
+      if (cs[2] != null) {
+        document.querySelectorAll('#cs-color-2 .cs-swatch').forEach(s => {
+          s.classList.toggle('active', parseInt(s.dataset.val) === cs[2]);
         });
+      }
+      if (cs[4] != null) {
+        const sv = document.getElementById('cs-sv-4');
+        if (sv) sv.textContent = cs[4];
+      }
+      if (cs[6] != null) {
+        const tog = document.getElementById('cs-tog-6');
+        if (tog) tog.checked = cs[6] === 1;
+      }
+      if (cs[7] != null) {
+        const tog = document.getElementById('cs-tog-7');
+        if (tog) tog.checked = cs[7] === 1;
       }
     }
 
     async function setCommonSetting(settingId, value, triggerEl) {
       if (isNaN(value)) return;
       // For color swatches: optimistic UI update
-      if (settingId === 3) {
-        document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
+      if (settingId === 2) {
+        document.querySelectorAll('#cs-color-2 .cs-swatch').forEach(s => {
           s.classList.toggle('active', parseInt(s.dataset.val) === value);
         });
       }
