@@ -37,7 +37,7 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
 
     # Print device/server info returned by the API
     try:
-        info = await client.device_info()
+        info = client.device_info()
         device_feature_flags = getattr(info, "bluetooth_proxy_feature_flags", 0)
         print("device_info:", info)
         print("bluetooth_proxy_feature_flags:", getattr(info, "bluetooth_proxy_feature_flags", None))
@@ -93,7 +93,7 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
         disconnect_timeout=10.0,    # allow graceful disconnect
         feature_flags=device_feature_flags,
         has_cache=False,     # keep False unless you actually have a cache
-        address_type=1,      # try RANDOM (1) if PUBLIC (0) fails
+        address_type=0,      # PUBLIC (0) — Geberit AquaClean uses a public BLE address
     )
 
     try:
