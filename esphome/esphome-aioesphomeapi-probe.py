@@ -37,13 +37,11 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
 
     # Print device/server info returned by the API
     try:
-        info = client.device_info()
+        info = await client.device_info()
         device_feature_flags = getattr(info, "bluetooth_proxy_feature_flags", 0)
         print("device_info:", info)
         print("bluetooth_proxy_feature_flags:", getattr(info, "bluetooth_proxy_feature_flags", None))
 
-        # after await client.connect(login=True) and after reading device info
-        device_feature_flags = getattr(info, "bluetooth_proxy_feature_flags", 0)
         client.set_debug(True)
 
         # Quick scan to confirm the peripheral is advertising
@@ -54,7 +52,9 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
                 seen = True
                 print("Advertisement seen:", addr, "rssi:", rssi)
 
-        cancel_adv = await client.subscribe_bluetooth_le_advertisements(on_adv)
+        # subscribe_bluetooth_le_advertisements is synchronous in current aioesphomeapi
+        # — returns the cancel callable directly, do not await
+        cancel_adv = client.subscribe_bluetooth_le_advertisements(on_adv)
         await asyncio.sleep(5.0)
         cancel_adv()
 
