@@ -14,7 +14,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings."
+      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings. Also make sure no other device (e.g. the Geberit Home App or the standalone bridge) is connected via Bluetooth — the AquaClean only advertises when no BLE connection is active."
     },
     "abort": {
       "already_configured": "This AquaClean device is already configured."
@@ -35,7 +35,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings."
+      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings. Also make sure no other device (e.g. the Geberit Home App or the standalone bridge) is connected via Bluetooth — the AquaClean only advertises when no BLE connection is active."
     }
   }
 }
