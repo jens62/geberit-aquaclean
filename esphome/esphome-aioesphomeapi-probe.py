@@ -86,17 +86,17 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
             else:
                 connected_future.set_exception(Exception("Disconnected"))
 
-    cancel_connection = await client.bluetooth_device_connect(
-        mac_int,
-        on_bluetooth_connection_state,
-        timeout=30.0,
-        disconnect_timeout=10.0,    # allow graceful disconnect
-        feature_flags=device_feature_flags,
-        has_cache=False,     # keep False unless you actually have a cache
-        address_type=0,      # PUBLIC (0) — Geberit AquaClean uses a public BLE address
-    )
-
     try:
+        cancel_connection = await client.bluetooth_device_connect(
+            mac_int,
+            on_bluetooth_connection_state,
+            timeout=30.0,
+            disconnect_timeout=10.0,
+            feature_flags=device_feature_flags,
+            has_cache=False,
+            address_type=0,      # PUBLIC (0) — Geberit AquaClean uses a public BLE address
+        )
+
         mtu = await asyncio.wait_for(connected_future, timeout=30.0)
         print(f"BLE connected (MTU: {mtu}).  Fetching GATT services …\n")
         resp = await client.bluetooth_gatt_get_services(mac_int)
@@ -122,8 +122,15 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
                             pass
                     except Exception as e:
                         print(f"  │  └─ read failed: {e}")
+
+    except (TimeoutError, Exception) as e:
+        if "Timeout" in type(e).__name__ or isinstance(e, TimeoutError):
+            print(f"\nBLE connect timed out — device may be busy or connected elsewhere.")
+        else:
+            print(f"\nBLE connect failed: {e}")
+
     finally:
-        print("\nDisconnecting …")
+        print("Disconnecting …")
         try:
             await client.bluetooth_device_disconnect(mac_int)
         except Exception:
