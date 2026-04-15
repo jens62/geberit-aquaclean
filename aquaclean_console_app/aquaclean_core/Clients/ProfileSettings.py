@@ -12,3 +12,4 @@ class ProfileSettings(Enum):
     DryerTemperature = 8
     DryerState = 9  # bool
     SystemFlush = 10  # bool
+    DryerSprayIntensity = 13

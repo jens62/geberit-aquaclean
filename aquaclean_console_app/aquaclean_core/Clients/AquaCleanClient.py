@@ -153,7 +153,10 @@ class AquaCleanClient(IAquaCleanClient):
         await self.base_client.SetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.OdourExtraction, 1 if state else 0)
 
     async def get_dryer_temperature(self):
-        return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.DryerState)
+        return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.DryerTemperature)
+
+    async def get_dryer_spray_intensity(self):
+        return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.DryerSprayIntensity)
 
     async def get_wc_seat_heat(self):
         return await self.base_client.GetStoredProfileSettingAsync(ProfileSettings.ProfileSettings.WcSeatHeat)
