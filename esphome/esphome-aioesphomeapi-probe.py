@@ -37,7 +37,7 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
 
     # Print device/server info returned by the API
     try:
-        info = client.device_info()
+        info = await client.device_info()
         device_feature_flags = getattr(info, "bluetooth_proxy_feature_flags", 0)
         print("device_info:", info)
         print("bluetooth_proxy_feature_flags:", getattr(info, "bluetooth_proxy_feature_flags", None))
