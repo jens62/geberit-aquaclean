@@ -19,20 +19,23 @@ PROFILE_NUMBERS: list[tuple] = [
     ("ps_lady_shower_position", 5, "Lady Shower Position",  0, 4, "mdi:arrow-left-right"),
     ("ps_water_temperature",    6, "Water Temperature",     0, 5, "mdi:thermometer-water"),
     ("ps_wc_seat_heat",         7, "WC Seat Heat",          0, 5, "mdi:heat-wave"),
-    ("ps_dryer_temperature",    8, "Dryer Temperature",     0, 5, "mdi:hair-dryer"),
-    ("ps_dryer_state",          9, "Dryer State",           0, 1, "mdi:hair-dryer"),
+    ("ps_dryer_temperature",      8,  "Dryer Temperature",     0, 5, "mdi:hair-dryer"),
+    ("ps_dryer_state",            9,  "Dryer State",           0, 1, "mdi:hair-dryer"),
+    ("ps_dryer_spray_intensity",  13, "Dryer Spray Intensity", 0, 4, "mdi:hair-dryer"),
     ("ps_odour_extraction",     0, "Odour Extraction",      0, 1, "mdi:air-filter"),
     ("ps_oscillator_state",     1, "Oscillator State",      0, 1, "mdi:rotate-360"),
 ]
 
 # (data_key, setting_id, friendly_name, min_value, max_value, icon)
 # Ranges confirmed from BLE log analysis (proc 0x51/0x52).
-# id=0: odour extraction run-on, id=1: brightness, id=2: activation, id=3: color
 COMMON_NUMBERS: list[tuple] = [
     ("cs_orientation_light_brightness", 1, "Orientation Light Brightness", 0, 4, "mdi:brightness-6"),
     ("cs_orientation_light_activation", 2, "Orientation Light Activation", 0, 2, "mdi:motion-sensor"),
     ("cs_orientation_light_color",      3, "Orientation Light Color",      0, 6, "mdi:palette"),
     ("cs_odour_extraction_run_on",      0, "Odour Extraction Run-On",      0, 1, "mdi:air-purifier"),
+    ("cs_wc_lid_sensor_sensitivity",    4, "WC Lid Sensor Sensitivity",    0, 4, "mdi:motion-sensor"),
+    ("cs_wc_lid_open_automatically",    6, "WC Lid Open Automatically",    0, 1, "mdi:door-open"),
+    ("cs_wc_lid_close_automatically",   7, "WC Lid Close Automatically",   0, 1, "mdi:door-closed"),
 ]
 
 

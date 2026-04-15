@@ -428,14 +428,17 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "ps_lady_shower_position": (profile_settings or {}).get(5),
                 "ps_water_temperature":    (profile_settings or {}).get(6),
                 "ps_wc_seat_heat":         (profile_settings or {}).get(7),
-                "ps_dryer_temperature":    (profile_settings or {}).get(8),
-                "ps_dryer_state":          (profile_settings or {}).get(9),
-                # Common (device-wide) settings (IDs 0-3)
-                # id=0: odour extraction run-on, id=1: brightness, id=2: activation, id=3: color
+                "ps_dryer_temperature":      (profile_settings or {}).get(8),
+                "ps_dryer_state":            (profile_settings or {}).get(9),
+                "ps_dryer_spray_intensity":  (profile_settings or {}).get(13),
+                # Common (device-wide) settings
                 "cs_odour_extraction_run_on":      (common_settings or {}).get(0),
                 "cs_orientation_light_brightness": (common_settings or {}).get(1),
                 "cs_orientation_light_activation": (common_settings or {}).get(2),
                 "cs_orientation_light_color":      (common_settings or {}).get(3),
+                "cs_wc_lid_sensor_sensitivity":    (common_settings or {}).get(4),
+                "cs_wc_lid_open_automatically":    (common_settings or {}).get(6),
+                "cs_wc_lid_close_automatically":   (common_settings or {}).get(7),
                 # Poll timing (for countdown visualization)
                 "poll_epoch": poll_start,
                 "poll_interval": self.update_interval.total_seconds(),
