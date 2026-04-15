@@ -245,11 +245,11 @@ views:
         icon: mdi:lightbulb-outline
         entities:
           - entity: number.geberit_aquaclean_orientation_light_activation
-            name: Activation (0=On, 1=Off, 2=When Approached)
+            name: Activation (0=Off, 1=On, 2=When Approached)
           - entity: number.geberit_aquaclean_orientation_light_brightness
             name: Brightness
           - entity: number.geberit_aquaclean_orientation_light_color
-            name: Color (1=Blue, 2=Magenta, …)
+            name: Color (0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite)
           - entity: number.geberit_aquaclean_odour_extraction_run_on
             name: Odour Extraction Run-On
 
