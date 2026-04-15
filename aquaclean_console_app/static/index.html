@@ -140,11 +140,120 @@
 
     .info-grid dt { color: var(--muted); white-space: nowrap; }
     .info-grid dd { font-weight: 500; word-break: break-all; }
-    .ps-inp { width:4rem;padding:0.25rem 0.4rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.85rem;font-weight:500; }
-    .ps-btn { min-width:auto;padding:0.25rem 0.55rem;font-size:0.78rem;margin-left:0.35rem; }
-    .cs-swatch { display:inline-block;width:1.4rem;height:1.4rem;border-radius:50%;margin:0 0.2rem;cursor:pointer;border:2px solid transparent;vertical-align:middle;transition:transform 0.15s,border-color 0.15s; }
+    /* ── User Profile sections ──────────────────────────────────────────── */
+    .ps-sections { display:flex; flex-direction:column; gap:0.5rem; }
+
+    .ps-section {
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid rgba(255,255,255,0.06);
+      overflow: hidden;
+    }
+    .ps-section-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--muted);
+      padding: 0.55rem 1.1rem 0.45rem;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .ps-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.65rem 1.1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 0.875rem;
+      gap: 1rem;
+      min-height: 2.6rem;
+    }
+    .ps-row:last-child { border-bottom: none; }
+    .ps-row-label { color: var(--text); flex-shrink: 0; }
+
+    /* iOS-style toggle switch */
+    .ios-toggle { position:relative; display:inline-block; width:46px; height:28px; flex-shrink:0; }
+    .ios-toggle input { opacity:0; width:0; height:0; position:absolute; }
+    .ios-toggle-track {
+      position: absolute; inset: 0;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.15);
+      transition: background 0.22s;
+      cursor: pointer;
+    }
+    .ios-toggle-track::before {
+      content: '';
+      position: absolute;
+      left: 3px; top: 3px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.22s cubic-bezier(.4,0,.2,1);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    }
+    .ios-toggle input:checked + .ios-toggle-track { background: #34c759; }
+    .ios-toggle input:checked + .ios-toggle-track::before { transform: translateX(18px); }
+
+    /* Stepper: − value + */
+    .ps-stepper {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.04);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .ps-step-btn {
+      background: none;
+      border: none;
+      color: var(--text);
+      font-size: 1.15rem;
+      line-height: 1;
+      width: 2.2rem;
+      height: 2.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: unset;
+      padding: 0;
+      border-radius: 0;
+      border-right: 1px solid rgba(255,255,255,0.1);
+      transition: background 0.15s;
+    }
+    .ps-step-btn:last-child { border-right: none; border-left: 1px solid rgba(255,255,255,0.1); }
+    .ps-step-btn:hover { background: rgba(255,255,255,0.1); }
+    .ps-step-val {
+      min-width: 2.4rem;
+      text-align: center;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text);
+      user-select: none;
+    }
+
+    /* Activation select — wide enough for "When Approached" */
+    .ps-sel {
+      padding: 0.3rem 0.5rem;
+      border-radius: 7px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: inherit;
+      font-size: 0.85rem;
+      font-weight: 500;
+      min-width: 9rem;
+      cursor: pointer;
+    }
+
+    /* Color swatches */
+    .cs-swatch { display:inline-block;width:1.55rem;height:1.55rem;border-radius:50%;margin:0 0.22rem;cursor:pointer;border:2px solid transparent;vertical-align:middle;transition:transform 0.15s,border-color 0.15s; }
+    .cs-swatch:first-child { margin-left:0; }
     .cs-swatch:hover { transform:scale(1.2); }
     .cs-swatch.active { border-color:#fff;transform:scale(1.15); }
+
+    /* Not-yet-mapped placeholder */
+    .ps-not-avail { font-size:0.78rem; color:var(--muted); font-style:italic; }
 
     /* Connection status badge */
     .conn-panel {
@@ -363,44 +472,184 @@
     </dl>
 
     <h2>User Profile</h2>
-    <dl class="info-grid">
-      <dt>Anal Shower Pressure</dt>  <dd><input id="ps-inp-2" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(2,'ps-inp-2',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Anal Shower Position</dt>  <dd><input id="ps-inp-4" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(4,'ps-inp-4',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Lady Shower Pressure</dt>  <dd><input id="ps-inp-3" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(3,'ps-inp-3',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Lady Shower Position</dt>  <dd><input id="ps-inp-5" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(5,'ps-inp-5',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Water Temperature</dt>     <dd><input id="ps-inp-6" type="number" min="0" max="5" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(6,'ps-inp-6',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Seat Heat</dt>             <dd><input id="ps-inp-7" type="number" min="0" max="5" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(7,'ps-inp-7',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Dryer Temperature</dt>     <dd><input id="ps-inp-8" type="number" min="0" max="5" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(8,'ps-inp-8',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Dryer</dt>                 <dd><input id="ps-inp-9" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(9,'ps-inp-9',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Oscillator</dt>            <dd><input id="ps-inp-1" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(1,'ps-inp-1',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Odour Extraction</dt>      <dd><input id="ps-inp-0" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setProfileSetting(0,'ps-inp-0',this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-    </dl>
+    <div class="ps-sections">
 
-    <h2>Orientation Light</h2>
-    <dl class="info-grid">
-      <dt>Activation</dt>
-      <dd>
-        <select id="cs-sel-2" class="ps-inp" onchange="setCommonSetting(2,parseInt(this.value),this)">
-          <option value="0">On</option>
-          <option value="1">Off</option>
-          <option value="2">When Approached</option>
-        </select>
-      </dd>
-      <dt>Brightness</dt>
-      <dd><input id="cs-inp-1" type="number" min="0" max="4" step="1" class="ps-inp" placeholder="—"><button onclick="setCommonSetting(1,parseInt(document.getElementById('cs-inp-1').value),this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-      <dt>Color</dt>
-      <dd id="cs-color-3">
-        <span class="cs-swatch" data-val="0" style="background:#fff1d8" title="Warm White (0)"    onclick="setCommonSetting(3,0,this)"></span>
-        <span class="cs-swatch" data-val="1" style="background:#117aff" title="Blue (1)"          onclick="setCommonSetting(3,1,this)"></span>
-        <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta (2)"       onclick="setCommonSetting(3,2,this)"></span>
-        <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange (3)"        onclick="setCommonSetting(3,3,this)"></span>
-        <span class="cs-swatch" data-val="4" style="background:#e4efff" title="Cold White (4)"    onclick="setCommonSetting(3,4,this)"></span>
-        <span class="cs-swatch" data-val="5" style="background:#96f3f3" title="Turquoise (5)"     onclick="setCommonSetting(3,5,this)"></span>
-        <span class="cs-swatch" data-val="6" style="background:#ffee7c" title="Yellow (6)"        onclick="setCommonSetting(3,6,this)"></span>
-      </dd>
-      <dt>Odour Run-On</dt>
-      <dd><input id="cs-inp-0" type="number" min="0" max="1" step="1" class="ps-inp" placeholder="—"><button onclick="setCommonSetting(0,parseInt(document.getElementById('cs-inp-0').value),this)" class="ps-btn"><span class="spinner"></span>Set</button></dd>
-    </dl>
+      <!-- 1. Shower -->
+      <div class="ps-section">
+        <div class="ps-section-title">Shower</div>
+        <div class="ps-row">
+          <span>Water Temperature</span>
+          <div class="ps-stepper" data-id="6" data-kind="profile" data-min="0" data-max="5">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-6">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Spray Arm Position</span>
+          <div class="ps-stepper" data-id="4" data-kind="profile" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-4">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Spray Intensity</span>
+          <div class="ps-stepper" data-id="2" data-kind="profile" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-2">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Oscillation</span>
+          <label class="ios-toggle">
+            <input type="checkbox" id="ps-tog-1" onchange="setProfileSetting(1,this.checked?1:0,null)">
+            <span class="ios-toggle-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 2. Lady Shower -->
+      <div class="ps-section">
+        <div class="ps-section-title">Lady Shower</div>
+        <div class="ps-row">
+          <span>Spray Arm Position</span>
+          <div class="ps-stepper" data-id="5" data-kind="profile" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-5">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Spray Intensity</span>
+          <div class="ps-stepper" data-id="3" data-kind="profile" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-3">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Dryer -->
+      <div class="ps-section">
+        <div class="ps-section-title">Dryer</div>
+        <div class="ps-row">
+          <span>Dryer</span>
+          <label class="ios-toggle">
+            <input type="checkbox" id="ps-tog-9" onchange="setProfileSetting(9,this.checked?1:0,null)">
+            <span class="ios-toggle-track"></span>
+          </label>
+        </div>
+        <div class="ps-row">
+          <span>Air Temperature</span>
+          <div class="ps-stepper" data-id="8" data-kind="profile" data-min="0" data-max="5">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-8">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Dryer Spray Intensity</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+      </div>
+
+      <!-- 4. Orientation Light -->
+      <div class="ps-section">
+        <div class="ps-section-title">Orientation Light</div>
+        <div class="ps-row">
+          <span>Activation</span>
+          <select id="cs-sel-2" class="ps-sel" onchange="setCommonSetting(2,parseInt(this.value),this)">
+            <option value="0">On</option>
+            <option value="1">Off</option>
+            <option value="2">When Approached</option>
+          </select>
+        </div>
+        <div class="ps-row">
+          <span>Brightness</span>
+          <div class="ps-stepper" data-id="1" data-kind="common" data-min="0" data-max="4">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="cs-sv-1">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Colour</span>
+          <div id="cs-color-3" style="display:flex;gap:0.4rem;flex-wrap:wrap">
+            <span class="cs-swatch" data-val="0" style="background:#fff1d8" title="Warm White"  onclick="setCommonSetting(3,0,this)"></span>
+            <span class="cs-swatch" data-val="6" style="background:#ffee7c" title="Yellow"      onclick="setCommonSetting(3,6,this)"></span>
+            <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange"      onclick="setCommonSetting(3,3,this)"></span>
+            <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta"     onclick="setCommonSetting(3,2,this)"></span>
+            <span class="cs-swatch" data-val="4" style="background:#e4efff" title="Cold White"  onclick="setCommonSetting(3,4,this)"></span>
+            <span class="cs-swatch" data-val="5" style="background:#96f3f3" title="Turquoise"   onclick="setCommonSetting(3,5,this)"></span>
+            <span class="cs-swatch" data-val="1" style="background:#117aff" title="Blue"        onclick="setCommonSetting(3,1,this)"></span>
+          </div>
+        </div>
+        <div class="ps-row">
+          <span>Run-on Time</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+        <div class="ps-row">
+          <span>Sensor Sensitivity</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+      </div>
+
+      <!-- 5. Odour Extraction -->
+      <div class="ps-section">
+        <div class="ps-section-title">Odour Extraction</div>
+        <div class="ps-row">
+          <span>Odour Extraction</span>
+          <label class="ios-toggle">
+            <input type="checkbox" id="ps-tog-0" onchange="setProfileSetting(0,this.checked?1:0,null)">
+            <span class="ios-toggle-track"></span>
+          </label>
+        </div>
+        <div class="ps-row">
+          <span>Run-On</span>
+          <label class="ios-toggle">
+            <input type="checkbox" id="cs-tog-0" onchange="setCommonSetting(0,this.checked?1:0,null)">
+            <span class="ios-toggle-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 6. WC Lid -->
+      <div class="ps-section">
+        <div class="ps-section-title">WC Lid</div>
+        <div class="ps-row">
+          <span>Sensor Sensitivity</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+        <div class="ps-row">
+          <span>Open Automatically</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+        <div class="ps-row">
+          <span>Close Automatically</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+        <div class="ps-row">
+          <span>Maximum Lid Position</span>
+          <span class="ps-not-avail">not mapped</span>
+        </div>
+      </div>
+
+      <!-- 7. Seat Heating -->
+      <div class="ps-section">
+        <div class="ps-section-title">Seat Heating</div>
+        <div class="ps-row">
+          <span>Temperature</span>
+          <div class="ps-stepper" data-id="7" data-kind="profile" data-min="0" data-max="5">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-7">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
 
     <h2>Commands</h2>
     <div class="controls">
@@ -943,46 +1192,78 @@
 
     function onProfileSettings(ps) {
       // ps is {id: value} — IDs match ProfileSettings enum
-      // Fill inputs with current values (only when not currently focused by user)
       [0,1,2,3,4,5,6,7,8,9].forEach(id => {
-        const el = document.getElementById('ps-inp-' + id);
-        if (el && document.activeElement !== el && ps[id] != null) el.value = ps[id];
+        if (ps[id] == null) return;
+        const val = ps[id];
+        // Stepper value display
+        const sv = document.getElementById('ps-sv-' + id);
+        if (sv) sv.textContent = val;
+        // Toggle checkbox
+        const tog = document.getElementById('ps-tog-' + id);
+        if (tog) tog.checked = val === 1;
       });
     }
 
-    async function setProfileSetting(settingId, inputId, btn) {
-      const inp = document.getElementById(inputId);
-      const val = parseInt(inp.value, 10);
-      if (isNaN(val) || val < parseInt(inp.min) || val > parseInt(inp.max)) {
-        inp.style.borderColor = 'var(--error)';
-        setTimeout(() => inp.style.borderColor = '', 2000);
-        return;
+    function stepDec(btn) {
+      const st = btn.closest('.ps-stepper');
+      const valEl = st.querySelector('.ps-step-val');
+      const cur = parseInt(valEl.textContent);
+      const min = parseInt(st.dataset.min);
+      if (isNaN(cur) || cur <= min) return;
+      const newVal = cur - 1;
+      valEl.textContent = newVal;
+      const id = parseInt(st.dataset.id);
+      if (st.dataset.kind === 'profile') setProfileSetting(id, newVal, null);
+      else setCommonSetting(id, newVal, null);
+    }
+
+    function stepInc(btn) {
+      const st = btn.closest('.ps-stepper');
+      const valEl = st.querySelector('.ps-step-val');
+      const cur = parseInt(valEl.textContent);
+      const max = parseInt(st.dataset.max);
+      if (isNaN(cur) || cur >= max) return;
+      const newVal = cur + 1;
+      valEl.textContent = newVal;
+      const id = parseInt(st.dataset.id);
+      if (st.dataset.kind === 'profile') setProfileSetting(id, newVal, null);
+      else setCommonSetting(id, newVal, null);
+    }
+
+    async function setProfileSetting(settingId, val, btn) {
+      if (isNaN(val)) return;
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.classList.remove('success', 'error');
       }
-      btn.disabled = true;
-      btn.classList.add('loading');
-      btn.classList.remove('success', 'error');
       try {
         const r = await fetch(apiBase + '/config/profile-setting', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ setting_id: settingId, value: val }),
         });
-        btn.classList.add(r.ok ? 'success' : 'error');
+        if (btn) btn.classList.add(r.ok ? 'success' : 'error');
       } catch (_) {
-        btn.classList.add('error');
+        if (btn) btn.classList.add('error');
       } finally {
-        btn.disabled = false;
-        btn.classList.remove('loading');
-        setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        }
       }
     }
 
     function onCommonSettings(cs) {
-      // cs is {id: value} — IDs from _COMMON_SETTING_MQTT_KEYS
-      // id=0: odour run-on, id=1: brightness, id=2: activation, id=3: color
+      // cs is {id: value} — id=0: odour run-on, id=1: brightness, id=2: activation, id=3: color
+      if (cs[0] != null) {
+        const tog = document.getElementById('cs-tog-0');
+        if (tog) tog.checked = cs[0] === 1;
+      }
       if (cs[1] != null) {
-        const el = document.getElementById('cs-inp-1');
-        if (el && document.activeElement !== el) el.value = cs[1];
+        const sv = document.getElementById('cs-sv-1');
+        if (sv) sv.textContent = cs[1];
       }
       if (cs[2] != null) {
         const sel = document.getElementById('cs-sel-2');
@@ -992,10 +1273,6 @@
         document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
           s.classList.toggle('active', parseInt(s.dataset.val) === cs[3]);
         });
-      }
-      if (cs[0] != null) {
-        const el = document.getElementById('cs-inp-0');
-        if (el && document.activeElement !== el) el.value = cs[0];
       }
     }
 
