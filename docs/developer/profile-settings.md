@@ -88,37 +88,34 @@ iPhone reads IDs in order: `[2, 1, 3, 0]` on every connect (from the log).
 |-----------|------|-------|-------|
 | 0 | Odour Extraction Run-On | 0–1 | Run-on time after use (boolean) |
 | 1 | Orientation Light Brightness | 0–4 | — |
-| 2 | Orientation Light Activation | 0–2 | 0=On, 1=Off, 2=When Approached |
-| 3 | Orientation Light Color | 0–6 | See color table below |
+| 2 | **Orientation Light Color** | 0–6 | **id=2=COLOR** — see color table below; confirmed 2026-04-15 |
+| 3 | **Orientation Light Activation** | 0–2 | **id=3=ACTIVATION** — 0=Off, 1=On, 2=When Approached; confirmed 2026-04-15 |
 | 4 | WC Lid Sensor Sensitivity | 0–4 | Confirmed 2026-04-15 via BLE log |
 | 6 | WC Lid Open Automatically | 0–1 | 0=off, 1=on; confirmed 2026-04-15 |
 | 7 | WC Lid Close Automatically | 0–1 | 0=off, 1=on; confirmed 2026-04-15 |
 
+IDs 2, 3 fully confirmed 2026-04-15 from all-colors BLE log. Previous analysis had id=2 and id=3 swapped — now corrected.
 IDs 4, 6, 7 confirmed from WC-Lid BLE log (2026-04-15). ID 5 unknown (candidate: Maximum Lid Position).
 
 ---
 
-## Orientation Light Colors
+## Orientation Light Colors (common setting id=2)
 
-Color name constants from `colors.xml` in the Android app source.
-**BLE wire values confirmed for Blue and Magenta** (from BLE log: initial state was Magenta/when-approached;
-after user changed to On/Blue the wire values became `id=3=1` for color and `id=2=0` for activation).
+All 7 values **fully confirmed** 2026-04-15 from BLE log
+`Orientierungslicht-von-bei-Aktivierung-auf-EIn-Aus-Bei-Annäherung-dann-alle-Farben-von-links-nach-rechts.txt`.
 
 | BLE Wire Value | Color Name | Hex | Confirmation |
 |---------------|-----------|-----|--------------|
-| 0 | Warm White | `#fff1d8` | Unconfirmed — position 0 assumed |
-| 1 | Blue | `#117aff` | **Confirmed via BLE log** |
-| 2 | Magenta | `#eb4994` | **Confirmed via BLE log** |
-| 3 | Orange | `#ffad3f` | Unconfirmed |
-| 4 | Cold White | `#e4efff` | Unconfirmed |
-| 5 | Turquoise | `#96f3f3` | Unconfirmed |
-| 6 | Yellow | `#ffee7c` | Unconfirmed |
+| 0 | Blue | `#117aff` | **Confirmed 2026-04-15** |
+| 1 | Turquoise | `#96f3f3` | **Confirmed 2026-04-15** |
+| 2 | Magenta | `#eb4994` | **Confirmed 2026-04-15** |
+| 3 | Orange | `#ffad3f` | **Confirmed 2026-04-15** |
+| 4 | Yellow | `#ffee7c` | **Confirmed 2026-04-15** |
+| 5 | Warm White | `#fff1d8` | **Confirmed 2026-04-15** |
+| 6 | Cold White | `#e4efff` | **Confirmed 2026-04-15** |
 
-> **Note:** The Excel spreadsheet `Profile-Settings.xlsx` listed color indices 0–6 in a different order
-> (its column B said 0=Warmwhite, 1=Yellow, 2=Orange, 3=Magenta, 4=Coldwhite, 5=Turquoise, 6=Blue).
-> **These were the user's guesses and do not match the confirmed BLE wire values.**
-> Only values 1 (Blue) and 2 (Magenta) are confirmed from the BLE log.
-> The mapping for values 0, 3, 4, 5, 6 needs user testing to verify.
+> **Note:** Previous table (before 2026-04-15) had id=2 and id=3 swapped, and only Blue/Magenta confirmed.
+> The full mapping is now confirmed. The Excel spreadsheet ordering was wrong.
 
 ---
 
@@ -126,10 +123,8 @@ after user changed to On/Blue the wire values became `id=3=1` for color and `id=
 
 | Unknown | Where to look |
 |---------|--------------|
-| WC lid sensor sensitivity setting ID | Sniff iPhone while adjusting lid sensor slider |
-| WC lid auto-open/close/max-position IDs | Sniff iPhone on WC lid settings screen |
-| Orientation light color values 0, 3, 4, 5, 6 | Select each color on iPhone; observe `SetStoredCommonSetting` `id=3` payload |
-| Common setting IDs 4–9 | Inspect iPhone log: iPhone reads IDs up to 9 on connect |
+| Common setting ID 5 | Candidate: Maximum Lid Position — sniff iPhone while adjusting |
+| Common setting IDs 8–9 | Purpose unknown — sniff iPhone on connect |
 
 ---
 
@@ -162,15 +157,15 @@ Original Excel data as-is. Source: user-provided spreadsheet.
 
 ### Color resource values (from `colors.xml`)
 
-| BLE Index (confirmed) | Color Name | Hex |
-|----------------------|-----------|-----|
-| 1 (**confirmed**) | Blue | `#117aff` |
-| 2 (**confirmed**) | Magenta | `#eb4994` |
-| 0 (unconfirmed) | Warm White | `#fff1d8` |
-| 3 (unconfirmed) | Orange | `#ffad3f` |
-| 4 (unconfirmed) | Cold White | `#e4efff` |
-| 5 (unconfirmed) | Turquoise | `#96f3f3` |
-| 6 (unconfirmed) | Yellow | `#ffee7c` |
+| BLE Index | Color Name | Hex | Status |
+|-----------|-----------|-----|--------|
+| 0 | Blue | `#117aff` | **Confirmed 2026-04-15** |
+| 1 | Turquoise | `#96f3f3` | **Confirmed 2026-04-15** |
+| 2 | Magenta | `#eb4994` | **Confirmed 2026-04-15** |
+| 3 | Orange | `#ffad3f` | **Confirmed 2026-04-15** |
+| 4 | Yellow | `#ffee7c` | **Confirmed 2026-04-15** |
+| 5 | Warm White | `#fff1d8` | **Confirmed 2026-04-15** |
+| 6 | Cold White | `#e4efff` | **Confirmed 2026-04-15** |
 
 > Second turquoise variant in `colors.xml`: `NonGeberitTurquoise2 = #4ba5a0` — not exposed in app UI,
 > not mapped to any BLE value.

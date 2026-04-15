@@ -30,8 +30,8 @@ PROFILE_NUMBERS: list[tuple] = [
 # Ranges confirmed from BLE log analysis (proc 0x51/0x52).
 COMMON_NUMBERS: list[tuple] = [
     ("cs_orientation_light_brightness", 1, "Orientation Light Brightness", 0, 4, "mdi:brightness-6"),
-    ("cs_orientation_light_activation", 2, "Orientation Light Activation", 0, 2, "mdi:motion-sensor"),
-    ("cs_orientation_light_color",      3, "Orientation Light Color",      0, 6, "mdi:palette"),
+    ("cs_orientation_light_activation", 3, "Orientation Light Activation", 0, 2, "mdi:motion-sensor"),
+    ("cs_orientation_light_color",      2, "Orientation Light Color",      0, 6, "mdi:palette"),
     ("cs_odour_extraction_run_on",      0, "Odour Extraction Run-On",      0, 1, "mdi:air-purifier"),
     ("cs_wc_lid_sensor_sensitivity",    4, "WC Lid Sensor Sensitivity",    0, 4, "mdi:motion-sensor"),
     ("cs_wc_lid_open_automatically",    6, "WC Lid Open Automatically",    0, 1, "mdi:door-open"),
