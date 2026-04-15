@@ -291,8 +291,8 @@ class AquaCleanBaseClient:
         IDs confirmed from BLE log analysis:
           0: Odour extraction run-on time (bool)
           1: Orientation light brightness (0-4)
-          2: Orientation light activation (0=On, 1=Off, 2=when approached)
-          3: Orientation light color      (0-6; 1=Blue, 2=Magenta confirmed)
+          2: Orientation light COLOR      (0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite)
+          3: Orientation light ACTIVATION (0=Off, 1=On, 2=WhenApproached)
           4: WC Lid sensor sensitivity    (0-4)
           6: WC Lid open automatically   (0=off, 1=on)
           7: WC Lid close automatically  (0=off, 1=on)
