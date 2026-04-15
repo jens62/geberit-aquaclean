@@ -212,34 +212,45 @@ views:
             name: Filter Reset Count
 
       # ── User Profile Settings ─────────────────────────────────────────────
-      # number entities render as sliders in HA — tap to set a new value.
+      # Structured to mirror the web UI sections. number entities render as
+      # sliders in HA — tap the value to type a new one, or drag the slider.
+
       - type: entities
-        title: User Profile
-        icon: mdi:account-cog
+        title: Shower
+        icon: mdi:shower-head
         entities:
-          - entity: number.geberit_aquaclean_anal_shower_pressure
-            name: Anal Shower Pressure
-          - entity: number.geberit_aquaclean_lady_shower_pressure
-            name: Lady Shower Pressure
-          - entity: number.geberit_aquaclean_anal_shower_position
-            name: Anal Shower Position
-          - entity: number.geberit_aquaclean_lady_shower_position
-            name: Lady Shower Position
           - entity: number.geberit_aquaclean_water_temperature
             name: Water Temperature
-          - entity: number.geberit_aquaclean_wc_seat_heat
-            name: WC Seat Heat
-          - entity: number.geberit_aquaclean_dryer_temperature
-            name: Dryer Temperature
-          - entity: number.geberit_aquaclean_dryer_state
-            name: Dryer State
-          - entity: number.geberit_aquaclean_odour_extraction
-            name: Odour Extraction
+          - entity: number.geberit_aquaclean_anal_shower_position
+            name: Spray Arm Position
+          - entity: number.geberit_aquaclean_anal_shower_pressure
+            name: Spray Intensity
           - entity: number.geberit_aquaclean_oscillator_state
-            name: Oscillator State
+            name: Oscillation (0=Off, 1=On)
 
-      # ── Orientation Light (common/device-wide settings) ───────────────────
-      # number entities render as sliders in HA — tap to set a new value.
+      - type: entities
+        title: Lady Shower
+        icon: mdi:shower-head
+        entities:
+          - entity: number.geberit_aquaclean_water_temperature
+            name: Water Temperature (shared)
+          - entity: number.geberit_aquaclean_lady_shower_position
+            name: Spray Arm Position
+          - entity: number.geberit_aquaclean_lady_shower_pressure
+            name: Spray Intensity
+
+      - type: entities
+        title: Dryer
+        icon: mdi:hair-dryer
+        entities:
+          - entity: number.geberit_aquaclean_dryer_state
+            name: Dryer (0=Off, 1=On)
+          - entity: number.geberit_aquaclean_dryer_temperature
+            name: Air Temperature
+          - entity: number.geberit_aquaclean_dryer_spray_intensity
+            name: Spray Intensity
+
+      # Orientation Light — common (device-wide) settings
       - type: entities
         title: Orientation Light
         icon: mdi:lightbulb-outline
@@ -250,8 +261,34 @@ views:
             name: Brightness
           - entity: number.geberit_aquaclean_orientation_light_color
             name: Color (0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite)
+
+      - type: entities
+        title: Odour Extraction
+        icon: mdi:air-filter
+        entities:
+          - entity: number.geberit_aquaclean_odour_extraction
+            name: Odour Extraction (0=Off, 1=On)
           - entity: number.geberit_aquaclean_odour_extraction_run_on
-            name: Odour Extraction Run-On
+            name: Run-On (0=Off, 1=On)
+
+      # WC Lid — common (device-wide) settings
+      - type: entities
+        title: WC Lid
+        icon: mdi:toilet
+        entities:
+          - entity: number.geberit_aquaclean_wc_lid_sensor_sensitivity
+            name: Sensor Sensitivity
+          - entity: number.geberit_aquaclean_wc_lid_open_automatically
+            name: Open Automatically (0=Off, 1=On)
+          - entity: number.geberit_aquaclean_wc_lid_close_automatically
+            name: Close Automatically (0=Off, 1=On)
+
+      - type: entities
+        title: Seat Heating
+        icon: mdi:heat-wave
+        entities:
+          - entity: number.geberit_aquaclean_wc_seat_heat
+            name: Temperature
 
       # ── Device Information ────────────────────────────────────────────────
       - type: entities
