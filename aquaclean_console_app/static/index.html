@@ -514,6 +514,14 @@
       <div class="ps-section">
         <div class="ps-section-title">Lady Shower</div>
         <div class="ps-row">
+          <span>Water Temperature</span>
+          <div class="ps-stepper" data-id="6" data-kind="profile" data-min="0" data-max="5">
+            <button class="ps-step-btn" onclick="stepDec(this)">−</button>
+            <span class="ps-step-val" id="ps-sv-6b">—</span>
+            <button class="ps-step-btn" onclick="stepInc(this)">+</button>
+          </div>
+        </div>
+        <div class="ps-row">
           <span>Spray Arm Position</span>
           <div class="ps-stepper" data-id="5" data-kind="profile" data-min="0" data-max="4">
             <button class="ps-step-btn" onclick="stepDec(this)">−</button>
@@ -585,14 +593,6 @@
             <span class="cs-swatch" data-val="5" style="background:#96f3f3" title="Turquoise"   onclick="setCommonSetting(3,5,this)"></span>
             <span class="cs-swatch" data-val="1" style="background:#117aff" title="Blue"        onclick="setCommonSetting(3,1,this)"></span>
           </div>
-        </div>
-        <div class="ps-row">
-          <span>Run-on Time</span>
-          <span class="ps-not-avail">not mapped</span>
-        </div>
-        <div class="ps-row">
-          <span>Sensor Sensitivity</span>
-          <span class="ps-not-avail">not mapped</span>
         </div>
       </div>
 
@@ -1195,9 +1195,11 @@
       [0,1,2,3,4,5,6,7,8,9].forEach(id => {
         if (ps[id] == null) return;
         const val = ps[id];
-        // Stepper value display
+        // Stepper value display (id=6 appears in both Shower and Lady Shower — update both)
         const sv = document.getElementById('ps-sv-' + id);
         if (sv) sv.textContent = val;
+        const svb = document.getElementById('ps-sv-' + id + 'b');
+        if (svb) svb.textContent = val;
         // Toggle checkbox
         const tog = document.getElementById('ps-tog-' + id);
         if (tog) tog.checked = val === 1;
