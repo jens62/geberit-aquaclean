@@ -58,8 +58,8 @@ class _GetStoredProfileCall53:
 
 # iPhone order from BLE log: AnalShowerPressure=2, OscillatorState=1, LadyShowerPressure=3,
 # AnalShowerPosition=4, WaterTemperature=6, WcSeatHeat=7, LadyShowerPosition=5,
-# DryerTemperature=8, OdourExtraction=0, DryerState=9
-_IPHONE_PROFILE_SETTING_IDS = [2, 1, 3, 4, 6, 7, 5, 8, 0, 9]
+# DryerTemperature=8, OdourExtraction=0, DryerState=9, DryerSprayIntensity=13
+_IPHONE_PROFILE_SETTING_IDS = [2, 1, 3, 4, 6, 7, 5, 8, 0, 9, 13]
 
 from threading import Lock
 import re
@@ -285,17 +285,20 @@ class AquaCleanBaseClient:
         await self.send_request(api_call)
 
     async def get_stored_common_settings_async(self) -> dict:
-        """Read orientation light common settings via proc 0x51.
+        """Read common (device-wide) settings via proc 0x51.
 
-        Returns a dict mapping setting_id → value for IDs 0-3.
-        IDs confirmed from BLE log (iPhone orientation-light session):
+        Returns a dict mapping setting_id → value.
+        IDs confirmed from BLE log analysis:
           0: Odour extraction run-on time (bool)
           1: Orientation light brightness (0-4)
-          2: Orientation light activation (0=On, 1=Off, 2=when approached)
-          3: Orientation light color      (0-6; 1=Blue, 2=Magenta confirmed)
+          2: Orientation light COLOR      (0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite)
+          3: Orientation light ACTIVATION (0=Off, 1=On, 2=WhenApproached)
+          4: WC Lid sensor sensitivity    (0-4)
+          6: WC Lid open automatically   (0=off, 1=on)
+          7: WC Lid close automatically  (0=off, 1=on)
         """
         cs = {}
-        for sid in [2, 1, 3, 0]:  # iPhone read order from BLE log
+        for sid in [2, 1, 3, 0, 4, 6, 7]:  # iPhone read order from BLE log (extended)
             api_call = GetStoredCommonSetting(sid)
             await self.send_request(api_call)
             cs[sid] = api_call.result(self.message_context.result_bytes)

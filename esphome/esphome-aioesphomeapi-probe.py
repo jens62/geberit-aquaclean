@@ -52,11 +52,12 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
                 seen = True
                 print("Advertisement seen:", addr, "rssi:", rssi)
 
-        # subscribe_bluetooth_le_advertisements is synchronous in current aioesphomeapi
-        # — returns the cancel callable directly, do not await
+        # Keep the advertisement subscription alive through the BLE connect phase.
+        # Cancelling it before connect causes the ESP32 to stop forwarding BLE
+        # connection state events, making every connect attempt time out.
         cancel_adv = client.subscribe_bluetooth_le_advertisements(on_adv)
         await asyncio.sleep(5.0)
-        cancel_adv()
+        # do NOT cancel here — cancel_adv() is called in the finally block below
 
         if not seen:
             print("Warning: target not seen in adverts. It may not be advertising or is connected elsewhere.")
@@ -137,6 +138,10 @@ async def probe(proxy_host: str, ble_address: str, noise_psk: str | None = None)
             pass
         if cancel_connection:
             cancel_connection()
+        try:
+            cancel_adv()
+        except Exception:
+            pass
         await client.disconnect()
 
 

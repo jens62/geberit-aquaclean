@@ -91,6 +91,7 @@ PROCEDURES = {
     (0x01, 0x13): "SubscribeNotifications",
     (0x01, 0x45): "GetStatisticsDescale",
     (0x01, 0x51): "GetStoredCommonSetting",
+    (0x01, 0x52): "SetStoredCommonSetting",
     (0x01, 0x53): "GetStoredProfileSetting_C#",
     (0x01, 0x54): "SetStoredProfileSetting_C#",
     (0x01, 0x56): "SetDeviceRegistrationLevel",
@@ -130,7 +131,27 @@ PROFILE_SETTINGS = {
     8: "DryerTemperature",
     9: "DryerState",
     10: "SystemFlush",
+    13: "DryerSprayIntensity",
 }
+
+# Common setting ID → name (proc 0x51/0x52). id=2=COLOR, id=3=ACTIVATION (confirmed 2026-04-15).
+COMMON_SETTINGS = {
+    0: "OdourExtractionRunOn",
+    1: "OrientationLightBrightness",
+    2: "OrientationLightColor",      # 0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite
+    3: "OrientationLightActivation", # 0=Off,1=On,2=WhenApproached
+    4: "WcLidSensorSensitivity",
+    5: "WcLidMaxPosition",           # unconfirmed
+    6: "WcLidOpenAutomatically",
+    7: "WcLidCloseAutomatically",
+}
+
+COMMON_SETTING_COLOR_NAMES = {
+    0: "Blue", 1: "Turquoise", 2: "Magenta", 3: "Orange",
+    4: "Yellow", 5: "WarmWhite", 6: "ColdWhite",
+}
+
+COMMON_SETTING_ACTIVATION_NAMES = {0: "Off", 1: "On", 2: "WhenApproached"}
 
 # ATT handles → channel names
 HANDLES = {
@@ -769,12 +790,33 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
 
     if (ctx, proc) == (0x01, 0x51):
         setting_id = frame.args[0] if frame.args else -1
+        setting_name = COMMON_SETTINGS.get(setting_id, f"id={setting_id}")
         if frame.is_response:
             if frame.result and len(frame.result) >= 2:
                 val = int.from_bytes(frame.result[:2], "little")
-                return f"Common setting value={val}"
+                extra = ""
+                if setting_id == 2:
+                    extra = f" ({COMMON_SETTING_COLOR_NAMES.get(val, '?')})"
+                elif setting_id == 3:
+                    extra = f" ({COMMON_SETTING_ACTIVATION_NAMES.get(val, '?')})"
+                return f"{setting_name}={val}{extra}"
             return "ACK"
-        return f"Reading common setting id={setting_id} (mapping TBD)"
+        return f"Reading {setting_name}"
+
+    if (ctx, proc) == (0x01, 0x52):
+        if frame.is_response:
+            return "ACK"
+        if frame.args and len(frame.args) >= 3:
+            setting_id = frame.args[0]
+            val = int.from_bytes(frame.args[1:3], "little")
+            setting_name = COMMON_SETTINGS.get(setting_id, f"id={setting_id}")
+            extra = ""
+            if setting_id == 2:
+                extra = f" ({COMMON_SETTING_COLOR_NAMES.get(val, '?')})"
+            elif setting_id == 3:
+                extra = f" ({COMMON_SETTING_ACTIVATION_NAMES.get(val, '?')})"
+            return f"Setting {setting_name}={val}{extra}"
+        return f"SetStoredCommonSetting args={frame.args.hex()}"
 
     if (ctx, proc) == (0x01, 0x56):
         return "ACK" if frame.is_response else f"Setting device registration level (args={frame.args.hex()})"
@@ -797,6 +839,11 @@ def _md_phase(ctx: int, proc: int, args: bytes) -> str:
         return "Profile Settings"
     if (ctx, proc) == (0x01, 0x54):
         setting_name = PROFILE_SETTINGS.get(args[1] if len(args) > 1 else -1, "Setting")
+        return f"User Action: Change {setting_name}"
+    if (ctx, proc) == (0x01, 0x51):
+        return "Common Settings"
+    if (ctx, proc) == (0x01, 0x52):
+        setting_name = COMMON_SETTINGS.get(args[0] if args else -1, "Setting")
         return f"User Action: Change {setting_name}"
     if (ctx, proc) == (0x01, 0x09):
         cmd_name = COMMANDS.get(args[0] if args else -1, "Command")
