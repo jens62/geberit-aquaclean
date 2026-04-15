@@ -572,9 +572,9 @@
         <div class="ps-section-title">Orientation Light</div>
         <div class="ps-row">
           <span>Activation</span>
-          <select id="cs-sel-2" class="ps-sel" onchange="setCommonSetting(2,parseInt(this.value),this)">
-            <option value="0">On</option>
-            <option value="1">Off</option>
+          <select id="cs-sel-3" class="ps-sel" onchange="setCommonSetting(3,parseInt(this.value),this)">
+            <option value="0">Off</option>
+            <option value="1">On</option>
             <option value="2">When Approached</option>
           </select>
         </div>
@@ -588,14 +588,14 @@
         </div>
         <div class="ps-row">
           <span>Colour</span>
-          <div id="cs-color-3" style="display:flex;gap:0.4rem;flex-wrap:wrap">
-            <span class="cs-swatch" data-val="0" style="background:#fff1d8" title="Warm White"  onclick="setCommonSetting(3,0,this)"></span>
-            <span class="cs-swatch" data-val="6" style="background:#ffee7c" title="Yellow"      onclick="setCommonSetting(3,6,this)"></span>
-            <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange"      onclick="setCommonSetting(3,3,this)"></span>
-            <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta"     onclick="setCommonSetting(3,2,this)"></span>
-            <span class="cs-swatch" data-val="4" style="background:#e4efff" title="Cold White"  onclick="setCommonSetting(3,4,this)"></span>
-            <span class="cs-swatch" data-val="5" style="background:#96f3f3" title="Turquoise"   onclick="setCommonSetting(3,5,this)"></span>
-            <span class="cs-swatch" data-val="1" style="background:#117aff" title="Blue"        onclick="setCommonSetting(3,1,this)"></span>
+          <div id="cs-color-2" style="display:flex;gap:0.4rem;flex-wrap:wrap">
+            <span class="cs-swatch" data-val="5" style="background:#fff1d8" title="Warm White"  onclick="setCommonSetting(2,5,this)"></span>
+            <span class="cs-swatch" data-val="4" style="background:#ffee7c" title="Yellow"      onclick="setCommonSetting(2,4,this)"></span>
+            <span class="cs-swatch" data-val="3" style="background:#ffad3f" title="Orange"      onclick="setCommonSetting(2,3,this)"></span>
+            <span class="cs-swatch" data-val="2" style="background:#eb4994" title="Magenta"     onclick="setCommonSetting(2,2,this)"></span>
+            <span class="cs-swatch" data-val="6" style="background:#e4efff" title="Cold White"  onclick="setCommonSetting(2,6,this)"></span>
+            <span class="cs-swatch" data-val="1" style="background:#96f3f3" title="Turquoise"   onclick="setCommonSetting(2,1,this)"></span>
+            <span class="cs-swatch" data-val="0" style="background:#117aff" title="Blue"        onclick="setCommonSetting(2,0,this)"></span>
           </div>
         </div>
       </div>
@@ -1281,13 +1281,13 @@
         const sv = document.getElementById('cs-sv-1');
         if (sv) sv.textContent = cs[1];
       }
-      if (cs[2] != null) {
-        const sel = document.getElementById('cs-sel-2');
-        if (sel && document.activeElement !== sel) sel.value = cs[2];
-      }
       if (cs[3] != null) {
-        document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
-          s.classList.toggle('active', parseInt(s.dataset.val) === cs[3]);
+        const sel = document.getElementById('cs-sel-3');
+        if (sel && document.activeElement !== sel) sel.value = cs[3];
+      }
+      if (cs[2] != null) {
+        document.querySelectorAll('#cs-color-2 .cs-swatch').forEach(s => {
+          s.classList.toggle('active', parseInt(s.dataset.val) === cs[2]);
         });
       }
       if (cs[4] != null) {
@@ -1307,8 +1307,8 @@
     async function setCommonSetting(settingId, value, triggerEl) {
       if (isNaN(value)) return;
       // For color swatches: optimistic UI update
-      if (settingId === 3) {
-        document.querySelectorAll('#cs-color-3 .cs-swatch').forEach(s => {
+      if (settingId === 2) {
+        document.querySelectorAll('#cs-color-2 .cs-swatch').forEach(s => {
           s.classList.toggle('active', parseInt(s.dataset.val) === value);
         });
       }

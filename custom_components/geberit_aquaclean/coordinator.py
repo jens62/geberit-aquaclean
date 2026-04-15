@@ -434,8 +434,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 # Common (device-wide) settings
                 "cs_odour_extraction_run_on":      (common_settings or {}).get(0),
                 "cs_orientation_light_brightness": (common_settings or {}).get(1),
-                "cs_orientation_light_activation": (common_settings or {}).get(2),
-                "cs_orientation_light_color":      (common_settings or {}).get(3),
+                "cs_orientation_light_activation": (common_settings or {}).get(3),
+                "cs_orientation_light_color":      (common_settings or {}).get(2),
                 "cs_wc_lid_sensor_sensitivity":    (common_settings or {}).get(4),
                 "cs_wc_lid_open_automatically":    (common_settings or {}).get(6),
                 "cs_wc_lid_close_automatically":   (common_settings or {}).get(7),

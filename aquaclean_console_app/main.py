@@ -470,8 +470,8 @@ _PROFILE_SETTING_RANGES = {
 _COMMON_SETTING_MQTT_KEYS = {
     0: "odourExtractionRunOn",
     1: "orientationLightBrightness",
-    2: "orientationLightActivation",
-    3: "orientationLightColor",
+    2: "orientationLightColor",       # id=2 = color (confirmed via BLE log 2026-04-15)
+    3: "orientationLightActivation",  # id=3 = activation (confirmed via BLE log 2026-04-15)
     4: "wcLidSensorSensitivity",
     6: "wcLidOpenAutomatically",
     7: "wcLidCloseAutomatically",
@@ -482,8 +482,8 @@ _COMMON_SETTING_MQTT_KEYS = {
 _COMMON_SETTING_RANGES = {
     0: (0, 1),   # Odour extraction run-on time: boolean
     1: (0, 4),   # Orientation light brightness
-    2: (0, 2),   # Orientation light activation: 0=On, 1=Off, 2=when approached
-    3: (0, 6),   # Orientation light color
+    2: (0, 6),   # Orientation light color: 0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite
+    3: (0, 2),   # Orientation light activation: 0=Off, 1=On, 2=WhenApproached
     4: (0, 4),   # WC Lid sensor sensitivity (confirmed 2026-04-15)
     6: (0, 1),   # WC Lid open automatically: boolean (confirmed 2026-04-15)
     7: (0, 1),   # WC Lid close automatically: boolean (confirmed 2026-04-15)
@@ -2985,8 +2985,8 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
             }
             for key, name, mqtt_key, sid, icon, min_val, max_val in [
                 ("orientation_light_brightness",  "Orientation Light Brightness",  "orientationLightBrightness",  1, "mdi:brightness-6",       0, 4),
-                ("orientation_light_activation",  "Orientation Light Activation",  "orientationLightActivation",  2, "mdi:motion-sensor",       0, 2),
-                ("orientation_light_color",       "Orientation Light Color",       "orientationLightColor",       3, "mdi:palette",             0, 6),
+                ("orientation_light_activation",  "Orientation Light Activation",  "orientationLightActivation",  3, "mdi:motion-sensor",       0, 2),
+                ("orientation_light_color",       "Orientation Light Color",       "orientationLightColor",       2, "mdi:palette",             0, 6),
                 ("odour_extraction_run_on",       "Odour Extraction Run-On",       "odourExtractionRunOn",        0, "mdi:air-purifier",        0, 1),
                 ("wc_lid_sensor_sensitivity",     "WC Lid Sensor Sensitivity",     "wcLidSensorSensitivity",      4, "mdi:motion-sensor",       0, 4),
                 ("wc_lid_open_automatically",     "WC Lid Open Automatically",     "wcLidOpenAutomatically",      6, "mdi:door-open",           0, 1),
