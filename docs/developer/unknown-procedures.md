@@ -242,7 +242,79 @@ mostly labeled `unknown_NN` except for:
 
 ---
 
-## 6. How to investigate unknowns systematically
+## 6. E0003 blocked state — ctx=0x00 vs ctx=0x01 split (confirmed 2026-04-16)
+
+### Finding: ctx=0x00 procedures are immune to the blocked state
+
+**Source:** Thomas Bingel C# UWP app log (`local-assets/geberit-aquaclean-logs/log-of-th-bingel-in-blocked-state.log`)
+running against the user's own device (SN=HB2304EU298413) in a confirmed blocked state.
+
+| Procedure | Context | Proc | Result in blocked state |
+|-----------|---------|------|------------------------|
+| GetDeviceIdentification | `0x00` | `0x82` | ✅ **SUCCEEDS** — no subscription needed |
+| GetDeviceInitialOperationDate | `0x00` | `0x86` | ✅ **SUCCEEDS** — no subscription needed |
+| GetSystemParameterList | `0x01` | `0x0D` | ❌ **FAILS** — CONTROL ACK received but zero data frames follow |
+
+**Conclusion:** The block is application-layer only within the ctx=0x01 command space. BLE transport is healthy — GATT connections succeed, CONTROL ACKs arrive, the device just sends no data. This is NOT a BLE timeout at the radio level.
+
+### C# app behavior in blocked state (no recovery mechanism)
+
+The thomas-bingel C# reference app:
+1. Connects, reads DeviceIdentification (ctx=0x00) → **succeeds**
+2. Sends NO 0x11/0x13 subscribe sequence at all
+3. Calls GetSystemParameterList (ctx=0x01) → receives CONTROL ACK, waits for data → **times out**
+4. Retries 50+ times with no change in strategy
+5. Crashes with exit code `0xffffffff` (unhandled exception)
+
+**Key insight:** The block affects the C# reference app too. This confirms it is a fundamental device protocol issue, not a bug specific to this bridge.
+
+### Using `geberit-ble-probe.py` as an E0003 diagnostic
+
+The probe script is the most direct tool for diagnosing a blocked device:
+
+```bash
+# Step 1: confirm BLE connectivity (ctx=0x00, always works in blocked state)
+python tools/geberit-ble-probe.py --proc 0x82 --ctx 0x00
+# Expected: DeviceIdentification data — if this fails, BLE is not connected at all
+
+# Step 2: confirm the block (ctx=0x01, fails in blocked state)
+python tools/geberit-ble-probe.py --proc 0x0D --ctx 0x01 \
+    --args 08 00 01 02 03 04 05 06 09
+# Expected in blocked state: "FAILED: BLEPeripheralTimeoutError"
+# Expected when unlocked: 61-byte result with SPL values
+
+# Step 3: attempt unlock (send subscribe sequence)
+python tools/geberit-ble-probe.py --proc 0x0D --ctx 0x01 \
+    --args 08 00 01 02 03 04 05 06 09
+# The --no-subscribe flag is NOT set, so subscribe runs automatically
+# If this succeeds, the 4×Proc_0x11 + 4×Proc_0x13 sequence unlocked the device
+```
+
+### InfoFrame encodes firmware version
+
+The device broadcasts InfoFrame packets during the initial BLE connection flood (10 identical frames).
+One byte field encodes the firmware version:
+
+```
+InfoFrame bytes: 80 01 30 14 0C 03 00 03 00 00 00 00 31 30 00 12 00 B7 08 00
+                 ↑                                    ↑  ↑        ↑
+                 header (0x80+ = INFO)               RsHi RsLo   TsLo
+```
+
+| Field | Offset | Value | Interpretation |
+|-------|--------|-------|----------------|
+| `RsHi` | 12 | `0x31` | ASCII `'1'` — first digit of RS version |
+| `RsLo` | 13 | `0x30` | ASCII `'0'` — second digit of RS version |
+| `TsLo` | 15 | `0x12` | `18` decimal — TS build number |
+
+Result: firmware version `RS10.0 TS18` → displayed as `10.18` (matches `GetSOCApplicationVersions` response).
+
+This means firmware version is readable without calling any procedure — it arrives in the InfoFrame
+flood before any request is sent, even in the blocked state.
+
+---
+
+## 7. How to investigate unknowns systematically
 
 1. Run `ble-decode.py` with `--markdown` on a relevant log:
    ```bash
