@@ -24,13 +24,18 @@ class GetSOCApplicationVersions:
         return bytearray()
 
     def result(self, data):
-        logger.trace("GetDeviceIdentification: result")
-        logger.info("Not yet fully implemented.")
-        readable_data = ''.join(f'{b:02X}' for b in data)
-        logger.trace(f"data: {readable_data}")
-        # ds = Deserializer.Deserializer()
-        # di = ds.deserialize(SOCApplicationVersion.SOCApplicationVersion, data)
-        # return di
-        return readable_data
+        logger.trace("GetSOCApplicationVersions: result")
+        # Response layout (4 bytes): [RsHi][RsLo][TsLo][TsHi]
+        # RsHi/RsLo are ASCII chars forming the RS version string (e.g. 0x31,0x30 → "10").
+        # TsLo+TsHi form the TS build number as uint16 LE (e.g. 0x12,0x00 → 18).
+        # Confirmed from InfoFrame fields in thomas-bingel C# log and live probe:
+        #   GetSOCApplicationVersions → 31 30 12 00 → "RS10.0 TS18"
+        if data and len(data) >= 3:
+            rs = ''.join(chr(b) if 0x20 <= b <= 0x7E else f"{b:02X}" for b in data[0:2])
+            ts = data[2] + (data[3] << 8 if len(data) >= 4 else 0)
+            version = f"RS{rs}.0 TS{ts}"
+            logger.debug(f"GetSOCApplicationVersions: {version}")
+            return version
+        return data.hex() if data else ""
 
     
