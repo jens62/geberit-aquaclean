@@ -130,7 +130,7 @@ value. See `memory/ble-procedure-investigation-method.md` for the full 0x0A vs 0
 values used for? They form the init handshake but the semantic meaning of the data
 is unknown.
 
-#### Proc 0x0B session-claim hypothesis (2026-04-16) — NOT implemented
+#### Proc 0x0B session-claim hypothesis (2026-04-16) — **DISPROVEN**
 
 **Observation:** BLE log analysis of 4 capture sessions (`1_Neuanmeldung nach blocking
 state 1.txt` through `4_dritte anmedlung.txt`) shows the iPhone sends exactly these
@@ -150,18 +150,15 @@ a new client has taken over — and may clear stale state left by a previous cli
 correct, adding them to the bridge's init sequence could allow recovery from E0003
 (device visible but no response) without a power cycle.
 
-**Why not implemented:** The purpose of writing to this storage area is unknown. The
-bridge currently writes nothing to the "init area" (proc 0x0B/0x0A storage). Writing
-arbitrary values to an unknown storage layer on every connect risks overwriting
-device-internal state. The hypothesis needs to be validated before the writes are
-added.
+**Validation (2026-04-16, commit 0bce5a2):**
+1. Baseline confirmed (commit 4691631): 4×0x11 + 4×0x13 alone does NOT recover E0003
+2. 3×0x0B writes implemented and tested in two modes:
+   - **bleak (local BLE):** E0003 persists — GetSystemParameterList timed out (failure #1)
+   - **ESP32 proxy:** E0003 persists — GetSystemParameterList timed out (failures #1 and #2)
+3. **Result: DISPROVEN.** The 3×0x0B writes have no effect on E0003 recovery.
 
-**How to validate:**
-1. Reproduce E0003 (let iPhone connect and disconnect without bridge power-cycling)
-2. Confirm the existing 4×0x11 + 4×0x13 sequence does NOT recover the device
-3. Add the 3×0x0B writes to the init sequence and retry
-4. If E0003 recovers: hypothesis confirmed — writes are safe to keep
-5. If E0003 still persists: writes are not the cause; look elsewhere
+**Not implemented:** Reverted after disproof. E0003 root cause remains unknown.
+The device requires a power cycle to recover from this state.
 
 ---
 
