@@ -32,36 +32,6 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredCommonSetting
 from aquaclean_console_app.aquaclean_utils                                               import utils
 
 
-class _SetStoredProfileCall0B:
-    """Write a stored profile setting using proc 0x0B (iPhone init-area write).
-
-    Payload: [setting_id, val_lo, val_hi] (3 bytes).
-    Confirmed from BLE log: args 020200 / 010200 / 030200 (2026-04-16).
-    """
-    _attr = ApiCallAttribute(0x01, 0x0B, 0x01)
-
-    def __init__(self, setting_id: int, value: int):
-        self._payload = bytes([setting_id, value & 0xFF, (value >> 8) & 0xFF])
-
-    def get_api_call_attribute(self) -> ApiCallAttribute:
-        return self._attr
-
-    def get_payload(self) -> bytes:
-        return self._payload
-
-    def result(self, data: bytearray):
-        return bytes(data)
-
-
-# Session-claim writes: iPhone sends these after SubscribeNotifications on every connect.
-# Value is always 2 for all three — not user preferences, a session registration token.
-_SESSION_CLAIM_WRITES = [
-    (2, 2),   # AnalShowerPressure = 2
-    (1, 2),   # OscillatorState    = 2
-    (3, 2),   # LadyShowerPressure = 2
-]
-
-
 class _GetStoredProfileCall53:
     """Read a stored profile setting using proc 0x53 (C# GetStoredProfileSetting).
 
@@ -206,20 +176,18 @@ class AquaCleanBaseClient:
 
         NOTE: The iPhone also sends 3×Proc(0x0B) writes immediately after 0x13
         (AnalShowerPressure=2, OscillatorState=2, LadyShowerPressure=2 — always
-        value=2 regardless of user settings). These ARE implemented here as a
-        hypothesis test: baseline log confirmed that 4×0x11 + 4×0x13 alone does
-        NOT recover E0003. Testing whether adding 0x0B writes enables recovery.
+        value=2 regardless of user settings). These were tested as a session-claim
+        hypothesis (commit 0bce5a2, 2026-04-16): DISPROVEN. E0003 persisted in both
+        bleak and ESP32 proxy test runs with 0x0B writes present. Not implemented.
         See docs/developer/unknown-procedures.md § "Proc 0x0B session-claim hypothesis".
         """
-        logger.debug("iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13 + 3×Proc_0x0B (hypothesis test)")
+        logger.debug("iPhone init sequence: 4×Proc_0x11 + 4×Proc_0x13")
         for payload in SubscribeNotifications.PRE_PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x11)
             await self.send_request(api_call)
         for payload in SubscribeNotifications.PAYLOADS:
             api_call = SubscribeNotifications(payload, proc=0x13)
             await self.send_request(api_call)
-        for setting_id, value in _SESSION_CLAIM_WRITES:
-            await self.send_request(_SetStoredProfileCall0B(setting_id, value))
 
     async def get_stored_profile_settings_async(self) -> dict:
         """Read all user profile settings via proc 0x53 (C# GetStoredProfileSetting).
