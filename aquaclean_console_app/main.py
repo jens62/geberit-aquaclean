@@ -2678,13 +2678,7 @@ class ApiMode:
         except asyncio.CancelledError:
             return
 
-    async def _fetch_state(self, client, _skip_profile: bool = False, _with_identification: bool = True):
-        if _with_identification:
-            # GetDeviceIdentification (proc 0x82, ctx 0x00) must be called before
-            # GetSystemParameterList (proc 0x0D, ctx 0x01) in every BLE session.
-            # The device ACKs GetSPL frames but returns no data until it has seen
-            # a ctx=0x00 call first (confirmed by probe testing in stuck state).
-            await client.base_client.get_device_identification_async(0)
+    async def _fetch_state(self, client, _skip_profile: bool = False):
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
         result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 9])
         # Update device_state before _on_demand's finally fires so the
@@ -2711,25 +2705,9 @@ class ApiMode:
         return {**state, "profile_settings": profile_settings}
 
     async def _fetch_state_and_info(self, client):
-        """Used for the first on-demand poll only: fetch state + identification in one BLE session.
-
-        Call order is critical in stuck state (e.g. after iPhone app disconnects):
-        GetDeviceIdentification (proc 0x82, ctx=0x00) must immediately precede
-        GetSystemParameterList (proc 0x0D, ctx=0x01, FIRST+CONS).  Any ctx=0x01 calls
-        between them re-stick the device and cause GetSPL to time out with E0003.
-
-        Confirmed by probe testing 2026-04-16:
-          FIRST+CONS + GetDeviceId → GetSPL immediately = SUCCESS
-          FIRST+CONS + GetDeviceId → GetDate → GetFirmware → GetFilterStatus → GetSPL = FAIL
-
-        So the order is: GetDeviceId → GetSPL → [everything else].
-        """
-        # Step 1: GetDeviceIdentification (ctx=0x00) — unlocks GetSPL in stuck state.
+        """Used for the first on-demand poll only: fetch state + identification in one BLE session."""
         ident = await client.base_client.get_device_identification_async(0)
-
-        # Step 2: GetSystemParameterList IMMEDIATELY after — no other calls in between.
-        # _with_identification=False because GetDeviceId was already called above.
-        state = await self._fetch_state(client, _skip_profile=True, _with_identification=False)
+        state = await self._fetch_state(client, _skip_profile=True)
 
         # Step 3: Remaining identification calls (safe to do after GetSPL succeeds).
         initial_op_date = await client.base_client.get_device_initial_operation_date()
