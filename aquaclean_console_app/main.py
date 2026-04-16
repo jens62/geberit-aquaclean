@@ -2713,15 +2713,43 @@ class ApiMode:
     async def _fetch_state_and_info(self, client):
         """Used for the first on-demand poll only: fetch state + identification in one BLE session.
 
-        Identification (_fetch_info) is fetched FIRST because GetDeviceIdentification
-        (proc 0x82, ctx 0x00) must precede GetSystemParameterList (proc 0x0D, ctx 0x01)
-        in every BLE session — the device ACKs GetSPL but returns no data until it has
-        seen a ctx=0x00 call.  _fetch_state is called with _with_identification=False
-        since _fetch_info already satisfied that requirement.
-        Profile settings come last — after GetFilterStatus — to avoid exhausting the device.
+        Call order is critical in stuck state (e.g. after iPhone app disconnects):
+        GetDeviceIdentification (proc 0x82, ctx=0x00) must immediately precede
+        GetSystemParameterList (proc 0x0D, ctx=0x01, FIRST+CONS).  Any ctx=0x01 calls
+        between them re-stick the device and cause GetSPL to time out with E0003.
+
+        Confirmed by probe testing 2026-04-16:
+          FIRST+CONS + GetDeviceId → GetSPL immediately = SUCCESS
+          FIRST+CONS + GetDeviceId → GetDate → GetFirmware → GetFilterStatus → GetSPL = FAIL
+
+        So the order is: GetDeviceId → GetSPL → [everything else].
         """
-        info  = await self._fetch_info(client)
+        # Step 1: GetDeviceIdentification (ctx=0x00) — unlocks GetSPL in stuck state.
+        ident = await client.base_client.get_device_identification_async(0)
+
+        # Step 2: GetSystemParameterList IMMEDIATELY after — no other calls in between.
+        # _with_identification=False because GetDeviceId was already called above.
         state = await self._fetch_state(client, _skip_profile=True, _with_identification=False)
+
+        # Step 3: Remaining identification calls (safe to do after GetSPL succeeds).
+        initial_op_date = await client.base_client.get_device_initial_operation_date()
+        fw = await client.base_client.get_firmware_version_list_async()
+        try:
+            filter_status = await client.base_client.get_filter_status_async()
+        except BLEPeripheralTimeoutError:
+            logger.warning("GetFilterStatus (0x59) timed out — device may be stuck for this proc; skipping, filter_status=None")
+            filter_status = None
+
+        info = {
+            "sap_number": ident.sap_number,
+            "serial_number": ident.serial_number,
+            "production_date": ident.production_date,
+            "description": ident.description,
+            "initial_operation_date": str(initial_op_date),
+            "firmware_versions": fw,
+            "filter_status": filter_status,
+        }
+
         # Profile settings last — after GetFilterStatus — to avoid exhausting the device.
         profile_settings = await client.base_client.get_stored_profile_settings_async()
         self.service.device_state["profile_settings"] = profile_settings
