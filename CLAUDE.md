@@ -445,6 +445,20 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **BLE sniffing needed — unimplemented procedures from thomas-bingel tmp.txt.**
+  Two procedures cannot be implemented without first capturing their wire format
+  from the official Geberit Home iOS app.  **When asked "What should I sniff?",
+  start here.**
+
+  | Proc | Name | What to trigger in the app | What to look for in the capture |
+  |------|------|----------------------------|---------------------------------|
+  | `0x08` | `SetActiveProfileSetting(settingId, value)` | Change a profile setting (pressure, temperature, position) during an active shower session — this proc sets a value *live*, distinct from the stored profile setting (proc 0x0A/0x0B) | Outgoing write to WRITE_0/WRITE_1 after the slider moves; note payload bytes: how many, which byte is the settingId, which bytes encode the value and in what endianness |
+  | `0x56` | `SetDeviceRegistrationLevel(registrationLevel)` | App startup / first connect — the iPhone may send this once per session, value 257 (0x0101) mentioned in C# tmp.txt | Any outgoing ctx=0x01 proc=0x56 write; note full payload (expected ≥ 2 bytes for value 257) |
+
+  **Tools:** use `tools/ble-session-replay.py --dry-run` to verify the proc
+  appears in a captured log.  Use `tools/geberit-ble-probe.py --proc 0xNN`
+  to test a candidate payload on the live device after identifying the format.
+
 - **Investigate E0002 / E0003 failure after iPhone app closes BLE connection.**
   After the Geberit iPhone app connects and then is closed, the bridge cannot
   reconnect to the device. Sequence observed in log:
