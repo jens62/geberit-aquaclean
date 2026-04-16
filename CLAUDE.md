@@ -464,10 +464,11 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   Root cause confirmed: the Geberit device only accepts one BLE connection and stops advertising
   while the Geberit Home App is connected. Bridge gets E0002 during the iPhone session (expected).
   After the app closes, the device resumes advertising — bridge auto-recovers in 1-2 polls.
-  The old E0003-after-iPhone pattern (ec6186bb log) was caused by the param 7 bug in GetSPL:
-  after iPhone disconnect, when the device starts advertising again, the bridge reconnected but
-  GetSPL with param 7 timed out in the remaining stuck state → E0003 → cascade. With param 7
-  removed, the bridge reconnects and GetSPL succeeds immediately — full automatic recovery.
+  The old E0003-after-iPhone pattern (ec6186bb log) was caused by a GetSPL parameter count bug:
+  in stuck state the device accepts a maximum of 8 parameters; the bridge was sending 9
+  ([0,1,2,3,4,5,6,7,9]) → ACK but no data → E0003. Removing index 7 reduced the count to 8
+  and restored normal operation. Param 7 itself is not toxic — any 9th param causes the same
+  timeout (confirmed by probe: [0,1,2,3,4,5,6,0,9] also fails).
   E0002/E0003 hints updated to instruct users to close the Geberit Home App.
   **Confirmed in:** `local-assets/geberit-aquaclean-logs/standalone/aquaclean-36844ec779b6ddcb8dd1f45eb4f42286b1158f90-TRACE-E0002-andE0003-overcome-inbetween-i-worked-with-iphone-App-and-it-recoverd-automatically.log`
 
