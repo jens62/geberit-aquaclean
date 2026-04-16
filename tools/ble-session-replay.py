@@ -46,6 +46,9 @@ Usage examples
 
   # Skip bridge's subscribe sequence (replay log frames as-is, including 0x11/0x13):
   python tools/ble-session-replay.py <log> --no-pre-subscribe
+
+  # Send Proc_0x55 before the log calls (test if it unlocks GetSPL):
+  python tools/ble-session-replay.py <log> --procs 0x0D --prepend 0x01:0x55:01
 """
 
 import argparse
@@ -235,11 +238,10 @@ class _Assembler:
             # Outgoing FIRST frame (FrameType=0, IsCount=1, Count=N>0)
             cons_needed = (frame[0] >> 1) & 7
             first_payload = frame[2:20]
-            # Payload format matches SINGLE: [msg_type=0x04][0xFF][0x00][body_len][crc_hi][crc_lo][body...]
-            body_len = first_payload[3]
+            # FIRST frame payload: [0xFF][0x00][body_len][ctr_lo][ctr_hi][node][ctx][proc][arg_len][args...]
             self._pending = {
                 "cons_needed": cons_needed,
-                "body_len": body_len,
+                "body_len": None,   # computed in _assemble() from first_payload[2]
                 "first": frame,
                 "cons": [],
             }
@@ -262,11 +264,13 @@ class _Assembler:
         self._pending = None
 
         # FIRST frame: bytes[2..19] = first_payload (18 bytes); byte[1] = first data byte
-        # Data layout inside first_payload: [msg_type][0xFF][0x00][body_len][crc_hi][crc_lo][body_start...]
-        # body starts at first_payload[6], and frame[1] is also body data
+        # FIRST frames do NOT have the 0x04 msg_type byte (unlike SINGLE frames).
+        # first_payload layout: [0xFF][0x00][body_len][ctr_lo][ctr_hi][node][ctx][proc][arg_len][args...]
+        # body starts at first_payload[5] (node byte); frame[1] is also part of the data stream.
         first_payload = first[2:20]  # 18 bytes
-        body_from_first = first_payload[6:]   # 12 bytes
-        body_byte1 = bytes([first[1]])         # 1 byte
+        body_len      = first_payload[2]       # correct offset for body_len
+        body_from_first = first_payload[5:]    # 13 bytes starting at node
+        body_byte1 = bytes([first[1]])         # 1 byte — also part of the arg data
 
         parts = [body_from_first, body_byte1]
         for c in cons_frames:
@@ -388,7 +392,7 @@ class AdHocCall:
 # Config helper
 # ---------------------------------------------------------------------------
 def _load_config(config_path: Optional[str] = None):
-    cfg = configparser.ConfigParser()
+    cfg = configparser.ConfigParser(inline_comment_prefixes=('#',))
     path = config_path or os.path.join(_repo_root, 'config.ini')
     read = cfg.read(path)
     if config_path and not read:
@@ -489,17 +493,35 @@ async def run(args):
         else:
             print("(pre-subscribe skipped)\n")
 
+        if args.prepend:
+            parts = args.prepend.split(':')
+            pre_ctx  = int(parts[0], 16)
+            pre_proc = int(parts[1], 16)
+            pre_args = bytes.fromhex(parts[2]) if len(parts) > 2 and parts[2] else b''
+            pre_call = AdHocCall(pre_ctx, pre_proc, pre_args)
+            pre_name = f"Prepend(ctx=0x{pre_ctx:02X}, proc=0x{pre_proc:02X})"
+            print(f"[PRE] {pre_name}  args={pre_args.hex() or '(none)'}")
+            try:
+                await base_client.send_request(pre_call)
+                raw = pre_call.result(base_client.message_context.result_bytes)
+                if raw:
+                    print(f"      → {raw.hex()}  ({len(raw)} bytes)")
+                else:
+                    print(f"      → (empty response / OK)")
+            except Exception as exc:
+                print(f"      → FAILED: {type(exc).__name__}: {exc}")
+            print()
+
         for i, (ctx, proc, args_b, first_cons, ts, name) in enumerate(calls):
             call = AdHocCall(ctx, proc, args_b)
             mode = " [F+C]" if first_cons else ""
             print(f"[{i+1:3d}] {name}{mode}  args={args_b.hex() or '(none)'}")
             try:
-                result = await base_client.send_request(
+                await base_client.send_request(
                     call,
                     send_as_first_cons=first_cons,
-                    timeout_seconds=args.timeout,
                 )
-                raw = bytes(result) if result else b''
+                raw = call.result(base_client.message_context.result_bytes)
                 if raw:
                     print(f"      → {raw.hex()}  ({len(raw)} bytes)")
                     if len(raw) >= 2:
@@ -579,6 +601,10 @@ Examples:
                    help='ESP32 API port (default: 6053)')
     p.add_argument('--esphome-psk', metavar='PSK',
                    help='ESP32 noise PSK (default: [ESPHOME] noise_psk in config.ini)')
+    p.add_argument('--prepend', metavar='CTX:PROC[:ARGS]',
+                   help='Send one extra call before the log, e.g. "0x01:0x55:01" for Proc_0x55. '
+                        'CTX and PROC are hex; ARGS is optional hex bytes (no spaces). '
+                        'Runs after the subscribe sequence, before any log calls.')
     p.add_argument('--config', metavar='PATH',
                    help='Path to config.ini (default: config.ini in repo root)')
     return asyncio.run(run(p.parse_args()))
