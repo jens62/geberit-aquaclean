@@ -34,6 +34,9 @@ Usage examples
   # Override device and ESP32 host from config.ini:
   python tools/geberit-ble-probe.py --proc 0x05 --device AA:BB:CC:DD:EE:FF --esphome-host 192.168.0.50
 
+  # Enable TRACE logging identical to bridge TRACE output (for side-by-side comparison):
+  python tools/geberit-ble-probe.py --proc 0x0D --args ... --trace --log-file /tmp/probe-TRACE.log
+
   # GetFirmwareVersionList requires FIRST+CONS send mode:
   python tools/geberit-ble-probe.py --proc 0x0E --first-cons \\
       --args 08 01 03 04 05 06 07 08 09 00 00 00 00
@@ -75,9 +78,49 @@ _add_level('TRACE', 5)
 # ---------------------------------------------------------------------------
 # Logging: silence bridge internals; show only probe output at DEBUG+
 # ---------------------------------------------------------------------------
-logging.basicConfig(level=logging.WARNING, format='%(levelname)s  %(message)s')
+_BRIDGE_LOG_FORMAT = '%(asctime)s %(name)s %(lineno)d %(levelname)s: %(message)s'
+_BRIDGE_LOGGERS = ['aquaclean_console_app', 'aioesphomeapi']
+
+logging.basicConfig(level=logging.WARNING, format=_BRIDGE_LOG_FORMAT)
 log = logging.getLogger('probe')
 log.setLevel(logging.DEBUG)
+
+
+def _configure_logging(trace: bool, debug: bool, log_file: str | None = None):
+    """Enable bridge-compatible TRACE/DEBUG logging on --trace / --debug.
+
+    Sets aquaclean_console_app.* and aioesphomeapi.* to the requested level,
+    matching the bridge's log format so output can be compared side-by-side.
+    Optionally writes to a file (--log-file PATH).
+    """
+    if not (trace or debug):
+        return
+    level = logging.TRACE if trace else logging.DEBUG  # type: ignore[attr-defined]
+    fmt = logging.Formatter(_BRIDGE_LOG_FORMAT)
+
+    # Bring root handler up to the requested level / format.
+    root = logging.getLogger()
+    root.setLevel(level)
+    for h in root.handlers:
+        h.setFormatter(fmt)
+        h.setLevel(level)
+
+    # Optional file handler shared by all bridge loggers.
+    file_handler = None
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(fmt)
+        file_handler.setLevel(level)
+
+    for name in _BRIDGE_LOGGERS:
+        lg = logging.getLogger(name)
+        lg.setLevel(level)
+        if file_handler:
+            lg.addHandler(file_handler)
+
+    if file_handler:
+        log.addHandler(file_handler)
+        log.info(f"Logging to file: {log_file}  level={'TRACE' if trace else 'DEBUG'}")
 
 # ---------------------------------------------------------------------------
 # Bridge imports (after path and level setup)
@@ -355,7 +398,16 @@ Example: investigate proc 0x07 with arg 0x00
                    help='Path to config.ini (default: config.ini in repo root)')
     p.add_argument('--pre-check', action='store_true',
                    help='Call GetDeviceIdentification first to confirm device identity')
-    return asyncio.run(run(p.parse_args()))
+    p.add_argument('--debug', action='store_true',
+                   help='Enable DEBUG logging for bridge modules (aquaclean_console_app.*, aioesphomeapi.*)'
+                        ' — same format as bridge log files for side-by-side comparison')
+    p.add_argument('--trace', action='store_true',
+                   help='Enable TRACE logging for bridge modules (more verbose than --debug)')
+    p.add_argument('--log-file', metavar='PATH',
+                   help='Write log output to FILE in addition to stderr (useful for --trace)')
+    args = p.parse_args()
+    _configure_logging(trace=args.trace, debug=args.debug, log_file=args.log_file)
+    return asyncio.run(run(args))
 
 
 if __name__ == '__main__':
