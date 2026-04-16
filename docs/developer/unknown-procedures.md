@@ -130,6 +130,39 @@ value. See `memory/ble-procedure-investigation-method.md` for the full 0x0A vs 0
 values used for? They form the init handshake but the semantic meaning of the data
 is unknown.
 
+#### Proc 0x0B session-claim hypothesis (2026-04-16) — NOT implemented
+
+**Observation:** BLE log analysis of 4 capture sessions (`1_Neuanmeldung nach blocking
+state 1.txt` through `4_dritte anmedlung.txt`) shows the iPhone sends exactly these
+three 0x0B writes on every connect, immediately after the 4×0x13 subscription sequence:
+
+```
+args=020200  →  AnalShowerPressure = 2  (setting_id=2, value=2)
+args=010200  →  OscillatorState    = 2  (setting_id=1, value=2)
+args=030200  →  LadyShowerPressure = 2  (setting_id=3, value=2)
+```
+
+The value is always `2` for all three regardless of the user's actual shower settings.
+This is not preference restoration — the real settings arrive later via proc 0x53/0x54.
+
+**Hypothesis:** These writes "claim" the application session — telling the device that
+a new client has taken over — and may clear stale state left by a previous client. If
+correct, adding them to the bridge's init sequence could allow recovery from E0003
+(device visible but no response) without a power cycle.
+
+**Why not implemented:** The purpose of writing to this storage area is unknown. The
+bridge currently writes nothing to the "init area" (proc 0x0B/0x0A storage). Writing
+arbitrary values to an unknown storage layer on every connect risks overwriting
+device-internal state. The hypothesis needs to be validated before the writes are
+added.
+
+**How to validate:**
+1. Reproduce E0003 (let iPhone connect and disconnect without bridge power-cycling)
+2. Confirm the existing 4×0x11 + 4×0x13 sequence does NOT recover the device
+3. Add the 3×0x0B writes to the init sequence and retry
+4. If E0003 recovers: hypothesis confirmed — writes are safe to keep
+5. If E0003 still persists: writes are not the cause; look elsewhere
+
 ---
 
 ## 2. Unknown Common Setting IDs (proc 0x51/0x52)
