@@ -2678,7 +2678,13 @@ class ApiMode:
         except asyncio.CancelledError:
             return
 
-    async def _fetch_state(self, client, _skip_profile: bool = False):
+    async def _fetch_state(self, client, _skip_profile: bool = False, _with_identification: bool = True):
+        if _with_identification:
+            # GetDeviceIdentification (proc 0x82, ctx 0x00) must be called before
+            # GetSystemParameterList (proc 0x0D, ctx 0x01) in every BLE session.
+            # The device ACKs GetSPL frames but returns no data until it has seen
+            # a ctx=0x00 call first (confirmed by probe testing in stuck state).
+            await client.base_client.get_device_identification_async(0)
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
         result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 9])
         # Update device_state before _on_demand's finally fires so the
@@ -2707,14 +2713,15 @@ class ApiMode:
     async def _fetch_state_and_info(self, client):
         """Used for the first on-demand poll only: fetch state + identification in one BLE session.
 
-        Call order keeps GetFilterStatus early (position ~23 in the session) so the
-        device has not yet been exhausted by the 10×Proc_0x53 profile reads.
-        Profile settings come last — after filter status is safely captured.
-        Session call count: init(18) + SPL(1) + ident(1) + date(1) + fw(1) + filter(1)
-                            + profile(10) = 33 total; filter at #23, profile at #24-33.
+        Identification (_fetch_info) is fetched FIRST because GetDeviceIdentification
+        (proc 0x82, ctx 0x00) must precede GetSystemParameterList (proc 0x0D, ctx 0x01)
+        in every BLE session — the device ACKs GetSPL but returns no data until it has
+        seen a ctx=0x00 call.  _fetch_state is called with _with_identification=False
+        since _fetch_info already satisfied that requirement.
+        Profile settings come last — after GetFilterStatus — to avoid exhausting the device.
         """
-        state = await self._fetch_state(client, _skip_profile=True)
         info  = await self._fetch_info(client)
+        state = await self._fetch_state(client, _skip_profile=True, _with_identification=False)
         # Profile settings last — after GetFilterStatus — to avoid exhausting the device.
         profile_settings = await client.base_client.get_stored_profile_settings_async()
         self.service.device_state["profile_settings"] = profile_settings
