@@ -178,29 +178,38 @@ This is what `Deserializer.py` does: `data_array[i] = LE(result[i*5+2:i*5+6])`.
 
 **Known parameter indices (from `GetSystemParameterList.py` docstring — authoritative):**
 
-| Index | Name | Observed idle value | Notes |
-|-------|------|---------------------|-------|
-| 0 | userIsSitting | 0 | 0 = not sitting |
-| 1 | analShowerIsRunning | **1280** | NOT boolean — idle ≠ 0 |
-| 2 | ladyShowerIsRunning | **2** | NOT boolean — idle ≠ 0 |
-| 3 | dryerIsRunning | **3** | NOT boolean — idle ≠ 0 |
-| 4 | descalingState | 4 | enum; idle = 4 |
-| 5 | descalingDurationInMinutes | 5 | integer |
-| 6 | lastErrorCode | 6 | integer |
-| 7 | *unnamed* | 7 | polled by bridge; semantics unknown |
-| 8 | *pos 8 = duplicate of idx 4* | 11 (0x0b) | iPhone request has idx 4 twice |
-| 9 | orientationLightState | 0 | 0 = off |
-| 10 | *unknown* | 0 | polled by iPhone only |
-| 11 | *unknown* | 0 | polled by iPhone only |
+| Index | Name | Value when NOT running | Value when running | Notes |
+|-------|------|------------------------|--------------------|-------|
+| 0 | userIsSitting | 0 | non-zero | 0 = not sitting |
+| 1 | analShowerIsRunning | 0 | **1280 (0x0500)** observed | val=0 confirmed by C# unit test |
+| 2 | ladyShowerIsRunning | 0 | non-zero | |
+| 3 | dryerIsRunning | 0 | non-zero | |
+| 4 | descalingState | 0 | non-zero | enum |
+| 5 | descalingDurationInMinutes | 0 | integer | |
+| 6 | lastErrorCode | 0 | integer | |
+| 7 | *unnamed* | 0 | ? | polled by bridge; semantics unknown |
+| 8 | *pos 8 = duplicate of idx 4* | — | — | iPhone request has idx 4 twice |
+| 9 | orientationLightState | 0 | non-zero | 0 = off |
+| 10 | *unknown* | 0 | ? | polled by iPhone only |
+| 11 | *unknown* | 0 | ? | polled by iPhone only |
 
 Our bridge polls `[0,1,2,3,4,5,7,9]` (8 params). The iPhone polls
 `[0,1,2,3,4,5,6,7,4,8,9,10]` (12 params, index 4 duplicated).
 
-**⚠ Params 1–7 are NOT simple booleans — their idle values are non-zero.**
-Source: `Connect-Toggle-Lid-shutdown-app.txt` — all 36 SPL responses across the
-full session are byte-for-byte identical, before and after the ToggleLid command.
-This also confirms: **lid state is not tracked by any GetSystemParameterList parameter.**
-To understand active vs idle encoding, a log with a shower actively running is needed.
+**Encoding confirmed correct:** `val != 0` = running/active; `val == 0` = not running.
+Source: thomas-bingel C# unit test (`DeserializerTest.DeserializationOfSystemParameterListTest`)
+confirms `DataArray[0..5] = 0` for an all-idle device response.
+The bridge code `data_array[i] != 0` is correct and has been since day one.
+
+**1280 (0x0500) for analShowerIsRunning:** observed value when the anal shower is active.
+The raw bytes are `[0x00, 0x05, 0x00, 0x00]` (LE). The `0x05` in byte position 1 may
+encode the current shower settings (temperature, position, intensity, oscillation) as
+a packed compound value — but the exact bit/nibble layout is unconfirmed. A BLE capture
+with different profile settings active during a shower would allow decoding.
+
+Source: `Connect-Toggle-Lid-shutdown-app.txt` — all 36 SPL responses are
+byte-for-byte identical across the session. **Lid state is not tracked by any
+GetSystemParameterList parameter.**
 
 ---
 
@@ -288,6 +297,69 @@ with 8 different payloads. The class keeps both payload lists as class attribute
 
 `result()` returns `bytes(data)` — no DTO needed. The response is a minimal ACK
 echo with no structured data to extract.
+
+---
+
+## Bridge Discoveries Beyond the C# Reference
+
+The thomas-bingel C# reference implementation
+([github.com/thomas-bingel/geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean))
+is the closest known public reverse-engineering of the Geberit BLE protocol. The
+aquaclean-bridge goes beyond it in the following areas — discovered independently
+through iPhone BLE traffic analysis and empirical testing.
+
+### 1. GetFilterStatus (proc `0x59`) — full implementation
+
+The C# reference has **no implementation of filter status reading**.
+The bridge fully implements `GetFilterStatus` with a working 13-byte request payload
+and a complete record ID mapping:
+
+| Record ID | Field | Notes |
+|-----------|-------|-------|
+| 0 | `status` | Always 1 |
+| 1 | `shower_cycles` | Cumulative shower counter |
+| 7 | `days_until_filter_change` | 0 = replace now; 365 = just reset |
+| 8 | `last_filter_reset` | Unix timestamp |
+| 9 | `next_filter_change` | Unix timestamp; 0 after reset |
+| 10 | `filter_reset_count` | Total resets performed |
+
+This allows users to track filter lifetime and trigger `ResetFilterCounter` at the
+right time — something the C# reference cannot do at all.
+
+### 2. Dryer Spray Intensity (ProfileSetting index 13)
+
+The C# `ProfileSettings` enum ends at index 10 (`SystemFlush`).
+The bridge discovered **index 13 = Dryer Spray Intensity** independently via iPhone
+BLE traffic analysis. This setting is writable via proc 0x54 (`SetStoredProfileSetting`)
+and is exposed through the bridge's REST API, MQTT, and the web UI.
+
+### 3. Session Unlock Sequence (`SubscribeNotifications`, proc `0x11` / `0x13`)
+
+The C# reference has no implementation of the notification subscription handshake.
+The bridge discovered — through empirical testing — that **4× Proc(0x11) followed by
+4× Proc(0x13)** must be sent at the start of every BLE session to unlock the device for
+polling. Without this sequence, a device whose previous BLE session (e.g. from the
+official Geberit Home app) ended without properly unsubscribing will return only CONTROL
+ACKs in response to `GetSystemParameterList` — no data frames arrive.
+
+This unlock sequence is now sent on every `connect_ble_only()` and `connect()`.
+See `_subscribe_notifications()` in `AquaCleanBaseClient.py`.
+
+### 4. 13-Byte Padded Payload Rule (critical protocol constraint)
+
+All "get list" procedures (`GetSystemParameterList`, `GetFirmwareVersionList`,
+`GetFilterStatus`) require **exactly 13 bytes** of argument payload. The C# reference
+does not document this constraint. Sending a shorter payload causes the device to
+return **error 0xF7** immediately. This was discovered through BLE traffic analysis
+and is now a documented, tested requirement.
+
+### 5. SPL idx-byte unreliability
+
+The response to `GetSystemParameterList` contains an "index echo" byte per record.
+The C# reference reads values positionally (correct behavior) but does not document
+that the idx bytes are **unreliable from record 2 onward** — the device always returns
+`0x00` regardless of which parameter was requested. This has been confirmed empirically
+from iPhone traffic logs. The bridge decodes positionally and documents this explicitly.
 
 ---
 

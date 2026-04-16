@@ -7,6 +7,8 @@ Port of [Thomas Bingel](https://github.com/thomas-bingel)'s C# [geberit-aquaclea
 **Key enhancements over the original:**
 - **Non-blocking, on-demand BLE** — connects only for the duration of each request, then releases the connection immediately. The original holds BLE permanently, causing the device to stop responding after a few days. On-demand mode eliminates this entirely.
 - **ESPHome Bluetooth Proxy** — use an ESP32 as a remote BLE-to-IP bridge, eliminating the need for local Bluetooth hardware; run the bridge anywhere on your network
+- **Filter status & lifetime tracking** — reads the ceramic honeycomb filter counter directly from the device: days until replacement, last reset date, total shower cycles. The original C# library has no filter status support.
+- **Dryer spray intensity** — exposes the dryer spray intensity setting (read and write), discovered through independent BLE protocol analysis. Not present in the original C# library.
 - **MQTT** — publishes device state in real time; accepts control and configuration commands
 - **REST API + web UI** — live dashboard, per-request queries, runtime configuration without restart
 - **CLI** — one-shot commands for scripting, diagnostics, and automation
@@ -236,6 +238,13 @@ This project introduces an **on-demand BLE connection mode** that eliminates the
 | Long-term stability | Device stops responding after a few days | No long-term connection held — device stays healthy |
 | Latency | Instant (always connected) | ~1–2 s per request (connect + query + disconnect) |
 | Use case | Continuous monitoring, service mode | REST API, scripting, integrations that poll occasionally |
+
+Beyond connection handling, this project also extends the protocol coverage of the original:
+
+| Feature | Original C# | This project |
+|---------|-------------|-------------|
+| Filter status & lifetime | ✗ not implemented | ✓ days until replacement, last reset, shower cycle count |
+| Dryer spray intensity | ✗ not in original | ✓ read + write, discovered via independent BLE analysis |
 
 On-demand mode is selected in `config.ini`:
 
