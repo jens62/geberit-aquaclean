@@ -344,7 +344,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     ident = await client.base_client.get_device_identification_async(0)
                     initial_op_date = await client.base_client.get_device_initial_operation_date()
                     state = await client.base_client.get_system_parameter_list_async(
-                        [0, 1, 2, 3, 4, 5, 7, 9]
+                        [0, 1, 2, 3, 4, 5, 6, 7, 9]
                     )
                     stats = await client.base_client.get_statistics_descale_async()
                     soc_versions = await client.base_client.get_soc_application_versions_async()
@@ -392,6 +392,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "is_anal_shower_running": state.data_array[1] != 0,
                 "is_lady_shower_running": state.data_array[2] != 0,
                 "is_dryer_running": state.data_array[3] != 0,
+                "last_error_code": state.data_array[6],
                 # Descale statistics
                 "days_until_next_descale": stats.days_until_next_descale,
                 "days_until_shower_restricted": stats.days_until_shower_restricted,

@@ -979,6 +979,20 @@ Reads/writes stored user settings by index. Getters already in `AquaCleanClient`
 Reads live device state (what's happening right now). Indices 0–9 are the only ones known.
 These are NOT DpIds — separate index space.
 
+**SPL parameter semantics — confirmed from BLE log (2026-04-15):**
+The code comment labels are misleading. Actual semantics confirmed from toilet-use session log:
+- **Index 0** — labelled `userIsSitting` in code, actually fires on **user approach/proximity detection** (lid opens ~17s after this becomes 1, before user actually sits)
+- **Index 1** — labelled `analShowerIsRunning`, actually tracks **user sitting**
+- **Index 3** — labelled `dryerIsRunning`, actually tracks **anal shower running** (confirmed: changes when anal shower started by pressing device button)
+- Dryer state: not visible in any SPL parameter change in the captured session — may be at an index not polled by the bridge, or polled differently by the iPhone
+
+**Proc 0x55 — fixed init-sequence call (2026-04-15):**
+- Sent by iPhone once per session, at the END of the init sequence (after all GetStoredCommonSetting reads), before any user action
+- Payload: `[0x01]` (1 byte), response: `0x00`
+- NOT approach-triggered — present in Connect-Toggle-Lid log too (no approach in that session)
+- Purpose unknown — possibly "session ready" / "enable remote control"
+- The lid opening 17s after Proc(0x55) in the Stuhlgang log was coincidental: the device's own proximity sensor opened the lid independently; the app just happened to connect while the user was approaching
+
 ### Quick-win new commands (zero new protocol code needed)
 All unexposed Commands enum entries just need REST endpoints + web UI wiring.
 No new protocol code needed — `SetCommandAsync(Commands.X)` already handles all of them.

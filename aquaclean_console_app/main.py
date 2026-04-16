@@ -2664,18 +2664,20 @@ class ApiMode:
 
     async def _fetch_state(self, client, _skip_profile: bool = False):
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
-        result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 7, 9])
+        result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 9])
         # Update device_state before _on_demand's finally fires so the
         # "disconnected" SSE broadcast carries fresh values.
         self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
         self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
         self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
         self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
+        self.service.device_state["last_error_code"]        = result.data_array[6]
         state = {
             "is_user_sitting":        self.service.device_state["is_user_sitting"],
             "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
             "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
             "is_dryer_running":       self.service.device_state["is_dryer_running"],
+            "last_error_code":        self.service.device_state["last_error_code"],
         }
         if _skip_profile:
             return state
