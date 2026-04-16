@@ -215,7 +215,7 @@ class AquaCleanBaseClient:
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
 
         api_call = GetSystemParameterList(parameter_list)
-        response = await self.send_request(api_call)
+        response = await self.send_request(api_call, send_as_first_cons=True)
         logger.trace(f"response: {response}")
         result = response.result(self.message_context.result_bytes)
         return result
