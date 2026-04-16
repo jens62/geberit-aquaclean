@@ -2686,7 +2686,7 @@ class ApiMode:
             # a ctx=0x00 call first (confirmed by probe testing in stuck state).
             await client.base_client.get_device_identification_async(0)
         from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
-        result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 9])
+        result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 9])
         # Update device_state before _on_demand's finally fires so the
         # "disconnected" SSE broadcast carries fresh values.
         self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
