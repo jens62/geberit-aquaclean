@@ -27,6 +27,7 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus       
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SubscribeNotifications         import SubscribeNotifications
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredProfileSetting        import SetStoredProfileSetting
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStoredCommonSetting         import GetStoredCommonSetting
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetNodeList                    import GetNodeList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredCommonSetting         import SetStoredCommonSetting
 
 from aquaclean_console_app.aquaclean_utils                                               import utils
@@ -328,6 +329,11 @@ class AquaCleanBaseClient:
         logger.debug(f"result: {result}")
 
         return result
+
+    async def get_node_list_async(self) -> dict:
+        api_call = GetNodeList()
+        await self.send_request(api_call)
+        return api_call.result(self.message_context.result_bytes)
 
     async def get_soc_application_versions_async(self):
         api_call = GetSOCApplicationVersions()

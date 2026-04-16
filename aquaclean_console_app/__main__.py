@@ -63,8 +63,8 @@ def entry_point():
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
-        'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
-        'filter-status', 'firmware-version-list', 'profile-settings',
+        'info', 'identification', 'initial-operation-date', 'soc-versions', 'node-list',
+        'statistics-descale', 'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
         'toggle-lid', 'toggle-anal', 'reset-filter-counter',
         # app config / home assistant (no BLE required)

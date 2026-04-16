@@ -167,6 +167,10 @@ class RestApiService:
         async def get_system_parameters():
             return await self._api_mode.get_system_parameters()
 
+        @app.get("/data/node-list")
+        async def get_node_list():
+            return await self._api_mode.get_node_list()
+
         @app.get("/data/soc-versions")
         async def get_soc_versions():
             return await self._api_mode.get_soc_versions()
