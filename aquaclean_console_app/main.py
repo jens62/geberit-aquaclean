@@ -2095,6 +2095,22 @@ class ApiMode:
         self.service.device_state["is_dryer_running"] = val
         return {"is_dryer_running": val}
 
+    async def get_node_list(self):
+        topic = self.service.mqttConfig['topic']
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            result = await self.service.client.base_client.get_node_list_async()
+        else:
+            result = await self._on_demand(self._fetch_node_list)
+        await self.service.mqtt_service.send_data_async(
+            f"{topic}/peripheralDevice/information/nodeList",
+            str(result))
+        return result
+
+    async def _fetch_node_list(self, client):
+        return await client.base_client.get_node_list_async()
+
     async def _fetch_soc_versions(self, client):
         versions = await client.base_client.get_soc_application_versions_async()
         return {"soc_versions": str(versions)}
@@ -3505,6 +3521,8 @@ async def run_cli(args):
         elif args.command == 'initial-operation-date':
             date = await client.base_client.get_device_initial_operation_date()
             result["data"] = {"initial_operation_date": str(date)}
+        elif args.command == 'node-list':
+            result["data"] = await client.base_client.get_node_list_async()
         elif args.command == 'soc-versions':
             versions = await client.base_client.get_soc_application_versions_async()
             result["data"] = {"soc_versions": str(versions)}
@@ -3701,8 +3719,8 @@ if __name__ == "__main__":
         'status', 'system-parameters',
         'user-sitting-state', 'anal-shower-state', 'lady-shower-state', 'dryer-state',
         # device info queries
-        'info', 'identification', 'initial-operation-date', 'soc-versions', 'statistics-descale',
-        'filter-status', 'firmware-version-list', 'profile-settings',
+        'info', 'identification', 'initial-operation-date', 'soc-versions', 'node-list',
+        'statistics-descale', 'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
         'toggle-lid', 'toggle-anal', 'reset-filter-counter',
         # app config / home assistant (no BLE required)
