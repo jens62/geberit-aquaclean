@@ -459,16 +459,17 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   appears in a captured log.  Use `tools/geberit-ble-probe.py --proc 0xNN`
   to test a candidate payload on the live device after identifying the format.
 
-- **Investigate E0002 / E0003 failure after iPhone app closes BLE connection.**
-  After the Geberit iPhone app connects and then is closed, the bridge cannot
-  reconnect to the device. Sequence observed in log:
-  E0002 (device not found) × 4 → circuit breaker fires → ESP32 restarted →
-  E0003 (device visible but no response) — bridge stuck until device power-cycles.
-  Hypothesis: device holds a BLE GATT connection to the iPhone for a timeout
-  period after the app closes; the ESP32 scanner sees no advertisements during
-  that window (Geberit does not advertise while connected to another host).
-  **Log:** `local-assets/geberit-aquaclean-logs/standalone/aquaclean-ec6186bb342b2f4e93fd82c672a5f13a450011c3-TRACE-setting-the-lady-shower-pressure-work-locked-after-access-with-iphone.log`
-  (E0002 sequence starts at line 49128, E0003 at line 64499)
+- ~~**Investigate E0002 / E0003 failure after iPhone app closes BLE connection.**~~
+  **RESOLVED (2026-04-16, commit 36844ec).**
+  Root cause confirmed: the Geberit device only accepts one BLE connection and stops advertising
+  while the Geberit Home App is connected. Bridge gets E0002 during the iPhone session (expected).
+  After the app closes, the device resumes advertising — bridge auto-recovers in 1-2 polls.
+  The old E0003-after-iPhone pattern (ec6186bb log) was caused by the param 7 bug in GetSPL:
+  after iPhone disconnect, when the device starts advertising again, the bridge reconnected but
+  GetSPL with param 7 timed out in the remaining stuck state → E0003 → cascade. With param 7
+  removed, the bridge reconnects and GetSPL succeeds immediately — full automatic recovery.
+  E0002/E0003 hints updated to instruct users to close the Geberit Home App.
+  **Confirmed in:** `local-assets/geberit-aquaclean-logs/standalone/aquaclean-36844ec779b6ddcb8dd1f45eb4f42286b1158f90-TRACE-E0002-andE0003-overcome-inbetween-i-worked-with-iphone-App-and-it-recoverd-automatically.log`
 
 - **Fix `send_request()` — `call_count` not decremented on `asyncio.CancelledError`.**
   **File:** `aquaclean_core/Clients/AquaCleanBaseClient.py`, `send_request()`, lines ~315–334.

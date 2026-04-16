@@ -49,23 +49,28 @@ E0001 = ErrorCode(
 )
 E0002 = ErrorCode(
     "E0002", "BLE device not found (ESP32 proxy)", "BLE", "ERROR",
-    hint="Ensure the Geberit AquaClean is powered on and within BLE range of the ESP32 proxy. "
-         "Try moving the ESP32 closer to the device. "
+    hint="The Geberit AquaClean was not found via BLE. "
+         "Most likely cause: the Geberit Home App is open on your phone — "
+         "the device only accepts one BLE connection and stops advertising while the app is connected. "
+         "Close the Geberit Home App completely, then wait ~30 seconds — polling will resume automatically. "
+         "If the app is not running: ensure the AquaClean is powered on and within BLE range of the ESP32 proxy. "
          "If the device was recently visible and nothing moved, the ESP32 BLE scanner may be stuck — "
          "power-cycle the ESP32 to recover. "
          "Verify with: python esphome/ble-scan.py <esp32-ip>",
 )
 E0003 = ErrorCode(
     "E0003", "BLE connection timeout", "BLE", "ERROR",
-    hint="The toilet did not respond in time. "
+    hint="The toilet was found but did not respond in time. "
+         "If the Geberit Home App is open or was recently closed: close the app completely — "
+         "the bridge and the app cannot share a BLE connection. "
+         "The bridge will auto-recover within 1-2 polls once the app is closed. "
          "If you just pressed a button (e.g. Toggle Lid), this is normal — "
-         "the connection briefly resets after a command and polling will resume automatically within 1-2 minutes. "
-         "No action needed. "
-         "If this error appears on its own without a preceding button press: "
+         "the connection briefly resets after a command and polling resumes automatically within 1-2 minutes. "
+         "If this error appears without any of the above: "
          "1) Wait 2 minutes — it often recovers by itself. "
-         "2) Power cycle the Geberit AquaClean (unplug for 10 seconds). "
+         "2) Power-cycle the Geberit AquaClean (unplug for 10 seconds). "
          "3) Restart the Bluetooth adapter on the host. "
-         "If using an ESP32 proxy, also power cycle it.",
+         "If using an ESP32 proxy, also power-cycle it.",
 )
 E0004 = ErrorCode(
     "E0004", "GATT service not found", "BLE", "ERROR",
