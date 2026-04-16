@@ -138,7 +138,7 @@ class AdHocCall:
 # ---------------------------------------------------------------------------
 def _load_config(config_path: Optional[str] = None):
     """Return (esphome_host, esphome_port, esphome_psk, device_id) from config.ini."""
-    cfg = configparser.ConfigParser()
+    cfg = configparser.ConfigParser(inline_comment_prefixes=('#',))
     path = config_path or os.path.join(_repo_root, 'config.ini')
     read = cfg.read(path)
     if config_path and not read:
@@ -172,6 +172,12 @@ def _print_result(raw: bytes, ctx: int, proc: int):
               f"   int16 LE: {struct.unpack_from('<h', raw)[0]}")
     if len(raw) >= 4:
         print(f"  uint32 LE: {struct.unpack_from('<I', raw)[0]}")
+    # If most bytes are printable ASCII, show the null-separated strings
+    printable = sum(0x20 <= b < 0x7F or b == 0 for b in raw)
+    if printable == len(raw) and any(0x20 <= b < 0x7F for b in raw):
+        parts = [s for s in raw.split(b'\x00') if s]
+        decoded = [p.decode('ascii', errors='replace') for p in parts]
+        print(f"  Strings : {decoded}")
     # Proc-specific interpretation
     if (ctx, proc) == (0x01, 0x51) and len(raw) >= 2:
         val = struct.unpack_from('<H', raw)[0]
@@ -184,6 +190,21 @@ def _print_result(raw: bytes, ctx: int, proc: int):
         print(f"  → SOC version = {v1}{v2}.{build}")
     elif (ctx, proc) == (0x01, 0x05) and len(raw) >= 1:
         print(f"  → GetNodeList: A={raw[0]}, B({len(raw)-1} bytes)={raw[1:].hex()}")
+    elif (ctx, proc) == (0x00, 0x82) and len(raw) >= 26:
+        # DeviceIdentification struct (offsets confirmed from live device response):
+        #   [0:12]  SAP number (12 bytes)
+        #   [12:26] Serial number (14 bytes)
+        #   [26:32] 6 null padding bytes
+        #   [32:42] Production date (10 bytes)
+        #   [42:]   Description (null-padded)
+        sap    = raw[0:12].rstrip(b'\x00').decode('ascii', errors='replace')
+        serial = raw[12:26].rstrip(b'\x00').decode('ascii', errors='replace')
+        prod   = raw[32:42].rstrip(b'\x00').decode('ascii', errors='replace') if len(raw) >= 42 else '?'
+        desc   = raw[42:].rstrip(b'\x00').decode('ascii', errors='replace') if len(raw) >= 43 else '?'
+        print(f"  → SAP        : {sap}")
+        print(f"  → Serial     : {serial}")
+        print(f"  → Production : {prod}")
+        print(f"  → Description: {desc}")
 
 
 # ---------------------------------------------------------------------------
@@ -238,22 +259,39 @@ async def run(args):
             await base_client.subscribe_notifications_async()
             print("Subscribed.")
 
+        if args.pre_check:
+            print("\nPre-check: GetDeviceIdentification (ctx=0x00, proc=0x82)")
+            try:
+                pre_call = AdHocCall(0x00, 0x82, b'')
+                await base_client.send_request(pre_call)
+                raw = pre_call.result(base_client.message_context.result_bytes)
+                if len(raw) >= 42:
+                    sap    = raw[0:12].rstrip(b'\x00').decode('ascii', errors='replace')
+                    serial = raw[12:26].rstrip(b'\x00').decode('ascii', errors='replace')
+                    prod   = raw[32:42].rstrip(b'\x00').decode('ascii', errors='replace')
+                    desc   = raw[42:].rstrip(b'\x00').decode('ascii', errors='replace')
+                    print(f"  SAP: {sap}  Serial: {serial}  Production: {prod}  Desc: {desc}")
+                else:
+                    print(f"  Raw ({len(raw)} bytes): {raw.hex()}")
+            except Exception as exc:
+                print(f"  Pre-check FAILED: {type(exc).__name__}: {exc}")
+            print()
+
         call = AdHocCall(ctx, proc, args_bytes)
 
         for i in range(args.repeat):
             label = f"Call {i+1}/{args.repeat}" if args.repeat > 1 else "Call"
-            print(f"\n{label}")
+            print(f"\n{label}: {proc_name}")
             try:
-                result = await base_client.send_request(
+                await base_client.send_request(
                     call,
                     send_as_first_cons=args.first_cons,
-                    timeout_seconds=args.timeout,
                 )
-                raw = bytes(result) if result else b''
+                raw = call.result(base_client.message_context.result_bytes)
                 print(f"  Result ({len(raw)} bytes):")
                 _print_result(raw, ctx, proc)
             except Exception as exc:
-                print(f"  FAILED: {type(exc).__name__}: {exc}")
+                print(f"  FAILED: {proc_name} — {type(exc).__name__}: {exc}")
 
     finally:
         try:
@@ -315,6 +353,8 @@ Example: investigate proc 0x07 with arg 0x00
                    help='Call the procedure N times (default: 1)')
     p.add_argument('--config', metavar='PATH',
                    help='Path to config.ini (default: config.ini in repo root)')
+    p.add_argument('--pre-check', action='store_true',
+                   help='Call GetDeviceIdentification first to confirm device identity')
     return asyncio.run(run(p.parse_args()))
 
 
