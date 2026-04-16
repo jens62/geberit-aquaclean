@@ -75,8 +75,8 @@ class AquaCleanClient(IAquaCleanClient):
             await asyncio.sleep(interval)
 
     async def _state_changed_timer_elapsed(self):
-        """Original polling logic with specific parameter list [0, 1, 2, 3, 4, 5, 6, 7, 9]"""
-        result = await self.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 9])
+        """Original polling logic with specific parameter list [0, 1, 2, 3, 4, 5, 6, 9]"""
+        result = await self.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 9])
         device_state_changed_event_args = DeviceStateChangedEventArgs(
             IsUserSitting=result.data_array[0] != 0,
             IsAnalShowerRunning=result.data_array[1] != 0,
