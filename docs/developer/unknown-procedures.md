@@ -196,33 +196,37 @@ Confirmed IDs: 0–9 and 13. IDs **10, 11, 12** fall between `DryerState`(9) and
 
 ---
 
-## 4. Unknown GetSystemParameterList Indices
+## 4. GetSystemParameterList — Confirmed and Unknown Indices
 
-The bridge polls indices `[0, 1, 2, 3, 4, 5, 7, 9]`. The following indices are
-either unpolled or polled but unconfirmed:
+The bridge polls indices `[0, 1, 2, 3, 4, 5, 6, 9]` (8 params). Current status:
 
-| Index | Code label | C# polls? | Status |
-|-------|-----------|-----------|--------|
-| 6 | `lastErrorCode` | **Yes** (C# polls `[0,1,2,3,4,5,6,9]`) | **Not polled by bridge** — C# reference names it `lastErrorCode`. Bridge polls index 7 instead. |
-| 7 | *(unknown)* | No | Polled by bridge only; meaning **unconfirmed**. Not in C# reference request list. |
-| 8 | *(not polled)* | No | **Unknown** — never polled by either bridge or C# reference |
-| 9 | `orientationLightState` | Yes | Polled by bridge; label from C# source comment — semantics **not confirmed** from logs |
+### Confirmed semantics (BLE log 2026-04-15 + spl-monitor 2026-04-17)
 
-**Key finding (2026-04-16):** The thomas-bingel C# reference (`GetSystemParameterList.cs`)
-polls index 6 and names it `lastErrorCode`. The bridge polls index 7 instead — a deviation
-that means the bridge never reads the device's last error code from SPL.
-Source: `aquaclean-core/Api/CallClasses/GetSystemParameterList.cs` docstring.
+| Index | C# label | Confirmed semantics | Notes |
+|-------|----------|---------------------|-------|
+| 0 | `userIsSitting` | **Approach/presence detection** — changes when user enters toilet proximity | ✓ confirmed |
+| 2 | `ladyShowerIsRunning` | **Lady shower running** | ✓ confirmed (04-17 session: changed when lady shower started) |
+| 3 | `dryerIsRunning` | **Anal shower running** — C# label is WRONG | ✓ confirmed (04-15 and 04-17: changes when anal shower runs) |
+| 4 | `descalingState` | Descaling state | from C# |
+| 5 | `descalingDurationInMinutes` | Descaling duration | from C# |
+| 6 | `lastErrorCode` | Last error code | from C# |
 
-**Note on confirmed vs assumed SPL semantics:** Several currently-polled indices
-have misleading code labels. Confirmed (2026-04-15 Stuhlgang log):
-- Index 0 = proximity/approach detection (not "user sitting")
-- Index 1 = user actually sitting (not "anal shower running")
-- Index 3 = anal shower running (not "dryer running")
+### Unconfirmed / unknown
 
-See `memory/ble-procedure-investigation-method.md` for details.
+| Index | C# label | Observed | Status |
+|-------|----------|----------|--------|
+| 1 | `analShowerIsRunning` | **Never changed** in any monitored session, including sessions with both showers running | **Unknown** — semantics not confirmed. Possibly WC seat sensor (weight-triggered?) vs index 0's proximity sensor. Dryer running state is NOT reported by any currently polled index. |
+| 9 | `orientationLightState` | **N/A on HB2304EU298413** — device echoes 0 for this param, indicating it is not supported | Device does not expose orientation light state via GetSPL on this hardware variant. Bridge still requests it but result is always 0 and currently unused. |
 
-**How to investigate:** Sniff a session that exercises dryer and orientation light
-state changes, and correlate SPL index changes with what happens on the device.
+### Fix applied (2026-04-17)
+
+**The bridge had `is_anal_shower_running` and `is_dryer_running` swapped:** it was reading param 3 for `is_dryer_running` (actually the anal shower) and param 1 for `is_anal_shower_running` (which never changes). Fixed in all code paths.
+
+### Index 7 — removed
+
+Index 7 was previously polled by the bridge but not in the C# reference list. It has been removed (any 9th param causes a stuck-device GetSPL failure when the device is in locked state — confirmed 2026-04-16). Index 7's semantics remain unknown.
+
+**How to investigate index 1:** Sniff a session where the user is definitely seated (with body weight on the WC seat) and observe whether index 1 changes. Compare against sessions with only proximity (approaching without sitting).
 
 ---
 
