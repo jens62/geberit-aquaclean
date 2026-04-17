@@ -389,9 +389,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "initial_operation_date": initial_op_date,
                 # Live state
                 "is_user_sitting": state.data_array[0] != 0,
-                "is_anal_shower_running": state.data_array[1] != 0,
+                "is_anal_shower_running": state.data_array[3] != 0,  # param 3 confirmed = anal shower
                 "is_lady_shower_running": state.data_array[2] != 0,
-                "is_dryer_running": state.data_array[3] != 0,
+                "is_dryer_running": state.data_array[1] != 0,  # param 1, dryer state unknown
                 "last_error_code": state.data_array[6],
                 # Descale statistics
                 "days_until_next_descale": stats.days_until_next_descale,

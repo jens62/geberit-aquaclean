@@ -79,9 +79,9 @@ class AquaCleanClient(IAquaCleanClient):
         result = await self.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 9])
         device_state_changed_event_args = DeviceStateChangedEventArgs(
             IsUserSitting=result.data_array[0] != 0,
-            IsAnalShowerRunning=result.data_array[1] != 0,
+            IsAnalShowerRunning=result.data_array[3] != 0,  # param 3 confirmed = anal shower
             IsLadyShowerRunning=result.data_array[2] != 0,
-            IsDryerRunning=result.data_array[3] != 0
+            IsDryerRunning=result.data_array[1] != 0,  # param 1, dryer state unknown
         )
 
         if self.last_device_state_changed_event_args is None:

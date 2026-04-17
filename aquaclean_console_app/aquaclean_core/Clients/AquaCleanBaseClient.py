@@ -448,11 +448,12 @@ class AquaCleanBaseClient:
         await self.frame_service.send_frame_async(frame)
 
         if send_as_first_cons:
-            # CONS frame on WRITE_1: type byte 0x12 (SINGLE|HasMsgType|SubIndex=1),
-            # followed by 19 zero bytes.  The full CrcMessage fits in the FIRST frame
-            # so the CONS frame carries no payload — the device requires it for the
-            # handshake regardless.
-            cons_frame = bytes([0x12]) + bytes(19)
+            # CONS frame on WRITE_1: type byte 0x12 followed by CrcMessage bytes [19:38].
+            # The FIRST frame carries CrcMessage[0:19]; the CONS must carry [19:38] so
+            # that param IDs beyond position 8 in the request list reach the device.
+            # For ≤8 params these bytes are zero padding (no behaviour change).
+            # For 9-12 params they contain the actual remaining param IDs.
+            cons_frame = bytes([0x12]) + message.serialize()[19:38]
             logger.debug(f"Sending CONS frame: {cons_frame.hex()}")
             await self.bluetooth_le_connector.send_message_cons(cons_frame)
 

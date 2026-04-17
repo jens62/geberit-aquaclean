@@ -14,14 +14,18 @@ logger = logging.getLogger(__name__)
 class GetSystemParameterList:
 
     """
-    0 userIsSitting, 
-    1 analShowerIsRunning,
-    2 ladyShowerIsRunning,
-    3 dryerIsRunning,
-    4 descalingState, 
-    5 descalingDurationInMinutes,
-    6 lastErrorCode,
-    9 orientationLightState
+    Confirmed semantics from BLE log analysis (2026-04-17):
+    0 userIsSitting        (approach/presence detection)
+    1 unknown              (C# label: analShowerIsRunning — never observed to change)
+    2 ladyShowerIsRunning  (confirmed: changes when lady shower runs)
+    3 analShowerIsRunning  (C# label: dryerIsRunning — confirmed: changes when anal shower runs)
+    4 descalingState
+    5 descalingDurationInMinutes
+    6 lastErrorCode
+    9 orientationLightState (not supported on HB2304EU298413 — echoes 0, device does not respond)
+
+    NOTE: C# labels for indices 1 and 3 are swapped relative to confirmed behavior.
+    Dryer running state is NOT exposed via any known GetSPL index.
     """
 
             

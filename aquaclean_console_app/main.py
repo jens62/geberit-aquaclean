@@ -2070,8 +2070,9 @@ class ApiMode:
     # --- Helpers ---
 
     async def _fetch_anal_shower_state(self, client):
-        result = await client.base_client.get_system_parameter_list_async([1])
-        val = result.data_array[1] != 0
+        # Param 3 confirmed = anal shower running (BLE log 2026-04-17)
+        result = await client.base_client.get_system_parameter_list_async([3])
+        val = result.data_array[0] != 0  # data_array[0] = first (only) result record
         # Update device_state here — before _on_demand's finally block fires —
         # so the "disconnected" SSE broadcast carries the fresh value, not null.
         self.service.device_state["is_anal_shower_running"] = val
@@ -2085,13 +2086,14 @@ class ApiMode:
 
     async def _fetch_lady_shower_state(self, client):
         result = await client.base_client.get_system_parameter_list_async([2])
-        val = result.data_array[2] != 0
+        val = result.data_array[0] != 0  # data_array[0] = first (only) result record
         self.service.device_state["is_lady_shower_running"] = val
         return {"is_lady_shower_running": val}
 
     async def _fetch_dryer_state(self, client):
-        result = await client.base_client.get_system_parameter_list_async([3])
-        val = result.data_array[3] != 0
+        # Param 1 semantics unconfirmed; dryer state not found in any known SPL index
+        result = await client.base_client.get_system_parameter_list_async([1])
+        val = result.data_array[0] != 0  # data_array[0] = first (only) result record
         self.service.device_state["is_dryer_running"] = val
         return {"is_dryer_running": val}
 
@@ -2684,9 +2686,9 @@ class ApiMode:
         # Update device_state before _on_demand's finally fires so the
         # "disconnected" SSE broadcast carries fresh values.
         self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
-        self.service.device_state["is_anal_shower_running"] = result.data_array[1] != 0
+        self.service.device_state["is_anal_shower_running"] = result.data_array[3] != 0  # param 3 confirmed = anal shower
         self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
-        self.service.device_state["is_dryer_running"]       = result.data_array[3] != 0
+        self.service.device_state["is_dryer_running"]       = result.data_array[1] != 0  # param 1, dryer state unknown
         self.service.device_state["last_error_code"]        = result.data_array[6]
         state = {
             "is_user_sitting":        self.service.device_state["is_user_sitting"],
@@ -3497,9 +3499,9 @@ async def run_cli(args):
             r = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
             result["data"] = {
                 "is_user_sitting":        r.data_array[0] != 0,
-                "is_anal_shower_running": r.data_array[1] != 0,
+                "is_anal_shower_running": r.data_array[3] != 0,  # param 3 confirmed = anal shower
                 "is_lady_shower_running": r.data_array[2] != 0,
-                "is_dryer_running":       r.data_array[3] != 0,
+                "is_dryer_running":       r.data_array[1] != 0,  # param 1, dryer state unknown
             }
         elif args.command == 'info':
             ident           = await client.base_client.get_device_identification_async(0)
@@ -3515,14 +3517,14 @@ async def run_cli(args):
             r = await client.base_client.get_system_parameter_list_async([0])
             result["data"] = {"is_user_sitting": r.data_array[0] != 0}
         elif args.command == 'anal-shower-state':
-            r = await client.base_client.get_system_parameter_list_async([1])
-            result["data"] = {"is_anal_shower_running": r.data_array[1] != 0}
+            r = await client.base_client.get_system_parameter_list_async([3])  # param 3 = anal shower
+            result["data"] = {"is_anal_shower_running": r.data_array[0] != 0}
         elif args.command == 'lady-shower-state':
             r = await client.base_client.get_system_parameter_list_async([2])
-            result["data"] = {"is_lady_shower_running": r.data_array[2] != 0}
+            result["data"] = {"is_lady_shower_running": r.data_array[0] != 0}
         elif args.command == 'dryer-state':
-            r = await client.base_client.get_system_parameter_list_async([3])
-            result["data"] = {"is_dryer_running": r.data_array[3] != 0}
+            r = await client.base_client.get_system_parameter_list_async([1])  # param 1, dryer unconfirmed
+            result["data"] = {"is_dryer_running": r.data_array[0] != 0}
         elif args.command == 'identification':
             ident = await client.base_client.get_device_identification_async(0)
             result["data"] = {
