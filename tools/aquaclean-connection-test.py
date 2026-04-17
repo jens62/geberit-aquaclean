@@ -483,10 +483,10 @@ async def check_ble_connect(client: APIClient, mac: str, scan_duration: float) -
         )
         return
 
-    if unsub:
-        try: unsub()
-        except Exception: pass
-
+    # IMPORTANT: keep the advertisement subscription alive through the BLE connect call.
+    # The ESP32 needs its BLE scanner active to find the device and initiate the link.
+    # Unsubscribing before bluetooth_device_connect() causes a 25s timeout.
+    # (Same pattern as ESPHomeAPIClient._connect() in the bridge.)
     addr_type = address_type_seen[0] if address_type_seen else 0
     _report("Device advertisement", _Result.PASS, f"Seen MAC {mac}  address_type={addr_type}")
 
@@ -522,9 +522,13 @@ async def check_ble_connect(client: APIClient, mac: str, scan_duration: float) -
             ),
             timeout=25.0,
         )
-        # Wait for the connection state callback
+        # Wait for the connection state callback to confirm the link is up
         mtu = await asyncio.wait_for(connected_future, timeout=20.0)
     except asyncio.TimeoutError:
+        # Unsub advertisement subscription on failure
+        if unsub:
+            try: unsub()
+            except Exception: pass
         _report(
             "BLE connect", _Result.FAIL, "Connection timed out after 25s",
             hint=(
@@ -538,6 +542,10 @@ async def check_ble_connect(client: APIClient, mac: str, scan_duration: float) -
         )
         return
     except Exception as e:
+        # Unsub advertisement subscription on failure
+        if unsub:
+            try: unsub()
+            except Exception: pass
         msg = str(e)
         if "disconnect" in msg.lower() and ("0x16" in msg or "before connected" in msg.lower()):
             _report(
@@ -572,7 +580,10 @@ async def check_ble_connect(client: APIClient, mac: str, scan_duration: float) -
             )
         return
 
-    # Connected — disconnect cleanly
+    # Connected — unsub advertisement subscription, then disconnect BLE cleanly
+    if unsub:
+        try: unsub()
+        except Exception: pass
     try:
         await asyncio.wait_for(
             client.bluetooth_device_disconnect(mac_int),
