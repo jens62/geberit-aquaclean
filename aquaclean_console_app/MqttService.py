@@ -24,6 +24,7 @@ class MqttService:
         self.ToggleLidPosition = myEvent.EventHandler()
         self.Connect           = myEvent.EventHandler()
         self.ToggleAnal        = myEvent.EventHandler()
+        self.ToggleDryer       = myEvent.EventHandler()
         self.SetBleConnection        = myEvent.EventHandler()
         self.SetEsphomeApiConnection = myEvent.EventHandler()
         self.SetPollInterval         = myEvent.EventHandler()
@@ -122,6 +123,7 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/connect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/restart")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleDryer")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/resetFilterCounter")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/config/profileSetting")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/config/commonSetting")
@@ -138,6 +140,8 @@ class MqttService:
             self.handle_toggleLidPositionMessage()
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleAnal":
             self.handle_toggle_anal_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleDryer":
+            self.handle_toggle_dryer_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/connect":
             self.handle_connect_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/disconnect":
@@ -179,6 +183,12 @@ class MqttService:
     def handle_toggle_anal_message(self):
         logger.trace("in handle_toggle_anal_message")
         for handler in self.ToggleAnal.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_toggle_dryer_message(self):
+        logger.trace("in handle_toggle_dryer_message")
+        for handler in self.ToggleDryer.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
             _ = future.result()
 

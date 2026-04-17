@@ -16,6 +16,7 @@ BUTTONS: list[tuple[str, str, str]] = [
     ("toggle_lid",           "Toggle Lid",           "geberit:lid"),
     ("toggle_anal_shower",   "Toggle Anal Shower",   "geberit:analshower"),
     ("toggle_lady_shower",   "Toggle Lady Shower",   "geberit:ladywash"),
+    ("toggle_dryer",         "Toggle Dryer",         "mdi:hair-dryer"),
     ("reset_filter_counter", "Reset Filter Counter", "mdi:air-purifier"),
 ]
 

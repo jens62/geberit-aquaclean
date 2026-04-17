@@ -153,6 +153,16 @@ class RestApiService:
             result = await self._api_mode.run_command("toggle-anal") or {}
             return {"status": "success", "command": "toggle-anal", **result}
 
+        @app.post("/command/toggle-lady")
+        async def toggle_lady():
+            result = await self._api_mode.run_command("toggle-lady") or {}
+            return {"status": "success", "command": "toggle-lady", **result}
+
+        @app.post("/command/toggle-dryer")
+        async def toggle_dryer():
+            result = await self._api_mode.run_command("toggle-dryer") or {}
+            return {"status": "success", "command": "toggle-dryer", **result}
+
         @app.post("/command/reset-filter-counter")
         async def reset_filter_counter():
             result = await self._api_mode.run_command("reset-filter-counter") or {}

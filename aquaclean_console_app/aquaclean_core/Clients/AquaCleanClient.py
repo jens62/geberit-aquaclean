@@ -112,6 +112,9 @@ class AquaCleanClient(IAquaCleanClient):
     async def toggle_lady_shower(self):
         await self.base_client.SetCommandAsync(Commands.ToggleLadyShower)
 
+    async def toggle_dryer(self):
+        await self.base_client.SetCommandAsync(Commands.ToggleDryer)
+
     async def toggle_lid_position(self):
         await self.base_client.SetCommandAsync(Commands.ToggleLidPosition)
         await asyncio.sleep(0.01)
