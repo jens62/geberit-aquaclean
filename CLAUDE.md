@@ -648,15 +648,33 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   (which has no running `ApiMode`) would still show only `from_file` values, which
   is correct behaviour for a CLI invocation.
 
-- **Investigate toggle anal shower / toggle lady shower not working.**
-  The `ToggleAnalShower` (code 0) and `ToggleLadyShower` (code 1) commands are exposed
-  via the HACS integration (`button.py`) and the standalone bridge (`MqttService.py`,
-  REST API) but do not appear to work in practice. This is a core BLE protocol issue,
-  not specific to Home Assistant. Buttons removed from `lovelace/dashboard.yaml` Controls
-  section until the root cause is identified.
-  Suggested investigation: BLE-sniff the official Geberit Home app while triggering the
-  shower manually to confirm the correct command code and procedure ID. Compare against
-  the current `SetCommandAsync(Commands.ToggleAnalShower)` implementation.
+- **Wire remaining Commands enum entries (all interfaces).**
+  `ToggleAnalShower`, `ToggleLadyShower`, `ToggleDryer`, `ToggleLidPosition`, and
+  `ResetFilterCounter` are fully wired. `ToggleOrientationLight` has REST only (no MQTT,
+  no HACS button, not in CLI choices). The following are **not wired at all** — they exist
+  in `Commands.py` but have no REST endpoint, MQTT topic, CLI command, HACS button, or
+  web UI button:
+
+  | Command | Code | Notes |
+  |---------|------|-------|
+  | `StartCleaningDevice` | 4 | Purpose unclear — self-cleaning cycle? |
+  | `ExecuteNextCleaningStep` | 5 | Companion to StartCleaningDevice |
+  | `PrepareDescaling` | 6 | Descaling workflow step 1 |
+  | `ConfirmDescaling` | 7 | Descaling workflow step 2 |
+  | `CancelDescaling` | 8 | Abort descaling |
+  | `PostponeDescaling` | 9 | Delay descaling reminder |
+  | `StartLidPositionCalibration` | 33 | Lid calibration |
+  | `LidPositionOffsetSave` | 34 | Save calibrated offset |
+  | `LidPositionOffsetIncrement` | 35 | Nudge lid offset + |
+  | `LidPositionOffsetDecrement` | 36 | Nudge lid offset − |
+  | `TriggerFlushManually` | 37 | Manual flush |
+
+  All follow the same pattern as ToggleDryer — zero new protocol code needed, just wiring
+  on all interfaces (REST, MQTT, CLI, HA discovery, HACS button, web UI).
+  Priority candidates: `TriggerFlushManually`, `PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`/`PostponeDescaling` (descaling workflow), `ToggleOrientationLight` (complete missing interfaces).
+
+  **New finding (2026-04-17):** `ToggleAnalShower` and `ToggleLadyShower` work correctly
+  when `userSitting == True`. The device only accepts shower commands while someone is seated.
 
 - **Add RSSI tracking to performance statistics (all interfaces).**
   BLE RSSI and WiFi RSSI are correlated with connect/poll timing: weak BLE signal → more
