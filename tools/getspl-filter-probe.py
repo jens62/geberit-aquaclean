@@ -7,29 +7,35 @@ Verifies the GetFilterStatus ordering fix:
   GetFilterStatus MUST be called BEFORE GetSystemParameterList with the
   12-param iPhone list [0,1,2,3,4,5,6,7,4,8,9,10].
 
-After GetSPL receives unsupported params (8/9/10 on HB2304EU298413, idx_echo=0),
-the device ACKs but ignores the next GetFilterStatus → BLEPeripheralTimeoutError.
-
 Default mode (--order filter-first):
   1. Subscribe (4×Proc_0x13)
   2. GetFilterStatus   ← first: device is clean, always succeeds
-  3. GetSPL(12 params) ← second: may corrupt device state, but filter data already captured
+  3. GetSPL(12 params) ← second
 
-Reversed mode (--order spl-first) — reproduces the bug:
+Reversed mode (--order spl-first) — reproduces the issue:
   1. Subscribe
-  2. GetSPL(12 params) ← first: corrupts device state
-  3. GetFilterStatus   ← second: ACKd but no data → timeout
+  2. GetSPL(12 params)
+  3. GetFilterStatus
+
+Logging levels
+--------------
+  --trace   Full TRACE output from bridge internals (frame-level, FrameCollector, etc.)
+  --debug   DEBUG-level bridge output (medium verbosity)
+  default   Only bridge errors (WARNING); probe itself always logs at INFO
 
 Usage
 -----
   # Test the fix (default):
   python tools/getspl-filter-probe.py
 
-  # Reproduce the bug:
-  python tools/getspl-filter-probe.py --order spl-first
+  # Full TRACE capture to file:
+  python tools/getspl-filter-probe.py --trace --log-file /tmp/probe-trace.log
 
-  # Full TRACE log:
-  python tools/getspl-filter-probe.py --trace --log-file /tmp/probe-ordering.log
+  # Reproduce the issue (spl-first):
+  python tools/getspl-filter-probe.py --order spl-first --trace --log-file /tmp/probe-spl-first.log
+
+  # Debug level (less verbose than TRACE):
+  python tools/getspl-filter-probe.py --debug
 """
 
 import argparse
@@ -81,7 +87,7 @@ def _load_config(config_path: Optional[str] = None):
     return host, port, psk, dev
 
 # ---------------------------------------------------------------------------
-# Main probe
+# Constants
 # ---------------------------------------------------------------------------
 IPHONE_PARAMS = [0, 1, 2, 3, 4, 5, 6, 7, 4, 8, 9, 10]
 PARAM_NAMES = {
@@ -98,8 +104,11 @@ PARAM_NAMES = {
     10: 'unknown_10',
 }
 
+# ---------------------------------------------------------------------------
+# Main probe
+# ---------------------------------------------------------------------------
 
-async def probe(args):
+async def probe(args, log):
     cfg_host, cfg_port, cfg_psk, cfg_dev = _load_config(args.config)
     host   = args.esphome_host or cfg_host
     port   = args.esphome_port or cfg_port
@@ -110,30 +119,27 @@ async def probe(args):
         print("ERROR: No device address. Provide --device or set [BLE] device_id in config.ini.")
         return 1
 
-    # Logging
-    log_level = logging.TRACE if args.trace else logging.WARNING
-    handlers = [logging.StreamHandler(sys.stdout)]
-    if args.log_file:
-        handlers.append(logging.FileHandler(args.log_file))
-    logging.basicConfig(level=log_level, handlers=handlers,
-                        format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s',
-                        datefmt='%H:%M:%S')
+    order_desc = ('GetFilterStatus → GetSPL  [fix — expect both ✅]'
+                  if args.order == 'filter-first' else
+                  'GetSPL → GetFilterStatus  [issue repro — expect GetFilterStatus ❌]')
+    print(f"\n=== getspl-filter-probe ===")
+    print(f"Order:  {order_desc}")
+    print(f"Device: {device}" + (f" via {host}:{port}" if host else " via local BLE"))
+    if args.trace:
+        print("Level:  TRACE (full bridge internals — see log file or scroll up)")
+    elif args.debug:
+        print("Level:  DEBUG")
+    print()
 
     connector   = BluetoothLeConnector(esphome_host=host, esphome_port=port, esphome_noise_psk=psk)
     base_client = AquaCleanBaseClient(connector)
 
-    order_desc = ('GetFilterStatus → GetSPL  [FIX — expected: both succeed]'
-                  if args.order == 'filter-first' else
-                  'GetSPL → GetFilterStatus  [BUG REPRO — expected: GetFilterStatus times out]')
-    print(f"\n=== getspl-filter-probe ===")
-    print(f"Order:  {order_desc}")
-    print(f"Device: {device}" + (f" via {host}:{port}" if host else " via local BLE"))
-    print()
-
+    log.info("Connecting to %s...", device)
     await base_client.connect_async(device)
-    print("Connected. Subscribing...")
+    log.info("Connected. Subscribing...")
     await base_client.subscribe_notifications_async()
-    print("Subscribed.\n")
+    log.info("Subscribed.")
+    print("Connected and subscribed.\n")
 
     spl_result    = None
     spl_error     = None
@@ -143,32 +149,40 @@ async def probe(args):
     async def do_spl():
         nonlocal spl_result, spl_error
         print(f"GetSPL (proc 0x0D), params {IPHONE_PARAMS} ...")
+        log.info("→ Sending GetSPL with %d params: %s", len(IPHONE_PARAMS), IPHONE_PARAMS)
         t0 = datetime.datetime.now()
         try:
             spl_result = await base_client.get_system_parameter_list_async(IPHONE_PARAMS)
             ms = int((datetime.datetime.now() - t0).total_seconds() * 1000)
-            print(f"  ✅ OK  ({ms} ms)  a_byte={spl_result.a_byte}")
+            print(f"  ✅ OK  ({ms} ms)  a={spl_result.a}  len(data_array)={len(spl_result.data_array)}")
+            log.info("← GetSPL OK  a=%d  data_array_len=%d  ms=%d",
+                     spl_result.a, len(spl_result.data_array), ms)
         except Exception as e:
             ms = int((datetime.datetime.now() - t0).total_seconds() * 1000)
             spl_error = e
             print(f"  ❌ FAIL ({ms} ms)  {type(e).__name__}: {e}")
+            log.error("← GetSPL FAIL  ms=%d  %s: %s", ms, type(e).__name__, e)
 
     async def do_filter():
         nonlocal filter_result, filter_error
         print("GetFilterStatus (proc 0x59) ...")
+        log.info("→ Sending GetFilterStatus")
         t0 = datetime.datetime.now()
         try:
             filter_result = await base_client.get_filter_status_async()
             ms = int((datetime.datetime.now() - t0).total_seconds() * 1000)
             print(f"  ✅ OK  ({ms} ms)")
+            log.info("← GetFilterStatus OK  ms=%d", ms)
         except BLEPeripheralTimeoutError as e:
             ms = int((datetime.datetime.now() - t0).total_seconds() * 1000)
             filter_error = e
-            print(f"  ❌ TIMEOUT ({ms} ms)  {e}")
+            print(f"  ❌ TIMEOUT ({ms} ms)")
+            log.error("← GetFilterStatus TIMEOUT  ms=%d", ms)
         except Exception as e:
             ms = int((datetime.datetime.now() - t0).total_seconds() * 1000)
             filter_error = e
             print(f"  ❌ FAIL ({ms} ms)  {type(e).__name__}: {e}")
+            log.error("← GetFilterStatus FAIL  ms=%d  %s: %s", ms, type(e).__name__, e)
 
     try:
         if args.order == 'filter-first':
@@ -182,23 +196,26 @@ async def probe(args):
             print("[2/2]", end=' ')
             await do_filter()
     finally:
+        log.info("Disconnecting...")
         try:
             await base_client.disconnect()
         except Exception:
             pass
+        log.info("Disconnected.")
 
-    # Summary
+    # -----------------------------------------------------------------------
+    # Results summary
+    # -----------------------------------------------------------------------
     print()
     print("=== RESULTS ===")
     if spl_result is not None:
-        print(f"GetSPL:          ✅  a_byte={spl_result.a_byte}, {len(spl_result.data_array)} values")
+        print(f"GetSPL:          ✅  a={spl_result.a}, len(data_array)={len(spl_result.data_array)}")
         unique_params = list(dict.fromkeys(IPHONE_PARAMS))
         for p in unique_params:
             idx = IPHONE_PARAMS.index(p)
-            val = spl_result.data_array[idx] if idx < len(spl_result.data_array) else None
+            val = spl_result.data_array[idx] if idx < len(spl_result.data_array) else '?'
             name = PARAM_NAMES.get(p, f'param_{p}')
-            val_str = str(val) if val is not None else 'N/A'
-            print(f"  [{p:2d}] {name:<40s} = {val_str}")
+            print(f"  [{p:2d}] {name:<40s} = {val}")
     elif spl_error:
         print(f"GetSPL:          ❌  {type(spl_error).__name__}: {spl_error}")
 
@@ -214,23 +231,20 @@ async def probe(args):
         if hasattr(fs, 'filter_reset_count'):
             print(f"  filter_reset_count       = {fs.filter_reset_count}")
     elif filter_error is not None:
-        print(f"GetFilterStatus: ❌  {type(filter_error).__name__}: {filter_error}")
+        print(f"GetFilterStatus: ❌  {type(filter_error).__name__}")
 
     print()
     if args.order == 'filter-first':
         if filter_error is None and spl_result is not None:
-            print("✅  FIX CONFIRMED: both calls succeeded with GetFilterStatus called first.")
+            print("✅  Both calls succeeded.")
         elif filter_error is not None:
-            print("❌  UNEXPECTED: GetFilterStatus failed even when called first.")
-        else:
-            print("⚠   Partial result.")
+            print("❌  GetFilterStatus failed even when called first.")
+            print("    Run with --trace and --log-file to capture bridge frame-level details.")
     else:
         if filter_error is not None and isinstance(filter_error, BLEPeripheralTimeoutError):
-            print("✅  BUG REPRODUCED: GetFilterStatus timed out after GetSPL with params 8/9/10.")
-        elif filter_error is not None:
-            print(f"⚠   GetFilterStatus failed (not a timeout): {filter_error}")
-        else:
-            print("ℹ   GetFilterStatus succeeded despite spl-first order (device may not exhibit this bug).")
+            print("⚠   GetFilterStatus timed out after GetSPL (issue reproduced).")
+        elif filter_error is None:
+            print("ℹ   GetFilterStatus succeeded despite spl-first order.")
 
     return 0
 
@@ -241,31 +255,59 @@ async def probe(args):
 def main():
     p = argparse.ArgumentParser(
         prog='getspl-filter-probe',
-        description='Probe GetFilterStatus + GetSPL ordering to verify the fix or reproduce the bug.',
+        description='Probe GetFilterStatus + GetSPL ordering.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Root cause (confirmed 2026-04-17, log 7d0d8216):
-  After GetSPL with unsupported param indices 8/9/10 (HB2304EU298413, idx_echo=0),
-  the device ACKs GetFilterStatus CONTROL frame but sends no data → 5 s timeout.
+The iPhone app sends GetSPL with [0,1,2,3,4,5,6,7,4,8,9,10] and GetFilterStatus
+works fine. If GetFilterStatus fails in our bridge, the root cause is in how we
+consume the GetSPL response — not in the device. Run with --trace to diagnose.
 
-Fix: call GetFilterStatus BEFORE GetSPL (--order filter-first, the default).
 See memory/getspl-getfilterstatus-ordering.md for full analysis.
 """)
     p.add_argument('--order', choices=['filter-first', 'spl-first'], default='filter-first',
-                   help='filter-first = fix (default); spl-first = bug repro')
+                   help='filter-first (default) or spl-first (issue repro)')
     p.add_argument('--device',
                    help='BLE MAC address (default: [BLE] device_id in config.ini)')
     p.add_argument('--trace', action='store_true',
-                   help='Enable TRACE-level bridge logging')
+                   help='TRACE-level bridge logging: full frame-level details from FrameCollector etc.')
+    p.add_argument('--debug', action='store_true',
+                   help='DEBUG-level bridge logging: medium verbosity')
     p.add_argument('--log-file', metavar='PATH',
-                   help='Write output to FILE in addition to stdout')
+                   help='Write all output to FILE in addition to stdout')
     p.add_argument('--esphome-host', metavar='HOST')
     p.add_argument('--esphome-port', type=int, metavar='PORT')
     p.add_argument('--esphome-psk',  metavar='PSK')
     p.add_argument('--config', metavar='PATH',
                    help='Path to config.ini (default: repo root config.ini)')
     args = p.parse_args()
-    return asyncio.run(probe(args))
+
+    # Determine bridge log level
+    if args.trace:
+        bridge_level = logging.TRACE
+    elif args.debug:
+        bridge_level = logging.DEBUG
+    else:
+        bridge_level = logging.WARNING
+
+    # Handlers
+    fmt = '%(asctime)s.%(msecs)03d %(levelname)-7s %(name)s: %(message)s'
+    handlers = [logging.StreamHandler(sys.stdout)]
+    if args.log_file:
+        handlers.append(logging.FileHandler(args.log_file))
+        print(f"Logging to: {args.log_file}")
+
+    # Root logger at INFO so probe's own messages always show
+    logging.basicConfig(level=logging.INFO, handlers=handlers,
+                        format=fmt, datefmt='%H:%M:%S')
+
+    # Bridge internals: set to bridge_level (may be higher/lower than INFO)
+    for pkg in ('aquaclean_console_app', 'aioesphomeapi', 'bleak'):
+        logging.getLogger(pkg).setLevel(bridge_level)
+
+    log = logging.getLogger('getspl-filter-probe')
+    log.setLevel(logging.INFO)
+
+    return asyncio.run(probe(args, log))
 
 
 if __name__ == '__main__':

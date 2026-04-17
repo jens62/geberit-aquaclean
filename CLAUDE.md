@@ -996,9 +996,9 @@ Reads live device state (what's happening right now). Indices 0–9 are the only
 These are NOT DpIds — separate index space.
 
 **SPL parameter semantics — confirmed from BLE log (2026-04-15):**
-The code comment labels are misleading. Actual semantics confirmed from toilet-use session log:
-- **Index 0** — labelled `userIsSitting` in code, actually fires on **user approach/proximity detection** (lid opens ~17s after this becomes 1, before user actually sits)
-- **Index 1** — labelled `analShowerIsRunning`, actually tracks **user sitting**
+Some code comment labels are misleading. Actual semantics confirmed from toilet-use session log:
+- **Index 0** — `userIsSitting` — **confirmed correct**. Proximity detection is a separate hardware feature not yet mapped to any SPL index.
+- **Index 1** — labelled `analShowerIsRunning` in code, actually tracks **user sitting**
 - **Index 3** — labelled `dryerIsRunning`, actually tracks **anal shower running** (confirmed: changes when anal shower started by pressing device button)
 - Dryer state: not visible in any SPL parameter change in the captured session — may be at an index not polled by the bridge, or polled differently by the iPhone
 
