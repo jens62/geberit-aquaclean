@@ -217,10 +217,10 @@ def get_system_info() -> dict:
                 ll = line.lower()
                 if "bluetooth" in ll and ".hcd" in ll:
                     # "Bluetooth: hci0: BCM4345C0 'brcm/BCM4345C0.hcd' Patch"
-                    m = _re.search(r"'([^']+\.hcd)'", line)
+                    m = re.search(r"'([^']+\.hcd)'", line)
                     if m:
                         bluetooth["firmware_file"] = m.group(1)
-                    m2 = _re.search(r"(BCM\w+)", line)
+                    m2 = re.search(r"(BCM\w+)", line)
                     if m2:
                         bluetooth["chip"] = m2.group(1)
                 elif "bluetooth" in ll and "firmware" in ll and "version" in ll:
