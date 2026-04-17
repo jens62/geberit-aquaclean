@@ -75,7 +75,11 @@ class AquaCleanClient(IAquaCleanClient):
             await asyncio.sleep(interval)
 
     async def _state_changed_timer_elapsed(self):
-        """Poll using the iPhone's 12-param list (index 4 duplicated as observed in BLE traffic)."""
+        """Poll using the iPhone's 12-param list [0,1,2,3,4,5,6,7,4,8,9,10].
+        Params 8/9/10 are not supported on HB2304EU298413 (idx_echo=0) but sending them is
+        safe here: this method is only called during continuous polling, where GetFilterStatus
+        is not called in the same session — so the device-side state corruption triggered by
+        unsupported params does not matter."""
         result = await self.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 4, 8, 9, 10])
         device_state_changed_event_args = DeviceStateChangedEventArgs(
             IsUserSitting=result.data_array[0] != 0,

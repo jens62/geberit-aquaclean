@@ -228,6 +228,25 @@ see `memory/cons-frame-zero-padding-bug.md` for details.
 
 **The bridge had `is_anal_shower_running` and `is_dryer_running` swapped:** it was reading param 3 for `is_dryer_running` (actually the anal shower) and param 1 for `is_anal_shower_running` (which never changes). Fixed in all code paths.
 
+### GetFilterStatus ordering constraint (confirmed 2026-04-17)
+
+**After GetSPL with unsupported param indices (8, 9, 10 on HB2304EU298413), the device enters a
+state where it ACKs the subsequent GetFilterStatus CONTROL frame (ErrorCode=0x00) but sends no
+data frames → 5 s silence → BLEPeripheralTimeoutError.**
+
+**Evidence:**
+| Log | GetSPL CONS frame | a_byte | GetFilterStatus |
+|-----|-------------------|--------|-----------------|
+| 36844ec (working) | `12 00 00 00 ...` (all zeros — buggy CONS, params 8–10 never sent) | 7 | ✅ responds |
+| 7d0d821 (failing) | `12 04 08 09 0a 00 ...` (CONS fix applied, params 8/9/10 sent) | 9 | ❌ ACKd, no data |
+
+**Fix:** In `_fetch_state_and_info()` and `_fetch_info()` in `main.py`, call
+`get_filter_status_async()` **before** `get_system_parameter_list_async()`. The device is in a
+clean state before any GetSPL, so GetFilterStatus always succeeds when called first.
+
+**This is device-side behavior** — we cannot change the device firmware. The workaround is
+the call ordering fix only. See `memory/getspl-getfilterstatus-ordering.md` for full analysis.
+
 ### a_byte field in SPL response
 
 The first byte of the result (`a_byte`) indicates how many parameters have valid data. Observed

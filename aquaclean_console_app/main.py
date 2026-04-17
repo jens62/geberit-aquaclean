@@ -2709,16 +2709,20 @@ class ApiMode:
     async def _fetch_state_and_info(self, client):
         """Used for the first on-demand poll only: fetch state + identification in one BLE session."""
         ident = await client.base_client.get_device_identification_async(0)
-        state = await self._fetch_state(client, _skip_profile=True)
-
-        # Step 3: Remaining identification calls (safe to do after GetSPL succeeds).
-        initial_op_date = await client.base_client.get_device_initial_operation_date()
-        fw = await client.base_client.get_firmware_version_list_async()
+        # GetFilterStatus MUST come before GetSPL: sending GetSPL with unsupported param indices
+        # (8, 9, 10 on HB2304EU298413) leaves the device in a state where it ACKs but ignores
+        # the next GetFilterStatus — 5 s silence → BLEPeripheralTimeoutError.  By calling
+        # GetFilterStatus first (while the device is still clean), we always get valid data.
         try:
             filter_status = await client.base_client.get_filter_status_async()
         except BLEPeripheralTimeoutError:
             logger.warning("GetFilterStatus (0x59) timed out — device may be stuck for this proc; skipping, filter_status=None")
             filter_status = None
+        state = await self._fetch_state(client, _skip_profile=True)
+
+        # Remaining identification calls (safe to do after GetSPL).
+        initial_op_date = await client.base_client.get_device_initial_operation_date()
+        fw = await client.base_client.get_firmware_version_list_async()
 
         info = {
             "sap_number": ident.sap_number,
