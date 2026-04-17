@@ -224,14 +224,20 @@ async def check_api_connect(
         )
         return None
 
-    # Get device info
+    # Get device info — also retrieves bluetooth_proxy_feature_flags needed for BLE connect
+    feature_flags = 0
     try:
         info = await client.device_info()
+        feature_flags = getattr(info, "bluetooth_proxy_feature_flags", 0)
         _report("API connect", _Result.PASS, f"Connected to '{info.name}' (ESPHome {info.esphome_version})")
-        _report("ESP32 MAC", _Result.PASS, f"{info.mac_address}  model: {info.model or 'unknown'}")
+        _report("ESP32 MAC", _Result.PASS,
+                f"{info.mac_address}  model: {info.model or 'unknown'}  "
+                f"bt_feature_flags=0x{feature_flags:02X}")
     except Exception as e:
         _report("API connect", _Result.PASS, "Connected (device_info unavailable)")
 
+    # Store feature_flags on client object so check_ble_connect can access it
+    client._test_feature_flags = feature_flags  # type: ignore[attr-defined]
     return client
 
 # ---------------------------------------------------------------------------
@@ -243,6 +249,7 @@ async def check_ble_subscription(client: APIClient) -> bool:
     received_packets: list[int] = []
     first_packet_time: Optional[float] = None
     subscription_error: Optional[str] = None
+    subscription_start: float = time.monotonic()
 
     def on_raw_advertisements(resp) -> None:
         nonlocal first_packet_time
@@ -301,7 +308,7 @@ async def check_ble_subscription(client: APIClient) -> bool:
         )
         return False
     else:
-        lag_ms = int((first_packet_time or 0) * 1000) if first_packet_time else 0
+        lag_ms = int((first_packet_time - subscription_start) * 1000) if first_packet_time else 0
         _report(
             "BLE subscription", _Result.PASS,
             f"Receiving BLE packets ({total_packets} total, first arrived in {lag_ms}ms)"
@@ -483,19 +490,40 @@ async def check_ble_connect(client: APIClient, mac: str, scan_duration: float) -
     addr_type = address_type_seen[0] if address_type_seen else 0
     _report("Device advertisement", _Result.PASS, f"Seen MAC {mac}  address_type={addr_type}")
 
-    # Attempt BLE connect using has_cache=False (safe default matching the bridge)
+    # Attempt BLE connect using the callback API (aioesphomeapi >= 14)
+    # bluetooth_device_connect takes an on_bluetooth_connection_state(connected, mtu, error) cb;
+    # it returns a cancel-connection callable (not a handle).
+    # feature_flags must come from device_info.bluetooth_proxy_feature_flags (not 0).
+    feature_flags: int = getattr(client, "_test_feature_flags", 0)
+    loop = asyncio.get_running_loop()
+    connected_future: asyncio.Future = loop.create_future()
+    cancel_connection: Optional[object] = None
+
+    def on_bluetooth_connection_state(connected: bool, mtu: int, error: int) -> None:
+        if connected_future.done():
+            return
+        if error:
+            connected_future.set_exception(Exception(f"BLE connection error code {error}"))
+        elif connected:
+            connected_future.set_result(mtu)
+        else:
+            connected_future.set_exception(Exception("Disconnected during connection attempt"))
+
     try:
-        handle = await asyncio.wait_for(
+        cancel_connection = await asyncio.wait_for(
             client.bluetooth_device_connect(
-                address=mac_int,
+                mac_int,
+                on_bluetooth_connection_state,
                 address_type=addr_type,
                 has_cache=False,
-                feature_flags=0,
+                feature_flags=feature_flags,
                 timeout=20.0,
                 disconnect_timeout=5.0,
             ),
             timeout=25.0,
         )
+        # Wait for the connection state callback
+        mtu = await asyncio.wait_for(connected_future, timeout=20.0)
     except asyncio.TimeoutError:
         _report(
             "BLE connect", _Result.FAIL, "Connection timed out after 25s",
@@ -547,7 +575,7 @@ async def check_ble_connect(client: APIClient, mac: str, scan_duration: float) -
     # Connected — disconnect cleanly
     try:
         await asyncio.wait_for(
-            client.bluetooth_device_disconnect(handle),
+            client.bluetooth_device_disconnect(mac_int),
             timeout=5.0,
         )
     except Exception:
