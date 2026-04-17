@@ -14,7 +14,7 @@ jobs:
             const body = context.payload.issue.body;
             const placeholder = "--- Please select ---";
             
-            if (body.includes(placeholder)) {
+            if (body && body.includes(placeholder)) {
               // 1. Post a polite but firm comment
               await github.rest.issues.createComment({
                 issue_number: context.issue.number,
@@ -27,9 +27,10 @@ jobs:
               await github.rest.issues.addLabels({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
-                repo: context.repo.repo,a
+                repo: context.repo.repo,
                 labels: ['needs-info']
               });
+            }
 
               // 3. (Optional) Close the issue immediately
               // await github.rest.issues.update({
@@ -38,4 +39,4 @@ jobs:
               //   repo: context.repo.repo,
               //   state: 'closed'
               // });
-            }
+            

@@ -97,6 +97,31 @@ iPhone reads IDs in order: `[2, 1, 3, 0]` on every connect (from the log).
 IDs 2, 3 fully confirmed 2026-04-15 from all-colors BLE log. Previous analysis had id=2 and id=3 swapped — now corrected.
 IDs 4, 6, 7 confirmed from WC-Lid BLE log (2026-04-15). ID 5 unknown (candidate: Maximum Lid Position).
 
+### Important: Orientation light settings are NOT applied immediately
+
+**Source:** Geberit official support, case CAS1550064K3D1Z
+(`local-assets/Correspondence-Geberit/Eingangsbestätigung Vorgang CAS1550064K3D1Z.pdf`)
+
+Geberit's verbatim answer to the question why color, brightness and activation changes
+don't take effect while the light is on:
+
+> „die Einstellung in der App werden je nach Handy unterschiedlich gespeichert.
+> Manchmal ist es notwendig einen Neustart (für mind. 30 Sekunden am Netzschalter
+> ausschalten) durchzuführen."
+
+**Translation:** *"The settings in the app are saved differently depending on the phone.
+Sometimes it is necessary to perform a restart (switch off at the power switch for at
+least 30 seconds)."*
+
+**Practical implications:**
+- Writing a common setting (proc 0x52) stores the value in non-volatile memory but the
+  running firmware does not re-apply it at runtime.
+- The orientation light continues to use the old values until the device is power-cycled.
+- **For testing:** after writing color/brightness/activation via bridge or app, power-cycle
+  the device (≥30 s off) before checking whether the new value is in effect.
+- This is expected device behavior — the write is acknowledged correctly, the effect is
+  simply deferred until restart.
+
 ---
 
 ## Orientation Light Colors (common setting id=2)

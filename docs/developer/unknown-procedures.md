@@ -17,9 +17,9 @@ Last updated: 2026-04-17
 |-------|-------|
 | Label | `GetNodeList` |
 | Direction | Request (no args), response = `NodeList` struct |
-| Response format | 1-byte `A` + 128-byte opaque `B` |
+| Response format | 1-byte `A` (count) + 128-byte `B` (node ID array, first `A` bytes meaningful) |
 | Seen in | BLE traffic logs; confirmed in thomas-bingel C# repo (`tmp.txt`) |
-| Status | **Name confirmed. Response struct known. Semantics of 128-byte B block unknown.** |
+| Status | **Name confirmed. Response format confirmed (2026-04-17). Node semantics unknown.** |
 
 **Source:** `aquaclean-core/Api/CallClasses/tmp.txt` — `GetNodeList()` returns `NodeList`.
 `NodeList` struct (`aquaclean-core/Api/CallClasses/Dtos/NodeList.cs`):
@@ -31,11 +31,30 @@ public struct NodeList {
 }
 ```
 
-**What B contains:** unknown. Likely a bitmask or list of present BLE nodes/components.
+**Confirmed result (2026-04-17, device HB2304EU298413, via `geberit-ble-probe.py --proc 0x05 --ctx 0x01`):**
 
-**How to investigate:** Run `ble-decode.py --verbose` on any log, search for proc `0x05`,
-and examine the `result=` bytes. With 128 bytes, it likely encodes which device components
-are present as a bitmask (128 bytes × 8 bits = 1024 possible node IDs).
+```
+A = 12
+B (first 12 bytes) = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15]
+B (remaining 116 bytes) = all zero
+```
+
+- `A=12` → the device has 12 registered nodes
+- `B` is a **node ID array**, not a bitmask — first `A` bytes are meaningful, rest are zero-padded
+- Node IDs present: `0x03–0x0C, 0x0E, 0x0F`
+- **Node `0x0D` (13) is absent** from the list, while all adjacent IDs are present
+- Node IDs `0x01` and `0x02` are also absent (likely reserved)
+
+**What the node IDs likely represent:** logical subsystems or firmware modules (e.g. main controller,
+pump, lid mechanism, descaling unit, orientation light). Each has its own node ID for the internal
+communication bus. Exact mapping of ID → component is unknown.
+
+**Notable:** `0x0D` is also the procedure code for `GetSystemParameterList`. Whether the absent
+node 13 is related to GetSPL behavior is unknown — the procedure code and node ID namespaces are
+almost certainly separate.
+
+**How to investigate further:** BLE-sniff a session with a different hardware variant to see whether
+the node list changes (different hardware = different modules present).
 
 ---
 
@@ -244,8 +263,17 @@ data frames → 5 s silence → BLEPeripheralTimeoutError.**
 `get_filter_status_async()` **before** `get_system_parameter_list_async()`. The device is in a
 clean state before any GetSPL, so GetFilterStatus always succeeds when called first.
 
-**This is device-side behavior** — we cannot change the device firmware. The workaround is
-the call ordering fix only. See `memory/getspl-getfilterstatus-ordering.md` for full analysis.
+**Root cause: UNKNOWN (2026-04-17).** The earlier claim that "params 8/9/10 cause device-side
+failure" was ⚠️ **disproved by iPhone BLE log analysis** (Stuhlgang log, via `tools/ble-decode.py`):
+iPhone uses the identical 12-param list `[0,1,2,3,4,5,6,7,4,8,9,10]` and GetFilterStatus succeeds
+every time (59 ms after GetSPL, no intermediate calls). Bridge consumption of GetSPL is bit-for-bit
+identical in working and failing cases — no bridge-side bug either.
+
+**Remaining hypothesis:** The bridge inserts `GetDeviceInitialOperationDate` + `GetFirmwareVersionList`
+between GetSPL and GetFilterStatus. iPhone calls GetFilterStatus immediately after GetSPL with no
+intermediate calls. Whether these extra calls corrupt device state is **not yet confirmed**.
+
+See `docs/developer/getfilterstatus-getspl-ordering.md` for the complete investigation.
 
 ### a_byte field in SPL response
 
