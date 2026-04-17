@@ -33,6 +33,8 @@ def entry_point():
             "device commands (require BLE):\n"
             "  %(prog)s --mode cli --command toggle-lid\n"
             "  %(prog)s --mode cli --command toggle-anal\n"
+            "  %(prog)s --mode cli --command toggle-lady\n"
+            "  %(prog)s --mode cli --command toggle-dryer\n"
             "  %(prog)s --mode cli --command reset-filter-counter\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
@@ -66,7 +68,7 @@ def entry_point():
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'node-list',
         'statistics-descale', 'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
-        'toggle-lid', 'toggle-anal', 'reset-filter-counter',
+        'toggle-lid', 'toggle-anal', 'toggle-lady', 'toggle-dryer', 'reset-filter-counter',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # system info + performance stats (no BLE required)

@@ -1627,6 +1627,7 @@ class ApiMode:
         self.service.mqtt_service.SetProfileSetting      += self._on_mqtt_set_profile_setting
         self.service.mqtt_service.SetCommonSetting       += self._on_mqtt_set_common_setting
         self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
+        self.service.mqtt_service.ToggleDryer      += self._on_mqtt_toggle_dryer
         self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
         self.service.mqtt_service.SetPollInterval         += self._on_mqtt_set_poll_interval
@@ -1780,6 +1781,12 @@ class ApiMode:
             await self.run_command("toggle-anal")
         except Exception as e:
             logger.warning(f"MQTT toggle-anal failed: {e}")
+
+    async def _on_mqtt_toggle_dryer(self):
+        try:
+            await self.run_command("toggle-dryer")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-dryer failed: {e}")
 
     async def _on_mqtt_set_ble_connection(self, value: str):
         try:
@@ -2769,6 +2776,10 @@ class ApiMode:
             await client.toggle_lid_position()
         elif command == "toggle-anal":
             await client.toggle_anal_shower()
+        elif command == "toggle-lady":
+            await client.toggle_lady_shower()
+        elif command == "toggle-dryer":
+            await client.toggle_dryer()
         elif command == "toggle-orientation-light":
             await client.toggle_orientation_light()
         elif command == "reset-filter-counter":
@@ -3184,6 +3195,19 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
             },
         },
         {
+            "topic": f"{HA}/switch/geberit_aquaclean/toggle_dryer/config",
+            "payload": {
+                "name": "Toggle Dryer",
+                "unique_id": "geberit_aquaclean_toggle_dryer",
+                "command_topic": f"{t}/peripheralDevice/control/toggleDryer",
+                "payload_on": "true", "payload_off": "false",
+                "icon": "mdi:hair-dryer",
+                "optimistic": True,
+                "retain": False,
+                "device": DEVICE,
+            },
+        },
+        {
             "topic": f"{HA}/button/geberit_aquaclean/reset_filter_counter/config",
             "payload": {
                 "name": "Reset Filter Counter",
@@ -3560,6 +3584,12 @@ async def run_cli(args):
         elif args.command == 'toggle-anal':
             await client.toggle_anal_shower()
             result["data"] = {"action": "anal_shower_toggled"}
+        elif args.command == 'toggle-lady':
+            await client.toggle_lady_shower()
+            result["data"] = {"action": "lady_shower_toggled"}
+        elif args.command == 'toggle-dryer':
+            await client.toggle_dryer()
+            result["data"] = {"action": "dryer_toggled"}
         elif args.command == 'reset-filter-counter':
             await client.reset_filter_counter()
             result["data"] = {"action": "filter_counter_reset"}
@@ -3708,6 +3738,8 @@ if __name__ == "__main__":
             "device commands (require BLE):\n"
             "  %(prog)s --mode cli --command toggle-lid\n"
             "  %(prog)s --mode cli --command toggle-anal\n"
+            "  %(prog)s --mode cli --command toggle-lady\n"
+            "  %(prog)s --mode cli --command toggle-dryer\n"
             "  %(prog)s --mode cli --command reset-filter-counter\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
@@ -3741,7 +3773,7 @@ if __name__ == "__main__":
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'node-list',
         'statistics-descale', 'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
-        'toggle-lid', 'toggle-anal', 'reset-filter-counter',
+        'toggle-lid', 'toggle-anal', 'toggle-lady', 'toggle-dryer', 'reset-filter-counter',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # system info + performance stats (no BLE required)
