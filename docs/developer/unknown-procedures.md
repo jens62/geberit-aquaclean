@@ -5,7 +5,7 @@ logs but whose purpose or mapping is not yet fully understood.
 
 Use this as a research backlog: each item has a suggested investigation approach.
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 
 ---
 
@@ -198,13 +198,16 @@ Confirmed IDs: 0–9 and 13. IDs **10, 11, 12** fall between `DryerState`(9) and
 
 ## 4. GetSystemParameterList — Confirmed and Unknown Indices
 
-The bridge polls indices `[0, 1, 2, 3, 4, 5, 6, 9]` (8 params). Current status:
+The bridge/spl-monitor polls the iPhone's 12-param list `[0, 1, 2, 3, 4, 5, 6, 7, 4, 8, 9, 10]`
+(single call; index 4 duplicated exactly as observed in iPhone BLE traffic). Updated 2026-04-17
+after the CONS frame bug fix enabled >8 params. Prior 8-param limit was NOT a device constraint —
+see `memory/cons-frame-zero-padding-bug.md` for details.
 
 ### Confirmed semantics (BLE log 2026-04-15 + spl-monitor 2026-04-17)
 
 | Index | C# label | Confirmed semantics | Notes |
 |-------|----------|---------------------|-------|
-| 0 | `userIsSitting` | **Approach/presence detection** — changes when user enters toilet proximity | ✓ confirmed |
+| 0 | `userIsSitting` | **Approach/presence detection** — changes when user enters toilet proximity | ✓ confirmed; value=1 observed with user seated (2026-04-17) |
 | 2 | `ladyShowerIsRunning` | **Lady shower running** | ✓ confirmed (04-17 session: changed when lady shower started) |
 | 3 | `dryerIsRunning` | **Anal shower running** — C# label is WRONG | ✓ confirmed (04-15 and 04-17: changes when anal shower runs) |
 | 4 | `descalingState` | Descaling state | from C# |
@@ -215,18 +218,33 @@ The bridge polls indices `[0, 1, 2, 3, 4, 5, 6, 9]` (8 params). Current status:
 
 | Index | C# label | Observed | Status |
 |-------|----------|----------|--------|
-| 1 | `analShowerIsRunning` | **Never changed** in any monitored session, including sessions with both showers running | **Unknown** — semantics not confirmed. Possibly WC seat sensor (weight-triggered?) vs index 0's proximity sensor. Dryer running state is NOT reported by any currently polled index. |
-| 9 | `orientationLightState` | **N/A on HB2304EU298413** — device echoes 0 for this param, indicating it is not supported | Device does not expose orientation light state via GetSPL on this hardware variant. Bridge still requests it but result is always 0 and currently unused. |
+| 1 | `analShowerIsRunning` | **Always 0** in all monitored sessions including with user seated and showers running | **Unknown** — semantics not confirmed. Possibly WC seat sensor (weight-triggered?) vs index 0's proximity sensor. Dryer running state is NOT reported by any currently polled index. |
+| 7 | *(not in C# reference)* | **Always 0 on HB2304EU298413** — device supports the parameter (idx_echo correct) but value never changes | **Unknown** — supported by this hardware but semantics unknown. Previously removed from bridge polling; the "9th param causes stuck-state failure" was caused by the CONS frame bug (any 9th param was sent as 0x00), NOT by param 7 being toxic. |
+| 8 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
+| 9 | `orientationLightState` | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
+| 10 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
 
 ### Fix applied (2026-04-17)
 
 **The bridge had `is_anal_shower_running` and `is_dryer_running` swapped:** it was reading param 3 for `is_dryer_running` (actually the anal shower) and param 1 for `is_anal_shower_running` (which never changes). Fixed in all code paths.
 
-### Index 7 — removed
+### a_byte field in SPL response
 
-Index 7 was previously polled by the bridge but not in the C# reference list. It has been removed (any 9th param causes a stuck-device GetSPL failure when the device is in locked state — confirmed 2026-04-16). Index 7's semantics remain unknown.
+The first byte of the result (`a_byte`) indicates how many parameters have valid data. Observed
+value `9` for the 12-param iPhone list on HB2304EU298413 — 9 of 12 requested params are supported.
+Records for unsupported params (IDs 8, 9, 10 on this device) have `idx_echo=0`.
+
+### idx_echo reliability
+
+Empirical evidence from probe with 12-param list (2026-04-17): idx_echo bytes are **correct** for
+all records 0–8 (params 0–7 plus the duplicate param 4). The earlier note claiming "idx bytes are
+unreliable from record 2 onward" was incorrect — it was based on observations made while the CONS
+frame bug was active (the 9th+ params were sent as 0x00, causing the device to echo back the
+corrupted IDs). With the CONS fix in place, idx_echo values are reliable.
 
 **How to investigate index 1:** Sniff a session where the user is definitely seated (with body weight on the WC seat) and observe whether index 1 changes. Compare against sessions with only proximity (approaching without sitting).
+
+**How to investigate index 7:** Monitor with spl-monitor while operating descaling or other features not related to the shower — index 7 may track a state not observable during normal toilet use.
 
 ---
 
