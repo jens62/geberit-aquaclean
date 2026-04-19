@@ -20,6 +20,9 @@ BUTTONS: list[tuple[str, str, str]] = [
     ("reset_filter_counter", "Reset Filter Counter", "mdi:air-purifier"),
 ]
 
+# Commands that only work while a user is seated — entity becomes unavailable otherwise.
+_SITTING_REQUIRED = {"toggle_anal_shower", "toggle_lady_shower", "toggle_dryer"}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -43,6 +46,14 @@ class AquaCleanButton(AquaCleanEntity, ButtonEntity):
         self._attr_unique_id = f"{entry.entry_id}_{command}"
         self._attr_name = name
         self._attr_icon = icon
+
+    @property
+    def available(self) -> bool:
+        if self._command in _SITTING_REQUIRED:
+            data = self.coordinator.data or {}
+            if not data.get("is_user_sitting"):
+                return False
+        return super().available
 
     async def async_press(self) -> None:
         await self.coordinator.async_execute_command(self._command)

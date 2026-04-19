@@ -188,6 +188,61 @@ This is **expected device behavior** — the bridge must wait it out.
 
 ---
 
+## Command vs. Poll Concurrency — Is There a Conflict?
+
+The device only accepts one active BLE session at a time. The question is whether a user
+command (from the web UI, REST API, HACS, or CLI) can collide with an in-progress
+GetSystemParameterList (poll) on the same session.
+
+### On-demand mode (default) — fully serialized
+
+Every BLE operation goes through `ApiMode._on_demand_inner()`, which acquires
+`ApiMode._on_demand_lock` (`asyncio.Lock`) before opening a BLE connection.
+Both the polling loop and user commands acquire the same lock, so they are strictly
+serialized:
+
+- Poll running → user command waits at `async with self._on_demand_lock` until the
+  poll's BLE session closes, then opens its own session.
+- Command running → polling loop waits the same way.
+
+**No conflict is possible in on-demand mode.**
+
+The web UI reflects this: buttons show a spinner and are disabled during an in-flight
+request (`loading` class), giving the user visual feedback that the lock is held.
+
+### Persistent mode — soft serialization via `call_count`
+
+The BLE connection is always open. Both polling and user commands share the same
+`AquaCleanClient` instance and call `send_request()` on it.
+
+`send_request()` guards entry with a busy-wait:
+
+```python
+while self.call_count > 0:
+    await asyncio.sleep(0.1)
+with self.lock:
+    self.call_count += 1
+```
+
+If GetSPL is mid-flight (`call_count == 1`), a user command will spin at 100 ms
+intervals until it completes, then proceed. In practice this works correctly.
+
+**Known weakness:** there is a TOCTOU race. Two coroutines can both exit the
+`while call_count > 0` loop (both see `0`), then both increment — ending at
+`call_count == 2` with two requests in flight simultaneously. This is unlikely
+in practice because asyncio is single-threaded and `await asyncio.sleep(0.1)` is
+the only yield point between the check and the increment, but it is not a proper
+mutual-exclusion guarantee.
+
+Additionally, `call_count` is not decremented on `asyncio.CancelledError` — see
+the Known Issues section below. A proper `asyncio.Lock` would fix both gaps, but
+that change has not been made yet.
+
+**Summary:** safe in practice in persistent mode, but relies on a soft busy-wait
+rather than a hard lock.
+
+---
+
 ## Known Issues
 
 ### CancelledError in `send_request()` Leaves `call_count = 1` Permanently
