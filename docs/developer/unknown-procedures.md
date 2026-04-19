@@ -5,7 +5,7 @@ logs but whose purpose or mapping is not yet fully understood.
 
 Use this as a research backlog: each item has a suggested investigation approach.
 
-Last updated: 2026-04-17
+Last updated: 2026-04-19
 
 ---
 
@@ -240,7 +240,7 @@ see `memory/cons-frame-zero-padding-bug.md` for details.
 | 1 | `analShowerIsRunning` | **Always 0** in all monitored sessions including with user seated and showers running | **Unknown** — semantics not confirmed. Possibly WC seat sensor (weight-triggered?) vs index 0's proximity sensor. Dryer running state is NOT reported by any currently polled index. |
 | 7 | *(not in C# reference)* | **Always 0 on HB2304EU298413** — device supports the parameter (idx_echo correct) but value never changes | **Unknown** — supported by this hardware but semantics unknown. Previously removed from bridge polling; the "9th param causes stuck-state failure" was caused by the CONS frame bug (any 9th param was sent as 0x00), NOT by param 7 being toxic. |
 | 8 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
-| 9 | `orientationLightState` | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
+| 9 | `orientationLightState` | **Always 0 on HB2304EU298413** — idx_echo=0 | ⚠️ **CONFIRMED NOT OBSERVABLE** (2026-04-19): light turned on/off three times; SPL identical at all events. Full raw frame analysis (all 4 GATT handles, CONTROL frames, unsolicited notifications) found zero variation. Hardware proximity sensor only — no BLE involvement. See `docs/developer/ble-protocol.md`. |
 | 10 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
 
 ### Fix applied (2026-04-17)

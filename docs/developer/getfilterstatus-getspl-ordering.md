@@ -1,6 +1,29 @@
 # GetFilterStatus / GetSPL Ordering Investigation
 
-**Status: Root cause UNKNOWN (2026-04-17)**
+**Status: Root cause UNKNOWN (2026-04-17) — trigger source clarified 2026-04-19**
+
+## Which disconnect leaves GetFilterStatus (0x59) stuck — confirmed 2026-04-19
+
+| Trigger | GetFilterStatus (0x59) stuck? |
+|---------|-------------------------------|
+| iPhone Geberit Home App connect + close | ✅ yes — requires power cycle |
+| Bridge connect + disconnect | ❌ **no** — confirmed by filter-probe.py |
+
+**The bridge does not cause the 0x59 stuck state.** Only iPhone App sessions trigger it.
+No unlock sequence for 0x59 is needed in the bridge — Fix 3 (non-fatal catch in `_fetch_info()`)
+is the correct strategy: the timeout is caught gracefully and polling continues normally.
+
+**No programmatic unlock exists for 0x59 (confirmed 2026-04-19).**
+All of the following were tested via filter-probe.py on a post-iPhone-session stuck device — none worked:
+- 4×Proc_0x11 + 4×Proc_0x13 (subscribe_notifications_async)
+- proc 0x53 profile settings (11 IDs)
+- proc 0x51 common settings (7 IDs)
+- proc 0x0A profile settings iPhone init style (10 IDs)
+
+Power cycle is the only recovery. filter-probe.py has no init sequence — it reports the
+timeout clearly so the user knows a power cycle is needed.
+
+---
 
 ---
 

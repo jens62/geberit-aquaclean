@@ -46,11 +46,30 @@ An interactive Swagger UI is available at `http://<host>:<port>/docs`.
 
 ## Commands
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/command/toggle-lid` | Toggle lid open/closed |
-| `POST` | `/command/toggle-anal` | Toggle anal shower on/off |
-| `POST` | `/command/reset-filter-counter` | Reset ceramic honeycomb filter counter (sets days back to 365, increments reset count) |
+All command endpoints require the user to be physically present at the device (or seated, where noted).
+The shower/dryer commands only take effect while a user is sitting — the device ignores them otherwise.
+
+> **Testing status legend:** ✅ confirmed working · ⚠️ implemented but not working · 🔲 untested
+
+| Method | Path | Description | Status |
+|--------|------|-------------|--------|
+| `POST` | `/command/toggle-lid` | Toggle lid open/closed | ✅ |
+| `POST` | `/command/toggle-anal` | Toggle anal shower on/off (requires user sitting) | ✅ |
+| `POST` | `/command/toggle-lady` | Toggle lady shower on/off (requires user sitting) | ✅ |
+| `POST` | `/command/toggle-dryer` | Toggle dryer on/off (requires user sitting) | ✅ |
+| `POST` | `/command/toggle-orientation-light` | Toggle orientation light | ⚠️ not working |
+| `POST` | `/command/reset-filter-counter` | Reset ceramic honeycomb filter counter (sets days back to 365, increments reset count) | 🔲 |
+| `POST` | `/command/trigger-flush-manually` | Trigger manual flush | 🔲 |
+| `POST` | `/command/prepare-descaling` | Start descaling workflow (step 1 of 2) | 🔲 |
+| `POST` | `/command/confirm-descaling` | Confirm descaling ready (step 2 of 2) | 🔲 |
+| `POST` | `/command/cancel-descaling` | Cancel descaling workflow | 🔲 |
+| `POST` | `/command/postpone-descaling` | Postpone descaling reminder | 🔲 |
+| `POST` | `/command/start-cleaning-device` | Start device self-cleaning cycle | 🔲 |
+| `POST` | `/command/execute-next-cleaning-step` | Advance to the next cleaning step | 🔲 |
+| `POST` | `/command/start-lid-calibration` | Start lid position calibration | 🔲 |
+| `POST` | `/command/lid-offset-save` | Save calibrated lid offset | 🔲 |
+| `POST` | `/command/lid-offset-increment` | Nudge lid offset up | 🔲 |
+| `POST` | `/command/lid-offset-decrement` | Nudge lid offset down | 🔲 |
 
 ## Data queries
 
