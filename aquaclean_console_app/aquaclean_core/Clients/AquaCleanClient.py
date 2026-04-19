@@ -125,6 +125,39 @@ class AquaCleanClient(IAquaCleanClient):
     async def reset_filter_counter(self):
         await self.base_client.SetCommandAsync(Commands.ResetFilterCounter)
 
+    async def trigger_flush_manually(self):
+        await self.base_client.SetCommandAsync(Commands.TriggerFlushManually)
+
+    async def prepare_descaling(self):
+        await self.base_client.SetCommandAsync(Commands.PrepareDescaling)
+
+    async def confirm_descaling(self):
+        await self.base_client.SetCommandAsync(Commands.ConfirmDescaling)
+
+    async def cancel_descaling(self):
+        await self.base_client.SetCommandAsync(Commands.CancelDescaling)
+
+    async def postpone_descaling(self):
+        await self.base_client.SetCommandAsync(Commands.PostponeDescaling)
+
+    async def start_cleaning_device(self):
+        await self.base_client.SetCommandAsync(Commands.StartCleaningDevice)
+
+    async def execute_next_cleaning_step(self):
+        await self.base_client.SetCommandAsync(Commands.ExecuteNextCleaningStep)
+
+    async def start_lid_position_calibration(self):
+        await self.base_client.SetCommandAsync(Commands.StartLidPositionCalibration)
+
+    async def lid_position_offset_save(self):
+        await self.base_client.SetCommandAsync(Commands.LidPositionOffsetSave)
+
+    async def lid_position_offset_increment(self):
+        await self.base_client.SetCommandAsync(Commands.LidPositionOffsetIncrement)
+
+    async def lid_position_offset_decrement(self):
+        await self.base_client.SetCommandAsync(Commands.LidPositionOffsetDecrement)
+
     async def set_stored_profile_setting(self, setting_id: int, value: int):
         """Write a single user profile setting by numeric ID (0-9)."""
         ps = ProfileSettings(setting_id)
