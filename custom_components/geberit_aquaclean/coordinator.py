@@ -613,6 +613,32 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.toggle_anal_shower()
                 elif command == "toggle_lady_shower":
                     await client.toggle_lady_shower()
+                elif command == "toggle_dryer":
+                    await client.toggle_dryer()
+                elif command == "toggle_orientation_light":
+                    await client.toggle_orientation_light()
+                elif command == "trigger_flush_manually":
+                    await client.trigger_flush_manually()
+                elif command == "prepare_descaling":
+                    await client.prepare_descaling()
+                elif command == "confirm_descaling":
+                    await client.confirm_descaling()
+                elif command == "cancel_descaling":
+                    await client.cancel_descaling()
+                elif command == "postpone_descaling":
+                    await client.postpone_descaling()
+                elif command == "start_cleaning_device":
+                    await client.start_cleaning_device()
+                elif command == "execute_next_cleaning_step":
+                    await client.execute_next_cleaning_step()
+                elif command == "start_lid_position_calibration":
+                    await client.start_lid_position_calibration()
+                elif command == "lid_position_offset_save":
+                    await client.lid_position_offset_save()
+                elif command == "lid_position_offset_increment":
+                    await client.lid_position_offset_increment()
+                elif command == "lid_position_offset_decrement":
+                    await client.lid_position_offset_decrement()
                 elif command == "reset_filter_counter":
                     await client.reset_filter_counter()
                 else:
