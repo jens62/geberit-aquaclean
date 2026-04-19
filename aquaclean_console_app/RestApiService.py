@@ -173,6 +173,61 @@ class RestApiService:
             result = await self._api_mode.run_command("toggle-orientation-light") or {}
             return {"status": "success", "command": "toggle-orientation-light", **result}
 
+        @app.post("/command/trigger-flush-manually")
+        async def trigger_flush_manually():
+            result = await self._api_mode.run_command("trigger-flush-manually") or {}
+            return {"status": "success", "command": "trigger-flush-manually", **result}
+
+        @app.post("/command/prepare-descaling")
+        async def prepare_descaling():
+            result = await self._api_mode.run_command("prepare-descaling") or {}
+            return {"status": "success", "command": "prepare-descaling", **result}
+
+        @app.post("/command/confirm-descaling")
+        async def confirm_descaling():
+            result = await self._api_mode.run_command("confirm-descaling") or {}
+            return {"status": "success", "command": "confirm-descaling", **result}
+
+        @app.post("/command/cancel-descaling")
+        async def cancel_descaling():
+            result = await self._api_mode.run_command("cancel-descaling") or {}
+            return {"status": "success", "command": "cancel-descaling", **result}
+
+        @app.post("/command/postpone-descaling")
+        async def postpone_descaling():
+            result = await self._api_mode.run_command("postpone-descaling") or {}
+            return {"status": "success", "command": "postpone-descaling", **result}
+
+        @app.post("/command/start-cleaning-device")
+        async def start_cleaning_device():
+            result = await self._api_mode.run_command("start-cleaning-device") or {}
+            return {"status": "success", "command": "start-cleaning-device", **result}
+
+        @app.post("/command/execute-next-cleaning-step")
+        async def execute_next_cleaning_step():
+            result = await self._api_mode.run_command("execute-next-cleaning-step") or {}
+            return {"status": "success", "command": "execute-next-cleaning-step", **result}
+
+        @app.post("/command/start-lid-calibration")
+        async def start_lid_calibration():
+            result = await self._api_mode.run_command("start-lid-calibration") or {}
+            return {"status": "success", "command": "start-lid-calibration", **result}
+
+        @app.post("/command/lid-offset-save")
+        async def lid_offset_save():
+            result = await self._api_mode.run_command("lid-offset-save") or {}
+            return {"status": "success", "command": "lid-offset-save", **result}
+
+        @app.post("/command/lid-offset-increment")
+        async def lid_offset_increment():
+            result = await self._api_mode.run_command("lid-offset-increment") or {}
+            return {"status": "success", "command": "lid-offset-increment", **result}
+
+        @app.post("/command/lid-offset-decrement")
+        async def lid_offset_decrement():
+            result = await self._api_mode.run_command("lid-offset-decrement") or {}
+            return {"status": "success", "command": "lid-offset-decrement", **result}
+
         @app.get("/data/system-parameters")
         async def get_system_parameters():
             return await self._api_mode.get_system_parameters()

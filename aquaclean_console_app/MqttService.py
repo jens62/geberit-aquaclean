@@ -21,14 +21,27 @@ class MqttService:
         self.mqttc = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2, self.mqttConfig['client'] + str(int(time.time())))
         self.mqttc.enable_logger()
 
-        self.ToggleLidPosition = myEvent.EventHandler()
-        self.Connect           = myEvent.EventHandler()
-        self.ToggleAnal        = myEvent.EventHandler()
-        self.ToggleDryer       = myEvent.EventHandler()
+        self.ToggleLidPosition       = myEvent.EventHandler()
+        self.Connect                 = myEvent.EventHandler()
+        self.ToggleAnal              = myEvent.EventHandler()
+        self.ToggleLadyShower        = myEvent.EventHandler()
+        self.ToggleDryer             = myEvent.EventHandler()
+        self.ToggleOrientationLight  = myEvent.EventHandler()
+        self.TriggerFlushManually    = myEvent.EventHandler()
+        self.PrepareDescaling        = myEvent.EventHandler()
+        self.ConfirmDescaling        = myEvent.EventHandler()
+        self.CancelDescaling         = myEvent.EventHandler()
+        self.PostponeDescaling       = myEvent.EventHandler()
+        self.StartCleaningDevice     = myEvent.EventHandler()
+        self.ExecuteNextCleaningStep = myEvent.EventHandler()
+        self.StartLidPositionCalibration  = myEvent.EventHandler()
+        self.LidPositionOffsetSave        = myEvent.EventHandler()
+        self.LidPositionOffsetIncrement   = myEvent.EventHandler()
+        self.LidPositionOffsetDecrement   = myEvent.EventHandler()
         self.SetBleConnection        = myEvent.EventHandler()
         self.SetEsphomeApiConnection = myEvent.EventHandler()
         self.SetPollInterval         = myEvent.EventHandler()
-        self.Disconnect        = myEvent.EventHandler()
+        self.Disconnect              = myEvent.EventHandler()
         self.ConnectESP32            = myEvent.EventHandler()
         self.DisconnectESP32         = myEvent.EventHandler()
         self.RestartESP32            = myEvent.EventHandler()
@@ -123,7 +136,20 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/connect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/disconnect")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/esphomeProxy/control/restart")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLadyShower")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleDryer")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleOrientationLight")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/triggerFlushManually")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/prepareDescaling")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/confirmDescaling")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/cancelDescaling")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/postponeDescaling")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/startCleaningDevice")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/executeNextCleaningStep")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/startLidPositionCalibration")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/lidPositionOffsetSave")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/lidPositionOffsetIncrement")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/lidPositionOffsetDecrement")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/resetFilterCounter")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/config/profileSetting")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/config/commonSetting")
@@ -140,8 +166,34 @@ class MqttService:
             self.handle_toggleLidPositionMessage()
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleAnal":
             self.handle_toggle_anal_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLadyShower":
+            self.handle_toggle_lady_shower_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleDryer":
             self.handle_toggle_dryer_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleOrientationLight":
+            self.handle_toggle_orientation_light_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/triggerFlushManually":
+            self.handle_trigger_flush_manually_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/prepareDescaling":
+            self.handle_prepare_descaling_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/confirmDescaling":
+            self.handle_confirm_descaling_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/cancelDescaling":
+            self.handle_cancel_descaling_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/postponeDescaling":
+            self.handle_postpone_descaling_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/startCleaningDevice":
+            self.handle_start_cleaning_device_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/executeNextCleaningStep":
+            self.handle_execute_next_cleaning_step_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/startLidPositionCalibration":
+            self.handle_start_lid_position_calibration_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/lidPositionOffsetSave":
+            self.handle_lid_position_offset_save_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/lidPositionOffsetIncrement":
+            self.handle_lid_position_offset_increment_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/lidPositionOffsetDecrement":
+            self.handle_lid_position_offset_decrement_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/connect":
             self.handle_connect_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/centralDevice/control/disconnect":
@@ -189,6 +241,84 @@ class MqttService:
     def handle_toggle_dryer_message(self):
         logger.trace("in handle_toggle_dryer_message")
         for handler in self.ToggleDryer.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_toggle_lady_shower_message(self):
+        logger.trace("in handle_toggle_lady_shower_message")
+        for handler in self.ToggleLadyShower.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_toggle_orientation_light_message(self):
+        logger.trace("in handle_toggle_orientation_light_message")
+        for handler in self.ToggleOrientationLight.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_trigger_flush_manually_message(self):
+        logger.trace("in handle_trigger_flush_manually_message")
+        for handler in self.TriggerFlushManually.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_prepare_descaling_message(self):
+        logger.trace("in handle_prepare_descaling_message")
+        for handler in self.PrepareDescaling.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_confirm_descaling_message(self):
+        logger.trace("in handle_confirm_descaling_message")
+        for handler in self.ConfirmDescaling.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_cancel_descaling_message(self):
+        logger.trace("in handle_cancel_descaling_message")
+        for handler in self.CancelDescaling.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_postpone_descaling_message(self):
+        logger.trace("in handle_postpone_descaling_message")
+        for handler in self.PostponeDescaling.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_start_cleaning_device_message(self):
+        logger.trace("in handle_start_cleaning_device_message")
+        for handler in self.StartCleaningDevice.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_execute_next_cleaning_step_message(self):
+        logger.trace("in handle_execute_next_cleaning_step_message")
+        for handler in self.ExecuteNextCleaningStep.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_start_lid_position_calibration_message(self):
+        logger.trace("in handle_start_lid_position_calibration_message")
+        for handler in self.StartLidPositionCalibration.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_lid_position_offset_save_message(self):
+        logger.trace("in handle_lid_position_offset_save_message")
+        for handler in self.LidPositionOffsetSave.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_lid_position_offset_increment_message(self):
+        logger.trace("in handle_lid_position_offset_increment_message")
+        for handler in self.LidPositionOffsetIncrement.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
+
+    def handle_lid_position_offset_decrement_message(self):
+        logger.trace("in handle_lid_position_offset_decrement_message")
+        for handler in self.LidPositionOffsetDecrement.get_handlers():
             future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
             _ = future.result()
 

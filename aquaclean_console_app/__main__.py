@@ -35,7 +35,19 @@ def entry_point():
             "  %(prog)s --mode cli --command toggle-anal\n"
             "  %(prog)s --mode cli --command toggle-lady\n"
             "  %(prog)s --mode cli --command toggle-dryer\n"
+            "  %(prog)s --mode cli --command toggle-orientation-light\n"
             "  %(prog)s --mode cli --command reset-filter-counter\n"
+            "  %(prog)s --mode cli --command trigger-flush-manually\n"
+            "  %(prog)s --mode cli --command prepare-descaling\n"
+            "  %(prog)s --mode cli --command confirm-descaling\n"
+            "  %(prog)s --mode cli --command cancel-descaling\n"
+            "  %(prog)s --mode cli --command postpone-descaling\n"
+            "  %(prog)s --mode cli --command start-cleaning-device\n"
+            "  %(prog)s --mode cli --command execute-next-cleaning-step\n"
+            "  %(prog)s --mode cli --command start-lid-calibration\n"
+            "  %(prog)s --mode cli --command lid-offset-save\n"
+            "  %(prog)s --mode cli --command lid-offset-increment\n"
+            "  %(prog)s --mode cli --command lid-offset-decrement\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
             "  %(prog)s --mode cli --command check-config\n"
@@ -68,7 +80,11 @@ def entry_point():
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'node-list',
         'statistics-descale', 'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
-        'toggle-lid', 'toggle-anal', 'toggle-lady', 'toggle-dryer', 'reset-filter-counter',
+        'toggle-lid', 'toggle-anal', 'toggle-lady', 'toggle-dryer', 'toggle-orientation-light',
+        'reset-filter-counter', 'trigger-flush-manually',
+        'prepare-descaling', 'confirm-descaling', 'cancel-descaling', 'postpone-descaling',
+        'start-cleaning-device', 'execute-next-cleaning-step',
+        'start-lid-calibration', 'lid-offset-save', 'lid-offset-increment', 'lid-offset-decrement',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # system info + performance stats (no BLE required)
