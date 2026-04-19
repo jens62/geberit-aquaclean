@@ -695,12 +695,96 @@
         </svg>
         Toggle Dryer
       </button>
+      <button onclick="sendPost('/command/toggle-orientation-light', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M12 2a7 7 0 0 1 7 7c0 2.6-1.41 4.88-3.5 6.13V17a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-1.87C6.41 13.88 5 11.6 5 9a7 7 0 0 1 7-7m-2 17h4v1a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-1z"/>
+        </svg>
+        Toggle Orientation Light
+      </button>
       <button onclick="sendPost('/command/reset-filter-counter', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm-1-11h2v5h-2zm0 6h2v2h-2z"/>
         </svg>
         Reset Filter Counter
+      </button>
+      <button onclick="sendPost('/command/trigger-flush-manually', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M12 2c-5.33 4.55-8 8.48-8 11.8C4 17.78 7.58 22 12 22s8-4.22 8-8.2C20 10.48 17.33 6.55 12 2z"/>
+        </svg>
+        Trigger Flush
+      </button>
+      <button onclick="sendPost('/command/prepare-descaling', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M7 3h10v2l-2 7 2 7v2H7v-2l2-7-2-7V3zm2.31 9L8 17h8l-1.31-5H9.31zM9 5l1.5 5h3L15 5H9z"/>
+        </svg>
+        Prepare Descaling
+      </button>
+      <button onclick="sendPost('/command/confirm-descaling', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M21 7L9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59 21 7z"/>
+        </svg>
+        Confirm Descaling
+      </button>
+      <button onclick="sendPost('/command/cancel-descaling', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+        </svg>
+        Cancel Descaling
+      </button>
+      <button onclick="sendPost('/command/postpone-descaling', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/>
+        </svg>
+        Postpone Descaling
+      </button>
+      <button onclick="sendPost('/command/start-cleaning-device', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/>
+        </svg>
+        Start Cleaning
+      </button>
+      <button onclick="sendPost('/command/execute-next-cleaning-step', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+        </svg>
+        Next Cleaning Step
+      </button>
+      <button onclick="sendPost('/command/start-lid-calibration', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+        </svg>
+        Start Lid Calibration
+      </button>
+      <button onclick="sendPost('/command/lid-offset-increment', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+        </svg>
+        Lid Offset +
+      </button>
+      <button onclick="sendPost('/command/lid-offset-decrement', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M19 13H5v-2h14v2z"/>
+        </svg>
+        Lid Offset −
+      </button>
+      <button onclick="sendPost('/command/lid-offset-save', this)">
+        <span class="spinner"></span>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
+          <path fill="currentColor" d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3zm3-10H5V5h10v4z"/>
+        </svg>
+        Lid Offset Save
       </button>
     </div>
 

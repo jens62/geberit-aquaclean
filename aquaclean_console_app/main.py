@@ -410,19 +410,33 @@ class ManualReconnectRequested(Exception):
 class NullMqttService:
     """Drop-in replacement for MqttService when MQTT is disabled."""
     def __init__(self):
-        self.ToggleLidPosition       = myEvent.EventHandler()
-        self.Connect                 = myEvent.EventHandler()
-        self.ToggleAnal              = myEvent.EventHandler()
-        self.SetBleConnection        = myEvent.EventHandler()
-        self.SetEsphomeApiConnection = myEvent.EventHandler()
-        self.SetPollInterval         = myEvent.EventHandler()
-        self.Disconnect              = myEvent.EventHandler()
-        self.ConnectESP32            = myEvent.EventHandler()
-        self.DisconnectESP32         = myEvent.EventHandler()
-        self.RestartESP32            = myEvent.EventHandler()
-        self.ResetFilterCounter      = myEvent.EventHandler()
-        self.SetProfileSetting       = myEvent.EventHandler()
-        self.SetCommonSetting        = myEvent.EventHandler()
+        self.ToggleLidPosition            = myEvent.EventHandler()
+        self.Connect                      = myEvent.EventHandler()
+        self.ToggleAnal                   = myEvent.EventHandler()
+        self.ToggleLadyShower             = myEvent.EventHandler()
+        self.ToggleDryer                  = myEvent.EventHandler()
+        self.ToggleOrientationLight       = myEvent.EventHandler()
+        self.TriggerFlushManually         = myEvent.EventHandler()
+        self.PrepareDescaling             = myEvent.EventHandler()
+        self.ConfirmDescaling             = myEvent.EventHandler()
+        self.CancelDescaling              = myEvent.EventHandler()
+        self.PostponeDescaling            = myEvent.EventHandler()
+        self.StartCleaningDevice          = myEvent.EventHandler()
+        self.ExecuteNextCleaningStep      = myEvent.EventHandler()
+        self.StartLidPositionCalibration  = myEvent.EventHandler()
+        self.LidPositionOffsetSave        = myEvent.EventHandler()
+        self.LidPositionOffsetIncrement   = myEvent.EventHandler()
+        self.LidPositionOffsetDecrement   = myEvent.EventHandler()
+        self.SetBleConnection             = myEvent.EventHandler()
+        self.SetEsphomeApiConnection      = myEvent.EventHandler()
+        self.SetPollInterval              = myEvent.EventHandler()
+        self.Disconnect                   = myEvent.EventHandler()
+        self.ConnectESP32                 = myEvent.EventHandler()
+        self.DisconnectESP32              = myEvent.EventHandler()
+        self.RestartESP32                 = myEvent.EventHandler()
+        self.ResetFilterCounter           = myEvent.EventHandler()
+        self.SetProfileSetting            = myEvent.EventHandler()
+        self.SetCommonSetting             = myEvent.EventHandler()
 
     async def start_async(self, loop, queue):
         queue.put("initialized")
@@ -1626,8 +1640,21 @@ class ApiMode:
         # Wire MQTT inbound control topics → ApiMode handlers
         self.service.mqtt_service.SetProfileSetting      += self._on_mqtt_set_profile_setting
         self.service.mqtt_service.SetCommonSetting       += self._on_mqtt_set_common_setting
-        self.service.mqtt_service.ToggleAnal       += self._on_mqtt_toggle_anal
-        self.service.mqtt_service.ToggleDryer      += self._on_mqtt_toggle_dryer
+        self.service.mqtt_service.ToggleAnal                  += self._on_mqtt_toggle_anal
+        self.service.mqtt_service.ToggleLadyShower            += self._on_mqtt_toggle_lady
+        self.service.mqtt_service.ToggleDryer                 += self._on_mqtt_toggle_dryer
+        self.service.mqtt_service.ToggleOrientationLight      += self._on_mqtt_toggle_orientation_light
+        self.service.mqtt_service.TriggerFlushManually        += self._on_mqtt_trigger_flush_manually
+        self.service.mqtt_service.PrepareDescaling            += self._on_mqtt_prepare_descaling
+        self.service.mqtt_service.ConfirmDescaling            += self._on_mqtt_confirm_descaling
+        self.service.mqtt_service.CancelDescaling             += self._on_mqtt_cancel_descaling
+        self.service.mqtt_service.PostponeDescaling           += self._on_mqtt_postpone_descaling
+        self.service.mqtt_service.StartCleaningDevice         += self._on_mqtt_start_cleaning_device
+        self.service.mqtt_service.ExecuteNextCleaningStep     += self._on_mqtt_execute_next_cleaning_step
+        self.service.mqtt_service.StartLidPositionCalibration += self._on_mqtt_start_lid_calibration
+        self.service.mqtt_service.LidPositionOffsetSave       += self._on_mqtt_lid_offset_save
+        self.service.mqtt_service.LidPositionOffsetIncrement  += self._on_mqtt_lid_offset_increment
+        self.service.mqtt_service.LidPositionOffsetDecrement  += self._on_mqtt_lid_offset_decrement
         self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
         self.service.mqtt_service.SetPollInterval         += self._on_mqtt_set_poll_interval
@@ -1787,6 +1814,84 @@ class ApiMode:
             await self.run_command("toggle-dryer")
         except Exception as e:
             logger.warning(f"MQTT toggle-dryer failed: {e}")
+
+    async def _on_mqtt_toggle_lady(self):
+        try:
+            await self.run_command("toggle-lady")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-lady failed: {e}")
+
+    async def _on_mqtt_toggle_orientation_light(self):
+        try:
+            await self.run_command("toggle-orientation-light")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-orientation-light failed: {e}")
+
+    async def _on_mqtt_trigger_flush_manually(self):
+        try:
+            await self.run_command("trigger-flush-manually")
+        except Exception as e:
+            logger.warning(f"MQTT trigger-flush-manually failed: {e}")
+
+    async def _on_mqtt_prepare_descaling(self):
+        try:
+            await self.run_command("prepare-descaling")
+        except Exception as e:
+            logger.warning(f"MQTT prepare-descaling failed: {e}")
+
+    async def _on_mqtt_confirm_descaling(self):
+        try:
+            await self.run_command("confirm-descaling")
+        except Exception as e:
+            logger.warning(f"MQTT confirm-descaling failed: {e}")
+
+    async def _on_mqtt_cancel_descaling(self):
+        try:
+            await self.run_command("cancel-descaling")
+        except Exception as e:
+            logger.warning(f"MQTT cancel-descaling failed: {e}")
+
+    async def _on_mqtt_postpone_descaling(self):
+        try:
+            await self.run_command("postpone-descaling")
+        except Exception as e:
+            logger.warning(f"MQTT postpone-descaling failed: {e}")
+
+    async def _on_mqtt_start_cleaning_device(self):
+        try:
+            await self.run_command("start-cleaning-device")
+        except Exception as e:
+            logger.warning(f"MQTT start-cleaning-device failed: {e}")
+
+    async def _on_mqtt_execute_next_cleaning_step(self):
+        try:
+            await self.run_command("execute-next-cleaning-step")
+        except Exception as e:
+            logger.warning(f"MQTT execute-next-cleaning-step failed: {e}")
+
+    async def _on_mqtt_start_lid_calibration(self):
+        try:
+            await self.run_command("start-lid-calibration")
+        except Exception as e:
+            logger.warning(f"MQTT start-lid-calibration failed: {e}")
+
+    async def _on_mqtt_lid_offset_save(self):
+        try:
+            await self.run_command("lid-offset-save")
+        except Exception as e:
+            logger.warning(f"MQTT lid-offset-save failed: {e}")
+
+    async def _on_mqtt_lid_offset_increment(self):
+        try:
+            await self.run_command("lid-offset-increment")
+        except Exception as e:
+            logger.warning(f"MQTT lid-offset-increment failed: {e}")
+
+    async def _on_mqtt_lid_offset_decrement(self):
+        try:
+            await self.run_command("lid-offset-decrement")
+        except Exception as e:
+            logger.warning(f"MQTT lid-offset-decrement failed: {e}")
 
     async def _on_mqtt_set_ble_connection(self, value: str):
         try:
@@ -2790,6 +2895,28 @@ class ApiMode:
             topic = self.service.mqttConfig['topic']
             await self._publish_filter_status_to_mqtt(new_fs, topic)
             await self.rest_api.broadcast_state(self.service.device_state.copy())
+        elif command == "trigger-flush-manually":
+            await client.trigger_flush_manually()
+        elif command == "prepare-descaling":
+            await client.prepare_descaling()
+        elif command == "confirm-descaling":
+            await client.confirm_descaling()
+        elif command == "cancel-descaling":
+            await client.cancel_descaling()
+        elif command == "postpone-descaling":
+            await client.postpone_descaling()
+        elif command == "start-cleaning-device":
+            await client.start_cleaning_device()
+        elif command == "execute-next-cleaning-step":
+            await client.execute_next_cleaning_step()
+        elif command == "start-lid-calibration":
+            await client.start_lid_position_calibration()
+        elif command == "lid-offset-save":
+            await client.lid_position_offset_save()
+        elif command == "lid-offset-increment":
+            await client.lid_position_offset_increment()
+        elif command == "lid-offset-decrement":
+            await client.lid_position_offset_decrement()
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
 
@@ -3208,6 +3335,151 @@ def get_ha_discovery_configs(topic_prefix: str) -> list:
             },
         },
         {
+            "topic": f"{HA}/switch/geberit_aquaclean/toggle_lady/config",
+            "payload": {
+                "name": "Toggle Lady Shower",
+                "unique_id": "geberit_aquaclean_toggle_lady",
+                "command_topic": f"{t}/peripheralDevice/control/toggleLadyShower",
+                "payload_on": "true", "payload_off": "false",
+                "icon": "mdi:shower-head",
+                "optimistic": True,
+                "retain": False,
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/toggle_orientation_light/config",
+            "payload": {
+                "name": "Toggle Orientation Light",
+                "unique_id": "geberit_aquaclean_toggle_orientation_light",
+                "command_topic": f"{t}/peripheralDevice/control/toggleOrientationLight",
+                "payload_press": "true",
+                "icon": "mdi:lightbulb",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/trigger_flush_manually/config",
+            "payload": {
+                "name": "Trigger Flush Manually",
+                "unique_id": "geberit_aquaclean_trigger_flush_manually",
+                "command_topic": f"{t}/peripheralDevice/control/triggerFlushManually",
+                "payload_press": "true",
+                "icon": "mdi:water",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/prepare_descaling/config",
+            "payload": {
+                "name": "Prepare Descaling",
+                "unique_id": "geberit_aquaclean_prepare_descaling",
+                "command_topic": f"{t}/peripheralDevice/control/prepareDescaling",
+                "payload_press": "true",
+                "icon": "mdi:chemical-weapon",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/confirm_descaling/config",
+            "payload": {
+                "name": "Confirm Descaling",
+                "unique_id": "geberit_aquaclean_confirm_descaling",
+                "command_topic": f"{t}/peripheralDevice/control/confirmDescaling",
+                "payload_press": "true",
+                "icon": "mdi:check-circle",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/cancel_descaling/config",
+            "payload": {
+                "name": "Cancel Descaling",
+                "unique_id": "geberit_aquaclean_cancel_descaling",
+                "command_topic": f"{t}/peripheralDevice/control/cancelDescaling",
+                "payload_press": "true",
+                "icon": "mdi:close-circle",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/postpone_descaling/config",
+            "payload": {
+                "name": "Postpone Descaling",
+                "unique_id": "geberit_aquaclean_postpone_descaling",
+                "command_topic": f"{t}/peripheralDevice/control/postponeDescaling",
+                "payload_press": "true",
+                "icon": "mdi:clock-outline",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/start_cleaning_device/config",
+            "payload": {
+                "name": "Start Cleaning Device",
+                "unique_id": "geberit_aquaclean_start_cleaning_device",
+                "command_topic": f"{t}/peripheralDevice/control/startCleaningDevice",
+                "payload_press": "true",
+                "icon": "mdi:spray-bottle",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/execute_next_cleaning_step/config",
+            "payload": {
+                "name": "Execute Next Cleaning Step",
+                "unique_id": "geberit_aquaclean_execute_next_cleaning_step",
+                "command_topic": f"{t}/peripheralDevice/control/executeNextCleaningStep",
+                "payload_press": "true",
+                "icon": "mdi:skip-next",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/start_lid_calibration/config",
+            "payload": {
+                "name": "Start Lid Position Calibration",
+                "unique_id": "geberit_aquaclean_start_lid_calibration",
+                "command_topic": f"{t}/peripheralDevice/control/startLidPositionCalibration",
+                "payload_press": "true",
+                "icon": "mdi:tune",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/lid_offset_save/config",
+            "payload": {
+                "name": "Lid Position Offset Save",
+                "unique_id": "geberit_aquaclean_lid_offset_save",
+                "command_topic": f"{t}/peripheralDevice/control/lidPositionOffsetSave",
+                "payload_press": "true",
+                "icon": "mdi:content-save",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/lid_offset_increment/config",
+            "payload": {
+                "name": "Lid Position Offset +",
+                "unique_id": "geberit_aquaclean_lid_offset_increment",
+                "command_topic": f"{t}/peripheralDevice/control/lidPositionOffsetIncrement",
+                "payload_press": "true",
+                "icon": "mdi:plus",
+                "device": DEVICE,
+            },
+        },
+        {
+            "topic": f"{HA}/button/geberit_aquaclean/lid_offset_decrement/config",
+            "payload": {
+                "name": "Lid Position Offset −",
+                "unique_id": "geberit_aquaclean_lid_offset_decrement",
+                "command_topic": f"{t}/peripheralDevice/control/lidPositionOffsetDecrement",
+                "payload_press": "true",
+                "icon": "mdi:minus",
+                "device": DEVICE,
+            },
+        },
+        {
             "topic": f"{HA}/button/geberit_aquaclean/reset_filter_counter/config",
             "payload": {
                 "name": "Reset Filter Counter",
@@ -3590,9 +3862,45 @@ async def run_cli(args):
         elif args.command == 'toggle-dryer':
             await client.toggle_dryer()
             result["data"] = {"action": "dryer_toggled"}
+        elif args.command == 'toggle-orientation-light':
+            await client.toggle_orientation_light()
+            result["data"] = {"action": "orientation_light_toggled"}
         elif args.command == 'reset-filter-counter':
             await client.reset_filter_counter()
             result["data"] = {"action": "filter_counter_reset"}
+        elif args.command == 'trigger-flush-manually':
+            await client.trigger_flush_manually()
+            result["data"] = {"action": "flush_triggered"}
+        elif args.command == 'prepare-descaling':
+            await client.prepare_descaling()
+            result["data"] = {"action": "descaling_prepared"}
+        elif args.command == 'confirm-descaling':
+            await client.confirm_descaling()
+            result["data"] = {"action": "descaling_confirmed"}
+        elif args.command == 'cancel-descaling':
+            await client.cancel_descaling()
+            result["data"] = {"action": "descaling_cancelled"}
+        elif args.command == 'postpone-descaling':
+            await client.postpone_descaling()
+            result["data"] = {"action": "descaling_postponed"}
+        elif args.command == 'start-cleaning-device':
+            await client.start_cleaning_device()
+            result["data"] = {"action": "cleaning_started"}
+        elif args.command == 'execute-next-cleaning-step':
+            await client.execute_next_cleaning_step()
+            result["data"] = {"action": "next_cleaning_step_executed"}
+        elif args.command == 'start-lid-calibration':
+            await client.start_lid_position_calibration()
+            result["data"] = {"action": "lid_calibration_started"}
+        elif args.command == 'lid-offset-save':
+            await client.lid_position_offset_save()
+            result["data"] = {"action": "lid_offset_saved"}
+        elif args.command == 'lid-offset-increment':
+            await client.lid_position_offset_increment()
+            result["data"] = {"action": "lid_offset_incremented"}
+        elif args.command == 'lid-offset-decrement':
+            await client.lid_position_offset_decrement()
+            result["data"] = {"action": "lid_offset_decremented"}
 
         result["status"]  = "success"
         result["message"] = f"Command {args.command} completed"
@@ -3740,7 +4048,19 @@ if __name__ == "__main__":
             "  %(prog)s --mode cli --command toggle-anal\n"
             "  %(prog)s --mode cli --command toggle-lady\n"
             "  %(prog)s --mode cli --command toggle-dryer\n"
+            "  %(prog)s --mode cli --command toggle-orientation-light\n"
             "  %(prog)s --mode cli --command reset-filter-counter\n"
+            "  %(prog)s --mode cli --command trigger-flush-manually\n"
+            "  %(prog)s --mode cli --command prepare-descaling\n"
+            "  %(prog)s --mode cli --command confirm-descaling\n"
+            "  %(prog)s --mode cli --command cancel-descaling\n"
+            "  %(prog)s --mode cli --command postpone-descaling\n"
+            "  %(prog)s --mode cli --command start-cleaning-device\n"
+            "  %(prog)s --mode cli --command execute-next-cleaning-step\n"
+            "  %(prog)s --mode cli --command start-lid-calibration\n"
+            "  %(prog)s --mode cli --command lid-offset-save\n"
+            "  %(prog)s --mode cli --command lid-offset-increment\n"
+            "  %(prog)s --mode cli --command lid-offset-decrement\n"
             "\n"
             "app config / home assistant (no BLE required):\n"
             "  %(prog)s --mode cli --command check-config\n"
@@ -3773,7 +4093,11 @@ if __name__ == "__main__":
         'info', 'identification', 'initial-operation-date', 'soc-versions', 'node-list',
         'statistics-descale', 'filter-status', 'firmware-version-list', 'profile-settings',
         # device commands
-        'toggle-lid', 'toggle-anal', 'toggle-lady', 'toggle-dryer', 'reset-filter-counter',
+        'toggle-lid', 'toggle-anal', 'toggle-lady', 'toggle-dryer', 'toggle-orientation-light',
+        'reset-filter-counter', 'trigger-flush-manually',
+        'prepare-descaling', 'confirm-descaling', 'cancel-descaling', 'postpone-descaling',
+        'start-cleaning-device', 'execute-next-cleaning-step',
+        'start-lid-calibration', 'lid-offset-save', 'lid-offset-increment', 'lid-offset-decrement',
         # app config / home assistant (no BLE required)
         'check-config', 'get-config', 'publish-ha-discovery', 'remove-ha-discovery',
         # system info + performance stats (no BLE required)
