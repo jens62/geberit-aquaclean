@@ -13,11 +13,23 @@ from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
 # (command, friendly_name, icon)
 BUTTONS: list[tuple[str, str, str]] = [
-    ("toggle_lid",           "Toggle Lid",           "geberit:lid"),
-    ("toggle_anal_shower",   "Toggle Anal Shower",   "geberit:analshower"),
-    ("toggle_lady_shower",   "Toggle Lady Shower",   "geberit:ladywash"),
-    ("toggle_dryer",         "Toggle Dryer",         "mdi:hair-dryer"),
-    ("reset_filter_counter", "Reset Filter Counter", "mdi:air-purifier"),
+    ("toggle_lid",                    "Toggle Lid",                    "geberit:lid"),
+    ("toggle_anal_shower",            "Toggle Anal Shower",            "geberit:analshower"),
+    ("toggle_lady_shower",            "Toggle Lady Shower",            "geberit:ladywash"),
+    ("toggle_dryer",                  "Toggle Dryer",                  "mdi:hair-dryer"),
+    ("toggle_orientation_light",      "Toggle Orientation Light",      "mdi:lightbulb-outline"),
+    ("trigger_flush_manually",        "Trigger Flush Manually",        "mdi:toilet"),
+    ("prepare_descaling",             "Prepare Descaling",             "mdi:chemical-weapon"),
+    ("confirm_descaling",             "Confirm Descaling",             "mdi:check-circle-outline"),
+    ("cancel_descaling",              "Cancel Descaling",              "mdi:close-circle-outline"),
+    ("postpone_descaling",            "Postpone Descaling",            "mdi:clock-outline"),
+    ("start_cleaning_device",         "Start Cleaning Device",         "mdi:spray-bottle"),
+    ("execute_next_cleaning_step",    "Execute Next Cleaning Step",    "mdi:skip-next-circle-outline"),
+    ("start_lid_position_calibration","Start Lid Position Calibration","mdi:tune"),
+    ("lid_position_offset_save",      "Lid Position Offset Save",      "mdi:content-save-outline"),
+    ("lid_position_offset_increment", "Lid Position Offset Increment", "mdi:plus-circle-outline"),
+    ("lid_position_offset_decrement", "Lid Position Offset Decrement", "mdi:minus-circle-outline"),
+    ("reset_filter_counter",          "Reset Filter Counter",          "mdi:air-purifier"),
 ]
 
 # Commands that only work while a user is seated — entity becomes unavailable otherwise.
