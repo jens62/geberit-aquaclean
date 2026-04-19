@@ -189,7 +189,7 @@ This is what `Deserializer.py` does: `data_array[i] = LE(result[i*5+2:i*5+6])`.
 | 6 | lastErrorCode | 0 | integer | |
 | 7 | *unnamed* | 0 | ? | polled by bridge; semantics unknown |
 | 8 | *pos 8 = duplicate of idx 4* | — | — | iPhone request has idx 4 twice |
-| 9 | orientationLightState | 0 | non-zero | 0 = off |
+| 9 | orientationLightState | 0 | **always 0 on HB2304EU298413** | ⚠️ NOT OBSERVABLE — see note below |
 | 10 | *unknown* | 0 | ? | polled by iPhone only |
 | 11 | *unknown* | 0 | ? | polled by iPhone only |
 
@@ -210,6 +210,49 @@ with different profile settings active during a shower would allow decoding.
 Source: `Connect-Toggle-Lid-shutdown-app.txt` — all 36 SPL responses are
 byte-for-byte identical across the session. **Lid state is not tracked by any
 GetSystemParameterList parameter.**
+
+**⚠️ Orientation light state (index 9) is NOT observable on HB2304EU298413 — exhaustively confirmed (2026-04-19):**
+Source: `orientierungslicht bei annäherung wird eingeschaltet.txt`. Three light events were
+captured (ON at 07:41:52, OFF at 07:44:15, ON at 07:44:32) and the full BLE stack was
+checked at every layer:
+
+- **GetSPL result:** byte-for-byte identical at all three events and throughout the entire session.
+  Index 9 always returns idx_echo=0 (not supported on this device).
+- **All 4 GATT notification handles (0x000F, 0x0013, 0x0017, 0x001B):** only 6 distinct
+  frame payloads appear during polling, all mechanically repeating GetSPL request/response
+  cycles. No unsolicited notifications from the device. No variation of any byte at any
+  light event.
+- **CONTROL frames (0x70):** the only variation is a `01`↔`03` alternation in one byte —
+  this is a frame-sequence counter (FIRST vs. CONS acknowledgement), not device state.
+- **No other GATT handles** used after the initial connection setup.
+
+**The orientation light operates via a hardware proximity sensor with zero BLE involvement
+in its runtime on/off state. There is no BLE mechanism to observe it.**
+
+The light's *configuration* (activation mode, color, brightness) is readable/writable via
+GetStoredCommonSetting (proc 0x51) / SetStoredCommonSetting (proc 0x52). The device had
+activation mode 2 = "When Approached" in this session — that is what enables autonomous
+proximity-triggered behavior. Configuration ≠ runtime state.
+
+**⚠️ HYPOTHESIS (2026-04-19): Commands enum code ≠ SPL index — do NOT derive one from the other**
+
+The `Commands` enum values and the GetSystemParameterList parameter indices are two
+independent numbering systems with no systematic relationship:
+
+| Command | Code | SPL index for that feature's state |
+|---------|------|-------------------------------------|
+| ToggleAnalShower | 0 | 1 (analShowerIsRunning per C#) |
+| ToggleLadyShower | 1 | 2 (ladyShowerIsRunning) |
+| ToggleDryer | 2 | 3 (dryerIsRunning per C#) |
+| ToggleLidPosition | **10** | unknown — no SPL index 11 exists |
+| ToggleOrientationLight | **20** | 9 (orientationLightState) — not 20 |
+
+The first three show an accidental +1 offset (command code + 1 = SPL index). This is
+coincidence of ordering — the pattern breaks immediately at `ToggleLidPosition = 10`
+(no SPL index 11 exists) and `ToggleOrientationLight = 20` (SPL index is 9, not 20).
+
+**Do not guess SPL indices from command codes. Verify each independently from BLE logs
+or the C# reference source.**
 
 ---
 
