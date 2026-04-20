@@ -168,8 +168,38 @@ Service  3334429d-90f3-4c41-a02d-5cb3a03e0000  ✅ Geberit AquaClean Service
 
 - **Service found → protocol failure**: device GATT profile is correct; likely a
   transient state — power-cycle the toilet and retry.
-- **Service NOT found**: wrong device, unsupported model, or device in an
-  unusual firmware state.
+- **Service NOT found → protocol probe**: the script automatically probes all
+  non-standard services that have both WRITE and NOTIFY characteristics (see below).
+
+---
+
+## Auto protocol probe on unknown GATT profile
+
+When Step 6 fails and the known Geberit service UUID is **not** found, the script
+automatically probes all non-standard services (skipping standard BLE services like
+Device Information) for any that expose a WRITE + NOTIFY characteristic pair.
+
+It sends a `GetDeviceIdentification` (proc `0x82`) frame and listens for 5 seconds:
+
+```
+→ Found 1 candidate service(s) with WRITE+NOTIFY — probing Geberit protocol …
+  Probe frame (GetDeviceIdentification, proc 0x82, 20 bytes):
+    11 04 ff 00 04 e4 e4 01 00 82 00 00 00 00 00 00 00 00 00 00
+
+  Service  559eb100-2390-11e8-b467-0ed5f89f718b
+    WRITE handle=0x0015  NOTIFY handle=0x0013 … RESPONSE! 17 bytes: 82 04 …
+[PASS]  Protocol probe
+         Device responds to Geberit protocol on non-standard service!
+         Service  559eb100-2390-11e8-b467-0ed5f89f718b
+         WRITE handle=0x0015  NOTIFY handle=0x0013
+         Response (17 bytes): 82 04 …
+         → Please open a GitHub issue with the full output of this script
+           so support for this model can be added:
+           https://github.com/jens62/geberit-aquaclean/issues
+```
+
+If no response is received on any candidate, the device uses a different protocol or
+requires a different handshake — open a GitHub issue with the full script output.
 
 ---
 
