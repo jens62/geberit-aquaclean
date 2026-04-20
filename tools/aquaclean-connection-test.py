@@ -28,6 +28,7 @@ Usage
   python tools/aquaclean-connection-test.py --local-ble --mac AA:BB:CC:DD:EE:FF
   python tools/aquaclean-connection-test.py --mac AA:BB:CC:DD:EE:FF --stream-logs
   python tools/aquaclean-connection-test.py --stream-logs --stream-duration 60 --log-level verbose
+  python tools/aquaclean-connection-test.py --mac AA:BB:CC:DD:EE:FF --dynamic-uuids
 
 Install
 -------
@@ -461,7 +462,7 @@ async def check_esphome_discovery(timeout: float = 5.0) -> tuple[Optional[str], 
 # ---------------------------------------------------------------------------
 # Step 0b — Local BLE scan via bleak (--local-ble mode)
 # ---------------------------------------------------------------------------
-async def check_local_ble_scan(target_mac: Optional[str], scan_duration: float, identify_by: str = "any") -> None:
+async def check_local_ble_scan(target_mac: Optional[str], scan_duration: float, identify_by: str = "any") -> "list[str]":
     """Scan for Geberit devices using the local Bluetooth adapter (bleak)."""
     _section("Step 0 — Local BLE Scan (bleak)")
 
@@ -561,6 +562,7 @@ async def check_local_ble_scan(target_mac: Optional[str], scan_duration: float, 
             if mfr:
                 for cid, data in mfr.items():
                     print(f"    MFR   company=0x{cid:04X}  data={bytes(data).hex()}")
+    return geberit_found
 
 
 # ---------------------------------------------------------------------------
@@ -1206,9 +1208,184 @@ _GATT_PROP_NAMES = [
     (0x10, "NOTIFY"), (0x20, "INDICATE"),
 ]
 
+# Bluetooth SIG base UUID suffix — services matching this pattern are standard BLE services
+# (Generic Access, Device Information, etc.) and should be skipped during UUID extraction.
+_BT_SIG_BASE_SUFFIX = "-0000-1000-8000-00805f9b34fb"
+
 
 def _format_gatt_props(props: int) -> str:
     return " | ".join(name for bit, name in _GATT_PROP_NAMES if props & bit) or f"0x{props:02X}"
+
+
+async def _probe_via_bridge_stack(
+    host: Optional[str],
+    port: int,
+    noise_psk: Optional[str],
+    mac: str,
+    svc_uuid: str,
+    write_uuids: "list[str]",
+    read_uuids: "list[str]",
+    scan_duration: float,
+) -> None:
+    """Probe device identification using the full bridge stack with injected GATT UUIDs.
+
+    Used by --dynamic-uuids and the auto-probe on unknown GATT profiles:
+    1. Extracts the candidate service + characteristic UUIDs from the GATT table.
+    2. Overrides the BluetoothLeConnector class-level UUID constants as instance
+       attributes so the bridge's _post_connect() / _list_services() / send_message()
+       pick up the dynamically discovered UUIDs instead of the hardcoded defaults.
+    3. Runs the standard connect + subscribe_notifications + get_device_identification
+       flow — identical to Step 6 (Device Identification) but with injected UUIDs.
+
+    No protocol code is duplicated here — 100% of the bridge stack is reused.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+    try:
+        from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
+        from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import (
+            AquaCleanBaseClient, BLEPeripheralTimeoutError,
+        )
+    except ImportError as e:
+        _report(
+            "Bridge package import", _Result.SKIP,
+            f"aquaclean_console_app not importable: {e}",
+            hint="Run from the repo root or install the package with pip install -e .",
+        )
+        return
+
+    import logging as _logging
+    from uuid import UUID as _UUID
+
+    for _logger_name in ("aquaclean_console_app", "aioesphomeapi", "bleak"):
+        _logging.getLogger(_logger_name).setLevel(_logging.WARNING)
+    for _lvl_name, _lvl_val in (("SILLY", 4), ("TRACE", 5)):
+        if not hasattr(_logging, _lvl_name):
+            _logging.addLevelName(_lvl_val, _lvl_name)
+            setattr(_logging, _lvl_name, _lvl_val)
+            setattr(_logging.Logger, _lvl_name.lower(),
+                    lambda self, msg, *a, _v=_lvl_val, **kw: self.log(_v, msg, *a, **kw))
+
+    is_standard = svc_uuid.lower() == GEBERIT_SERVICE_UUID
+
+    label = "standard Geberit" if is_standard else "non-standard"
+    print(f"\n  {_cyan(f'→ Injecting {label} UUIDs into bridge stack and probing …')}")
+    print(f"    Service: {svc_uuid}")
+    for i, u in enumerate(write_uuids[:4]):
+        print(f"    WRITE_{i}: {u}")
+    for i, u in enumerate(read_uuids[:4]):
+        print(f"    READ_{i}:  {u}")
+    print()
+
+    # Pad write/read lists to 4 (bridge expects 4 of each; repeat last if fewer)
+    def _pad4(lst: "list[str]") -> "list[str]":
+        return (lst + [lst[-1]] * 4)[:4]
+
+    w = _pad4(write_uuids)
+    r = _pad4(read_uuids)
+
+    connector = BluetoothLeConnector(
+        esphome_host=host, esphome_port=port, esphome_noise_psk=noise_psk,
+    )
+    # Override class-level UUID constants as instance attributes.
+    # BluetoothLeConnector._post_connect(), _list_services(), and send_message()
+    # all read these via self.X — instance attrs shadow the class-level defaults.
+    connector.SERVICE_UUID                = _UUID(svc_uuid)
+    connector.BULK_CHAR_BULK_WRITE_0_UUID = _UUID(w[0])
+    connector.BULK_CHAR_BULK_WRITE_1_UUID = _UUID(w[1])
+    connector.BULK_CHAR_BULK_WRITE_2_UUID = _UUID(w[2])
+    connector.BULK_CHAR_BULK_WRITE_3_UUID = _UUID(w[3])
+    connector.BULK_CHAR_BULK_READ_0_UUID  = _UUID(r[0])
+    connector.BULK_CHAR_BULK_READ_1_UUID  = _UUID(r[1])
+    connector.BULK_CHAR_BULK_READ_2_UUID  = _UUID(r[2])
+    connector.BULK_CHAR_BULK_READ_3_UUID  = _UUID(r[3])
+
+    base_client = AquaCleanBaseClient(connector)
+    mode_label = f"ESP32 proxy ({host})" if host else "local BLE"
+    print(f"  Connecting to {mac} via {mode_label} …")
+
+    try:
+        await asyncio.wait_for(base_client.connect_async(mac), timeout=30.0)
+        await base_client.subscribe_notifications_async()
+    except asyncio.TimeoutError:
+        _report(
+            "Protocol probe", _Result.FAIL, "BLE connect timed out after 30s",
+            hint="Close the Geberit Home app and retry.",
+        )
+        try: await base_client.disconnect()
+        except Exception: pass
+        return
+    except Exception as e:
+        _report(
+            "Protocol probe", _Result.FAIL, f"BLE connect failed: {type(e).__name__}: {e}",
+            hint="Make sure the Geberit Home app is closed and the toilet is reachable.",
+        )
+        try: await base_client.disconnect()
+        except Exception: pass
+        return
+
+    ident = None
+    try:
+        ident = await asyncio.wait_for(
+            base_client.get_device_identification_async(0),
+            timeout=15.0,
+        )
+    except BLEPeripheralTimeoutError:
+        _report(
+            "Protocol probe", _Result.FAIL,
+            "GetDeviceIdentification timed out — device did not respond",
+            hint=(
+                "BLE connected and init sequence sent, but no response to identification.\n"
+                "• Power-cycle the toilet (30s off) and retry.\n"
+                "• If this is a non-standard model, open a GitHub issue with this full output:\n"
+                "  https://github.com/jens62/geberit-aquaclean/issues"
+            ),
+        )
+    except Exception as e:
+        _report(
+            "Protocol probe", _Result.FAIL, f"{type(e).__name__}: {e}",
+            hint="Open a GitHub issue with the full output of this script.",
+        )
+    finally:
+        try: await base_client.disconnect()
+        except Exception: pass
+
+    if ident is None:
+        return
+
+    desc = getattr(ident, "description",    None)
+    sn   = getattr(ident, "serial_number",  None)
+    sap  = getattr(ident, "sap_number",     None)
+    pd   = getattr(ident, "production_date", None)
+    print()
+    if desc: print(f"    {'Description':<22}  {desc}")
+    if sn:   print(f"    {'Serial Number':<22}  {sn}")
+    if sap:  print(f"    {'SAP Number':<22}  {sap}")
+    if pd:   print(f"    {'Production Date':<22}  {pd}")
+
+    if is_standard:
+        _report(
+            "Protocol probe", _Result.PASS,
+            "Device identification succeeded — bridge stack + injected UUIDs work correctly",
+        )
+    else:
+        _report(
+            "Protocol probe", _Result.PASS,
+            (
+                f"Device responds to Geberit protocol on non-standard service!\n"
+                f"         Service UUID: {svc_uuid}\n"
+                f"         WRITE_0 UUID: {write_uuids[0]}\n"
+                f"         READ_0 UUID:  {read_uuids[0]}"
+            ),
+            hint=(
+                "This device uses non-standard Geberit GATT UUIDs.\n"
+                "Please open a GitHub issue with the full output of this script\n"
+                "so support for this model can be added:\n"
+                "  https://github.com/jens62/geberit-aquaclean/issues"
+            ),
+        )
 
 
 async def check_gatt_services(
@@ -1217,12 +1394,17 @@ async def check_gatt_services(
     noise_psk: Optional[str],
     mac: str,
     scan_duration: float,
+    force_probe: bool = False,
 ) -> None:
     """Diagnostic: connect BLE via raw ESPHome API and dump GATT service table.
 
     Auto-triggered when Step 6 (Device Identification) fails after a successful
-    BLE connect.  Helps diagnose whether the device actually exposes the expected
-    Geberit AquaClean GATT profile.
+    BLE connect.  Prints the GATT profile and then probes via the full bridge
+    stack (_probe_via_bridge_stack) when the Geberit service is not found.
+
+    force_probe (--dynamic-uuids): also run the bridge-stack probe when the known
+    Geberit service UUID IS found, to validate that the probe mechanism works and
+    that GetDeviceIdentification succeeds with the discovered UUIDs.
     """
     print()
     print(f"  {_yellow('→ Auto-running GATT service discovery to diagnose the failure …')}")
@@ -1306,9 +1488,10 @@ async def check_gatt_services(
         except Exception: pass
         return
 
-    if unsub:
-        try: unsub()
-        except Exception: pass
+    # NOTE: do NOT call unsub() here — doing so while BLE is active queues an
+    # UnsubscribeBluetoothLEAdvertisementsRequest which is flushed on the next
+    # await, causing the ESP32 to drop the BLE link (trap 12 in CLAUDE.md).
+    # unsub() is called after bluetooth_device_disconnect below.
 
     # Read GATT services
     try:
@@ -1317,12 +1500,24 @@ async def check_gatt_services(
             timeout=15.0,
         )
     except Exception as e:
-        print(f"  {_red('GATT diagnostic: get_services failed:')} {e}")
+        _report(
+            "GATT service discovery", _Result.FAIL,
+            f"{type(e).__name__}: {e}" if str(e) else type(e).__name__,
+            hint=(
+                "GATT service discovery failed. The BLE connection was established but the\n"
+                "ESP32 could not retrieve the device's GATT service table.\n"
+                "• Power-cycle the toilet (30s off) and retry.\n"
+                "• Make sure no other app (Geberit Home) is connected to the device."
+            ),
+        )
         services = None
 
-    # Print GATT table
+    # Print GATT table and extract candidate service for protocol probe.
+    # Candidate = first non-standard service with both WRITE and NOTIFY chars.
+    geberit_service_found = False
+    candidate: "tuple[str, list[str], list[str]] | None" = None  # (svc_uuid, write_uuids, read_uuids)
+
     if services:
-        geberit_service_found = False
         print()
         print(f"  {'─'*62}")
         print(f"  GATT profile for {mac}:")
@@ -1340,8 +1535,22 @@ async def check_gatt_services(
                 cmarker = _green(f"  ← {clabel}") if clabel else ""
                 props_str = _format_gatt_props(char.properties)
                 print(f"    Char   {char.uuid}  [{props_str}]{cmarker}")
+            # Collect candidate: non-standard service with WRITE+NOTIFY chars
+            if candidate is None and not (uuid_lower.endswith(_BT_SIG_BASE_SUFFIX) and uuid_lower.startswith("0000")):
+                seen_handles: set[int] = set()
+                w_uuids: list[str] = []
+                r_uuids: list[str] = []
+                for c in svc.characteristics:
+                    if c.properties & 0x0C and c.handle not in seen_handles:  # WRITE | WRITE_NO_RESP
+                        seen_handles.add(c.handle)
+                        w_uuids.append(c.uuid)
+                    if c.properties & 0x10:  # NOTIFY
+                        r_uuids.append(c.uuid)
+                if w_uuids and r_uuids:
+                    candidate = (svc.uuid, w_uuids, r_uuids)
         print(f"  {'─'*62}")
         print()
+
         if geberit_service_found:
             _report(
                 "GATT profile", _Result.PASS,
@@ -1363,21 +1572,44 @@ async def check_gatt_services(
                     "Either:\n"
                     "• Wrong device — check the MAC address.\n"
                     "• Device is in an unusual firmware state — power-cycle and retry.\n"
-                    "• This is an unsupported Geberit model — open a GitHub issue with this output."
+                    "• This is an unsupported Geberit model — probing below to check compatibility."
                 ),
             )
+    elif services is None:
+        pass  # already reported above via _report(FAIL)
     else:
-        print(f"  {_yellow('(no GATT services returned)')}")
+        _report(
+            "GATT service discovery", _Result.WARN,
+            "No GATT services returned (empty list)",
+        )
 
-    # Disconnect
+    # Determine whether to run the bridge-stack probe:
+    # • force_probe (--dynamic-uuids): always probe using discovered UUIDs
+    # • Geberit service not found: auto-probe to check if device uses non-standard UUIDs
+    run_probe = candidate is not None and (force_probe or (services is not None and not geberit_service_found))
+
+    # Disconnect GATT discovery BLE before probe — device only allows one connection.
+    # For force_probe the bridge stack will reconnect on its own.
     try:
         await asyncio.wait_for(gatt_client.bluetooth_device_disconnect(mac_int), timeout=5.0)
     except Exception:
         pass
+    if unsub:
+        try: unsub()
+        except Exception: pass
     try:
         await asyncio.wait_for(gatt_client.disconnect(), timeout=3.0)
     except Exception:
         pass
+
+    if run_probe:
+        svc_uuid, write_uuids, read_uuids = candidate
+        await _probe_via_bridge_stack(
+            host, port, noise_psk, mac,
+            svc_uuid, write_uuids, read_uuids, scan_duration,
+        )
+    elif candidate is None and services is not None and not geberit_service_found:
+        print(f"  {_yellow('No WRITE+NOTIFY service found in GATT table — cannot probe protocol.')}")
 
 
 # ---------------------------------------------------------------------------
@@ -1569,19 +1801,26 @@ async def run(args: argparse.Namespace) -> None:
         print(f"  Target MAC:     {args.mac or '(not specified — scan only)'}")
         print(f"  Scan duration:  {args.scan_duration:.0f}s")
         print()
-        await check_local_ble_scan(args.mac, args.scan_duration, identify_by=args.identify_by)
-        # Step 6 — if a MAC is known, connect via bridge stack for full identification
-        ble_mac = args.mac
+        geberit_found = await check_local_ble_scan(args.mac, args.scan_duration, identify_by=args.identify_by)
+        # Step 6 — if a MAC is known (explicit or auto-detected), connect via bridge stack
+        ble_mac = args.mac or (geberit_found[0] if len(geberit_found) == 1 else None)
         if ble_mac:
             await check_device_identification(
                 host=None, port=ESPHOME_API_PORT, noise_psk=None,
                 mac=ble_mac.upper(), local_ble=True,
             )
+        elif len(geberit_found) > 1:
+            _section("Step 6 — Device Identification")
+            _report(
+                "Device identification", _Result.SKIP,
+                f"Multiple Geberit devices found — specify one with --mac",
+                hint=f"Found: {', '.join(geberit_found)}",
+            )
         else:
             _section("Step 6 — Device Identification")
             _report(
                 "Device identification", _Result.SKIP,
-                "Skipped — no MAC address specified",
+                "Skipped — no Geberit device found in scan",
                 hint="Re-run with --mac <MAC> to test full device identification.",
             )
         if args.stream_logs:
@@ -1661,10 +1900,17 @@ async def run(args: argparse.Namespace) -> None:
 
     # Step 6 — Device Identification via bridge stack (after ESPHome client disconnected)
     if mac_to_connect and sub_ok:
-        await check_device_identification(
-            host, port, args.noise_psk, mac_to_connect.upper(),
-            scan_duration=args.scan_duration,
-        )
+        if args.dynamic_uuids:
+            _section("Step 6 — GATT Discovery + Protocol Probe (--dynamic-uuids)")
+            await check_gatt_services(
+                host, port, args.noise_psk, mac_to_connect.upper(),
+                scan_duration=args.scan_duration, force_probe=True,
+            )
+        else:
+            await check_device_identification(
+                host, port, args.noise_psk, mac_to_connect.upper(),
+                scan_duration=args.scan_duration,
+            )
     else:
         _section("Step 6 — Device Identification")
         _report(
@@ -1748,6 +1994,15 @@ def main() -> None:
         "--log-level", default="debug", dest="log_level",
         choices=list(_LOG_LEVEL_MAP.keys()),
         help="ESP32 log level to stream (default: debug). Used with --stream-logs.",
+    )
+    parser.add_argument(
+        "--dynamic-uuids", action="store_true", dest="dynamic_uuids",
+        help=(
+            "Step 6: discover GATT services dynamically and probe with the Geberit protocol "
+            "instead of using the hardcoded Geberit UUIDs. "
+            "Useful to test the probe on a known device or to identify models with "
+            "non-standard UUIDs. Requires --mac and ESPHome mode."
+        ),
     )
     args = parser.parse_args()
     asyncio.run(run(args))
