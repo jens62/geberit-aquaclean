@@ -445,6 +445,159 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **SQLite change log + raw data debug panel (standalone bridge + HACS).**
+
+  **Goal:** log every raw value change from every Geberit procedure to disk, persistently, whether
+  or not the user is watching the web UI. Used for systematic reverse engineering of unknown
+  parameters (SPL params 8–11, packed fields like the anal-shower 1280/1281 value, etc.).
+
+  ### Scope: all procedures, not just GetSPL
+
+  Every value the bridge receives should be logged on change:
+  - `GetSystemParameterList` — all polled param indices (0–11) as raw uint32
+  - `GetFilterStatus` — all record IDs and values
+  - `GetStoredProfileSetting` — all profile setting IDs
+  - `GetStoredCommonSetting` — all common setting IDs
+  - `GetStatisticsDescale` — all fields
+  - `GetFirmwareVersionList` — firmware component versions
+  - `GetDeviceIdentification` — serial, SAP, firmware (changes = firmware update)
+  - `GetNodeList` — node IDs
+
+  ### Standalone bridge: SQLite change log
+
+  Use SQLite via `aiosqlite` (thin async wrapper over stdlib `sqlite3` — one extra pip dependency).
+  Enable `PRAGMA journal_mode=WAL` for concurrent read/write (bridge writes while web UI reads).
+
+  **Schema:**
+  ```sql
+  CREATE TABLE sessions (
+      id       INTEGER PRIMARY KEY,
+      started  REAL NOT NULL,   -- Unix timestamp
+      mac      TEXT,
+      firmware TEXT
+  );
+  CREATE TABLE changes (
+      id         INTEGER PRIMARY KEY,
+      ts         REAL NOT NULL,
+      session_id INTEGER REFERENCES sessions(id),
+      proc       TEXT NOT NULL,   -- "GetSPL", "GetFilterStatus", …
+      param_id   INTEGER,         -- index / record ID within that proc
+      param_name TEXT,            -- human label if known, NULL if unknown
+      prev_raw   INTEGER,
+      curr_raw   INTEGER
+  );
+  CREATE TABLE annotations (
+      id   INTEGER PRIMARY KEY,
+      ts   REAL NOT NULL,
+      note TEXT NOT NULL          -- free text, written via REST endpoint
+  );
+  CREATE INDEX idx_changes_ts   ON changes(ts);
+  CREATE INDEX idx_changes_proc ON changes(proc, param_id);
+  ```
+
+  Only log actual changes (prev ≠ curr). Add a session marker record on every bridge
+  connect/reconnect. Configurable max-age cleanup (e.g. DELETE WHERE ts < now - 30 days).
+
+  **Annotation endpoint:** `POST /debug/annotate` with a free-text note writes a record into
+  the `annotations` table with the current timestamp. This is the key feature for systematic
+  reverse engineering: write the annotation ("about to start shower, temp=3, pressure=2"),
+  perform the action, then query changes that occurred within N seconds of the annotation.
+  Example query:
+  ```sql
+  SELECT c.*, a.note
+  FROM changes c JOIN annotations a ON ABS(c.ts - a.ts) < 10
+  ORDER BY c.ts;
+  ```
+
+  **Export:** `aquaclean-bridge --export-changes --since 2026-04-01 > changes.json` for
+  sharing / offline analysis without running the bridge.
+
+  ### Web UI debug panel (standalone bridge)
+
+  Two tabs added to the existing web UI:
+
+  **"Live values" tab:**
+  - Table: procedure | param_id | param_name | current raw value (hex + decimal)
+  - Green flash when a value changed in the last poll cycle (via SSE)
+  - Shows ALL procedures, not just GetSPL
+
+  **"Change history" tab:**
+  - Last N records from the SQLite `changes` table, loaded via REST, auto-refreshes every 30s
+  - Filterable by procedure and param_id
+  - Annotations shown inline (joined by timestamp proximity)
+  - No SSE needed — just paginated REST endpoint querying the SQLite file
+
+  ### HACS integration: use HA recorder instead of SQLite
+
+  The HACS integration runs inside the HA process. HA already has its own SQLite database
+  (the `recorder` integration). Adding a second SQLite file would be redundant. Instead:
+
+  - Expose raw parameter values as **diagnostic sensor entities**
+    e.g. `sensor.geberit_aquaclean_spl_param_3_raw` with value `1280`
+  - `entity_category: EntityCategory.DIAGNOSTIC` — excluded from default UI but still recorded
+  - `state_class: SensorStateClass.MEASUREMENT` on numeric sensors — HA builds long-term statistics
+  - HA's **History panel** = the "change history" tab
+  - HA's **Lovelace History card** = the "live values" graph
+  - HA's **Logbook** = where change events appear
+  - HA's **Statistics API** = queryable change history
+
+  **Annotation equivalent in HACS:** no clean native solution. Workaround: HA logbook service
+  call from a script/input_text helper. Not as clean as the standalone `POST /debug/annotate`
+  endpoint but functional.
+
+  **Recorder load concern:** 30–50 diagnostic sensors updating every 10–30 seconds adds
+  recorder volume. Mitigations:
+  - All raw sensors marked `DIAGNOSTIC` (excluded from default dashboard)
+  - Users can opt out via `recorder: exclude:` in HA config
+  - Consider making raw sensor entities opt-in (disabled by default, user enables individually)
+
+  ### What JSON lines does better (keep as export format only)
+
+  Post-hoc analysis with `grep`/`jq`/`awk` without running the bridge. Implement as an
+  export command, not as the primary storage format.
+
+  ### Implementation order
+
+  1. SQLite schema + `aiosqlite` integration in standalone bridge (change detection for GetSPL first)
+  2. Annotation REST endpoint
+  3. Web UI "Live values" tab (SSE-driven)
+  4. Web UI "Change history" tab (REST-driven)
+  5. Extend change detection to all other procedures
+  6. HACS raw diagnostic sensor entities
+  7. Export command
+
+- **Decode SPL anal-shower value packed field — confirm byte layout with targeted sniff captures.**
+
+  Log `Change shower settings temperatur to 0 start shower start dryer.txt` shows the anal-shower
+  SPL parameter is a packed uint32, not a simple boolean:
+
+  | Value | Hex | Observed condition |
+  |-------|-----|--------------------|
+  | 0 | `0x00000000` | shower not running |
+  | 1281 | `0x00000501` | shower running, temperature = 1 (previous setting) |
+  | 1280 | `0x00000500` | shower running, temperature = 0 (after setting temp to 0) |
+
+  **Hypothesis (byte layout, little-endian):**
+  - Byte 0 = water temperature (0–5) ← confirmed by the 1280/1281 observation
+  - Byte 1 = 0x05 constant while running — likely pressure (0–4?) or packed pressure+position
+  - Bytes 2–3 = 0x00 — likely position and oscillation at zero/off
+
+  **Bridge impact:** the current `!= 0` check for "shower running" is correct, but the temperature
+  byte (and potentially pressure/position) embedded in this value are being discarded.
+
+  **To confirm — sniff one setting at a time (all other settings at 0, then start shower):**
+
+  | Capture | Change before starting shower |
+  |---------|-------------------------------|
+  | 1 | Pressure 0→4, temp=0, pos=0, osc=off |
+  | 2 | Position 0→4, temp=0, pressure=0, osc=off |
+  | 3 | Oscillation off→on, temp=0, pressure=0, pos=0 |
+  | 4 | Temperature 0→5, pressure=0, pos=0, osc=off |
+
+  Each capture gives a clean before/after SPL value that isolates one byte.
+  Use `ble-decode.py` on the captured log. Once confirmed, the bridge can expose
+  live shower temperature/pressure/position from the SPL poll without extra BLE calls.
+
 - **BLE sniffing needed — unimplemented procedures from thomas-bingel tmp.txt.**
   Two procedures cannot be implemented without first capturing their wire format
   from the official Geberit Home iOS app.  **When asked "What should I sniff?",
@@ -1240,6 +1393,119 @@ at first-time setup.  Auto-selects local bleak or ESPHome path.  Scan logic belo
 inside the package (`BluetoothLeConnector.scan()` or similar) — `ble-scan.py` becomes
 a thin wrapper or is retired.  DRY: one scan implementation, two consumers (CLI + ble-scan.py).
 See `docs/roadmap.md` for full spec.
+
+## Planned: zeroconf/mDNS service discovery for ESPHome BLE proxies
+
+**Goal:** auto-discover ESPHome BLE proxies via mDNS so `[ESPHOME] host` does not need
+to be hardcoded in `config.ini`.  Particularly useful when more than one ESP32 proxy
+is available on the network (e.g. one per floor, or a spare for failover).
+
+**Discovery logic already exists** in `aquaclean-connection-test.py` (Step 0) — any
+implementation in the bridge itself must reuse that logic.  DRY: one mDNS scanner,
+two consumers (CLI connection-test tool + standalone bridge).
+
+**Scope:**
+
+| Topic | Detail |
+|-------|--------|
+| Protocol | ESPHome native API advertises `_esphomelib._tcp.local` via mDNS |
+| Library | `zeroconf` (already a transitive dependency via aioesphomeapi) |
+| Multiple proxies | Collect all discovered proxies; selection strategy: use the first whose hostname or friendly name matches an optional `esphome_name_filter` config key (e.g. `aquaclean`). If no filter or exactly one match: use it automatically. If multiple matches: log a warning, use the first alphabetically, note the rest in the log. |
+| Config changes | `[ESPHOME] host` becomes optional — if empty, auto-discover. Add optional `[ESPHOME] name_filter` key. Validate in `_check_config_errors()`. |
+| Runtime failover | If the configured (or auto-selected) proxy goes offline and recovery fails (E2005), re-run mDNS discovery and retry with the next available proxy before giving up. |
+| `--scan` CLI integration | `aquaclean-bridge --scan` should also list discovered ESPHome proxies alongside BLE devices. |
+
+**Implementation order (suggested):**
+1. Extract mDNS scan logic from `aquaclean-connection-test.py` into `BluetoothLeConnector` (or a new `EspHomeDiscovery` helper).
+2. Wire into `_ensure_esphome_api_connected()`: if `esphome_host` is blank, call the helper and cache the result.
+3. Add `name_filter` config key + validation.
+4. Add runtime failover path in `wait_for_device_restart_via_esphome` / E2005 handler.
+5. Update `aquaclean-connection-test.py` Step 0 to call the shared helper (retire its inline mDNS code).
+
+### HACS config flow integration (zero-config installation with hinting)
+
+The connection-test tool steps map directly to a HACS config flow wizard, giving users
+zero-config installation with inline errors and hints instead of a terminal script:
+
+| Connection test step | Config flow equivalent |
+|---|---|
+| Step 0 — mDNS discovery | `async_step_user`: auto-discover ESPHome proxies, show as dropdown |
+| Step 1–3 — ESPHome API + BLE adapter check | `async_show_progress()` spinner; inline error + hint on failure |
+| Step 6 — GetDeviceIdentification | Final validation; pre-fills device name/SAP on confirmation screen |
+| `_Result.FAIL` + hint text | `errors={"base": "..."}` + `description_placeholders={"hint": "..."}` |
+
+**Proposed config flow steps:**
+```
+Step 1: auto-discover ESPHome proxies via mDNS
+  → found 1:        pre-fill host, skip to step 3
+  → found multiple: dropdown "Select ESPHome proxy"
+  → found none:     show manual host field (optional — local BLE path)
+
+Step 2 (if ESPHome host): test API connection + BLE adapter
+  → spinner → pass: continue
+  → fail: "Cannot reach ESP32 at <host>" + hint from E1001/E1002
+
+Step 3: scan for Geberit device (10s spinner)
+  → found 1:        pre-fill MAC → continue to Step 3b
+  → found multiple: dropdown
+  → not found:      "Ensure device is powered and not connected to the Geberit app"
+
+Step 3b: GATT discovery + UUID probe (5s spinner — see dynamic UUIDs below)
+  → standard UUIDs confirmed:       "✅ Standard Geberit GATT profile"
+  → non-standard UUIDs, works:      "⚠️ Non-standard UUID variant detected and saved"
+  → non-standard UUIDs, fails:      ❌ + "Unsupported model — open issue"
+
+Step 4: GetDeviceIdentification
+  → success: confirmation screen showing "Geberit AquaClean Mera Comfort (SN: HB2304EU298413)"
+  → fail:    error + hint
+```
+
+**Result for users:** click "Add Integration", watch spinners, land on confirmation screen
+showing device name + serial. No `config.ini`, no terminal, no MAC hunting.
+
+**Effort:** one focused session. Protocol logic is 100% reusable; new work is config flow
+scaffolding + `strings.json` hint text. Requires mDNS extraction (step 1 above) first.
+
+### Dynamic UUID support in HACS (--dynamic-uuids equivalent)
+
+Different Geberit models or firmware variants may advertise a different Service UUID.
+The connection test's `--dynamic-uuids` flag already handles this via instance-attribute
+shadowing on `BluetoothLeConnector`:
+
+```python
+connector.SERVICE_UUID                = UUID(discovered_svc_uuid)
+connector.BULK_CHAR_BULK_WRITE_0_UUID = UUID(w[0])
+# ... etc — instance attrs shadow class-level defaults
+```
+
+**HACS implementation (Option A — recommended):** run GATT discovery during config flow
+Step 3b, store discovered UUIDs in the config entry alongside the MAC. Coordinator
+injects them when constructing `BluetoothLeConnector` before each poll.
+
+```python
+config_entry.data = {
+    "mac": "38:AB:41:2A:0D:67",
+    "esphome_host": "aquaclean-proxy.local",
+    "uuid_service":  "3334429d-...",   # standard or custom variant
+    "uuid_write_0":  "...",
+    "uuid_read_0":   "...",
+}
+```
+
+Standard devices get standard UUIDs; variant-UUID devices are stored once and just work
+at runtime with no overhead.
+
+**What's already built vs. new:**
+
+| Piece | Status |
+|---|---|
+| GATT service table reading | ✅ `check_gatt_services()` in connection-test tool |
+| UUID injection into connector | ✅ `_probe_via_bridge_stack()` in connection-test tool |
+| `BluetoothLeConnector` instance UUID override | ✅ Python attr shadowing already works |
+| Config flow running GATT discovery | ❌ new work |
+| Config entry storing discovered UUIDs | ❌ new work |
+| Coordinator injecting stored UUIDs | ❌ new work |
+| `BluetoothLeConnector.__init__` `uuid_overrides` param | ❌ optional cleanup |
 
 ## Planned: HACS custom integration (Home Assistant, no MQTT)
 
