@@ -80,6 +80,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+SCRIPT_VERSION = "2026-04-21 10:55"    # update this date+time whenever the script is changed
+
 GEBERIT_BLE_NAME_PREFIX = "HB"   # Mera Comfort advertises as HB2304EU…; other models use "Geberit …"
 GEBERIT_SERVICE_UUID = "3334429d-90f3-4c41-a02d-5cb3a03e0000"
 # Same UUID in little-endian bytes (as it appears in raw BLE advertisement AD structures)
@@ -1785,6 +1787,7 @@ def print_summary() -> None:
         print(f"  {_red(f'{failed} check(s) failed')} — follow the hints above to fix them.")
 
     print()
+    print(f"  Script version:        {SCRIPT_VERSION}")
     print(f"  aioesphomeapi version: {_AIOESPHOMEAPI_VERSION}")
     print(f"  Python version:        {sys.version.split()[0]}")
     print()
@@ -1800,7 +1803,7 @@ def print_summary() -> None:
 # ---------------------------------------------------------------------------
 async def run(args: argparse.Namespace) -> None:
     print()
-    print(_bold("Geberit AquaClean — Connection Test"))
+    print(_bold(f"Geberit AquaClean — Connection Test  (v{SCRIPT_VERSION})"))
 
     # -----------------------------------------------------------------------
     # Local BLE mode (--local-ble)
