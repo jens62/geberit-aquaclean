@@ -339,7 +339,7 @@ class ESPHomeAPIClient:
         self,
         char_specifier: Union[str, UUID, 'ESPHomeGATTCharacteristic'],
         data: bytes,
-        response: bool = True
+        response: bool = False
     ):
         """
         Write data to a GATT characteristic.
@@ -347,7 +347,7 @@ class ESPHomeAPIClient:
         Args:
             char_specifier: UUID string, UUID object, or characteristic object
             data: Bytes to write
-            response: Whether to wait for write response (default: True)
+            response: Whether to wait for write response (default: False — WRITE_NO_RESP; set True only for characteristics that require ATT_WRITE_REQUEST)
 
         Raises:
             ValueError: If characteristic UUID not found in device services
