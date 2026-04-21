@@ -5,7 +5,7 @@ logs but whose purpose or mapping is not yet fully understood.
 
 Use this as a research backlog: each item has a suggested investigation approach.
 
-Last updated: 2026-04-19
+Last updated: 2026-04-21
 
 ---
 
@@ -69,6 +69,59 @@ the node list changes (different hardware = different modules present).
 | Status | **Completely unknown** |
 
 **How to investigate:** Same as 0x05 — check `args=` and `result=` fields in decoded output.
+
+---
+
+### Proc `0x0E` (ctx=0x01) — unknown init-phase procedure
+
+| Field | Value |
+|-------|-------|
+| Label | `UnknownProc_0x0E` |
+| Direction | Request with param list, response unknown |
+| Payload | SPL-style param ID list — called twice: `[1,3,4,5,6,7,8,9,10,11,12,14]` then `[15]` |
+| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-21) |
+| Calling context | Init sequence, after `GetSOCApplicationVersions`, before `GetFirmwareVersionList` |
+| Status | **Completely unknown — first observation** |
+
+**What is known:**
+- Called exactly twice per session in the Android app's init sequence
+- The param ID format mirrors `GetSystemParameterList` (0x0D): a list of integer IDs
+- First call: 12 IDs — `[1,3,4,5,6,7,8,9,10,11,12,14]`
+- Second call: 1 ID — `[15]`
+- The IDs do NOT overlap with the SPL param space (which maxes out at 11 on this device);
+  they may address a separate index space
+
+**Hypothesis:** Could be `GetNodeParameterList` (some per-node status query), a firmware
+module status request, or an extended hardware capability query. The param IDs resemble
+node IDs (from GetNodeList: `[3,4,5,6,7,8,9,10,11,12,14,15]`) with minor offset.
+
+**How to investigate:** Use `geberit-ble-probe.py --proc 0x0E --ctx 0x01` with the
+same param IDs and inspect the response bytes. Cross-reference param values against
+the GetNodeList node IDs.
+
+---
+
+### Proc `0x11` (ctx=0x01) — confirmed as `GetFirmwareVersionList`
+
+| Field | Value |
+|-------|-------|
+| Label | `GetFirmwareVersionList` |
+| Direction | Request (param list), response = firmware version strings |
+| Payload | SPL-style param list; Android app calls with `[3,4,5,6,7,8,9,10,11,12,14,15]` (×4) |
+| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-21) |
+| Calling context | Init sequence (called 4 times), between `GetSOCApplicationVersions` and `GetStoredProfileSetting` |
+| Status | **CONFIRMED — name and response content verified from ASCII strings in response** |
+
+**Evidence from pcapng:** Response to the GetFirmwareVersionList calls contained readable
+ASCII fragments including firmware component version strings. This confirms the procedure
+identity beyond doubt.
+
+**Already implemented in bridge:** `GetFirmwareVersionList` is implemented and callable.
+The Android app calls it 4 times with 12 param IDs each (`[3,4,5,6,7,8,9,10,11,12,14,15]`).
+The bridge uses fewer params; the exact parameter space is the 12 node IDs from `GetNodeList`.
+
+**Notable:** The Android init sequence calls this before any `GetStoredProfileSetting` reads —
+earlier in the init than previously assumed from iPhone log analysis.
 
 ---
 
@@ -184,19 +237,32 @@ The device requires a power cycle to recover from this state.
 ## 2. Unknown Common Setting IDs (proc 0x51/0x52)
 
 The iPhone reads IDs `[2, 1, 3, 0]` on every connect. IDs 4, 6, 7 were confirmed
-from the WC Lid BLE log (2026-04-15). The following IDs remain unknown:
+from the WC Lid BLE log (2026-04-15).
+
+**Update 2026-04-21 (Android pcapng):** The Android app reads **all IDs 0–9** in
+a sequential scan during every init. This confirms that IDs 0–9 all exist on this
+device. Semantics of IDs 4–9 remain unknown (responses not yet decoded from pcapng).
 
 | ID | Candidate | Range | Status |
 |----|-----------|-------|--------|
-| 5 | Maximum Lid Position | float/int | **Unknown** — in `Profile-Settings.xlsx` as "Maximaldeckelposition" but never seen in any BLE capture |
-| 8 | Unknown | — | **Unknown** — never observed |
-| 9 | Unknown | — | **Unknown** — never observed |
+| 0 | OdourRunOn | 0–1 | ✓ confirmed |
+| 1 | Brightness | 0–5 | ✓ confirmed |
+| 2 | Activation mode | 0=On / 1=Off / 2=When Approached | ✓ confirmed |
+| 3 | Color | 1=Blue / 2=Magenta / … | ✓ confirmed (partial color mapping) |
+| 4 | Unknown | — | **Observed** (Android app reads it, value unknown) |
+| 5 | Maximum Lid Position | float/int | **Observed** (Android reads it; "Maximaldeckelposition" in `Profile-Settings.xlsx`) |
+| 6 | Unknown | — | **Observed** (Android app reads it; also seen in WC Lid log) |
+| 7 | Unknown | — | **Observed** (Android app reads it; also seen in WC Lid log) |
+| 8 | Unknown | — | **Observed** (Android app reads it, value unknown) |
+| 9 | Unknown | — | **Observed** (Android app reads it, value unknown) |
 
 **How to investigate:**
 - **ID 5 (Max Lid Position):** Sniff iPhone while using "Maximaldeckelposition" calibration
   in the app's WC lid settings.
-- **IDs 8–9:** Sniff iPhone on every connect with `--verbose` and see whether any
-  `GetStoredCommonSetting` calls appear for these IDs during a full session.
+- **IDs 4, 8–9:** Decode the full GetStoredCommonSetting response sequence from the Android
+  pcapng (`open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng`) using
+  `tools/android-ble-analyze.py --geberit --verbose`. The raw response bytes for each ID
+  are in the capture.
 
 ---
 
@@ -239,9 +305,32 @@ see `memory/cons-frame-zero-padding-bug.md` for details.
 |-------|----------|----------|--------|
 | 1 | `analShowerIsRunning` | **Always 0** in all monitored sessions including with user seated and showers running | **Unknown** — semantics not confirmed. Possibly WC seat sensor (weight-triggered?) vs index 0's proximity sensor. Dryer running state is NOT reported by any currently polled index. |
 | 7 | *(not in C# reference)* | **Always 0 on HB2304EU298413** — device supports the parameter (idx_echo correct) but value never changes | **Unknown** — supported by this hardware but semantics unknown. Previously removed from bridge polling; the "9th param causes stuck-state failure" was caused by the CONS frame bug (any 9th param was sent as 0x00), NOT by param 7 being toxic. |
-| 8 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
-| 9 | `orientationLightState` | **Always 0 on HB2304EU298413** — idx_echo=0 | ⚠️ **CONFIRMED NOT OBSERVABLE** (2026-04-19): light turned on/off three times; SPL identical at all events. Full raw frame analysis (all 4 GATT handles, CONTROL frames, unsolicited notifications) found zero variation. Hardware proximity sensor only — no BLE involvement. See `docs/developer/ble-protocol.md`. |
-| 10 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0, device does not return a valid record | Not supported on this hardware variant. |
+| 8 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0 when polled by bridge; **always 0 in iPhone log** (delivered via A8 char) | Not supported on this hardware variant. May be non-zero on other models or in specific states. |
+| 9 | `orientationLightState` | **Always 0 on HB2304EU298413** — idx_echo=0; **always 0 in iPhone log** (delivered via A7 char) | ⚠️ **CONFIRMED NOT OBSERVABLE** (2026-04-19): light turned on/off three times; SPL identical at all events. Full raw frame analysis (all 4 GATT handles) found zero variation. Hardware proximity sensor only. See `docs/developer/ble-protocol.md`. |
+| 10 | *(not in C# reference)* | **N/A on HB2304EU298413** — idx_echo=0; **always 0 in iPhone log** (delivered via A8 char) | Not supported on this hardware variant. May be non-zero on other models. |
+| 11 | *(not in C# reference)* | **Always 0 in iPhone log** (delivered via A7 char, position after params 6 and 7) | Not polled by bridge. Always zero on HB2304EU298413. |
+
+### iPhone polls params 0–11 via four GATT characteristics (2026-04-20)
+
+The iPhone app requests all 12 SPL params (0–11) and receives them distributed across
+four GATT notification characteristics simultaneously:
+
+| Char | UUID suffix | Params delivered |
+|------|-------------|-----------------|
+| A5 (READ_0) | `...A53E0000` | 0, 1 (first chunk) |
+| A6 | `...A63E0000` | 2, 3, 4, 5 |
+| A7 | `...A73E0000` | 6, 7, 11 |
+| A8 | `...A83E0000` | 8, 9, 10 |
+
+On HB2304EU298413, params 8–11 are all zero in every captured log. Their meaning is
+unknown. They may be non-zero on other models or in specific device states (descaling,
+cleaning cycle, dryer active, error states).
+
+**Investigation trigger:** when a BLE traffic log shows non-zero values on A7 (params 6/7/11)
+or A8 (params 8/9/10) beyond what the bridge already reads, decode using 5-byte SPL
+record format and cross-reference with known device state at capture time.
+
+**Full analysis:** `docs/developer/gatt-characteristics-a6-a7-a8.md`
 
 ### Fix applied (2026-04-17)
 
@@ -298,16 +387,22 @@ corrupted IDs). With the CONS fix in place, idx_echo values are reliable.
 ## 5. GetFilterStatus — response ID mapping not fully verified
 
 Proc `0x59` (`GetFilterStatus`) returns records with IDs 0–7 (bridge currently polls
-8 IDs). The iPhone may use 12 IDs. Record ID names in `tools/ble-decode.py` are
-mostly labeled `unknown_NN` except for:
+8 IDs). Record ID names in `tools/ble-decode.py` are mostly labeled `unknown_NN` except for:
 - `0` — `status`
 - `1` — `shower_cycles`
 - `7` — `days_until_filter_change`
 - `8` — `last_filter_reset (unix ts)`
 
+**Update 2026-04-21 (Android pcapng):** The Android app calls `GetFilterStatus` with
+**12 params `[0–11]`**, not 8. This confirms there are at least 12 record IDs on this
+device. The bridge uses only 8 — IDs 8–11 are not read and their meaning is unknown.
+
 **How to investigate:** Cross-reference the decoded output of
 `Keremikwabenfilterwechsel - jetzt wieder in 365 Tagen.txt` against the bridge's
-`GetFilterStatus` implementation. See `memory/ble-traffic-logs.md`.
+`GetFilterStatus` implementation. See `memory/ble-traffic-logs.md`. Additionally,
+decode the `GetFilterStatus` response from the Android pcapng
+(`open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng`) to see whether IDs
+8–11 carry non-zero values.
 
 ---
 
@@ -383,7 +478,25 @@ flood before any request is sent, even in the blocked state.
 
 ---
 
-## 7. How to investigate unknowns systematically
+## 7. BLE Advertising Name — "Geberit AC PRO"
+
+**Source:** Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-21)
+
+The Geberit AquaClean Mera Comfort (SN: HB2304EU298413, MAC: 38:AB:41:2A:0D:67)
+advertises under the BLE local name **"Geberit AC PRO"**. This was confirmed by:
+
+1. The device appearing 11 times in LE advertising events in the pcapng capture
+2. The subsequent connection being to MAC `38:AB:41:2A:0D:67`
+3. The `GetDeviceIdentification` response in that session containing "HB2304EU298413"
+   and "quaClean Mera Comf" (truncated ASCII) — same physical device
+
+**Implication:** The bridge scans by MAC address, not by advertising name. The name
+"Geberit AC PRO" is informational only and does not affect any code path. It may differ
+across firmware versions or device models.
+
+---
+
+## 8. How to investigate unknowns systematically
 
 1. Run `ble-decode.py` with `--markdown` on a relevant log:
    ```bash
