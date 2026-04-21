@@ -128,6 +128,7 @@ in `aquaclean-proxy.yaml`; see [below](#esp32-logger-level).
 | `--stream-logs` | off | Stream ESP32 device logs after all BLE steps |
 | `--stream-duration` | 30s | How long to stream logs |
 | `--log-level` | `debug` | ESP32 log level: `error` \| `warn` \| `info` \| `debug` \| `verbose` |
+| `--dynamic-uuids` | off | Step 6: discover GATT UUIDs dynamically and probe instead of using hardcoded Geberit UUIDs; useful for testing the probe or identifying models with non-standard UUIDs |
 
 ---
 
@@ -176,30 +177,38 @@ Service  3334429d-90f3-4c41-a02d-5cb3a03e0000  ✅ Geberit AquaClean Service
 ## Auto protocol probe on unknown GATT profile
 
 When Step 6 fails and the known Geberit service UUID is **not** found, the script
-automatically probes all non-standard services (skipping standard BLE services like
-Device Information) for any that expose a WRITE + NOTIFY characteristic pair.
-
-It sends a `GetDeviceIdentification` (proc `0x82`) frame and listens for 5 seconds:
+automatically finds the first non-standard service that has both WRITE and NOTIFY
+characteristics, injects its UUIDs into the bridge's `BluetoothLeConnector`, and runs
+the full bridge stack — identical to a normal identification attempt but with the
+discovered UUIDs instead of the hardcoded defaults.
 
 ```
-→ Found 1 candidate service(s) with WRITE+NOTIFY — probing Geberit protocol …
-  Probe frame (GetDeviceIdentification, proc 0x82, 20 bytes):
-    11 04 ff 00 04 e4 e4 01 00 82 00 00 00 00 00 00 00 00 00 00
+→ Non-standard service UUID — injecting into bridge stack and probing …
+    Service: 559eb100-2390-11e8-b467-0ed5f89f718b
+    WRITE_0: 559eb101-2390-11e8-b467-0ed5f89f718b
+    READ_0:  559eb103-2390-11e8-b467-0ed5f89f718b
 
-  Service  559eb100-2390-11e8-b467-0ed5f89f718b
-    WRITE handle=0x0015  NOTIFY handle=0x0013 … RESPONSE! 17 bytes: 82 04 …
+  Connecting to 38:AB:41:2A:0D:67 via ESP32 proxy (192.168.0.114) …
+[PASS]  Protocol probe (BLE connect)
+         Connected to 38:AB:41:2A:0D:67
+
+    Description             AquaClean Mera Comfort
+    Serial Number           HB2304EU298413
+    …
+
 [PASS]  Protocol probe
          Device responds to Geberit protocol on non-standard service!
-         Service  559eb100-2390-11e8-b467-0ed5f89f718b
-         WRITE handle=0x0015  NOTIFY handle=0x0013
-         Response (17 bytes): 82 04 …
+         Service UUID: 559eb100-2390-11e8-b467-0ed5f89f718b
+         WRITE_0 UUID: 559eb101-2390-11e8-b467-0ed5f89f718b
+         READ_0 UUID:  559eb103-2390-11e8-b467-0ed5f89f718b
          → Please open a GitHub issue with the full output of this script
            so support for this model can be added:
            https://github.com/jens62/geberit-aquaclean/issues
 ```
 
-If no response is received on any candidate, the device uses a different protocol or
-requires a different handshake — open a GitHub issue with the full script output.
+If the probe fails (BLE connect error or identification timeout), the device either
+uses a different protocol or requires a different handshake — open a GitHub issue with
+the full script output.
 
 ---
 
