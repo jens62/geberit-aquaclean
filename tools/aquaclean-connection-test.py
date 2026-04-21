@@ -1535,8 +1535,17 @@ async def check_gatt_services(
                 cmarker = _green(f"  ← {clabel}") if clabel else ""
                 props_str = _format_gatt_props(char.properties)
                 print(f"    Char   {char.uuid}  [{props_str}]{cmarker}")
-            # Collect candidate: non-standard service with WRITE+NOTIFY chars
-            if candidate is None and not (uuid_lower.endswith(_BT_SIG_BASE_SUFFIX) and uuid_lower.startswith("0000")):
+            # Collect candidate: service with WRITE+NOTIFY chars.
+            # Include if: (a) non-standard service UUID, OR (b) standard-looking service
+            # UUID (e.g. 0000fd48) but with vendor-specific characteristics inside —
+            # some Geberit firmware variants register a BT SIG member service UUID but
+            # use custom 559ebXXX characteristic UUIDs within it.
+            _is_std_svc = uuid_lower.endswith(_BT_SIG_BASE_SUFFIX) and uuid_lower.startswith("0000")
+            _has_vendor_chars = any(
+                not (c.uuid.lower().endswith(_BT_SIG_BASE_SUFFIX) and c.uuid.lower().startswith("0000"))
+                for c in svc.characteristics
+            )
+            if candidate is None and (not _is_std_svc or _has_vendor_chars):
                 seen_handles: set[int] = set()
                 w_uuids: list[str] = []
                 r_uuids: list[str] = []
