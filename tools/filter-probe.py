@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-filter-probe.py — GetFilterStatus only
-=======================================
+filter-probe.py — GetSPL then GetFilterStatus
+==============================================
 
-Connects to the Geberit device, subscribes notifications, and calls
-GetFilterStatus (proc 0x59).  No GetSPL or any other call is made.
+Connects to the Geberit device, subscribes notifications, calls
+GetSystemParameterList (proc 0x0D) immediately followed by
+GetFilterStatus (proc 0x59) — no other calls between them.
+
+This mirrors the Android/iPhone app call order, which is required to
+avoid leaving the device in a stuck GetFilterStatus state.  If only
+GetFilterStatus is called in isolation (without the preceding GetSPL),
+the device may time out until it is power-cycled.
 
 Use this to:
   - Read raw filter data and all record IDs without side-effects
@@ -99,6 +105,27 @@ async def probe(args, log):
     result = None
     error  = None
 
+    # GetSPL must be called immediately before GetFilterStatus — mirroring the
+    # Android/iPhone app order.  Without this prefix call the device can enter a
+    # stuck state where GetFilterStatus times out until the next power-cycle.
+    print("GetSystemParameterList (proc 0x0D) ...")
+    log.info("→ Sending GetSystemParameterList")
+    t0_spl = datetime.datetime.now()
+    try:
+        await base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+        ms_spl = int((datetime.datetime.now() - t0_spl).total_seconds() * 1000)
+        print(f"  ✅ OK  ({ms_spl} ms)")
+        log.info("← GetSystemParameterList OK  ms=%d", ms_spl)
+    except BLEPeripheralTimeoutError as e:
+        ms_spl = int((datetime.datetime.now() - t0_spl).total_seconds() * 1000)
+        print(f"  ❌ TIMEOUT ({ms_spl} ms) — continuing anyway")
+        log.warning("← GetSystemParameterList TIMEOUT  ms=%d", ms_spl)
+    except Exception as e:
+        ms_spl = int((datetime.datetime.now() - t0_spl).total_seconds() * 1000)
+        print(f"  ⚠️  FAIL ({ms_spl} ms)  {type(e).__name__}: {e} — continuing anyway")
+        log.warning("← GetSystemParameterList FAIL  ms=%d  %s: %s", ms_spl, type(e).__name__, e)
+
+    print()
     print("GetFilterStatus (proc 0x59) ...")
     log.info("→ Sending GetFilterStatus")
     t0 = datetime.datetime.now()
@@ -161,7 +188,7 @@ async def probe(args, log):
 def main():
     p = argparse.ArgumentParser(
         prog='filter-probe',
-        description='Call GetFilterStatus (proc 0x59) only — no GetSPL.',
+        description='Call GetSPL (proc 0x0D) then GetFilterStatus (proc 0x59) — mirroring the app call order.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument('--device', metavar='MAC',
