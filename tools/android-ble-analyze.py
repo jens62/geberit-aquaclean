@@ -16,6 +16,8 @@ Usage:
   python tools/android-ble-analyze.py file.pcapng --mac AA:BB:CC:DD:EE:FF
   python tools/android-ble-analyze.py file.log --all-macs
   python tools/android-ble-analyze.py file.log --raw
+  python tools/android-ble-analyze.py file.pcapng --markdown
+  python tools/android-ble-analyze.py file.pcapng --markdown --output session.md
 """
 
 import argparse
@@ -25,6 +27,7 @@ import struct
 import sys
 import zlib
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -529,6 +532,451 @@ class Session:
 
 
 # ---------------------------------------------------------------------------
+# Geberit protocol decoder (for --markdown mode)
+# ---------------------------------------------------------------------------
+
+_PROC_NAMES_MD = {
+    (0x00, 0x82): "GetDeviceIdentification",
+    (0x00, 0x86): "GetDeviceInitialOperationDate",
+    (0x01, 0x05): "GetNodeList",
+    (0x01, 0x07): "UnknownProc_0x07",
+    (0x01, 0x09): "SetCommand",
+    (0x01, 0x0A): "GetStoredProfileSetting (init)",
+    (0x01, 0x0B): "SetStoredProfileSetting (init)",
+    (0x01, 0x0D): "GetSystemParameterList",
+    (0x01, 0x0E): "GetFirmwareVersionList",
+    (0x01, 0x11): "SubscribeNotif_0x11",
+    (0x01, 0x13): "SubscribeNotif_0x13",
+    (0x01, 0x45): "GetStatisticsDescale",
+    (0x01, 0x51): "GetStoredCommonSetting",
+    (0x01, 0x52): "SetStoredCommonSetting",
+    (0x01, 0x53): "GetStoredProfileSetting",
+    (0x01, 0x54): "SetStoredProfileSetting",
+    (0x01, 0x55): "UnknownProc_0x55",
+    (0x01, 0x56): "SetDeviceRegistrationLevel",
+    (0x01, 0x59): "GetFilterStatus",
+    (0x01, 0x81): "GetSOCApplicationVersions",
+}
+
+_PHASE_MD = {
+    (0x01, 0x11): "Init",
+    (0x01, 0x13): "Init",
+    (0x00, 0x82): "Identification",
+    (0x00, 0x86): "Identification",
+    (0x01, 0x81): "Identification",
+    (0x01, 0x05): "Identification",
+    (0x01, 0x0E): "Firmware Versions",
+    (0x01, 0x0A): "Profile Settings (init)",
+    (0x01, 0x0B): "Profile Settings (init)",
+    (0x01, 0x53): "Profile Settings",
+    (0x01, 0x54): "Profile Settings",
+    (0x01, 0x51): "Common Settings",
+    (0x01, 0x52): "Common Settings",
+    (0x01, 0x55): "Session Init",
+    (0x01, 0x0D): "State Poll",
+    (0x01, 0x59): "Filter Status",
+    (0x01, 0x45): "Descale Statistics",
+    (0x01, 0x09): "User Action",
+}
+
+_PHASE_SUMMARIES_MD = {
+    "Init": "Subscribe to GATT notifications to open the BLE communication channel.",
+    "Identification": "Read static device metadata: model, serial number, SOC versions, node list.",
+    "Firmware Versions": "Read detailed per-component firmware version strings (proc 0x0E).",
+    "Profile Settings (init)":
+        "Read/write profile settings via init storage area (proc 0x0A/0x0B — "
+        "different from user preference storage 0x53/0x54).",
+    "Profile Settings":
+        "Read or write stored user preference settings — pressure, temperature, position (proc 0x53/0x54).",
+    "Common Settings":
+        "Read or write common device settings — orientation light color, brightness, "
+        "activation mode (proc 0x51/0x52).",
+    "Session Init":
+        "Proc 0x55 — sent once per session at the end of init; "
+        "purpose unknown (possibly 'remote control enabled').",
+    "State Poll": "Read live device state: seat occupancy, showers, dryer, descaling, error codes.",
+    "Filter Status": "Check ceramic honeycomb filter replacement countdown.",
+    "Descale Statistics": "Read descale cycle history and statistics.",
+    "User Action": "User triggered a device action via SetCommand (proc 0x09).",
+    "GATT Notification Subscribe":
+        "Enable GATT notifications on the four Geberit NOTIFY characteristics.",
+}
+
+_COMMANDS_MD = {
+    0x00: "ToggleAnalShower",  0x01: "ToggleLadyShower",  0x02: "ToggleDryer",
+    0x04: "StartCleaningDevice", 0x05: "ExecuteNextCleaningStep",
+    0x06: "PrepareDescaling",  0x07: "ConfirmDescaling",
+    0x08: "CancelDescaling",   0x09: "PostponeDescaling",
+    0x0A: "ToggleLidPosition", 0x14: "ToggleOrientationLight",
+    0x25: "TriggerFlushManually", 0x2F: "ResetFilterCounter",
+}
+
+_PROFILE_SETTINGS_MD = {
+    0: "OdourExtraction", 1: "OscillatorState",    2: "AnalShowerPressure",
+    3: "LadyShowerPressure", 4: "AnalShowerPosition", 5: "LadyShowerPosition",
+    6: "WaterTemperature", 7: "WcSeatHeat",        8: "DryerTemperature",
+    9: "DryerState",      10: "SystemFlush",
+}
+
+_COMMON_SETTINGS_MD = {
+    0: "OdourRunOn", 1: "Brightness", 2: "Color", 3: "Activation",
+}
+
+# Synthetic proc code for CCCD writes (not a real Geberit procedure)
+_PROC_CCCD = 0xCC
+
+
+@dataclass
+class _Call:
+    req_ts:       str
+    ctx:          int
+    proc:         int
+    args:         bytes
+    resp_ts:      str   = ""
+    resp_ctx:     int   = -1
+    resp_proc:    int   = -1
+    resp_status:  int   = -1
+    resp_result:  bytes = b""
+    resp_type:    str   = ""   # "single" | "multi" | ""
+
+
+def _parse_req(v: bytes):
+    """
+    Parse a Geberit WRITE_CMD frame value (handle 0x0003) as a procedure request.
+    Returns (ctx, proc, arg_len, partial_args) or None.
+
+    Frame layout (SINGLE 0x11 and FIRST 0x13/0x15/0x17 share ctx/proc offsets):
+      v[0]       = frame header
+      v[1]       = 0x04 (SINGLE request marker) or frame count byte (FIRST)
+      v[8]       = ctx  (0x00 or 0x01)
+      v[9]       = proc
+      v[10]      = arg_len (total expected, may exceed what's in this frame)
+      v[11:]     = first arg bytes (remaining in CONS frame if arg_len > 9)
+    """
+    if len(v) < 11:
+        return None
+    h = v[0]
+    if h == 0x11 and v[1] == 0x04:    # SINGLE
+        pass
+    elif h in (0x13, 0x15, 0x17):     # FIRST
+        pass
+    else:
+        return None
+    ctx, proc, arg_len = v[8], v[9], v[10]
+    partial = v[11:11 + arg_len]       # may be truncated — CONS carries the rest
+    return ctx, proc, arg_len, partial
+
+
+def _parse_resp(v: bytes):
+    """
+    Parse a NOTIF frame from handle 0x000F.
+    Returns one of:
+      ('CONTROL', error_code)        — ACK/flow-control, skip
+      ('SINGLE', ctx, proc, status, result)  — complete response
+      ('MULTI', 0, 0, 0, b'')       — first frame of multi-frame response
+      None                           — unknown/unhandled
+    """
+    if not v:
+        return None
+    h = v[0]
+    if h in (0x60, 0x70) or h & 0x80:  # CONTROL or INFO
+        return ('CONTROL', v[1] if len(v) > 1 else 0)
+    if h == 0x11 and len(v) >= 12 and v[1] == 0x05:  # SINGLE response
+        return ('SINGLE', v[9], v[10], v[7], v[12:12 + v[11]])
+    if h in (0x13, 0x15, 0x17):        # FIRST_DEV (multi-frame response)
+        return ('MULTI', 0, 0, 0, b'')
+    return None
+
+
+def _collect_calls(events: list) -> list:
+    """
+    Walk ATT events and return a list of _Call objects pairing each
+    Geberit request with its response.  Also emits synthetic _Call
+    entries for CCCD writes (notification subscribe, phase = Init).
+    """
+    calls       = []
+    pending     = None    # _Call waiting for its response
+    pend_args   = None    # partial args bytes from FIRST frame
+    pend_arglen = 0       # total expected arg_len from FIRST frame
+    CCCD_HANDLES = {0x0010, 0x0014, 0x0018, 0x001C}
+
+    for e in events:
+        etype = e["type"]
+
+        if etype in ("ATT_WRITE_CMD", "ATT_WRITE_REQ"):
+            try:
+                att_h = int(e.get("att_handle", "0x0000"), 16)
+            except Exception:
+                continue
+            raw = e.get("value", "")
+
+            if att_h == 0x0003:
+                # New outgoing request — flush any unmatched pending
+                if pending:
+                    calls.append(pending)
+                    pending = pend_args = None
+                    pend_arglen = 0
+                try:
+                    v = bytes.fromhex(raw)
+                except Exception:
+                    continue
+                parsed = _parse_req(v)
+                if not parsed:
+                    continue
+                ctx, proc, arg_len, partial = parsed
+                pending = _Call(req_ts=e["ts"], ctx=ctx, proc=proc, args=partial)
+                if arg_len > len(partial):   # CONS frame carries the remaining args
+                    pend_args   = partial
+                    pend_arglen = arg_len
+                else:
+                    pend_args   = None
+                    pend_arglen = 0
+
+            elif att_h == 0x0006 and pending and pend_args is not None:
+                # CONS continuation frame for the pending FIRST request
+                try:
+                    v = bytes.fromhex(raw)
+                except Exception:
+                    continue
+                if len(v) >= 2:
+                    full = (pend_args + v[1:])[:pend_arglen]
+                    pending.args = full
+                pend_args   = None
+                pend_arglen = 0
+
+            elif att_h in CCCD_HANDLES:
+                if pending:
+                    calls.append(pending)
+                    pending = pend_args = None
+                    pend_arglen = 0
+                calls.append(_Call(
+                    req_ts=e["ts"], ctx=0x01, proc=_PROC_CCCD,
+                    args=bytes([att_h & 0xFF, (att_h >> 8) & 0xFF]),
+                    resp_type="single", resp_status=0,
+                ))
+
+        elif etype == "ATT_HANDLE_VALUE_NOTIF" and pending:
+            try:
+                att_h = int(e.get("att_handle", "0x0000"), 16)
+            except Exception:
+                continue
+            if att_h != 0x000F:
+                continue
+            try:
+                v = bytes.fromhex(e.get("value", ""))
+            except Exception:
+                continue
+            parsed = _parse_resp(v)
+            if parsed is None:
+                continue
+            tag = parsed[0]
+            if tag == 'CONTROL':
+                continue    # ACK — keep waiting
+            pending.resp_ts = e["ts"]
+            if tag == 'SINGLE':
+                _, ctx_r, proc_r, status, result = parsed
+                pending.resp_ctx    = ctx_r
+                pending.resp_proc   = proc_r
+                pending.resp_status = status
+                pending.resp_result = result
+                pending.resp_type   = "single"
+            else:           # MULTI
+                pending.resp_type = "multi"
+            calls.append(pending)
+            pending = pend_args = None
+            pend_arglen = 0
+
+    if pending:
+        calls.append(pending)
+    return calls
+
+
+def _annotate_req(ctx: int, proc: int, args: bytes) -> str:
+    if proc == _PROC_CCCD:
+        h = (args[1] << 8 | args[0]) if len(args) >= 2 else 0
+        return f"Enable notifications on {GEBERIT_HANDLES.get(h, f'0x{h:04X}')}"
+
+    if (ctx, proc) in ((0x01, 0x11), (0x01, 0x13)):
+        return "Subscription handshake"
+    if (ctx, proc) == (0x00, 0x82):
+        return "Reading device model and SAP number"
+    if (ctx, proc) == (0x00, 0x86):
+        return "Reading installation date"
+    if (ctx, proc) == (0x01, 0x81):
+        return "Reading SOC firmware version (RS/TS)"
+    if (ctx, proc) == (0x01, 0x05):
+        return "Reading node list"
+    if (ctx, proc) == (0x01, 0x45):
+        return "Reading descale cycle statistics"
+    if (ctx, proc) == (0x01, 0x55):
+        return f"Unknown — args={args.hex() or '(none)'}"
+    if (ctx, proc) == (0x01, 0x56):
+        val = int.from_bytes(args[:2], "little") if len(args) >= 2 else "?"
+        return f"registrationLevel={val}"
+
+    if (ctx, proc) == (0x01, 0x0D):
+        if args:
+            n = args[0]; ids = list(args[1:1 + n])
+            return f"Polling {n} params: [{', '.join(str(i) for i in ids)}]"
+        return "Polling live device state"
+
+    if (ctx, proc) == (0x01, 0x0E):
+        if args:
+            n = args[0]; ids = list(args[1:1 + n])
+            return f"Querying {n} firmware component IDs: [{', '.join(str(i) for i in ids)}]"
+        return "Querying firmware component versions"
+
+    if (ctx, proc) == (0x01, 0x59):
+        if args:
+            n = args[0]; ids = list(args[1:1 + n])
+            return f"Checking {n} filter record IDs: [{', '.join(str(i) for i in ids)}]"
+        return "Checking filter status"
+
+    if (ctx, proc) == (0x01, 0x0A):    # GetStoredProfileSetting (init area)
+        sid = args[0] if args else -1
+        return f"Init-read {_PROFILE_SETTINGS_MD.get(sid, f'id={sid}')}"
+
+    if (ctx, proc) == (0x01, 0x0B):    # SetStoredProfileSetting (init area)
+        sid = args[0] if args else -1
+        val = int.from_bytes(args[1:3], "little") if len(args) >= 3 else "?"
+        return f"**Init-write {_PROFILE_SETTINGS_MD.get(sid, f'id={sid}')} = {val}**"
+
+    if (ctx, proc) == (0x01, 0x53):    # GetStoredProfileSetting (user prefs)
+        pid = args[0] if args else 0
+        sid = args[1] if len(args) >= 2 else -1
+        return f"Reading {_PROFILE_SETTINGS_MD.get(sid, f'id={sid}')} (profile {pid})"
+
+    if (ctx, proc) == (0x01, 0x54):    # SetStoredProfileSetting (user prefs)
+        pid = args[0] if args else 0
+        sid = args[1] if len(args) >= 2 else -1
+        val = int.from_bytes(args[2:4], "little") if len(args) >= 4 else "?"
+        return f"**Setting {_PROFILE_SETTINGS_MD.get(sid, f'id={sid}')} = {val} (profile {pid})**"
+
+    if (ctx, proc) == (0x01, 0x51):    # GetStoredCommonSetting
+        sid = args[0] if args else -1
+        return f"Reading {_COMMON_SETTINGS_MD.get(sid, f'id={sid}')} (id={sid})"
+
+    if (ctx, proc) == (0x01, 0x52):    # SetStoredCommonSetting
+        if len(args) >= 3:
+            sid = args[0]; val = int.from_bytes(args[1:3], "little")
+            return f"**Setting {_COMMON_SETTINGS_MD.get(sid, f'id={sid}')} = {val}**"
+        return "Writing common setting"
+
+    if (ctx, proc) == (0x01, 0x09):    # SetCommand
+        cmd = _COMMANDS_MD.get(args[0] if args else -1,
+                                f"0x{args.hex() if args else '??'}")
+        return f"**Triggering {cmd}**"
+
+    name = _PROC_NAMES_MD.get((ctx, proc), f"Proc(ctx=0x{ctx:02x}, proc=0x{proc:02x})")
+    return f"*(unknown: {name}, args={args.hex() or 'none'})*"
+
+
+def _annotate_resp(call: _Call) -> str:
+    if call.resp_type == "multi":
+        return "*(multi-frame response)*"
+    if call.resp_type == "":
+        return "—"
+    if call.resp_status not in (0, -1):
+        return f"ERR status=0x{call.resp_status:02X}"
+    ctx, proc, result = call.ctx, call.proc, call.resp_result
+    # Decode common single-frame results
+    if (ctx, proc) == (0x00, 0x82) and result:
+        runs = []
+        i = 0
+        while i < len(result):
+            run = b""
+            while i < len(result) and 0x20 <= result[i] <= 0x7E:
+                run += bytes([result[i]]); i += 1
+            if len(run) >= 4:
+                runs.append(run.decode("ascii"))
+            i += 1
+        return "Device: " + " | ".join(runs) if runs else "OK"
+    if (ctx, proc) == (0x01, 0x81) and len(result) >= 3:
+        v1 = chr(result[0]) if 0x20 <= result[0] <= 0x7E else "?"
+        v2 = chr(result[1]) if 0x20 <= result[1] <= 0x7E else "?"
+        return f"SOC {v1}{v2}.{result[2]}"
+    if (ctx, proc) in ((0x01, 0x0A), (0x01, 0x53)) and len(result) >= 2:
+        return f"→ {int.from_bytes(result[:2], 'little')}"
+    if (ctx, proc) == (0x01, 0x51) and len(result) >= 2:
+        return f"→ {int.from_bytes(result[:2], 'little')}"
+    if (ctx, proc) == (0x01, 0x59) and result:
+        return f"OK ({result[0]} records)"
+    return "ACK" if call.resp_type == "single" else "—"
+
+
+def _get_phase(ctx: int, proc: int) -> str:
+    if proc == _PROC_CCCD:
+        return "GATT Notification Subscribe"
+    return _PHASE_MD.get((ctx, proc), f"Proc(0x{ctx:02x}, 0x{proc:02x})")
+
+
+def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_count: int) -> str:
+    """Render Android BLE session as annotated markdown grouped by logical phase."""
+    if not calls:
+        return "*(no Geberit procedure calls decoded)*\n"
+
+    out = []
+    ts_first = calls[0].req_ts
+    ts_last  = next((c.resp_ts or c.req_ts for c in reversed(calls) if c.resp_ts or c.req_ts), ts_first)
+
+    out.append(f"# BLE Traffic Analysis: {path.name}")
+    out.append(
+        f"**Device:** `{mac}` &nbsp; **Format:** {fmt} &nbsp; **Packets:** {pkt_count:,}  "
+        f"**Time:** {ts_first} – {ts_last}"
+    )
+    out.append("")
+
+    # Group into consecutive phases
+    phases: list[tuple[str, list]] = []
+    cur_phase: str | None = None
+    cur_calls: list = []
+    for call in calls:
+        phase = _get_phase(call.ctx, call.proc)
+        if phase != cur_phase:
+            if cur_phase is not None:
+                phases.append((cur_phase, cur_calls))
+            cur_phase = phase
+            cur_calls = [call]
+        else:
+            cur_calls.append(call)
+    if cur_phase is not None:
+        phases.append((cur_phase, cur_calls))
+
+    phase_seen: dict = {}
+    for phase_name, phase_calls in phases:
+        phase_seen[phase_name] = phase_seen.get(phase_name, 0) + 1
+        occ = phase_seen[phase_name]
+        suffix = f" #{occ}" if occ > 1 else ""
+        ts0 = phase_calls[0].req_ts
+        ts1 = phase_calls[-1].resp_ts or phase_calls[-1].req_ts
+        ts_range = ts0 if ts0 == ts1 else f"{ts0} – {ts1}"
+        n = len(phase_calls)
+
+        out.append("---")
+        out.append("")
+        out.append(f"## {phase_name}{suffix} ({ts_range}, {n} call{'s' if n != 1 else ''})")
+        summary = _PHASE_SUMMARIES_MD.get(phase_name)
+        if summary:
+            out.append(f"*{summary}*")
+        out.append("")
+
+        out.append("| Time | Procedure | Request | Response |")
+        out.append("|------|-----------|---------|----------|")
+        for call in phase_calls:
+            if call.proc == _PROC_CCCD:
+                proc_name = "CCCD Write"
+            else:
+                proc_name = _PROC_NAMES_MD.get((call.ctx, call.proc),
+                                               f"0x{call.proc:02x}")
+            req_ann  = _annotate_req(call.ctx, call.proc, call.args)
+            resp_ann = _annotate_resp(call)
+            out.append(f"| {call.req_ts} | {proc_name} | {req_ann} | {resp_ann} |")
+        out.append("")
+
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
@@ -608,15 +1056,21 @@ Examples:
   python tools/android-ble-analyze.py file.pcapng --mac 38:AB:41:2A:0D:67
   python tools/android-ble-analyze.py file.log --all-macs
   python tools/android-ble-analyze.py file.log --raw
+  python tools/android-ble-analyze.py file.pcapng --markdown
+  python tools/android-ble-analyze.py file.pcapng --markdown --output session.md
 """,
     )
-    ap.add_argument("log", type=Path, help="BTSnoop .log file")
+    ap.add_argument("log", type=Path, help="BTSnoop .log or .pcapng file")
     ap.add_argument("--mac", default=DEFAULT_MAC,
                     help=f"MAC address to filter (default: {DEFAULT_MAC})")
     ap.add_argument("--all-macs", action="store_true",
                     help="Show events for all MAC addresses")
     ap.add_argument("--raw", action="store_true",
                     help="Dump every raw HCI packet (very verbose)")
+    ap.add_argument("--markdown", action="store_true",
+                    help="Render session as annotated markdown grouped by logical phase")
+    ap.add_argument("--output", metavar="FILE",
+                    help="Write markdown to FILE instead of stdout (requires --markdown)")
     args = ap.parse_args()
 
     if not args.log.exists():
@@ -650,7 +1104,17 @@ Examples:
         session.feed(ts_str, direction, hci_type, payload)
 
     print(f"[+] Parsed {pkt_count:,} HCI packets", file=sys.stderr)
-    print_report(session, args.log, fmt, pkt_count)
+
+    if args.markdown:
+        calls  = _collect_calls(session.events)
+        md_out = render_markdown_android(calls, args.log, session.target, fmt, pkt_count)
+        if args.output:
+            Path(args.output).write_text(md_out, encoding="utf-8")
+            print(f"[+] Markdown written to {args.output}", file=sys.stderr)
+        else:
+            print(md_out)
+    else:
+        print_report(session, args.log, fmt, pkt_count)
 
 
 if __name__ == "__main__":
