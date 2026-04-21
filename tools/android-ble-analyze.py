@@ -990,11 +990,20 @@ def _annotate_req(ctx: int, proc: int, args: bytes) -> str:
     return f"*(unknown: {name}, args={args.hex() or 'none'})*"
 
 
-# SPL parameter index → short label (for display only; not protocol logic)
+# SPL parameter index → label — mirrors ble-decode.py _SPL_PARAM_NAMES exactly
 _SPL_PARAM_NAMES = {
-    0: "seat", 1: "p1", 2: "lady", 3: "shower", 4: "descaling",
-    5: "descalingMin", 6: "lastErr", 7: "p7", 8: "p8",
-    9: "orientLight", 10: "p10", 11: "p11",
+    0: "user_sitting",
+    1: "anal_shower",
+    2: "lady_shower",
+    3: "dryer",
+    4: "descaling_state",
+    5: "descaling_min",
+    6: "last_error",
+    7: "unknown7",
+    8: "unknown8",
+    9: "orientation_light",
+    10: "unknown10",
+    11: "unknown11",
 }
 
 
@@ -1003,14 +1012,22 @@ def _annotate_resp(call: _Call) -> str:
         result = call.resp_result
         proc   = call.proc
         if result and _BRIDGE_AVAILABLE:
-            if proc == 0x0D:   # GetSystemParameterList — same record format as GetFilterStatus
-                rec = _BridgeGetFilterStatus().result(result)
-                raws = rec.get("raw_records", {})
-                nonzero = {k: v for k, v in raws.items() if v}
-                if not nonzero:
-                    return f"all zeros ({len(raws)} params)"
-                parts = [f"{_SPL_PARAM_NAMES.get(k, f'p{k}')}={v}" for k, v in sorted(nonzero.items())]
-                return "→ " + ", ".join(parts)
+            if proc == 0x0D:   # GetSystemParameterList
+                # Positional decoding using the request param list (same as ble-decode.py).
+                # The echoed param ID at result[i*5+1] may be 0 on some firmware — don't rely on it.
+                # result[0] = count byte; result[i*5+2:i*5+6] = LE uint32 value for record i.
+                args   = call.args or b''
+                count  = args[0] if args else 0
+                params = list(args[1:1 + count]) if count else list(range(12))
+                parts  = []
+                i = 0
+                while i * 5 + 5 < len(result):
+                    param_id = params[i] if i < len(params) else i
+                    val = struct.unpack_from('<I', result, i * 5 + 2)[0]
+                    label = _SPL_PARAM_NAMES.get(param_id, f"unknown{param_id}")
+                    parts.append(f"{param_id}: {label} = {val}")
+                    i += 1
+                return "<br>".join(parts) if parts else "OK"
             if proc == 0x59:   # GetFilterStatus
                 rec = _BridgeGetFilterStatus().result(result)
                 days   = rec.get("days_until_filter_change")
