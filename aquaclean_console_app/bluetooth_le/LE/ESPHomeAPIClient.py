@@ -65,6 +65,7 @@ class ESPHomeAPIClient:
         self._services = None
         self._uuid_to_handle: Dict[str, int] = {}
         self._handle_to_uuid: Dict[int, str] = {}
+        self._uuid_to_properties: Dict[str, int] = {}  # char UUID → GATT properties bitmask
         self._cccd_handles: Dict[int, int] = {}  # char_handle → CCCD descriptor handle
         self._notify_callbacks: Dict[int, Callable] = {}
         self._notify_unsubs: list = []  # unsubscribe functions from start_notify
@@ -210,9 +211,10 @@ class ESPHomeAPIClient:
                     uuid_str = char.uuid.lower()
                     handle = char.handle
 
-                    # Build bidirectional UUID↔handle mapping
+                    # Build bidirectional UUID↔handle mapping + properties lookup
                     self._uuid_to_handle[uuid_str] = handle
                     self._handle_to_uuid[handle] = uuid_str
+                    self._uuid_to_properties[uuid_str] = char.properties
 
                     # Find CCCD descriptor (UUID 00002902-...) for notification enable
                     cccd_uuid = "00002902-0000-1000-8000-00805f9b34fb"
@@ -339,7 +341,7 @@ class ESPHomeAPIClient:
         self,
         char_specifier: Union[str, UUID, 'ESPHomeGATTCharacteristic'],
         data: bytes,
-        response: bool = False
+        response: bool = None
     ):
         """
         Write data to a GATT characteristic.
@@ -347,7 +349,12 @@ class ESPHomeAPIClient:
         Args:
             char_specifier: UUID string, UUID object, or characteristic object
             data: Bytes to write
-            response: Whether to wait for write response (default: False — WRITE_NO_RESP; set True only for characteristics that require ATT_WRITE_REQUEST)
+            response: Whether to wait for write response.  When None (default),
+                      auto-detected from the GATT properties discovered at connect
+                      time: characteristics with the WRITE_NO_RESP bit (0x04) use
+                      ATT_WRITE_COMMAND (response=False); characteristics with only
+                      the WRITE bit (0x08) use ATT_WRITE_REQUEST (response=True).
+                      Pass explicitly to override.
 
         Raises:
             ValueError: If characteristic UUID not found in device services
@@ -366,9 +373,20 @@ class ESPHomeAPIClient:
             logger.error(f"[ESPHomeAPIClient] UUID {uuid_str} not found in services")
             raise ValueError(f"Characteristic UUID {uuid_str} not found in device services")
 
+        # Auto-detect write type from GATT properties if not explicitly specified.
+        # WRITE_NO_RESP (0x04) → ATT_WRITE_COMMAND (no ACK from peripheral).
+        # WRITE (0x08) only    → ATT_WRITE_REQUEST  (peripheral ACKs).
+        if response is None:
+            props = self._uuid_to_properties.get(uuid_str, 0)
+            response = not bool(props & 0x04)  # False if WRITE_NO_RESP, True if WRITE-only
+            logger.silly(
+                f"[ESPHomeAPIClient] Write type auto-detected: {uuid_str} "
+                f"properties=0x{props:02x} → response={response}"
+            )
+
         logger.silly(
             f"[ESPHomeAPIClient] Write characteristic: {uuid_str} (handle=0x{handle:04x}) "
-            f"len={len(data)} data={data.hex()[:40]}{'...' if len(data) > 20 else ''}"
+            f"response={response} len={len(data)} data={data.hex()[:40]}{'...' if len(data) > 20 else ''}"
         )
 
         try:
