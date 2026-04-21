@@ -103,6 +103,34 @@ GEBERIT_HANDLES = {
     0x001C: "CCCD-A8",
 }
 
+# ---------------------------------------------------------------------------
+# Bridge CallClass imports — reuse result() methods for decoding
+# ---------------------------------------------------------------------------
+import os as _os
+_repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
+# Register TRACE/SILLY log levels that bridge modules require (no-op if already set)
+import logging as _logging
+for _lvl_name, _lvl_val in (('SILLY', 4), ('TRACE', 5)):
+    if not hasattr(_logging, _lvl_name):
+        _logging.addLevelName(_lvl_val, _lvl_name)
+        setattr(_logging, _lvl_name, _lvl_val)
+        setattr(_logging.Logger, _lvl_name.lower(),
+                lambda self, msg, *a, _v=_lvl_val, **kw: self.log(_v, msg, *a, **kw))
+
+try:
+    from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFilterStatus import (
+        GetFilterStatus as _BridgeGetFilterStatus,
+    )
+    from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetFirmwareVersionList import (
+        GetFirmwareVersionList as _BridgeGetFirmwareVersionList,
+    )
+    _BRIDGE_AVAILABLE = True
+except ImportError:
+    _BRIDGE_AVAILABLE = False
+
 # BTSnoop timestamp epoch: microseconds since 2000-01-01
 import datetime as _dt
 _BTSNOOP_EPOCH_SECS = _dt.datetime(2000, 1, 1, tzinfo=_dt.timezone.utc).timestamp()
@@ -671,10 +699,10 @@ def _parse_resp(v: bytes):
     """
     Parse a NOTIF frame from handle 0x000F.
     Returns one of:
-      ('CONTROL', error_code)        — ACK/flow-control, skip
-      ('SINGLE', ctx, proc, status, result)  — complete response
-      ('MULTI', 0, 0, 0, b'')       — first frame of multi-frame response
-      None                           — unknown/unhandled
+      ('CONTROL', error_code)                  — ACK/flow-control, skip
+      ('SINGLE', ctx, proc, status, result)    — complete response
+      ('MULTI', cons_needed, first_v)          — FIRST[N] frame; N CONS frames follow
+      None                                     — unknown/unhandled
     """
     if not v:
         return None
@@ -683,9 +711,38 @@ def _parse_resp(v: bytes):
         return ('CONTROL', v[1] if len(v) > 1 else 0)
     if h == 0x11 and len(v) >= 12 and v[1] == 0x05:  # SINGLE response
         return ('SINGLE', v[9], v[10], v[7], v[12:12 + v[11]])
-    if h in (0x13, 0x15, 0x17):        # FIRST_DEV (multi-frame response)
-        return ('MULTI', 0, 0, 0, b'')
+    if h in (0x13, 0x15, 0x17):        # FIRST[N] — multi-frame response
+        cons_needed = (h >> 1) & 7     # N encoded in header bits [3:1]
+        return ('MULTI', cons_needed, v)
     return None
+
+
+def _assemble_multi(first_v: bytes, cons_frames: list) -> tuple:
+    """
+    Reassemble a FIRST[N]+CONS response.
+
+    FIRST[N] frames share the same header offsets as SINGLE frames (0x11):
+        v[7]  = status
+        v[9]  = ctx
+        v[10] = proc
+        v[11] = result_len  (total bytes across all frames)
+        v[12:]= start of result data
+
+    Each CONS frame carries 19 bytes of continuation at [1:].
+
+    Returns (ctx, proc, result) or (0, 0, b'') on failure.
+    """
+    if len(first_v) < 13:
+        return (0, 0, b'')
+    ctx        = first_v[9]
+    proc       = first_v[10]
+    result_len = first_v[11]
+    parts = [first_v[12:]]
+    for c in cons_frames:
+        if len(c) >= 2:
+            parts.append(c[1:])
+    result = (b"".join(parts))[:result_len]
+    return (ctx, proc, result)
 
 
 def _collect_calls(events: list) -> list:
@@ -693,12 +750,37 @@ def _collect_calls(events: list) -> list:
     Walk ATT events and return a list of _Call objects pairing each
     Geberit request with its response.  Also emits synthetic _Call
     entries for CCCD writes (notification subscribe, phase = Init).
+
+    Multi-frame responses (FIRST[N] at A5 + CONS frames at A5 or A6/A7/A8):
+    - A5 (0x000F): carries FIRST[N] frame; may also carry CONS frames for small responses
+    - A6/A7/A8 (0x0013/0x0017/0x001B): carry parallel CONS data for large responses
+      (e.g. GetSPL distributes 12 params across A5+A6+A7+A8 simultaneously)
     """
-    calls       = []
-    pending     = None    # _Call waiting for its response
-    pend_args   = None    # partial args bytes from FIRST frame
-    pend_arglen = 0       # total expected arg_len from FIRST frame
+    calls        = []
+    pending      = None    # _Call waiting for its response
+    pend_args    = None    # partial args bytes from FIRST request frame
+    pend_arglen  = 0       # total expected arg_len from FIRST request frame
+    multi_first  = None    # raw bytes of FIRST[N] response frame (for assembly)
+    multi_needed = 0       # CONS frames still expected
+    multi_cons   = []      # (att_handle, bytes) — collected CONS frames in arrival order
     CCCD_HANDLES = {0x0010, 0x0014, 0x0018, 0x001C}
+    SIDE_HANDLES = {0x0013, 0x0017, 0x001B}   # A6, A7, A8
+    # CONS frame headers: FrameType=0, IsCount=0 (not a count) → 0x12/0x14/0x16/0x42/0x44/0x46
+    _CONS_HEADERS = {0x12, 0x14, 0x16, 0x42, 0x44, 0x46}
+
+    def _finalize_multi():
+        """Assemble collected CONS frames into pending.resp_result (in-place)."""
+        nonlocal multi_first, multi_needed, multi_cons
+        if pending is not None and pending.resp_type == "multi" and multi_first is not None:
+            # Sort side frames by handle (A6 < A7 < A8) so they follow assembly order
+            cons_ordered = [v for _, v in sorted(multi_cons, key=lambda x: x[0])]
+            ctx_r, proc_r, result = _assemble_multi(multi_first, cons_ordered)
+            pending.resp_ctx    = ctx_r
+            pending.resp_proc   = proc_r
+            pending.resp_result = result
+        multi_first  = None
+        multi_needed = 0
+        multi_cons   = []
 
     for e in events:
         etype = e["type"]
@@ -711,15 +793,21 @@ def _collect_calls(events: list) -> list:
             raw = e.get("value", "")
 
             if att_h == 0x0003:
-                # New outgoing request — flush any unmatched pending
-                if pending:
-                    calls.append(pending)
-                    pending = pend_args = None
-                    pend_arglen = 0
                 try:
                     v = bytes.fromhex(raw)
                 except Exception:
                     continue
+                # CONTROL ACK frames (0x60/0x70) are flow-control only — do NOT
+                # interrupt multi-frame response collection (A6/A7/A8 may not have
+                # arrived yet).
+                if v and v[0] in (0x60, 0x70):
+                    continue
+                # New outgoing request — finalize any incomplete multi-frame and flush
+                _finalize_multi()
+                if pending:
+                    calls.append(pending)
+                    pending = pend_args = None
+                    pend_arglen = 0
                 parsed = _parse_req(v)
                 if not parsed:
                     continue
@@ -745,6 +833,7 @@ def _collect_calls(events: list) -> list:
                 pend_arglen = 0
 
             elif att_h in CCCD_HANDLES:
+                _finalize_multi()
                 if pending:
                     calls.append(pending)
                     pending = pend_args = None
@@ -760,33 +849,63 @@ def _collect_calls(events: list) -> list:
                 att_h = int(e.get("att_handle", "0x0000"), 16)
             except Exception:
                 continue
-            if att_h != 0x000F:
-                continue
             try:
                 v = bytes.fromhex(e.get("value", ""))
             except Exception:
                 continue
-            parsed = _parse_resp(v)
-            if parsed is None:
-                continue
-            tag = parsed[0]
-            if tag == 'CONTROL':
-                continue    # ACK — keep waiting
-            pending.resp_ts = e["ts"]
-            if tag == 'SINGLE':
-                _, ctx_r, proc_r, status, result = parsed
-                pending.resp_ctx    = ctx_r
-                pending.resp_proc   = proc_r
-                pending.resp_status = status
-                pending.resp_result = result
-                pending.resp_type   = "single"
-            else:           # MULTI
-                pending.resp_type = "multi"
-            calls.append(pending)
-            pending = pend_args = None
-            pend_arglen = 0
+
+            if att_h == 0x000F:
+                # If we're in multi-frame mode and this is a CONS continuation at A5
+                if pending.resp_type == "multi" and v and v[0] in _CONS_HEADERS:
+                    multi_cons.append((att_h, v))
+                    if len(multi_cons) >= multi_needed:
+                        _finalize_multi()
+                        calls.append(pending)
+                        pending = pend_args = None
+                        pend_arglen = 0
+                    continue
+
+                parsed = _parse_resp(v)
+                if parsed is None:
+                    continue
+                tag = parsed[0]
+                if tag == 'CONTROL':
+                    continue    # ACK — keep waiting
+                pending.resp_ts = e["ts"]
+                if tag == 'SINGLE':
+                    _, ctx_r, proc_r, status, result = parsed
+                    pending.resp_ctx    = ctx_r
+                    pending.resp_proc   = proc_r
+                    pending.resp_status = status
+                    pending.resp_result = result
+                    pending.resp_type   = "single"
+                    calls.append(pending)
+                    pending = pend_args = None
+                    pend_arglen = 0
+                else:   # MULTI — FIRST[N] detected; wait for N CONS frames
+                    _, cons_needed, first_v = parsed
+                    pending.resp_type = "multi"
+                    multi_first  = first_v
+                    multi_needed = cons_needed
+                    multi_cons   = []
+                    if cons_needed == 0:
+                        # Self-contained FIRST[0] — finalize immediately
+                        _finalize_multi()
+                        calls.append(pending)
+                        pending = pend_args = None
+                        pend_arglen = 0
+
+            elif att_h in SIDE_HANDLES and pending.resp_type == "multi":
+                # A6/A7/A8 parallel response frame — treat as ordered CONS
+                multi_cons.append((att_h, v))
+                if len(multi_cons) >= multi_needed:
+                    _finalize_multi()
+                    calls.append(pending)
+                    pending = pend_args = None
+                    pend_arglen = 0
 
     if pending:
+        _finalize_multi()
         calls.append(pending)
     return calls
 
@@ -871,9 +990,46 @@ def _annotate_req(ctx: int, proc: int, args: bytes) -> str:
     return f"*(unknown: {name}, args={args.hex() or 'none'})*"
 
 
+# SPL parameter index → short label (for display only; not protocol logic)
+_SPL_PARAM_NAMES = {
+    0: "seat", 1: "p1", 2: "lady", 3: "shower", 4: "descaling",
+    5: "descalingMin", 6: "lastErr", 7: "p7", 8: "p8",
+    9: "orientLight", 10: "p10", 11: "p11",
+}
+
+
 def _annotate_resp(call: _Call) -> str:
     if call.resp_type == "multi":
-        return "*(multi-frame response)*"
+        result = call.resp_result
+        proc   = call.proc
+        if result and _BRIDGE_AVAILABLE:
+            if proc == 0x0D:   # GetSystemParameterList — same record format as GetFilterStatus
+                rec = _BridgeGetFilterStatus().result(result)
+                raws = rec.get("raw_records", {})
+                nonzero = {k: v for k, v in raws.items() if v}
+                if not nonzero:
+                    return f"all zeros ({len(raws)} params)"
+                parts = [f"{_SPL_PARAM_NAMES.get(k, f'p{k}')}={v}" for k, v in sorted(nonzero.items())]
+                return "→ " + ", ".join(parts)
+            if proc == 0x59:   # GetFilterStatus
+                rec = _BridgeGetFilterStatus().result(result)
+                days   = rec.get("days_until_filter_change")
+                resets = rec.get("filter_reset_count")
+                last   = rec.get("last_filter_reset")
+                parts  = []
+                if days   is not None: parts.append(f"days={days}")
+                if resets is not None: parts.append(f"resets={resets}")
+                if last:               parts.append(f"last={_dt.datetime.utcfromtimestamp(last).strftime('%Y-%m-%d')}")
+                return ("→ " + ", ".join(parts)) if parts else "no records"
+            if proc == 0x0E:   # GetFirmwareVersionList
+                fw   = _BridgeGetFirmwareVersionList().result(result)
+                main = fw.get("main")
+                return "→ " + (main or f"{len(fw.get('components', {}))} components")
+            if proc in (0x11, 0x13):  return "ACK"
+            return f"OK ({len(result)}b)"
+        if result:
+            return f"OK ({len(result)}b)"
+        return "*(multi-frame response)*"   # assembly failed — no CONS frames captured
     if call.resp_type == "":
         return "—"
     if call.resp_status not in (0, -1):
