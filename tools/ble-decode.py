@@ -291,10 +291,10 @@ FILTER_STATUS_NAMES = {
     0:  "status",
     1:  "shower_cycles",
     2:  "unknown_02",
-    3:  "descaling_active",          # 0=idle, 1=descaling in progress (confirmed 2026-04-22)
+    3:  "unknown_03",               # changed 0→1 at PrepareDescaling in one log — purpose unconfirmed
     4:  "unknown_ts_04",
     5:  "unknown_05",
-    6:  "descaling_cycle_count",     # total lifetime descales performed (confirmed 2026-04-22)
+    6:  "unknown_06",               # value=2 observed; never changed in any log — meaning unknown
     7:  "days_until_filter_change",  # ceramic honeycomb filter
     8:  "last_filter_reset (unix ts)",
     9:  "next_filter_change (unix ts)",
@@ -340,8 +340,7 @@ IMPL_HINTS = {
   # Response: N records of [rec_id(1)][uint32 LE(4)]
   #   Ceramic filter fields: ID 7 = days_until_filter_change, 8 = last_reset ts,
   #     9 = next_change ts, 10 = reset_count
-  #   Descaling fields (incidentally in same response):
-  #     ID 3 = descaling_active (0=idle, 1=in progress), ID 6 = descaling_cycle_count
+  #   IDs 3 and 6: purpose unknown — see docs/developer/unknown-procedures.md
   # Already implemented in GetFilterStatus.py""",
 
     (0x01, 0x09): """\
@@ -700,14 +699,12 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
             if frame.result:
                 import struct
                 count = frame.result[0]
-                days = cycles = reset_count = descaling_active = None
+                days = cycles = reset_count = None
                 pos = 1
                 while pos + 4 < len(frame.result):
                     rid = frame.result[pos]
                     val = struct.unpack_from('<I', frame.result, pos + 1)[0]
-                    if rid == 3:
-                        descaling_active = val
-                    elif rid == 7:
+                    if rid == 7:
                         days = val
                     elif rid == 1:
                         cycles = val
@@ -715,8 +712,6 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
                         reset_count = val
                     pos += 5
                 parts = []
-                if descaling_active is not None:
-                    parts.append(f"descaling_active={descaling_active}")
                 if days is not None:
                     parts.append(f"days_remaining={days}")
                 if cycles is not None:
