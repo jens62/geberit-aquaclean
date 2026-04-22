@@ -1,7 +1,7 @@
 # GATT UUID Variants — Non-Standard Geberit BLE Profiles
 
 **Analysis date:** 2026-04-21
-**Status:** Variant A based on one device report (E4:85:01:CD:B0:08). Protocol probe NOT yet confirmed — the GATT channel was identified but the Geberit framing protocol has not been exercised over the new UUIDs.
+**Status:** Variant A based on one device report (E4:85:01:CD:B0:08). GATT discovery confirmed. Write type fix applied (commit 7433b6b) — protocol probe outcome pending user confirmation.
 
 ---
 
@@ -57,10 +57,14 @@ Full GATT table:
 | WRITE_1 | Unknown — possibly `559eb101-...` (unconfirmed) |
 
 **What is NOT yet known for Variant A:**
-- Whether the Geberit framing protocol (frame format, procedure codes) is identical over these UUIDs
+- Whether the Geberit framing protocol (frame format, procedure codes) is identical over these UUIDs (protocol probe fix applied 2026-04-21, outcome pending)
 - What the `559eb100` service (with `559eb101`/`559eb110`) is for — firmware update channel? configuration register?
 - Which specific Geberit models or firmware versions use this profile
 - Whether `559eb101` maps to WRITE_1 in the bridge's dual-write scheme (standard profile has WRITE_0 + WRITE_1; Variant A appears to have only one write characteristic in the data service)
+
+**Confirmed for Variant A (2026-04-21):**
+- `559eb001` is `[WRITE_NO_RESP]` only (GATT properties 0x04, no 0x08). Using ATT_WRITE_REQUEST caused GATT error 0x03 "Write not permitted".
+- Fix: `ESPHomeAPIClient.write_gatt_char` auto-detects write type from GATT properties at connect time (commit 7433b6b). No configuration needed.
 
 ---
 
