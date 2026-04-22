@@ -25,7 +25,7 @@ Home App 10-step procedure).
 | Reinsert plug (4/5) | User reinserts plug | No BLE traffic | — | 3, min counting |
 | Close cover (5/5) | User closes cover | No BLE traffic | — | 3 |
 | 60-minute countdown | Progress screen | App disconnects; device runs autonomously | 16:12–17:06 | 3, min: 59→…→5 |
-| *(app reconnects)* | Countdown display | `GetSPL` + `GetFilterStatus` polls | 17:06, 17:07, 17:10 | 3, min=5, 4, 3 |
+| *(app reconnects)* | Countdown display | `GetSPL` polls (GetFilterStatus also called on connect but values unchanged) | 17:06, 17:07, 17:10 | 3, min=5, 4, 3 |
 | "Descaling finished" | Completion screen | state → 0, min → 0 | ~17:11 | **0** |
 
 ---
@@ -92,14 +92,23 @@ state 0  (idle — descaling complete)
 
 ---
 
-## GetFilterStatus Changes During Descaling
+## GetFilterStatus During Descaling
 
-| ID | Meaning | Before | After | Notes |
-|----|---------|--------|-------|-------|
-| 3 | `descaling_active` flag | 0 | 1 → 0 | Becomes 1 after PrepareDescaling; returns to 0 on completion |
-| 6 | Total descaling cycle count | 2 | 3 | Incremented by 1 on completion — tracks lifetime descale count |
-| 7 | `days_until_filter_change` | 355 | 355 | **Unchanged** — ceramic filter, unrelated to descaling |
-| 8 | `last_filter_reset` | (unchanged) | (unchanged) | **Unchanged** — ceramic filter, unrelated to descaling |
+The Geberit Home App calls `GetFilterStatus` on **every BLE connect** as part of its session
+init — not specifically because of descaling. It happened to be called on all four reconnects.
+
+**What changed and what didn't (confirmed from raw log bytes):**
+
+| ID | Meaning | Observed values | Notes |
+|----|---------|-----------------|-------|
+| 3 | `descaling_active` flag | 0 → **1** (at PrepareDescaling); stayed 1 throughout all reconnects | Only confirmed change in this log. Post-completion value (return to 0) not captured — session ends at 17:11 with SPL only, no trailing GetFilterStatus. |
+| 6 | Total descaling cycle count | **2 throughout** entire log | Post-completion increment (expected 2→3) not captured — no GetFilterStatus after descaling finished. |
+| 7 | `days_until_filter_change` | **355, unchanged** | Ceramic honeycomb filter — unrelated to descaling |
+| 8 | `last_filter_reset` | **unchanged** | Ceramic honeycomb filter — unrelated to descaling |
+
+**Key point:** during the countdown reconnects at 17:06, 17:07, 17:10, GetFilterStatus returned
+**identical bytes** every time — nothing changed. The relevant countdown data came from GetSPL
+(`descaling_min` = 5, 4, 3), not from GetFilterStatus.
 
 ---
 
