@@ -97,17 +97,17 @@ state 0  (idle — descaling complete)
 The Geberit Home App calls `GetFilterStatus` on **every BLE connect** as part of its session
 init — not specifically because of descaling. It happened to be called on all four reconnects.
 
-**What changed and what didn't (confirmed from raw log bytes):**
+**Observed values (raw log bytes):**
 
-| ID | Meaning | Observed values | Notes |
-|----|---------|-----------------|-------|
-| 3 | `descaling_active` flag | 0 → **1** (at PrepareDescaling); stayed 1 throughout all reconnects | Only confirmed change in this log. Post-completion value (return to 0) not captured — session ends at 17:11 with SPL only, no trailing GetFilterStatus. |
-| 6 | Total descaling cycle count | **2 throughout** entire log | Post-completion increment (expected 2→3) not captured — no GetFilterStatus after descaling finished. |
-| 7 | `days_until_filter_change` | **355, unchanged** | Ceramic honeycomb filter — unrelated to descaling |
-| 8 | `last_filter_reset` | **unchanged** | Ceramic honeycomb filter — unrelated to descaling |
+| ID | Observed | Notes |
+|----|----------|-------|
+| 3 | 0 before PrepareDescaling; **1 after**; stayed 1 through all reconnects | Correlation with PrepareDescaling observed but **purpose unconfirmed** — post-completion value not captured. GetFilterStatus is the ceramic filter procedure; whether ID 3 has anything to do with descaling is unknown. |
+| 6 | **2 throughout** entire log — never changed | Meaning unknown. Value 2 was noted but never seen to change. |
+| 7 | **355, unchanged** | `days_until_filter_change` — ceramic honeycomb filter |
+| 8 | **unchanged** | `last_filter_reset` — ceramic honeycomb filter |
 
 **Key point:** during the countdown reconnects at 17:06, 17:07, 17:10, GetFilterStatus returned
-**identical bytes** every time — nothing changed. The relevant countdown data came from GetSPL
+**identical bytes** every time. The relevant countdown data came from GetSPL
 (`descaling_min` = 5, 4, 3), not from GetFilterStatus.
 
 ---

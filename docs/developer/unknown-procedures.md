@@ -431,23 +431,32 @@ corrupted IDs). With the CONS fix in place, idx_echo values are reliable.
 
 ## 5. GetFilterStatus — response ID mapping not fully verified
 
-Proc `0x59` (`GetFilterStatus`) returns records with IDs 0–7 (bridge currently polls
-8 IDs). Record ID names in `tools/ble-decode.py` are mostly labeled `unknown_NN` except for:
-- `0` — `status`
-- `1` — `shower_cycles`
+Proc `0x59` (`GetFilterStatus`) is the **ceramic honeycomb filter** procedure.
+Confirmed fields:
 - `7` — `days_until_filter_change`
 - `8` — `last_filter_reset (unix ts)`
+- `9` — `next_filter_change (unix ts)`
+- `10` — `filter_reset_count`
+
+Unknown fields observed in descaling session log (2026-04-22):
+
+| ID | Observed | Status |
+|----|----------|--------|
+| 3 | 0 before PrepareDescaling; 1 after; unchanged for rest of session | Correlation with PrepareDescaling noted but **purpose unconfirmed**. GetFilterStatus is the ceramic filter procedure — whether ID 3 relates to descaling at all is unknown. Do not assume. |
+| 6 | Value 2 throughout entire session; never changed | **Purpose unknown.** |
 
 **Update 2026-04-21 (Android pcapng):** The Android app calls `GetFilterStatus` with
 **12 params `[0–11]`**, not 8. This confirms there are at least 12 record IDs on this
 device. The bridge uses only 8 — IDs 8–11 are not read and their meaning is unknown.
 
-**How to investigate:** Cross-reference the decoded output of
+**How to investigate IDs 3 and 6:** Sniff a session where the ceramic filter is due for
+replacement (`days_until_filter_change = 0`) and observe whether IDs 3 or 6 change.
+Also sniff a session where no descaling occurs to check whether ID 3 stays at 0 or varies
+independently of descaling commands.
+
+**How to investigate IDs 8–11:** Cross-reference
 `Keremikwabenfilterwechsel - jetzt wieder in 365 Tagen.txt` against the bridge's
-`GetFilterStatus` implementation. See `memory/ble-traffic-logs.md`. Additionally,
-decode the `GetFilterStatus` response from the Android pcapng
-(`open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng`) to see whether IDs
-8–11 carry non-zero values.
+`GetFilterStatus` implementation. See `memory/ble-traffic-logs.md`.
 
 ---
 
