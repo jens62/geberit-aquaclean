@@ -802,32 +802,60 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   is correct behaviour for a CLI invocation.
 
 - **Wire remaining Commands enum entries (all interfaces).**
-  `ToggleAnalShower`, `ToggleLadyShower`, `ToggleDryer`, `ToggleLidPosition`, and
-  `ResetFilterCounter` are fully wired. `ToggleOrientationLight` has REST only (no MQTT,
-  no HACS button, not in CLI choices). The following are **not wired at all** — they exist
-  in `Commands.py` but have no REST endpoint, MQTT topic, CLI command, HACS button, or
-  web UI button:
+  `ToggleAnalShower`, `ToggleLadyShower`, `ToggleDryer`, `ToggleLidPosition`,
+  `ResetFilterCounter`, `TriggerFlushManually`, and all four descaling commands
+  (`PrepareDescaling`, `ConfirmDescaling`, `CancelDescaling`, `PostponeDescaling`) are
+  fully wired (REST, MQTT, CLI, HA Discovery). `ToggleOrientationLight` has REST only
+  (no MQTT, no HACS button, not in CLI choices). The following are **not wired at all**:
 
   | Command | Code | Notes |
   |---------|------|-------|
   | `StartCleaningDevice` | 4 | Purpose unclear — self-cleaning cycle? |
   | `ExecuteNextCleaningStep` | 5 | Companion to StartCleaningDevice |
-  | `PrepareDescaling` | 6 | Descaling workflow step 1 |
-  | `ConfirmDescaling` | 7 | Descaling workflow step 2 |
-  | `CancelDescaling` | 8 | Abort descaling |
-  | `PostponeDescaling` | 9 | Delay descaling reminder |
   | `StartLidPositionCalibration` | 33 | Lid calibration |
   | `LidPositionOffsetSave` | 34 | Save calibrated offset |
   | `LidPositionOffsetIncrement` | 35 | Nudge lid offset + |
   | `LidPositionOffsetDecrement` | 36 | Nudge lid offset − |
-  | `TriggerFlushManually` | 37 | Manual flush |
 
   All follow the same pattern as ToggleDryer — zero new protocol code needed, just wiring
   on all interfaces (REST, MQTT, CLI, HA discovery, HACS button, web UI).
-  Priority candidates: `TriggerFlushManually`, `PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`/`PostponeDescaling` (descaling workflow), `ToggleOrientationLight` (complete missing interfaces).
+  Priority candidate: `ToggleOrientationLight` (complete missing interfaces).
 
   **New finding (2026-04-17):** `ToggleAnalShower` and `ToggleLadyShower` work correctly
   when `userSitting == True`. The device only accepts shower commands while someone is seated.
+
+- **Expose descaling state in device_state / SSE / MQTT (prerequisite for guided descaling UI).**
+
+  The descaling commands (`PrepareDescaling`, `ConfirmDescaling`, `CancelDescaling`,
+  `PostponeDescaling`) are fully wired on all interfaces. The missing piece is **state
+  feedback**: `descaling_state` (SPL param 4) and `descaling_min` (SPL param 5) are polled
+  every cycle but never extracted from the result — `DeviceStateChangedEventArgs` has no
+  fields for them, so they never reach `device_state`, SSE, MQTT, or HACS.
+
+  **Descaling state machine (confirmed 2026-04-22 from BLE log):**
+
+  | descaling_state | descaling_min | Meaning |
+  |----------------|---------------|---------|
+  | 0 | 0 | Idle |
+  | 1 | 60 | PrepareDescaling ACKed; device self-preparing (~55 s) |
+  | 2 | 60 | Waiting for user to add descaler (open cover / remove plug / pour) |
+  | 3 | 60–0 | Chemical cycle running; countdown in minutes |
+
+  State 1→2 is **device-driven** (no BLE command). State 2→3 requires `ConfirmDescaling`.
+  Device runs the full 60-minute cycle autonomously — BLE not required after ConfirmDescaling.
+  Full protocol documented in `docs/developer/descaling-protocol.md`.
+
+  **Implementation — three changes only:**
+
+  1. Add `DescalingState: int = None` and `DescalingMin: int = None` to
+     `DeviceStateChangedEventArgs` in `IAquaCleanClient.py`.
+  2. Extract `data_array[4]` and `data_array[5]` in `AquaCleanClient.get_state()` and
+     populate the new fields.
+  3. Map `descaling_state` and `descaling_min` into `device_state` in `main.py` and include
+     in SSE broadcast (same pattern as `IsUserSitting` → `user_sitting`).
+
+  Once exposed, the web UI and HACS can guide the user through the PDF workflow by reading
+  `descaling_state` from the normal poll stream — no extra BLE calls needed.
 
 - **Add RSSI tracking to performance statistics (all interfaces).**
   BLE RSSI and WiFi RSSI are correlated with connect/poll timing: weak BLE signal → more
