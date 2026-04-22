@@ -66,6 +66,23 @@ Full GATT table:
 - `559eb001` is `[WRITE_NO_RESP]` only (GATT properties 0x04, no 0x08). Using ATT_WRITE_REQUEST caused GATT error 0x03 "Write not permitted".
 - Fix: `ESPHomeAPIClient.write_gatt_char` auto-detects write type from GATT properties at connect time (commit 7433b6b). No configuration needed.
 
+### ATT error 0x03 — diagnostic meaning
+
+`error=3 description=Write not permitted` = **ATT_ERR_WRITE_NOT_PERMITTED**: the characteristic does not support the WRITE_REQUEST operation. This is a write-type mismatch, not a security/pairing issue. Security errors are 0x05 (insufficient authentication) and 0x08 (insufficient encryption). Error 0x03 on a `[WRITE_NO_RESP]`-only characteristic unambiguously means: use `response=False` (ATT_WRITE_COMMAND).
+
+### Protocol probe is not read-only
+
+`--dynamic-uuids` protocol probe runs `connect_async()` + `subscribe_notifications_async()` + `get_device_identification_async()`. All three involve writes to the write characteristic:
+1. `connect_async()` sends SubscribeNotifications (4× Proc 0x01/0x13) to the write char
+2. `get_device_identification_async()` sends the GetDeviceIdentification request to the write char
+3. Response arrives via NOTIFY on the notify char
+
+The `[FAIL] GATT profile` result for Variant A is **expected and correct** — `3334429d` service is absent. `--dynamic-uuids` handles it via UUID injection. It does not need to be fixed.
+
+### Next unknown after write fix is confirmed
+
+If the protocol probe passes (write fix works), the next question is whether the Geberit framing protocol (frame format, procedure codes, response structure) is identical over `559eb001`/`559eb002`. iPhone BLE traffic from the Geberit Home App connected to `E4:85:01:CD:B0:08` would confirm or refute this.
+
 ---
 
 ## The `559eb` Vendor UUID Namespace
