@@ -21,7 +21,7 @@ Per-user preference storage. Payload format:
 | 6 | Water Temperature | 0–5 | Shared with Lady shower |
 | 4 | Anal Shower Position | 0–4 | Spray arm position |
 | 2 | Anal Shower Pressure | 0–4 | Shower spray intensity |
-| 1 | Oscillator State | 0–1 | Oscillating spray (boolean) |
+| 1 | Oscillator State | 0–1 | Oscillating spray (boolean per xlsx). ⚠️ Init-sequence proc 0x0B writes value `2` (iPhone) or `3` (Android) — these are session-claim writes, not actual stored values; the stored range remains 0–1. |
 
 ### Lady Shower
 
