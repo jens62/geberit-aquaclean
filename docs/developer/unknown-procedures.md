@@ -340,8 +340,8 @@ see `memory/cons-frame-zero-padding-bug.md` for details.
 | 0 | `userIsSitting` | **Approach/presence detection** — changes when user enters toilet proximity | ✓ confirmed; value=1 observed with user seated (2026-04-17) |
 | 2 | `ladyShowerIsRunning` | **Lady shower running** | ✓ confirmed (04-17 session: changed when lady shower started) |
 | 3 | `dryerIsRunning` | **Anal shower running** — C# label is WRONG | ✓ confirmed (04-15 and 04-17: changes when anal shower runs) |
-| 4 | `descalingState` | Descaling state | from C# |
-| 5 | `descalingDurationInMinutes` | Descaling duration | from C# |
+| 4 | `descalingState` | **Descaling state machine** — 0=idle, 1=preparing, 2=waiting for user to add descaler, 3=chemical cycle running | ✓ **confirmed** (2026-04-22 descaling session log). See `docs/developer/descaling-protocol.md` |
+| 5 | `descalingDurationInMinutes` | **Countdown in minutes** — 60→0 during state 3; 0 otherwise | ✓ **confirmed** (2026-04-22 descaling session log). See `docs/developer/descaling-protocol.md` |
 | 6 | `lastErrorCode` | Last error code | from C# |
 
 ### Unconfirmed / unknown
