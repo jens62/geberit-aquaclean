@@ -5,7 +5,7 @@ logs but whose purpose or mapping is not yet fully understood.
 
 Use this as a research backlog: each item has a suggested investigation approach.
 
-Last updated: 2026-04-21
+Last updated: 2026-04-22
 
 ---
 
@@ -64,11 +64,13 @@ the node list changes (different hardware = different modules present).
 |-------|-------|
 | Label | `UnknownProc_0x07` |
 | Direction | unknown |
-| Payload | unknown |
-| Seen in | BLE traffic logs |
+| Payload | Request args: `0x0a` (1 byte); response unknown |
+| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-22) — single occurrence during init sequence |
 | Status | **Completely unknown** |
 
-**How to investigate:** Same as 0x05 — check `args=` and `result=` fields in decoded output.
+**How to investigate:** Use `geberit-ble-probe.py --proc 0x07 --ctx 0x01 --args 0a` and inspect
+the response. Cross-reference with the GetNodeList node IDs (0x03–0x0C, 0x0E, 0x0F) — arg `0x0a`
+is node ID 10, possibly a per-node query.
 
 ---
 
@@ -125,26 +127,40 @@ earlier in the init than previously assumed from iPhone log analysis.
 
 ---
 
-### Proc `0x08` (ctx=0x01) — `SetActiveProfileSetting` (newly discovered)
+### Proc `0x08` (ctx=0x01) — `SetActiveProfileSetting` (observed in Android)
 
 | Field | Value |
 |-------|-------|
 | Label | `SetActiveProfileSetting` |
 | Direction | Write |
-| Args | `(int profileSettingId, object settingValue)` |
-| Seen in | thomas-bingel C# repo (`tmp.txt`) only — not yet observed in iPhone BLE logs |
-| Status | **Name known. Semantics unknown. Distinct from proc 0x54.** |
+| Args | `[setting_id, value_lo, value_hi]` — 3 bytes, same format as proc 0x0B |
+| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-22); thomas-bingel C# repo (`tmp.txt`) |
+| Status | **Observed and partially decoded. Same setting ID space as proc 0x53/0x54.** |
 
-**Source:** `aquaclean-core/Api/CallClasses/tmp.txt` — listed alongside `GetNodeList` (0x05)
-as procedures planned but not fully implemented in the C# reference.
+**Source:** `aquaclean-core/Api/CallClasses/tmp.txt` — listed as `SetActiveProfileSetting(profileSettingId, settingValue)`.
 
-**What distinguishes it from proc 0x54 (`SetStoredProfileSetting`):** unknown.
-Hypothesis: 0x08 may write to a different storage layer — "active" (live, in-session) vs
-"stored" (persisted to device flash). This mirrors the 0x0A/0x0B vs 0x53/0x54 distinction
-observed in iPhone init sequences.
+**Observed in Android pcapng:** Sent in 4 groups interleaved with GetSPL polls after the user
+selected settings mid-session. Decoded args (format: `[setting_id, value_lo, value_hi]`):
 
-**How to investigate:** BLE-sniff the Geberit Home app while changing a shower setting
-mid-session (not through the profile settings menu). Look for proc 0x08 in the decoded output.
+| Args (hex) | Setting ID | Name | Value |
+|------------|-----------|------|-------|
+| `040200` | 4 | AnalShowerPosition | 2 |
+| `020300` | 2 | AnalShowerPressure | 3 |
+| `060300` | 6 | WaterTemperature | 3 |
+| `050300` | 5 | LadyShowerPosition | 3 |
+| `030000` | 3 | LadyShowerPressure | 0 |
+| `090100` | 9 | DryerState | 1 |
+| `010100` | 1 | OscillatorState | 1 |
+| `000100` | 0 | OdourExtraction | 1 |
+| `0d0000` | 13 | DryerSprayIntensity | 0 |
+| `080300` | 8 | DryerTemperature | 3 |
+| `070000` | 7 | WcSeatHeat | 0 |
+
+**Confirmed:** Proc 0x08 uses the **same setting ID space** as proc 0x53/0x54 (GetStoredProfileSetting / SetStoredProfileSetting).
+
+**What distinguishes 0x08 from 0x54:** 0x08 likely applies settings live (in-session, "active"),
+while 0x54 persists them to device flash (stored profile). This is the "active" vs "stored"
+distinction described in `tmp.txt`.
 
 ---
 
@@ -234,6 +250,35 @@ The device requires a power cycle to recover from this state.
 
 ---
 
+### `SetCommand` payload code `3` (proc `0x09`, args=`[0x03]`)
+
+| Field | Value |
+|-------|-------|
+| Label | Unknown |
+| Mechanism | Proc `0x09` (SetCommand), single-byte payload `0x03` |
+| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-22) |
+| Status | **Not in `Commands` enum — unknown command code** |
+
+**Observation:** In a session titled "open lid remotely, walk to toilet, sit, stand up", the Android
+app sends `SetCommand(0x03)` immediately before `SetCommand(ToggleLidPosition)`. Code 3 is a gap in
+our `Commands` enum between `ToggleDryer (2)` and `StartCleaningDevice (4)`.
+
+**Current `Commands` enum codes for reference:**
+`0=ToggleAnalShower, 1=ToggleLadyShower, 2=ToggleDryer, [3=?], 4=StartCleaningDevice,
+5=ExecuteNextCleaningStep, 6=PrepareDescaling, 7=ConfirmDescaling, 8=CancelDescaling,
+9=PostponeDescaling, 10=ToggleLidPosition, 20=ToggleOrientationLight, 33–36=LidCalibration,
+37=TriggerFlushManually, 47=ResetFilterCounter`
+
+**Hypothesis:** Code 3 may be a dedicated "OpenLid" command (as opposed to the toggle in code 10).
+In the capture, the app opens the lid remotely, waits ~3.5 s, then sends ToggleLidPosition — possibly
+to close it after the user sat down.
+
+**How to investigate:** Use `geberit-ble-probe.py --proc 0x09 --ctx 0x01 --args 03` and observe
+whether the device responds with a lid action. Alternatively, sniff the app while tapping "open lid"
+and "close lid" separately (if those are distinct UI buttons) and compare which SetCommand code is sent.
+
+---
+
 ## 2. Unknown Common Setting IDs (proc 0x51/0x52)
 
 The iPhone reads IDs `[2, 1, 3, 0]` on every connect. IDs 4, 6, 7 were confirmed
@@ -253,8 +298,8 @@ device. Semantics of IDs 4–9 remain unknown (responses not yet decoded from pc
 | 5 | Maximum Lid Position | float/int | **Observed** (Android reads it; "Maximaldeckelposition" in `Profile-Settings.xlsx`) |
 | 6 | Unknown | — | **Observed** (Android app reads it; also seen in WC Lid log) |
 | 7 | Unknown | — | **Observed** (Android app reads it; also seen in WC Lid log) |
-| 8 | Unknown | — | **Observed** (Android app reads it, value unknown) |
-| 9 | Unknown | — | **Observed** (Android app reads it, value unknown) |
+| 8 | Unknown | — | **Observed** (Android app reads it; value `0` in pcapng 2026-04-22) |
+| 9 | Unknown | — | **Observed** (Android app reads it; value `0` in pcapng 2026-04-22) |
 
 **How to investigate:**
 - **ID 5 (Max Lid Position):** Sniff iPhone while using "Maximaldeckelposition" calibration
