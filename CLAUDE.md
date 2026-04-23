@@ -445,6 +445,37 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **Performance: reduce poll query time from ~2.7 s to ~0.5 s (confirmed from TRACE log 2026-04-23).**
+
+  Profiled from `aquaclean-aquaclean-bridge 2.4.79+e662858-TRACE-because-of-performance.log`.
+  Steady-state poll breakdown (on-demand, ESPHome proxy, polls 2+):
+
+  | Phase | Time | Every poll? | iPhone does this? |
+  |-------|------|-------------|-------------------|
+  | 8× SubscribeNotifications (unlock) | ~2,400 ms | Yes — every connect | No — once per app lifetime |
+  | 11× GetStoredProfileSettings (0x53) | ~2,200 ms | Yes — every poll | No — once at session init |
+  | GetSystemParameterList | ~410 ms | Yes | Yes |
+  | BLE connect + wait_for_info_frames | ~700–1,300 ms | Yes | ~150 ms |
+
+  **Fix 1 — Cache GetStoredProfileSettings (biggest win, ~2.2 s saved per poll):**
+  Profile settings (temperature, pressure, position, etc.) never change unless the user
+  explicitly changes them. Read once at startup, invalidate only when `SetStoredProfileSetting`
+  is called by the bridge itself, or after a configurable interval (e.g., 5 minutes).
+
+  **Fix 2 — Make SubscribeNotifications conditional (~2.4 s saved per connect):**
+  The stuck-device unlock sequence (4× Proc 0x11 + 4× Proc 0x13) fires on every BLE
+  connect even when the device was healthy seconds ago. Skip it if the last poll succeeded
+  less than N seconds ago (e.g., 2× poll interval). Fall back to sending it on E0003
+  recovery or after a configurable idle threshold.
+
+  **Fix 3 — Reduce GetFilterStatus timeout (saves 5 s on first poll of a stuck device):**
+  The GetFilterStatus timeout is 5 s. On a device that times out on this proc, the first
+  poll always wastes 5 s. Since GetFilterStatus is not on the critical state path, its
+  timeout can be reduced (e.g., to 2 s) independently of the main BLE timeout.
+
+  **Expected result after Fix 1 + Fix 2:** steady-state poll time ~500 ms (vs ~2,765 ms
+  current minimum); connect overhead ~300–600 ms BLE only (vs ~3,000–4,000 ms current).
+
 - **SQLite change log + raw data debug panel (standalone bridge + HACS).**
 
   **Goal:** log every raw value change from every Geberit procedure to disk, persistently, whether
