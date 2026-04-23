@@ -31,7 +31,7 @@ The bridge targets this profile by default. See `BluetoothLeConnector` class-lev
 
 ### Variant A (identified 2026-04-21, protocol probe pending)
 
-Observed on: `E4:85:01:CD:B0:08` (single report, model and firmware unknown).
+Observed on: `E4:85:01:CD:B0:08` — **AquaClean Alba** (confirmed via [GitHub issue #17](https://github.com/jens62/geberit-aquaclean/issues/17)).
 
 Full GATT table:
 
@@ -57,9 +57,9 @@ Full GATT table:
 | WRITE_1 | Unknown — possibly `559eb101-...` (unconfirmed) |
 
 **What is NOT yet known for Variant A:**
-- Whether the Geberit framing protocol (frame format, procedure codes) is identical over these UUIDs (protocol probe fix applied 2026-04-21, outcome pending)
-- What the `559eb100` service (with `559eb101`/`559eb110`) is for — firmware update channel? configuration register?
-- Which specific Geberit models or firmware versions use this profile
+- Whether the Geberit framing protocol (frame format, procedure codes) is identical over these UUIDs — writes to `559eb001` succeed but no NOTIFY response received (`BLEPeripheralTimeoutError`, 2026-04-23); BLE capture from Geberit Home App on the Alba required
+- What the `559eb100` service (with `559eb101`/`559eb110`) is for — firmware update channel? configuration register? initialization required before data channel responds?
+- Which other Geberit models (beyond the confirmed Alba) use this profile
 - Whether `559eb101` maps to WRITE_1 in the bridge's dual-write scheme (standard profile has WRITE_0 + WRITE_1; Variant A appears to have only one write characteristic in the data service)
 
 **Confirmed for Variant A (2026-04-21):**
