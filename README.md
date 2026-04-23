@@ -207,7 +207,10 @@ tail -f /var/log/aquaclean/aquaclean.log
 | MacBookAir + VirtualBox | Ubuntu 24.04 (x86-64) | 3.12.3 |
 | Debian server (arm64) | Debian 12 Bookworm | 3.11.2 |
 
-AquaClean firmware: RS28.0 TS199
+| Device | Status | Firmware |
+|--------|--------|---------|
+| Geberit AquaClean Mera Comfort | ✅ Confirmed working | RS28.0 TS199 |
+| Geberit AquaClean Alba | 🚧 Work in progress | Unknown |
 
 ---
 
