@@ -1,7 +1,7 @@
 # GATT UUID Variants — Non-Standard Geberit BLE Profiles
 
 **Analysis date:** 2026-04-24 (updated)
-**Status:** Variant A confirmed as AquaClean Alba. iPhone BLE captures analyzed — **encrypted application-layer protocol confirmed**. Alba support requires app reverse-engineering; not feasible with current bridge approach.
+**Status:** Variant A confirmed as AquaClean Alba. iPhone BLE captures analyzed — **encrypted application-layer protocol confirmed**. Alba support is not feasible with the current bridge approach; app reverse-engineering is legally questionable; a BLE MITM proxy is the remaining option but very high effort.
 
 ---
 
@@ -165,11 +165,35 @@ The application-layer key is likely either hardcoded in the Geberit Home app bin
 
 To support the Alba in the bridge, one of the following is required:
 
-1. **Encryption key extraction** — requires reverse-engineering the Geberit Home iOS app (`.ipa` binary analysis) or the firmware on the device itself
+1. **Encryption key extraction** — requires reverse-engineering the Geberit Home iOS app (`.ipa` binary analysis) or the firmware on the device itself. Note: reverse-engineering a commercial app binary is likely prohibited by Geberit's Terms of Service and may violate applicable law (e.g. DMCA in the US, similar provisions in the EU). This option is not pursued in this project.
 2. **Protocol documentation** from Geberit (unlikely to be available)
-3. **Man-in-the-middle BLE proxy** that relays known-plaintext commands and captures the corresponding encrypted output — very high effort
+3. **Man-in-the-middle BLE proxy** (see below)
 
 Without one of the above, Alba support is not feasible with the current bridge approach. The captures are sufficient to confirm this conclusively.
+
+### Man-in-the-Middle BLE Proxy — How It Would Work
+
+A MITM proxy inserts a device between the iPhone and the Alba toilet:
+
+```
+iPhone  ←→  [MITM device]  ←→  Alba toilet
+             (e.g. laptop or
+              Raspberry Pi with
+              2 BLE adapters)
+```
+
+The MITM device pretends to be the Alba toward the iPhone, and pretends to be the iPhone toward the Alba, relaying all traffic in both directions. Because it sits in the middle, it can observe both the plaintext command the iPhone intends to send and the encrypted bytes that actually appear on the wire to the device.
+
+**What you would learn:** a mapping of known actions (open lid, start shower, etc.) to their encrypted wire representation. Even without breaking the encryption scheme, this could yield a replay dictionary — send those exact bytes in future sessions and the device executes the command.
+
+**Why it is very high effort:**
+
+- **Two simultaneous BLE roles required.** A BLE adapter can only act as Central or Peripheral on one connection at a time. The proxy needs two adapters running in parallel — one acting as a peripheral toward the iPhone, one as a central toward the Alba.
+- **BLE Secure Connections defeats classical MITM.** If the Alba uses `LE Secure Connections` pairing (likely given the encrypted protocol), the Passkey/Numeric Comparison exchange is specifically designed to detect a MITM. Bypassing it requires extracting the Long-Term Key from the iPhone's Keychain, which requires a jailbroken iPhone.
+- **Session keys may make replay impossible.** The `00 04 2F F5 D9 00` ↔ `00 04 63 9D 51 00` handshake suggests a per-session key is negotiated. If so, captured encrypted bytes from one session cannot be replayed in a different session — the key has changed.
+- **Real-time relay latency.** Both ends must receive responses quickly enough not to time out and disconnect.
+
+**What would make it worthwhile:** if the session key is derived from the handshake in a predictable way, observing multiple handshakes alongside their corresponding encrypted payloads might reveal the key derivation algorithm — the real prize, not the individual encrypted bytes.
 
 ---
 
