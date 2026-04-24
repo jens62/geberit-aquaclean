@@ -59,8 +59,13 @@ async def _test_connection(
     esphome_port: int,
     noise_psk: str | None,
     hass=None,
-) -> None:
-    """Attempt a BLE connect to validate the supplied settings."""
+):
+    """Attempt a BLE connect, probe GATT profile, and return the result.
+
+    Returns a GattProfile on success.  Raises on connection failure.
+    The GATT profile is used to detect unsupported device variants (e.g. Alba)
+    so they receive a clear error with UUID details instead of "Cannot connect".
+    """
     _LOGGER.info(
         "[AquaClean] Config flow: testing connection — device=%s esphome_host=%s port=%s",
         device_id, esphome_host, esphome_port,
@@ -73,6 +78,12 @@ async def _test_connection(
     try:
         await client.connect_ble_only(device_id)
         _LOGGER.info("[AquaClean] Config flow: connection test succeeded")
+        profile = connector.get_gatt_profile()
+        _LOGGER.info(
+            "[AquaClean] Config flow: GATT profile — is_standard=%s svc_uuid=%s",
+            profile.is_standard, profile.svc_uuid,
+        )
+        return profile
     finally:
         try:
             await connector.disconnect()
@@ -117,7 +128,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # ESPHome: connects over TCP as before.
                 hass = self.hass if not data[CONF_ESPHOME_HOST] else None
                 try:
-                    await _test_connection(
+                    profile = await _test_connection(
                         data[CONF_DEVICE_ID],
                         data[CONF_ESPHOME_HOST],
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
@@ -128,6 +139,22 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.exception("[AquaClean] Config flow: connection test failed")
                     errors["base"] = "cannot_connect"
                 else:
+                    if profile is not None and not profile.is_standard:
+                        _LOGGER.warning(
+                            "[AquaClean] Config flow: unsupported GATT profile — "
+                            "svc=%s write=%s notify=%s",
+                            profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                        )
+                        return self.async_abort(
+                            reason="unsupported_device",
+                            description_placeholders={
+                                "mac": data[CONF_DEVICE_ID],
+                                "svc_uuid": profile.svc_uuid,
+                                "write_uuids": ", ".join(profile.write_uuids) or "—",
+                                "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                                "version": version,
+                            },
+                        )
                     await self.async_set_unique_id(data[CONF_DEVICE_ID])
                     self._abort_if_unique_id_configured()
                     return self.async_create_entry(
@@ -165,7 +192,7 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
             else:
                 hass = self.hass if not data[CONF_ESPHOME_HOST] else None
                 try:
-                    await _test_connection(
+                    profile = await _test_connection(
                         data[CONF_DEVICE_ID],
                         data[CONF_ESPHOME_HOST],
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
@@ -176,6 +203,22 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                     _LOGGER.exception("[AquaClean] Options flow: connection test failed")
                     errors["base"] = "cannot_connect"
                 else:
+                    if profile is not None and not profile.is_standard:
+                        _LOGGER.warning(
+                            "[AquaClean] Options flow: unsupported GATT profile — "
+                            "svc=%s write=%s notify=%s",
+                            profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                        )
+                        return self.async_abort(
+                            reason="unsupported_device",
+                            description_placeholders={
+                                "mac": data[CONF_DEVICE_ID],
+                                "svc_uuid": profile.svc_uuid,
+                                "write_uuids": ", ".join(profile.write_uuids) or "—",
+                                "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                                "version": version,
+                            },
+                        )
                     return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
