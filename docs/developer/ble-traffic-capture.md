@@ -41,8 +41,14 @@ The iPhone does not log Bluetooth traffic by default. A configuration profile ac
 2. On your iPhone, tap **Trust This Computer** if prompted.
 3. Open **PacketLogger** on your Mac.
 4. Click **File → New iOS Trace**. A stream of packets will appear immediately.
-5. On your iPhone, open the **Geberit Home App** and perform the action you want to capture (connect to the toilet, trigger a shower, etc.).
-6. Stop the trace once you have captured the action.
+   ![PacketLogger — connected and capturing](images/ble-traffic-capture/iphone-packetlogger/packetlogger-connected.png)
+
+5. Make sure all settings are configured as shown in the screenshot below.
+   ![PacketLogger — settings and results](images/ble-traffic-capture/iphone-packetlogger/packetlogger-settings-including-results.png)
+
+6. On your iPhone, open the **Geberit Home App** and perform the action you want to capture (connect to the toilet, trigger a shower, etc.).
+7. Stop the trace once you have captured the action.
+
 
 ### Step 3 — Filter by Device (recommended)
 
@@ -52,11 +58,16 @@ The iPhone talks to every nearby Bluetooth device. Filtering keeps the file smal
 2. In the detail pane (bottom), note the **Connection Handle** (e.g. `0x0040`).
 3. Type `Handle: 0x0040` in the filter bar at the top of the window.
 
-Alternatively, paste the toilet's MAC address (e.g. `38:AB:00:00:00:01`) directly into the filter bar.
+Alternatively, paste the toilet's MAC address (e.g. `38:AB:41:2A:0D:67`) directly into the filter bar.
+   ![PacketLogger — select device](images/ble-traffic-capture/iphone-packetlogger/packetlogger-select-device.png)
+
 
 ### Step 4 — Save the Capture
 
 **File → Export → Raw Data…**
+
+The exported file should look as shown below. The disclosure triangles are expanded here to show the captured data.
+![PacketLogger — settings and results (expanded)](images/ble-traffic-capture/iphone-packetlogger/packetlogger-settings-including-results-expanded.png)
 
 Save the file with a descriptive name (e.g. `geberit-open-lid-2026-04-22.txt`). This produces a plain-text log that `tools/ble-decode.py` reads directly.
 
@@ -127,11 +138,16 @@ Developer Options appear under Settings → System (stock Android) or Settings �
    ```
 4. Open **Wireshark**. In the interface list, look for:
    `Android Bluetooth HCI Snoop [device-serial-number]`
+
+   ![Wireshark — select Android interface](images/ble-traffic-capture/android-wireshark/wireshark-select-interface.png)
+
 5. Double-click it to start the live capture.
 6. On your phone, open the **Geberit Home App** and perform the action you want to capture.
 7. Stop the capture (red square button) once done.
 
 > **Interface not appearing:** run `adb devices` first, then in Wireshark go to **Capture → Refresh Interfaces** (`Cmd+R`). If it still does not appear, close Wireshark completely, run `adb devices` in the terminal, then reopen Wireshark.
+
+![Wireshark — Capture → Refresh Interfaces](images/ble-traffic-capture/android-wireshark/wireshark-refresh-interfaces.png)
 
 > **Verify Wireshark's androiddump:** run `/Applications/Wireshark.app/Contents/MacOS/extcap/androiddump --extcap-interfaces` in a terminal. If your phone's serial number appears, Wireshark supports it.
 
