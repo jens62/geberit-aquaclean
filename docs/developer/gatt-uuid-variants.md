@@ -1,7 +1,7 @@
 # GATT UUID Variants — Non-Standard Geberit BLE Profiles
 
-**Analysis date:** 2026-04-21
-**Status:** Variant A based on one device report (E4:85:01:CD:B0:08). GATT discovery confirmed. Write type fix applied (commit 7433b6b) — protocol probe outcome pending user confirmation.
+**Analysis date:** 2026-04-24 (updated)
+**Status:** Variant A confirmed as AquaClean Alba. iPhone BLE captures analyzed — **encrypted application-layer protocol confirmed**. Alba support requires app reverse-engineering; not feasible with current bridge approach.
 
 ---
 
@@ -56,15 +56,21 @@ Full GATT table:
 | NOTIFY_0 | `559eb002-2390-11e8-b467-0ed5f89f718b` |
 | WRITE_1 | Unknown — possibly `559eb101-...` (unconfirmed) |
 
-**What is NOT yet known for Variant A:**
-- Whether the Geberit framing protocol (frame format, procedure codes) is identical over these UUIDs — writes to `559eb001` succeed but no NOTIFY response received (`BLEPeripheralTimeoutError`, 2026-04-23); BLE capture from Geberit Home App on the Alba required
-- What the `559eb100` service (with `559eb101`/`559eb110`) is for — firmware update channel? configuration register? initialization required before data channel responds?
+**What is NOT yet known for Variant A (as of 2026-04-24):**
+- How to decode the encrypted data payloads — requires app reverse-engineering or a known encryption key
 - Which other Geberit models (beyond the confirmed Alba) use this profile
-- Whether `559eb101` maps to WRITE_1 in the bridge's dual-write scheme (standard profile has WRITE_0 + WRITE_1; Variant A appears to have only one write characteristic in the data service)
 
 **Confirmed for Variant A (2026-04-21):**
 - `559eb001` is `[WRITE_NO_RESP]` only (GATT properties 0x04, no 0x08). Using ATT_WRITE_REQUEST caused GATT error 0x03 "Write not permitted".
 - Fix: `ESPHomeAPIClient.write_gatt_char` auto-detects write type from GATT properties at connect time (commit 7433b6b). No configuration needed.
+
+**Confirmed for Variant A (2026-04-24, from iPhone PacketLogger captures):**
+- `559eb101` is **never written to** during init — the `559eb100` service is only READ (`559eb110`); it is not an initialization channel for the data service
+- `559eb110` returns a static 18-byte device config: `05 06 FA 00 3E 86 05 02 95 04 03 20 01 0E 01 01 02 00` (identical across sessions)
+- The Alba uses an **encrypted application-layer protocol**, completely different from the standard Geberit plaintext framing — this is why `BLEPeripheralTimeoutError` occurs: the bridge sends plaintext Geberit frames but the Alba ignores them
+- The probable role mapping `559eb001→WRITE_0` and `559eb001→NOTIFY_0` is correct at the GATT level, but the frame format above GATT is different
+
+See "Alba BLE Protocol Analysis" section below for the confirmed init sequence.
 
 ### ATT error 0x03 — diagnostic meaning
 
@@ -79,9 +85,83 @@ Full GATT table:
 
 The `[FAIL] GATT profile` result for Variant A is **expected and correct** — `3334429d` service is absent. `--dynamic-uuids` handles it via UUID injection. It does not need to be fixed.
 
-### Next unknown after write fix is confirmed
+### Root cause of BLEPeripheralTimeoutError (confirmed 2026-04-24)
 
-If the protocol probe passes (write fix works), the next question is whether the Geberit framing protocol (frame format, procedure codes, response structure) is identical over `559eb001`/`559eb002`. iPhone BLE traffic from the Geberit Home App connected to `E4:85:01:CD:B0:08` would confirm or refute this.
+The bridge's write to `559eb001` **succeeds at the GATT layer** — the device acknowledges the write. However, the device **never responds via NOTIFY on `559eb002`** because it does not recognise the standard Geberit plaintext frame format. The Alba uses an encrypted application-layer protocol (see "Alba BLE Protocol Analysis" below). The device silently discards frames it cannot decrypt/parse, causing the bridge to time out waiting for a NOTIFY response.
+
+This means: the GATT channel is correct (`559eb001`/`559eb002`) but the **frame format above GATT must also match** before the device responds.
+
+---
+
+## Alba BLE Protocol Analysis (2026-04-24)
+
+Source: iPhone PacketLogger captures from `E4:85:01:CD:51:6B` (AquaClean Alba, issue #17).
+Files: `local-assets/Bluetooth-Logs/johannes-schliephake/connect.txt` and `connect+actions.txt`.
+
+### Init sequence (confirmed, deterministic across sessions)
+
+| Step | Direction | Handle | Data | Notes |
+|------|-----------|--------|------|-------|
+| 1 | Device → Phone | 0x001E | Write Request (rejected) | Device attempts unsolicited write; phone rejects "Write Not Permitted" |
+| 2 | — | — | MTU negotiation | Phone proposes 527, device accepts 23 |
+| 3 | — | — | GATT discovery | Finds `559eb100` (0x000C–0x0010) and `0000fd48` (0x001C–0x0021) services |
+| 4 | Phone → Device | 0x0004 (CCCD) | `02 00` | Enable indication on Service Changed |
+| 5 | Phone → Device | 0x0021 (CCCD) | `01 00` | Enable notification on `559eb002` |
+| 6 | Phone → Device | 0x0010 | READ | Read `559eb110` |
+| 6r | Device → Phone | — | `05 06 FA 00 3E 86 05 02 95 04 03 20 01 0E 01 01 02 00` | Static 18-byte device config (identical across sessions) |
+| 7 | Phone → Device | 0x001F (`559eb001`) | `00 04 2F F5 D9 00` | Handshake frame 1 |
+| 7r | Device → Phone | Notify | `00 04 63 9D 51 00` | Handshake response 1 |
+| 8 | Phone → Device | 0x001F | `00 01 01 01 01 01 00` | Handshake frame 2 |
+| 8r | Device → Phone | Notify | `00 03 20 01 02 05 01 01 04 01 F8 1E 00` | Session parameters |
+| 8r2 | Device → Phone | Notify | `00 04 21 8B 30 00` | ACK / session handle |
+| 9 | Phone → Device | 0x001F | `00 04 21 8B 30 00` + `00 04 22 10 02 01 00` | Echo handle + second frame |
+| 9r | Device → Phone | Notify | Large encrypted response (fragmented) | Likely device identification |
+| 10 | Phone → Device | 0x001F | `00 04 41 8D 53 00` | ACK segment 1 |
+| … | — | — | Interleaved ACKs + encrypted data | Steady-state encrypted exchange |
+
+### Frame format
+
+**Cleartext control frames** (only during handshake):
+```
+00 04 XX XX XX 00
+```
+Where `XX XX XX` is a 3-byte sequence number. The ACK sequence increments the high byte by 0x20 per frame:
+`21 8B 30` → `41 8D 53` → `61 8F 72` → `81 81 95` → `A1 83 B4` → `C1 85 D7` → `E1 87 F6` → `01 89 11` (wraps)
+
+**Encrypted data frames** (steady state):
+```
+00 0D XX 20 [encrypted payload] 00
+00 0E XX 20 [encrypted payload] 00
+```
+Payload bytes differ between sessions — cannot decode without the encryption scheme.
+
+**Handshake frame 2 response** `00 03 20 01 02 05 01 01 04 01 F8 1E 00`:
+- Byte 0: `00` (frame type prefix)
+- Byte 1: `03` (frame type / length?)
+- Bytes 2–3: `20 01` (session parameter — possibly protocol version or session ID)
+- Byte 4: `02` (unknown)
+- Byte 5: `05` (unknown — possibly MTU negotiation result)
+- Bytes 6–12: session parameters / capabilities
+
+### What `559eb101` is for
+
+`559eb101` (WRITE_NO_RESP in `559eb100` service) is **never written to** during any observed session, including ones with settings changes. Its purpose is unknown — possibly factory/firmware use only. It is **not** needed to initialise the data channel. The `559eb100` service is effectively read-only from the app's perspective (only `559eb110` READ is used).
+
+### What the captures do NOT reveal
+
+- Encryption key or scheme — payloads are opaque; different every session
+- Whether there is a BLE-level pairing/bonding step that provides the key (not visible in HCI logs if pre-established)
+- Mapping of encrypted data to device state or commands
+
+### What would be needed to proceed
+
+To support the Alba in the bridge, one of the following is required:
+
+1. **Encryption key extraction** — requires reverse-engineering the Geberit Home iOS app (`.ipa` binary analysis) or the firmware on the device itself
+2. **Protocol documentation** from Geberit (unlikely to be available)
+3. **Man-in-the-middle BLE proxy** that relays known-plaintext commands and captures the corresponding encrypted output — very high effort
+
+Without one of the above, Alba support is not feasible with the current bridge approach. The captures are sufficient to confirm this conclusively.
 
 ---
 
