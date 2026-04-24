@@ -63,6 +63,17 @@ SINGLE payload (bytes 1-19 of 20-byte frame)
 FIRST+CONS assembly
     body = FIRST[2][5:] + FIRST[1] + CONS1[1:] + CONS2[1:] + ...
     Response body: [status][node][context][procedure][result_len][result...]
+
+
+Profile auto-detection
+    The tool detects which Geberit device profile is used by inspecting the first
+    Write Without Response packet for the given MAC:
+      - Writes to handles 0x0003/0x0006/... → AquaClean Mera Comfort (standard GATT)
+      - Writes to handle 0x001E            → AquaClean Alba (Variant A GATT)
+
+    For Alba captures pass --mac with the device MAC (e.g. E4:85:01:CD:51:6B).
+    Alba output is always a grouped markdown-style table; the standard Mera Comfort
+    frame decoder is not used.
 """
 
 import argparse
@@ -164,6 +175,326 @@ HANDLES = {
     0x0017: "READ_2",
     0x001B: "READ_3",
 }
+
+
+# ---------------------------------------------------------------------------
+# Alba (Variant A GATT — encrypted protocol) decoder
+# ---------------------------------------------------------------------------
+# Handle assignments confirmed from iPhone PacketLogger captures 2026-04-24.
+
+_ALBA_WRITE_HANDLE  = 0x001E  # 559eb001: app write channel (Write Without Response)
+_ALBA_NOTIFY_HANDLE = 0x0020  # 559eb002: app notify channel (Handle Value Notification)
+_ALBA_CONFIG_HANDLE = 0x0010  # 559eb110: static device config (Read)
+_ALBA_NOTIFY_CCCD   = 0x0021  # 559eb002 CCCD (enable notifications)
+_ALBA_SVC_CCCD      = 0x0004  # Generic Attribute Service Changed CCCD
+
+_ALBA_ALL_HANDLES = {
+    _ALBA_SVC_CCCD, _ALBA_CONFIG_HANDLE,
+    _ALBA_WRITE_HANDLE, _ALBA_NOTIFY_HANDLE, _ALBA_NOTIFY_CCCD,
+}
+
+# ATT opcodes seen in Alba captures
+_ATT_WRITE_REQ  = 0x12
+_ATT_WRITE_RESP = 0x13
+_ATT_READ_REQ   = 0x0A
+_ATT_READ_RESP  = 0x0B
+_ATT_WRITE_CMD  = 0x52   # Write Without Response
+_ATT_NOTIFY     = 0x1B   # Handle Value Notification
+
+
+def detect_profile(logfile: str, mac: str) -> tuple:
+    """
+    Return (profile, mac) where profile is 'mera_comfort', 'alba', or 'unknown'.
+    If mac has no Write Without Response traffic, auto-detects the MAC from the
+    file (uses it if exactly one device with WwR traffic is found).
+    """
+    def _profile_for_handle(handle: int) -> str:
+        if handle in WRITE_HANDLES:
+            return "mera_comfort"
+        if handle == _ALBA_WRITE_HANDLE:
+            return "alba"
+        return ""
+
+    found: dict = {}  # mac → profile
+    try:
+        with open(logfile, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parsed = parse_line(line)
+                if not parsed:
+                    continue
+                _, _, file_mac, raw = parsed
+                if len(raw) < 11 or raw[8] != _ATT_WRITE_CMD:
+                    continue
+                handle = raw[9] | (raw[10] << 8)
+                p = _profile_for_handle(handle)
+                if not p:
+                    continue
+                if file_mac.upper() not in found:
+                    found[file_mac.upper()] = p
+                    if file_mac.upper() == mac:
+                        return (p, mac)  # fast-path: requested MAC found
+    except FileNotFoundError:
+        pass
+
+    if not found:
+        return ("unknown", mac)
+
+    # Requested MAC had no traffic — auto-select if unambiguous
+    if len(found) == 1:
+        detected_mac, profile = next(iter(found.items()))
+        return (profile, detected_mac)
+
+    # Multiple devices — can't auto-select; return unknown with original mac
+    return ("unknown", mac)
+
+
+def _alba_extract(raw: bytes, last_read: list) -> Optional[tuple]:
+    """
+    Extract (opcode, handle_or_None, value_bytes) from a raw HCI packet for Alba.
+    last_read is a one-element list tracking the last Read Request handle
+    (Read Response packets carry no handle field).
+    Returns None if the packet is not interesting.
+    """
+    if len(raw) < 9:
+        return None
+    op = raw[8]
+
+    if op == _ATT_READ_RESP:
+        return (op, last_read[0], raw[9:])
+
+    if op == _ATT_WRITE_RESP:
+        return None  # boring ACK, skip
+
+    if op in (_ATT_READ_REQ, _ATT_WRITE_REQ, _ATT_WRITE_CMD, _ATT_NOTIFY):
+        if len(raw) < 11:
+            return None
+        handle = raw[9] | (raw[10] << 8)
+        if handle not in _ALBA_ALL_HANDLES:
+            return None
+        if op == _ATT_READ_REQ:
+            last_read[0] = handle
+        return (op, handle, raw[11:] if len(raw) > 11 else b"")
+
+    return None
+
+
+def _alba_handle_label(handle) -> str:
+    return {
+        _ALBA_SVC_CCCD:      "CCCD(SvcChg)",
+        _ALBA_CONFIG_HANDLE: "559eb110",
+        _ALBA_WRITE_HANDLE:  "559eb001",
+        _ALBA_NOTIFY_HANDLE: "559eb002",
+        _ALBA_NOTIFY_CCCD:   "CCCD(data)",
+    }.get(handle, f"h{handle:#06x}" if handle is not None else "ReadResp")
+
+
+def _alba_annotate_app_frame(value: bytes, direction: str, state: dict) -> str:
+    """Annotate one Alba application-layer frame on 559eb001 / 559eb002."""
+    if not value:
+        return "(empty)"
+    # Single-byte terminator (end of fragmented identification transfer)
+    if len(value) == 1 and value[0] == 0x00:
+        return "Identification transfer complete"
+    # Continuation fragment: does not start with 0x00 header
+    if value[0] != 0x00:
+        return f"Identification continuation ({len(value)} bytes, encrypted)"
+    if len(value) < 2:
+        return f"raw={value.hex()}"
+
+    b1 = value[1]
+
+    if b1 == 0x04:
+        seq = value[2:5].hex() if len(value) >= 5 else "?"
+        b2 = value[2] if len(value) > 2 else 0
+        if direction == "send":
+            if b2 == 0x2F:
+                return "Handshake challenge"
+            if b2 == 0x22:
+                return "Session ready"
+            # Concatenated echo(0x21) + session-ready(0x22) — specifically this pattern
+            if (b2 == 0x21 and len(value) > 8 and
+                    value[6:8] == b"\x00\x04" and value[8] == 0x22):
+                return "Echo session handle + Session ready"
+            # Other concatenated ACK pairs (two 00 04 frames in one write)
+            if len(value) > 6 and value[6:8] == b"\x00\x04":
+                seq2 = value[8:11].hex() if len(value) >= 11 else "?"
+                return f"ACK seq={seq} + ACK seq={seq2}"
+            return f"ACK seq={seq}"
+        else:
+            if b2 == 0x63:
+                return "Handshake challenge-response"
+            if b2 == 0x21:
+                state["last_session_handle"] = seq
+                return f"Session handle ({seq})"
+            return f"ACK seq={seq}"
+
+    if b1 == 0x01:
+        return f"Capabilities negotiation ({len(value)} bytes)"
+    if b1 == 0x03:
+        return f"Session parameters ({len(value)} bytes)"
+    if b1 == 0x24:
+        return f"Encrypted identification, fragment 1 ({len(value)} bytes)"
+    if b1 in (0x0D, 0x0E):
+        n = len(value) - 2
+        label = "request" if direction == "send" else "response"
+        return f"Encrypted {label} ({n} payload bytes)"
+
+    return f"Encrypted message, type={b1:#04x} ({len(value)} bytes)"
+
+
+def _alba_phase_for(op: int, handle, value: bytes, state: dict) -> str:
+    """
+    Determine the logical phase for an Alba event, advancing state when needed.
+    Phases in order: GATT Setup → Handshake → Session Init → Data Exchange
+    """
+    # GATT-layer setup events are always "GATT Setup" regardless of state
+    if op in (_ATT_READ_REQ, _ATT_READ_RESP, _ATT_WRITE_REQ):
+        return "GATT Setup"
+
+    current = state.get("phase", "GATT Setup")
+
+    # Continuation fragments and single-byte terminator
+    if not value or len(value) < 2 or value[0] != 0x00:
+        if current == "Handshake":
+            state["phase"] = "Session Init"
+        return state["phase"]
+
+    b1 = value[1]
+    b2 = value[2] if len(value) > 2 else 0
+
+    if b1 == 0x04:
+        if b2 == 0x2F and current == "GATT Setup":
+            state["phase"] = "Handshake"
+        return state["phase"]
+
+    if b1 in (0x01, 0x03):
+        state["phase"] = "Handshake"
+        return "Handshake"
+
+    if b1 == 0x24:
+        state["phase"] = "Session Init"
+        return "Session Init"
+
+    if b1 in (0x0D, 0x0E):
+        if current in ("GATT Setup", "Handshake", "Session Init"):
+            state["phase"] = "Data Exchange"
+        return state["phase"]
+
+    return current
+
+
+_ALBA_PHASE_SUMMARIES = {
+    "GATT Setup":    "Phone enables GATT notifications and reads the static 559eb110 device-config characteristic.",
+    "Handshake":     "Challenge/response key exchange and session-parameter negotiation.",
+    "Session Init":  "Device sends encrypted identification data (fragmented); phone acknowledges each segment.",
+    "Data Exchange": "Steady-state encrypted request/response exchange (settings reads/writes, state polling).",
+}
+
+
+def run_alba_mode(logfile: str, mac_filter: str, time_from, time_to,
+                  output_file: Optional[str] = None) -> None:
+    """Process an Alba BLE capture and print an annotated event table."""
+    last_read: list = [None]
+    state: dict = {"phase": "GATT Setup"}
+    current_phase: Optional[str] = None
+    phase_groups: List[Tuple[str, List[tuple]]] = []
+    current_rows: List[tuple] = []
+
+    try:
+        with open(logfile, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parsed = parse_line(line)
+                if not parsed:
+                    continue
+                ts_str, direction, mac, raw = parsed
+                if mac.upper() != mac_filter:
+                    continue
+                ts = _parse_time(ts_str)
+                if ts:
+                    ts_cmp = datetime(2000, 1, 1, ts.hour, ts.minute, ts.second, ts.microsecond)
+                    if time_from and ts_cmp < time_from:
+                        continue
+                    if time_to and ts_cmp > time_to:
+                        continue
+                evt = _alba_extract(raw, last_read)
+                if evt is None:
+                    continue
+                op, handle, value = evt
+
+                phase = _alba_phase_for(op, handle, value, state)
+                ts_short = ts_str.split()[2] if ts_str else "??"
+                dir_arrow = "→" if direction == "ATT Send" else "←"
+                hlabel = _alba_handle_label(handle)
+
+                # Value hex — truncate long encrypted payloads
+                val_hex = value.hex(" ") if value else ""
+                if len(val_hex) > 38:
+                    val_hex = value[:13].hex(" ") + " …"
+                if op == _ATT_READ_REQ:
+                    val_hex = ""
+
+                # Annotation
+                if op == _ATT_WRITE_REQ and handle == _ALBA_SVC_CCCD:
+                    ann = "Enable Service Changed indications"
+                elif op == _ATT_WRITE_REQ and handle == _ALBA_NOTIFY_CCCD:
+                    ann = "Enable data channel notifications (559eb002)"
+                elif op == _ATT_WRITE_REQ and direction == "ATT Receive":
+                    # Device wrote to the phone's GATT server — unusual, likely rejected
+                    ann = f"Device → Phone unsolicited write (rejected: Write Not Permitted)"
+                elif op == _ATT_READ_REQ:
+                    ann = "Read 559eb110 (static device config)"
+                elif op == _ATT_READ_RESP:
+                    ann = f"Device config ({len(value)} bytes, identical across sessions)"
+                else:
+                    d = "send" if direction == "ATT Send" else "recv"
+                    ann = _alba_annotate_app_frame(value, d, state)
+
+                row = (ts_short, dir_arrow, hlabel, val_hex, ann)
+                if phase != current_phase:
+                    if current_phase is not None:
+                        phase_groups.append((current_phase, current_rows))
+                    current_phase = phase
+                    current_rows = [row]
+                else:
+                    current_rows.append(row)
+
+    except FileNotFoundError:
+        print(f"Error: file not found: {logfile}", file=sys.stderr)
+        sys.exit(1)
+
+    if current_phase:
+        phase_groups.append((current_phase, current_rows))
+
+    out: List[str] = []
+    basename = os.path.basename(logfile)
+    out.append(f"# BLE Traffic Analysis: {basename}")
+    out.append(f"**Profile:** AquaClean Alba (Variant A GATT — encrypted application-layer protocol)")
+    out.append(f"**Device MAC:** `{mac_filter}`")
+    out.append("")
+    out.append("> `00 0D` / `00 0E` data frames use application-layer encryption — payload bytes are opaque.")
+    out.append("> Protocol structure and handshake sequence are fully visible.")
+    out.append("")
+
+    for phase_name, rows in phase_groups:
+        out.append(f"## {phase_name}")
+        summary = _ALBA_PHASE_SUMMARIES.get(phase_name)
+        if summary:
+            out.append(f"*{summary}*")
+        out.append("")
+        out.append("| Time | Dir | Handle | Data (hex) | Annotation |")
+        out.append("|------|-----|--------|------------|------------|")
+        for ts_short, dir_arrow, hlabel, val_hex, ann in rows:
+            val_cell = f"`{val_hex}`" if val_hex else ""
+            out.append(f"| {ts_short} | {dir_arrow} | {hlabel} | {val_cell} | {ann} |")
+        out.append("")
+
+    text = "\n".join(out)
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"Written to {output_file}", file=sys.stderr)
+    else:
+        print(text)
 
 
 # ---------------------------------------------------------------------------
@@ -980,6 +1311,23 @@ def main():
     mac_filter = args.mac.upper()
     time_from = _time_from_str(args.from_time) if args.from_time else None
     time_to = _time_from_str(args.to_time) if args.to_time else None
+
+    # Auto-detect device profile (and MAC if the default produced no traffic)
+    profile, mac_filter = detect_profile(args.logfile, mac_filter)
+    if mac_filter != args.mac.upper():
+        print(f"Auto-detected MAC: {mac_filter}", file=sys.stderr)
+    if profile == "alba":
+        print(f"Detected: AquaClean Alba (Variant A GATT — encrypted protocol)", file=sys.stderr)
+        run_alba_mode(args.logfile, mac_filter, time_from, time_to,
+                      args.output if args.output else None)
+        return
+    if profile == "unknown":
+        macs_hint = f"Check --mac." if args.mac != "38:AB:41:2A:0D:67" else \
+            f"Pass --mac <device-MAC> if this is not a Mera Comfort capture."
+        print(
+            f"Warning: no recognised Geberit traffic found for MAC {mac_filter}. {macs_hint}",
+            file=sys.stderr,
+        )
 
     # Build procedure filter set
     proc_filter: Optional[set] = None
