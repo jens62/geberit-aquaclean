@@ -1210,10 +1210,6 @@ _GATT_PROP_NAMES = [
     (0x10, "NOTIFY"), (0x20, "INDICATE"),
 ]
 
-# Bluetooth SIG base UUID suffix — services matching this pattern are standard BLE services
-# (Generic Access, Device Information, etc.) and should be skipped during UUID extraction.
-_BT_SIG_BASE_SUFFIX = "-0000-1000-8000-00805f9b34fb"
-
 
 def _format_gatt_props(props: int) -> str:
     return " | ".join(name for bit, name in _GATT_PROP_NAMES if props & bit) or f"0x{props:02X}"
@@ -1514,11 +1510,8 @@ async def check_gatt_services(
         )
         services = None
 
-    # Print GATT table and extract candidate service for protocol probe.
-    # Candidate = first non-standard service with both WRITE and NOTIFY chars.
-    geberit_service_found = False
-    candidate: "tuple[str, list[str], list[str]] | None" = None  # (svc_uuid, write_uuids, read_uuids)
-
+    # Print GATT table (diagnostic output only — candidate extraction is delegated
+    # to classify_services() from GattDiscovery, shared with the bridge stack).
     if services:
         print()
         print(f"  {'─'*62}")
@@ -1528,8 +1521,6 @@ async def check_gatt_services(
             uuid_lower = svc.uuid.lower()
             label = _GEBERIT_GATT_UUIDS.get(uuid_lower, "")
             marker = _green(f"  ✅ {label}") if label else ""
-            if label == "Geberit AquaClean Service":
-                geberit_service_found = True
             print(f"  Service  {svc.uuid}  (handle 0x{svc.handle:04X}){marker}")
             for char in svc.characteristics:
                 cuuid = char.uuid.lower()
@@ -1537,30 +1528,29 @@ async def check_gatt_services(
                 cmarker = _green(f"  ← {clabel}") if clabel else ""
                 props_str = _format_gatt_props(char.properties)
                 print(f"    Char   {char.uuid}  [{props_str}]{cmarker}")
-            # Collect candidate: service with WRITE+NOTIFY chars.
-            # Include if: (a) non-standard service UUID, OR (b) standard-looking service
-            # UUID (e.g. 0000fd48) but with vendor-specific characteristics inside —
-            # some Geberit firmware variants register a BT SIG member service UUID but
-            # use custom 559ebXXX characteristic UUIDs within it.
-            _is_std_svc = uuid_lower.endswith(_BT_SIG_BASE_SUFFIX) and uuid_lower.startswith("0000")
-            _has_vendor_chars = any(
-                not (c.uuid.lower().endswith(_BT_SIG_BASE_SUFFIX) and c.uuid.lower().startswith("0000"))
-                for c in svc.characteristics
-            )
-            if candidate is None and (not _is_std_svc or _has_vendor_chars):
-                seen_handles: set[int] = set()
-                w_uuids: list[str] = []
-                r_uuids: list[str] = []
-                for c in svc.characteristics:
-                    if c.properties & 0x0C and c.handle not in seen_handles:  # WRITE | WRITE_NO_RESP
-                        seen_handles.add(c.handle)
-                        w_uuids.append(c.uuid)
-                    if c.properties & 0x10:  # NOTIFY
-                        r_uuids.append(c.uuid)
-                if w_uuids and r_uuids:
-                    candidate = (svc.uuid, w_uuids, r_uuids)
         print(f"  {'─'*62}")
         print()
+
+    # Classify using shared GattDiscovery logic (same algorithm used by the
+    # bridge HACS config flow — avoids duplicating the candidate extraction).
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    try:
+        from aquaclean_console_app.bluetooth_le.LE.GattDiscovery import classify_services
+        _profile = classify_services(services.services if services else [])
+        geberit_service_found = _profile.is_standard
+        candidate = (
+            (_profile.svc_uuid, _profile.write_uuids, _profile.notify_uuids)
+            if not _profile.is_standard and _profile.svc_uuid != "unknown" and _profile.write_uuids
+            else None
+        )
+    except ImportError:
+        # Bridge package not installed — minimal fallback (probe step will also be skipped).
+        geberit_service_found = bool(services) and any(
+            svc.uuid.lower() == GEBERIT_SERVICE_UUID for svc in services.services
+        )
+        candidate = None
 
         if geberit_service_found:
             _report(
