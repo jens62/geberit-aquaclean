@@ -153,6 +153,14 @@ Payload bytes differ between sessions — cannot decode without the encryption s
 - Whether there is a BLE-level pairing/bonding step that provides the key (not visible in HCI logs if pre-established)
 - Mapping of encrypted data to device state or commands
 
+### Does the BLE pairing PIN help?
+
+No. BLE link-layer encryption (derived from the PIN/Passkey via the Long-Term Key) is handled transparently by the iPhone's Bluetooth controller. PacketLogger captures at the HCI boundary — above the controller — so ATT payloads appear as plaintext regardless of whether the BLE link is encrypted. This is why the handshake frames (`00 04 2F F5 D9 00`, `00 01 01 01 01 01 00`, etc.) are fully readable in the captures.
+
+The encrypted `00 0D`/`00 0E` frames are a separate application-layer encryption, implemented in the Geberit Home app itself, above GATT. Its key has nothing to do with the BLE PIN. Knowing the PIN would not help decrypt these frames.
+
+The application-layer key is likely either hardcoded in the Geberit Home app binary or derived during the `00 04 2F F5 D9 00` ↔ `00 04 63 9D 51 00` challenge-response handshake — both of which require app reverse-engineering to recover.
+
 ### What would be needed to proceed
 
 To support the Alba in the bridge, one of the following is required:
