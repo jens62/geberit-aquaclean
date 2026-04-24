@@ -153,6 +153,43 @@ Payload bytes differ between sessions — cannot decode without the encryption s
 - Whether there is a BLE-level pairing/bonding step that provides the key (not visible in HCI logs if pre-established)
 - Mapping of encrypted data to device state or commands
 
+### Cleartext structure confirmed — two-session comparison (2026-04-24)
+
+Comparing the encrypted `GetDeviceIdentification` response across two captures (`connect.txt` and `connect+actions.txt`) revealed that only part of the 41-byte payload is actually encrypted:
+
+```
+Byte offset   Content                              Status
+───────────   ──────────────────────────────────   ──────────────────────────
+0             00                                   Cleartext (frame prefix)
+1             24                                   Cleartext (frame type = GetDeviceId response)
+2–3           42 11                                Cleartext (length / metadata, constant)
+4–35          <32 bytes, differ between sessions>  Encrypted (per-session key)
+36–37         03 03                                Cleartext (fixed field delimiter)
+38–39         <2 bytes, differ between sessions>   Encrypted or session-dependent
+40            00                                   Cleartext (terminator)
+```
+
+The `00 24 42 11` header and the `03 03` field are byte-for-byte identical across sessions — if they were encrypted with a per-session key, the probability of this match would be negligible. The encrypted portion is therefore **~34 bytes**, not 40.
+
+**Session key is per-session (confirmed).** The remaining bytes differ between both captures, ruling out a static key and simple replay attacks.
+
+### Known-plaintext attack opportunity
+
+The standard `GetDeviceIdentification` response carries ASCII strings: the device description and SAP number. For the Alba these would be something like `"AquaClean Alba"` (14 bytes) and the SAP number (≈14 bytes) — roughly 28 bytes of known plaintext out of 34 bytes encrypted, approximately **80% keystream coverage** of the full encrypted block.
+
+With near-complete keystream coverage across two sessions:
+
+```
+Session 1:  keystream K1  ←  handshake challenge C1 / response R1
+Session 2:  keystream K2  ←  handshake challenge C2 / response R2
+```
+
+Comparing K1 and K2 against the respective challenge/response bytes could reveal the key derivation function `f(challenge, response, static_config) → keystream`. If `f` is lightweight (likely on an embedded device), it would become visible.
+
+**This is not guaranteed** — a proper KDF (HKDF, AES-based) would show no pattern. But it is worth attempting before any higher-effort approach.
+
+**Practical requirement:** the SAP number and firmware version of the Alba device (visible in the Geberit Home app under device info). With these, the known-plaintext offset search can be attempted on the existing captures.
+
 ### Does the BLE pairing PIN help?
 
 No. BLE link-layer encryption (derived from the PIN/Passkey via the Long-Term Key) is handled transparently by the iPhone's Bluetooth controller. PacketLogger captures at the HCI boundary — above the controller — so ATT payloads appear as plaintext regardless of whether the BLE link is encrypted. This is why the handshake frames (`00 04 2F F5 D9 00`, `00 01 01 01 01 01 00`, etc.) are fully readable in the captures.
