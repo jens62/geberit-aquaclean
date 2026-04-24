@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Geberit AquaClean",
+        "description": "Versio {version}\n\nSyötä AquaClean-laitteesi BLE MAC-osoite. Jätä ESPHome-välityspalvelimen isäntä -kenttä tyhjäksi käyttääksesi paikallista Bluetooth-sovitinta. Yhteystesti suoritetaan tallennettaessa — odota enintään 30 sekuntia.",
+        "data": {
+          "device_id": "BLE MAC-osoite (XX:XX:XX:XX:XX:XX)",
+          "esphome_host": "ESPHome-välityspalvelimen isäntä (tyhjä paikalliselle BLE:lle)",
+          "esphome_port": "ESPHome-välityspalvelimen portti",
+          "noise_psk": "ESPHome-salausavain (valinnainen, base64)",
+          "poll_interval": "Kyselyväli (sekuntia)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Yhteyden muodostaminen AquaClean-laitteeseen epäonnistui. Tarkista MAC-osoite, varmista että laite on käynnistetty ja BLE-kantaman sisällä, ja tarkista ESPHome-välityspalvelimen asetukset. Varmista myös, ettei mikään muu laite (esim. Geberit Home -sovellus tai itsenäinen silta) ole yhteydessä Bluetoothin kautta — AquaClean mainostaa vain, kun yhtään BLE-yhteyttä ei ole aktiivisena.",
+      "no_bluetooth": "Tältä laitteelta ei löydy paikallista Bluetooth-sovitinta. ESPHome Bluetooth -välityspalvelimen isäntä on pakollinen."
+    },
+    "abort": {
+      "already_configured": "Tämä AquaClean-laite on jo määritetty.",
+      "unsupported_device": "Geberit-laite ({mac}) muodosti yhteyden Bluetoothin kautta, mutta käyttää GATT-profiilia, jota tämä integraatio ei vielä tue.\n\nAvaa GitHub-ongelma osoitteessa https://github.com/jens62/geberit-aquaclean/issues/new ja sisällytä seuraavat tiedot:\n\n- **GATT-palvelun UUID:** {svc_uuid}\n- **Kirjoitusominaisuus:** {write_uuids}\n- **Ilmoitusominaisuus:** {notify_uuids}\n- **Laiteohjelmiston versio** (Geberit Home -sovelluksesta → ⓘ)\n- **Tarkka laitteen kuvaus** (Geberit Home -sovelluksesta → ⓘ)\n\nIntegration versio: {version}"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Geberit AquaClean — Asetukset",
+        "description": "Versio {version}\n\nPäivitä laitteen osoite tai välityspalvelimen asetukset. Live-yhteystesti suoritetaan tallennettaessa — odota enintään 30 sekuntia.",
+        "data": {
+          "device_id": "BLE MAC-osoite (XX:XX:XX:XX:XX:XX)",
+          "esphome_host": "ESPHome-välityspalvelimen isäntä (tyhjä paikalliselle BLE:lle)",
+          "esphome_port": "ESPHome-välityspalvelimen portti",
+          "noise_psk": "ESPHome-salausavain (valinnainen, base64)",
+          "poll_interval": "Kyselyväli (sekuntia)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Yhteyden muodostaminen AquaClean-laitteeseen epäonnistui. Tarkista MAC-osoite, varmista että laite on käynnistetty ja BLE-kantaman sisällä, ja tarkista ESPHome-välityspalvelimen asetukset. Varmista myös, ettei mikään muu laite (esim. Geberit Home -sovellus tai itsenäinen silta) ole yhteydessä Bluetoothin kautta — AquaClean mainostaa vain, kun yhtään BLE-yhteyttä ei ole aktiivisena.",
+      "no_bluetooth": "Tältä laitteelta ei löydy paikallista Bluetooth-sovitinta. ESPHome Bluetooth -välityspalvelimen isäntä on pakollinen."
+    }
+  }
+}
