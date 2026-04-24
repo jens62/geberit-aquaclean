@@ -544,6 +544,21 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.silly(f"result: {result}")
 
 
+    def get_gatt_profile(self):
+        """Return the GATT profile of the currently connected device.
+
+        Must be called after connect_ble_only() while BLE is still connected.
+        Returns a GattProfile (is_standard=True on any error so valid devices
+        are never falsely rejected).
+        """
+        from aquaclean_console_app.bluetooth_le.LE.GattDiscovery import probe_gatt_profile
+        if self.client is None:
+            from aquaclean_console_app.bluetooth_le.LE.GattDiscovery import (
+                GattProfile, GEBERIT_SERVICE_UUID,
+            )
+            return GattProfile(is_standard=True, svc_uuid=GEBERIT_SERVICE_UUID)
+        return probe_gatt_profile(self.client)
+
     async def restart_esp32_async(self):
         """Press the 'Restart AquaClean Proxy' button on the ESP32 via the native API.
 
