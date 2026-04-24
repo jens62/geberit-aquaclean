@@ -294,9 +294,23 @@ def _alba_annotate_app_frame(value: bytes, direction: str, state: dict) -> str:
         return "(empty)"
     # Single-byte terminator (end of fragmented identification transfer)
     if len(value) == 1 and value[0] == 0x00:
-        return "Identification transfer complete"
+        state.pop("in_device_id", None)
+        state.pop("device_id_frag", None)
+        return "GetDeviceIdentification transfer complete"
     # Continuation fragment: does not start with 0x00 header
     if value[0] != 0x00:
+        if state.get("in_device_id"):
+            frag = state.get("device_id_frag", 1) + 1
+            state["device_id_frag"] = frag
+            ann = f"GetDeviceIdentification response, frag {frag} — {len(value)}B encrypted"
+            # Bytes 16–17 of fragment 2 (= payload bytes 36–37) are confirmed cleartext 03 03
+            if len(value) >= 18:
+                marker = value[16:18]
+                if marker == b'\x03\x03':
+                    ann += " | bytes 16-17=03 03 (confirmed cleartext field)"
+                else:
+                    ann += f" | bytes 16-17={marker.hex(' ')} (expected 03 03)"
+            return ann
         return f"Identification continuation ({len(value)} bytes, encrypted)"
     if len(value) < 2:
         return f"raw={value.hex()}"
@@ -333,7 +347,14 @@ def _alba_annotate_app_frame(value: bytes, direction: str, state: dict) -> str:
     if b1 == 0x03:
         return f"Session parameters ({len(value)} bytes)"
     if b1 == 0x24:
-        return f"Encrypted identification, fragment 1 ({len(value)} bytes)"
+        # Confirmed: bytes 0-3 (00 24 42 11) are cleartext header; bytes 4+ are encrypted.
+        # 00=frame prefix, 24=GetDeviceId response type, 42 11=constant metadata.
+        hdr = ' '.join(f'{b:02X}' for b in value[:4])
+        enc_len = len(value) - 4
+        state["in_device_id"] = True
+        state["device_id_frag"] = 1
+        return (f"GetDeviceIdentification response, frag 1 "
+                f"— cleartext header: {hdr} | {enc_len}B encrypted")
     if b1 in (0x0D, 0x0E):
         n = len(value) - 2
         label = "request" if direction == "send" else "response"
