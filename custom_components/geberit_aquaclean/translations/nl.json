@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Geberit AquaClean",
+        "description": "Versie {version}\n\nVoer het BLE MAC-adres van uw AquaClean-apparaat in. Laat het veld ESPHome Proxy Host leeg om de lokale Bluetooth-adapter te gebruiken. Bij het opslaan wordt een verbindingstest uitgevoerd — wacht tot 30 seconden.",
+        "data": {
+          "device_id": "BLE MAC-adres (XX:XX:XX:XX:XX:XX)",
+          "esphome_host": "ESPHome Proxy Host (leeg laten voor lokale BLE)",
+          "esphome_port": "ESPHome Proxy Poort",
+          "noise_psk": "ESPHome Versleutelingssleutel (optioneel, base64)",
+          "poll_interval": "Polling-interval (seconden)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met het AquaClean-apparaat. Controleer het MAC-adres, zorg dat het apparaat is ingeschakeld en binnen BLE-bereik is, en verifieer de ESPHome-proxy-instellingen. Zorg er ook voor dat geen ander apparaat (bijv. de Geberit Home App of de standalone bridge) via Bluetooth is verbonden — de AquaClean is alleen zichtbaar wanneer er geen actieve BLE-verbinding is.",
+      "no_bluetooth": "Geen lokale Bluetooth-adapter gevonden op dit apparaat. Een ESPHome Bluetooth-proxy host is vereist."
+    },
+    "abort": {
+      "already_configured": "Dit AquaClean-apparaat is al geconfigureerd.",
+      "unsupported_device": "Het Geberit-apparaat ({mac}) heeft succesvol verbinding gemaakt via Bluetooth, maar gebruikt een GATT-profiel dat nog niet wordt ondersteund door deze integratie.\n\nOpen een GitHub-issue op https://github.com/jens62/geberit-aquaclean/issues/new met de volgende informatie:\n\n- **GATT-service UUID:** {svc_uuid}\n- **Schrijf-karakteristiek:** {write_uuids}\n- **Notificatie-karakteristiek:** {notify_uuids}\n- **Firmwareversie** (uit de Geberit Home App → ⓘ)\n- **Exacte apparaatbeschrijving** (uit de Geberit Home App → ⓘ)\n\nIntegratieversie: {version}"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Geberit AquaClean — Instellingen",
+        "description": "Versie {version}\n\nBijwerken van het apparaatadres of de proxy-instellingen. Bij het opslaan wordt een live verbindingstest uitgevoerd — wacht tot 30 seconden.",
+        "data": {
+          "device_id": "BLE MAC-adres (XX:XX:XX:XX:XX:XX)",
+          "esphome_host": "ESPHome Proxy Host (leeg laten voor lokale BLE)",
+          "esphome_port": "ESPHome Proxy Poort",
+          "noise_psk": "ESPHome Versleutelingssleutel (optioneel, base64)",
+          "poll_interval": "Polling-interval (seconden)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met het AquaClean-apparaat. Controleer het MAC-adres, zorg dat het apparaat is ingeschakeld en binnen BLE-bereik is, en verifieer de ESPHome-proxy-instellingen. Zorg er ook voor dat geen ander apparaat (bijv. de Geberit Home App of de standalone bridge) via Bluetooth is verbonden — de AquaClean is alleen zichtbaar wanneer er geen actieve BLE-verbinding is.",
+      "no_bluetooth": "Geen lokale Bluetooth-adapter gevonden op dit apparaat. Een ESPHome Bluetooth-proxy host is vereist."
+    }
+  }
+}
