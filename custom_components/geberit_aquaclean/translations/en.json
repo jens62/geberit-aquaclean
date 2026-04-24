@@ -17,7 +17,8 @@
       "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings. Also make sure no other device (e.g. the Geberit Home App or the standalone bridge) is connected via Bluetooth — the AquaClean only advertises when no BLE connection is active."
     },
     "abort": {
-      "already_configured": "This AquaClean device is already configured."
+      "already_configured": "This AquaClean device is already configured.",
+      "unsupported_device": "This Geberit device ({mac}) connected successfully over Bluetooth, but uses a GATT profile that is not yet supported by this integration.\n\nPlease open a GitHub issue at https://github.com/jens62/geberit-aquaclean/issues/new and include:\n\n- **GATT service UUID:** {svc_uuid}\n- **Write characteristic:** {write_uuids}\n- **Notify characteristic:** {notify_uuids}\n- **Firmware version** (from the Geberit Home App → ⓘ)\n- **Exact device description** (from the Geberit Home App → ⓘ)\n\nIntegration version: {version}"
     }
   },
   "options": {
