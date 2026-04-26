@@ -60,7 +60,8 @@ class BtSigDataService(Service):
 async def find_first_adapter_path_and_address(bus):
     """
     Use org.freedesktop.DBus.ObjectManager (with introspection) to find the first Adapter1 path and Address.
-    Returns (path, address) or (None, None).
+    Returns (path, address, objmgr) so the caller can reuse the ObjectManager interface for signal
+    subscriptions (e.g. to detect incoming BLE connections).
     """
     # introspect root to get proper introspection.Node for get_proxy_object
     introspection = await bus.introspect('org.bluez', '/')
@@ -75,8 +76,8 @@ async def find_first_adapter_path_and_address(bus):
             addr = adapter_props.get('Address')
             if isinstance(addr, Variant):
                 addr = addr.value
-            return path, addr
-    return None, None
+            return path, addr, objmgr
+    return None, None, objmgr
 
 
 async def safe_call(obj, method_name, *args, **kwargs):
@@ -112,8 +113,9 @@ async def main():
         print("No Bluetooth adapter wrapper found via bluez_peripheral.Adapter.get_first()")
 
     # Use ObjectManager with introspection to find adapter path and address reliably
+    objmgr = None
     try:
-        adapter_path, adapter_address = await find_first_adapter_path_and_address(bus)
+        adapter_path, adapter_address, objmgr = await find_first_adapter_path_and_address(bus)
         print("Adapter DBus path:", adapter_path)
         print("Adapter BLE address:", adapter_address)
     except Exception as e:
@@ -125,6 +127,23 @@ async def main():
         print("No adapter wrapper available; cannot register GATT services/advertisement.")
         await bus.disconnect()
         return
+
+    # Subscribe to BlueZ ObjectManager signals to detect incoming BLE connections.
+    # BlueZ adds a Device1 object when a central connects to this peripheral.
+    if objmgr is not None:
+        def on_device_connected(path, interfaces):
+            if 'org.bluez.Device1' in interfaces:
+                addr = interfaces['org.bluez.Device1'].get('Address')
+                if isinstance(addr, Variant):
+                    addr = addr.value
+                print(f"[Mock] BLE client connected:    {addr or path}")
+
+        def on_device_disconnected(path, interfaces):
+            if 'org.bluez.Device1' in interfaces:
+                print(f"[Mock] BLE client disconnected: {path}")
+
+        objmgr.on_interfaces_added(on_device_connected)
+        objmgr.on_interfaces_removed(on_device_disconnected)
 
     # Instantiate services
     geb_service = GeberitServiceA()
