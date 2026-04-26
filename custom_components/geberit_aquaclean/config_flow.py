@@ -84,6 +84,21 @@ async def _test_connection(
             profile.is_standard, profile.svc_uuid,
         )
         return profile
+    except Exception:
+        # connect_ble_only() may have partially succeeded: BLE connected but
+        # subscribe_notifications_async() failed because the device uses a
+        # non-standard GATT profile (e.g. AquaClean Alba).  In that case
+        # connector.client is still set and we can read the GATT services to
+        # return a useful unsupported_device abort instead of cannot_connect.
+        profile = connector.get_gatt_profile()
+        if not profile.is_standard:
+            _LOGGER.info(
+                "[AquaClean] Config flow: BLE connected but non-standard GATT profile "
+                "detected after init failure — svc=%s write=%s notify=%s",
+                profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+            )
+            return profile
+        raise
     finally:
         try:
             await connector.disconnect()
