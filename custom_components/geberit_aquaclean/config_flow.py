@@ -202,6 +202,21 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             data = _normalise(user_input)
+
+            # Skip the live BLE connection test when only non-connection settings
+            # changed (e.g. poll_interval).  Running a test in that case races with
+            # the coordinator's persistent ESP32 subscription and always fails with
+            # ESPHomeDeviceNotFoundError (0 packets — slot already in use).
+            _connection_keys = (
+                CONF_DEVICE_ID, CONF_ESPHOME_HOST, CONF_ESPHOME_PORT, CONF_NOISE_PSK,
+            )
+            connection_unchanged = all(
+                data.get(k) == current.get(k) for k in _connection_keys
+            )
+            if connection_unchanged:
+                _LOGGER.debug("[AquaClean] Options flow: connection params unchanged — skipping BLE test")
+                return self.async_create_entry(title="", data=data)
+
             if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
                 errors["base"] = "no_bluetooth"
             else:
