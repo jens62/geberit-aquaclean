@@ -398,8 +398,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         device_name = ""
         address_type = 0  # Default to PUBLIC (0) if not present in advertisement
 
+        total_packets = 0
+
         def on_raw_advertisements(resp):
-            nonlocal device_name, address_type
+            nonlocal device_name, address_type, total_packets
+            total_packets += len(resp.advertisements)
             for adv in resp.advertisements:
                 if adv.address == mac_int:
                     device_name = self._parse_local_name(bytes(adv.data))
@@ -424,8 +427,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except asyncio.TimeoutError:
             unsub_adv()
             self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
+            hint = (
+                "scanner may be stuck or subscription slot in use"
+                if total_packets == 0
+                else "device not advertising"
+            )
             raise ESPHomeDeviceNotFoundError(
-                f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host}"
+                f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host} "
+                f"(received {total_packets} total BLE advertisement packet(s) during 10 s scan — {hint})"
             )
         # Advertisement subscription intentionally kept alive until BLE connect completes.
         # Calling unsub_adv() before bluetooth_device_connect() sends
