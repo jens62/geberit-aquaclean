@@ -1552,6 +1552,7 @@ async def check_gatt_services(
         )
         candidate = None
 
+    if services is not None:
         if geberit_service_found:
             _report(
                 "GATT profile", _Result.PASS,
@@ -1563,6 +1564,11 @@ async def check_gatt_services(
                     "• Device stuck in an unusual state — power-cycle the toilet and retry.\n"
                     "• Geberit Home app was open on a nearby phone — close it and retry."
                 ),
+            )
+        elif not services.services:
+            _report(
+                "GATT service discovery", _Result.WARN,
+                "No GATT services returned (empty list)",
             )
         else:
             _report(
@@ -1576,13 +1582,6 @@ async def check_gatt_services(
                     "• This is an unsupported Geberit model — probing below to check compatibility."
                 ),
             )
-    elif services is None:
-        pass  # already reported above via _report(FAIL)
-    else:
-        _report(
-            "GATT service discovery", _Result.WARN,
-            "No GATT services returned (empty list)",
-        )
 
     # Determine whether to run the bridge-stack probe:
     # • force_probe (--dynamic-uuids): always probe using discovered UUIDs
