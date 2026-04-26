@@ -445,6 +445,16 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **HACS config flow: validate ESPHome host field syntax before attempting connection.**
+  Entering a malformed IP address (e.g. `192,168.0.114` with a comma) passes `cv.string`
+  validation and reaches `aioesphomeapi` which then fails with an unresolvable hostname error —
+  surfaced as the generic "Cannot connect" message instead of a clear input error.
+  Fix: add a validator in `_build_schema` for `CONF_ESPHOME_HOST` that, when non-empty,
+  checks the value is either a valid IP address (`ipaddress.ip_address()`) or a plausible
+  hostname (no commas, no spaces). Return `errors["esphome_host"] = "invalid_host"` with an
+  inline field error rather than running the BLE test.  Add the matching `invalid_host` key
+  to all translation files (`strings.json`, `en.json`, `de.json`, `nl.json`).
+
 - **Performance: reduce poll query time from ~2.7 s to ~0.5 s (confirmed from TRACE log 2026-04-23).**
 
   Profiled from `aquaclean-aquaclean-bridge 2.4.79+e662858-TRACE-because-of-performance.log`.
