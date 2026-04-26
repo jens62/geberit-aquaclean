@@ -97,19 +97,42 @@ mock defect.
 Verify that the HACS config flow shows the `unsupported_device` abort screen
 (with GATT UUID details) instead of the generic `cannot_connect` error.
 
+### Prerequisite — free the ESP32 subscription slot
+
+The ESP32 can only serve one BLE advertisement subscription at a time. Two things
+compete for that slot and must both be cleared before testing:
+
+1. **`aquaclean-proxy` ESPHome integration** — disable it in HA → Settings →
+   Integrations → aquaclean-proxy → Disable. This is the primary slot thief.
+
+2. **Existing Geberit AquaClean HACS integration** — do **not** delete or disable it;
+   you will add the mock as a *second* instance alongside it. But its polling holds
+   the slot briefly on each cycle. To minimise the race:
+   - Settings → Integrations → Geberit AquaClean → Configure → set Poll Interval
+     to `300` seconds. This leaves a 5-minute gap between polls.
+   - Or disable it temporarily (three dots → Disable) — HA remembers the config;
+     re-enable after the test.
+
 ### Steps
 
-1. Start the mock fresh on the Linux host (Raspberry Pi or similar):
+1. Apply the prerequisite above (ESPHome integration disabled, poll interval raised
+   or existing Geberit integration disabled).
+
+2. Start the mock fresh on the Linux host (Raspberry Pi or similar):
    ```bash
    sudo /home/jens/venv/bin/python ./mock-geberit-alba.py
    ```
+   Wait for `--- Mock Device Active ---` before proceeding.
 
-2. Disable the HA ESPHome integration if enabled.
-
-3. In HA: Settings → Integrations → Add Integration → Geberit AquaClean
-   - BLE MAC: `<adapter MAC from mock output>`
-   - ESPHome host: `<ESP32 IP>` (or leave empty for local BLE if HA host is in range)
+3. **Immediately** go to HA: Settings → Integrations → blue "+" button (bottom-right)
+   → search "Geberit AquaClean" → Add Integration.
+   - BLE MAC: `<adapter MAC printed by mock, e.g. 88:A2:9E:2C:EA:F7>`
+   - ESPHome host: `<ESP32 IP>` (or leave empty for local BLE if HA host is in BLE
+     range of the mock)
    - Port: `6053`
+
+   Do not use the existing integration's Configure button — that reconfigures the
+   real device. The "+" button adds a new second instance pointing to the mock.
 
 4. Click Submit. Wait up to 30 seconds.
 
@@ -118,6 +141,14 @@ Verify that the HACS config flow shows the `unsupported_device` abort screen
    - Write characteristic: `559eb001-2390-11e8-b467-0ed5f89f718b`
    - Notify characteristic: `559eb002-2390-11e8-b467-0ed5f89f718b`
    - Link to open a GitHub issue
+
+   The mock terminal should print:
+   ```
+   [Mock] BLE client connected:    XX:XX:XX:XX:XX:XX
+   [Mock] BLE client disconnected: /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX
+   ```
+   If the mock prints nothing, the ESP32 never found the device (see troubleshooting
+   below).
 
 ### Confirming via HA logs
 
@@ -138,12 +169,22 @@ INFO  [AquaClean] Config flow: BLE connected but non-standard GATT profile
 WARNING [AquaClean] Config flow: unsupported GATT profile — svc=0000fd48...
 ```
 
-If instead you see:
+If instead you see `ERROR [AquaClean] Config flow: connection test failed`, check
+the preceding line for the `ESPHomeDeviceNotFoundError` detail:
+
 ```
-ERROR [AquaClean] Config flow: connection test failed
+ESPHomeDeviceNotFoundError: AquaClean device ... not found via ESPHome proxy
+  (received 0 total BLE advertisement packet(s) during 10 s scan —
+   scanner may be stuck or subscription slot in use)
 ```
-then the BLE connect failed before the GATT profile could be read (e.g. mock
-not advertising — restart it and retry immediately).
+→ 0 packets: `aquaclean-proxy` ESPHome integration is still enabled, or another
+  client holds the slot. Disable it and retry.
+
+```
+  (received 847 packet(s) during 10 s scan — device not advertising)
+```
+→ N > 0 packets: scanner is healthy but the mock wasn't advertising at the right
+  moment. Restart the mock and submit the form immediately.
 
 ---
 
