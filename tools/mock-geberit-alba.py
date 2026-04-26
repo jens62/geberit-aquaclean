@@ -200,15 +200,15 @@ async def main():
             await safe_call(adv, "unregister", bus)
             await safe_call(adv, "unregister")
 
-        # Unregister services if possible
-        await safe_call(geb_service, "unregister", bus)
-        await safe_call(sig_service, "unregister", bus)
+        # Unregister services (Service.unregister() takes no arguments)
         await safe_call(geb_service, "unregister")
         await safe_call(sig_service, "unregister")
 
-        # Disconnect bus
+        # Disconnect bus (synchronous in dbus-next — do not await)
         try:
-            await bus.disconnect()
+            result = bus.disconnect()
+            if inspect.isawaitable(result):
+                await result
         except Exception as e:
             print("Error disconnecting bus:", e)
 
