@@ -515,11 +515,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         # start_notify() then fails with [org.bluez.Error.NotPermitted].
                         # Calling stop_notify() here before start_notify() clears that state.
                         # Harmless if the characteristic is not currently notifying.
-                        try:
-                            await self.client.stop_notify(characteristic)
-                            logger.debug(f"Preemptive stop_notify OK: {characteristic.uuid}")
-                        except Exception as _stop_exc:
-                            logger.debug(f"Preemptive stop_notify failed (expected if not notifying): {characteristic.uuid}: {type(_stop_exc).__name__}: {_stop_exc}")
+                        # stop_notify is a BlueZ-only workaround — ESPHomeAPIClient
+                        # does not expose this method (proxy manages BLE state).
+                        if hasattr(self.client, 'stop_notify'):
+                            try:
+                                await self.client.stop_notify(characteristic)
+                                logger.debug(f"Preemptive stop_notify OK: {characteristic.uuid}")
+                            except Exception as _stop_exc:
+                                logger.debug(f"Preemptive stop_notify failed (expected if not notifying): {characteristic.uuid}: {type(_stop_exc).__name__}: {_stop_exc}")
                         await self.client.start_notify(characteristic, self._on_data_received)
                         self._subscribed_characteristics.append(characteristic)
 
