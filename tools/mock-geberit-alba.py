@@ -10,6 +10,7 @@ Requirements:
 - run with sufficient privileges (or use sudo) to access system bus
 """
 
+import argparse
 import asyncio
 import inspect
 from dbus_next.aio import MessageBus
@@ -216,6 +217,44 @@ async def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Mock Geberit AquaClean Alba BLE peripheral (Linux/BlueZ).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+How to test the HACS 'unsupported device' detection
+----------------------------------------------------
+Prerequisites (free the ESP32 BLE subscription slot):
+  1. In HA: Settings → Integrations → aquaclean-proxy → Disable
+     (this is the main slot thief; must be disabled while testing)
+  2. In HA: Settings → Integrations → Geberit AquaClean → Configure
+     → set Poll Interval to 300 s and leave all other fields unchanged
+     (widens the gap between polls so the test slot is usually free)
+
+Test sequence:
+  3. Start this mock (run as root or with BlueZ privileges):
+       sudo python mock-geberit-alba.py
+     Wait for '--- Mock Device Active ---' before continuing.
+  4. Immediately in HA: Settings → Integrations
+     → 'Eintrag hinzufügen' (German) / 'Add entry' (English)  ← bottom-right
+     → search 'Geberit AquaClean' → select it
+     → BLE MAC: <adapter MAC printed above, e.g. 88:A2:9E:2C:EA:F7>
+     → ESPHome host: <ESP32 IP, e.g. 192.168.0.114>
+     → Port: 6053 → Submit
+
+     Do NOT use the Configure button on the existing integration —
+     that reconfigures the real device. 'Add entry' adds a second instance.
+
+Expected result:
+  - HA shows the 'unsupported device' abort screen with the GATT UUIDs
+  - This terminal prints:
+      [Mock] BLE client connected:    <ESP32 BLE MAC>
+      [Mock] BLE client disconnected: /org/bluez/hci0/dev_...
+  - If nothing is printed, the mock was not found during the 10 s scan
+    → restart the mock and submit the HA form immediately after step 3
+""",
+    )
+    parser.parse_args()  # handles --help; no other arguments accepted
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
