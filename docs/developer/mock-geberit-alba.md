@@ -124,15 +124,17 @@ compete for that slot and must both be cleared before testing:
    ```
    Wait for `--- Mock Device Active ---` before proceeding.
 
-3. **Immediately** go to HA: Settings → Integrations → blue "+" button (bottom-right)
-   → search "Geberit AquaClean" → Add Integration.
+3. **Immediately** go to HA: Settings → Integrations → **"Eintrag hinzufügen"**
+   (German UI) / **"Add entry"** (English UI) button at the bottom-right of the
+   Integrations page → search "Geberit AquaClean" → select it.
    - BLE MAC: `<adapter MAC printed by mock, e.g. 88:A2:9E:2C:EA:F7>`
    - ESPHome host: `<ESP32 IP>` (or leave empty for local BLE if HA host is in BLE
      range of the mock)
    - Port: `6053`
 
-   Do not use the existing integration's Configure button — that reconfigures the
-   real device. The "+" button adds a new second instance pointing to the mock.
+   **Do not** use the existing integration's Configure button — that reconfigures the
+   real device. "Eintrag hinzufügen" / "Add entry" adds a new second instance
+   pointing to the mock.
 
 4. Click Submit. Wait up to 30 seconds.
 
