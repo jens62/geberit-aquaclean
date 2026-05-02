@@ -19,7 +19,7 @@ PCAPNG MODE (--pcapng)
   /Users/jens/venv/bin/python tools/alba-decrypt-analysis.py \\
       --pcapng capture.pcapng \\
       --serial <your-serial> \\
-      --sap 146.350.01
+      --sap 146.350.01.x
 
   Analyse multiple captures together (e.g. remote + app):
   /Users/jens/venv/bin/python tools/alba-decrypt-analysis.py \\
@@ -472,12 +472,14 @@ def run_pcapng_analysis(paths: list[str], serial: str | None,
         print(f"  {la} ^ {lb}: {d.hex()}{flag}")
 
     if serial:
+        # Strip trailing .x placeholder (device reports e.g. "146.350.01.x")
+        sap_base = sap[:-2] if sap.lower().endswith(".x") else sap
         print()
         print("=" * 70)
-        print(f"Known-plaintext attack — serial={serial!r}  sap={sap!r}  type={type_str!r}")
+        print(f"Known-plaintext attack — serial={serial!r}  sap={sap_base!r}  type={type_str!r}")
         print()
         sap_variants = {
-            f"SAP.{suffix}": (sap + f".{suffix}").encode()
+            f"SAP.{suffix}": (sap_base + f".{suffix}").encode()
             for suffix in ("0", "1", "2")
         }
         type_bytes   = type_str.encode()
@@ -519,7 +521,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--sap", metavar="SAP", default="146.350.01",
-        help="SAP prefix — suffixes .0/.1/.2 are tried automatically (default: 146.350.01).",
+        help="SAP number — trailing .x placeholder is stripped automatically, then .0/.1/.2 "
+             "are tried. Pass '146.350.01' or '146.350.01.x' (both accepted). Default: 146.350.01.",
     )
     parser.add_argument(
         "--type", metavar="TYPE", dest="type_str", default="AcAlba",
