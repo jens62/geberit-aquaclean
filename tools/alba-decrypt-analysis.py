@@ -90,6 +90,7 @@ F3_b2 = bytes.fromhex("5e54")
 J_TYPE   = b"AcAlba"           # 6 bytes
 J_SERIAL = b"SB2509EU177754"   # 14 bytes
 J_SAP_VARIANTS = {
+    "SAP.x": b"146.350.01.x",   # literal 'x' — Geberit stores this verbatim (confirmed from Mera Comfort)
     "SAP.0": b"146.350.01.0",
     "SAP.1": b"146.350.01.1",
     "SAP.2": b"146.350.01.2",
@@ -99,6 +100,7 @@ J_SAP_VARIANTS = {
 K_TYPE   = b"AcAlba"           # 6 bytes
 K_SERIAL = b""   # redacted — provide via --serial for known-plaintext analysis
 K_SAP_VARIANTS = {
+    "SAP.x": b"146.350.01.x",   # literal 'x' — Geberit stores this verbatim (confirmed from Mera Comfort)
     "SAP.0": b"146.350.01.0",
     "SAP.1": b"146.350.01.1",
     "SAP.2": b"146.350.01.2",
@@ -472,16 +474,25 @@ def run_pcapng_analysis(paths: list[str], serial: str | None,
         print(f"  {la} ^ {lb}: {d.hex()}{flag}")
 
     if serial:
-        # Strip trailing .x placeholder (device reports e.g. "146.350.01.x")
-        sap_base = sap[:-2] if sap.lower().endswith(".x") else sap
+        # Build SAP variants: try literal value AND digit substitutions for trailing .x
+        if sap.lower().endswith(".x"):
+            sap_base = sap[:-2]
+            sap_variants = {
+                "SAP.x": sap.encode(),              # literal 'x' — likely what device stores
+                "SAP.0": (sap_base + ".0").encode(),
+                "SAP.1": (sap_base + ".1").encode(),
+                "SAP.2": (sap_base + ".2").encode(),
+            }
+        else:
+            sap_variants = {
+                f"SAP.{suffix}": (sap + f".{suffix}").encode()
+                for suffix in ("0", "1", "2")
+            }
         print()
         print("=" * 70)
-        print(f"Known-plaintext attack — serial={serial!r}  sap={sap_base!r}  type={type_str!r}")
+        print(f"Known-plaintext attack — serial={serial!r}  sap={sap!r}  type={type_str!r}")
+        print(f"  SAP variants tried: {', '.join(sap_variants)}")
         print()
-        sap_variants = {
-            f"SAP.{suffix}": (sap_base + f".{suffix}").encode()
-            for suffix in ("0", "1", "2")
-        }
         type_bytes   = type_str.encode()
         serial_bytes = serial.encode()
         candidates_base = [("TYPE", type_bytes), ("SERIAL", serial_bytes)]
