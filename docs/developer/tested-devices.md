@@ -18,6 +18,8 @@ This document lists every Geberit AquaClean device that has been confirmed to wo
 | Device | Serial / Prefix | GATT Profile | BLE MAC | GitHub Issue | Status |
 |--------|----------------|--------------|---------|--------------|--------|
 | AquaClean Alba | Unknown | Variant A (`0000fd48` + `559eb` chars) | `E4:85:01:CD:B0:08` | [#17](https://github.com/jens62/geberit-aquaclean/issues/17) | GATT discovery confirmed; write-type fix applied (commit 7433b6b); **protocol probe fails** (`BLEPeripheralTimeoutError` — writes succeed, no notify response). BLE traffic capture from Geberit Home App needed. |
+| AquaClean Alba | SB2509EU177754, SAP 146.350.01.x | Variant A (`0000fd48` + `559eb` chars) | `E4:85:01:CD:51:6B` | BLE captures from Johannes Schliephake | Firmware RS3.0 TS89. GetDeviceIdentification response is **encrypted** (session-specific key, 32-byte XOR cipher). Two sessions captured; known-plaintext attack attempted — no repeating keystream found. Session key derived from internal counter not visible in BLE. See `docs/developer/alba-ble-encryption.md`. |
+| AquaClean Alba | `<redacted>`, SAP 146.350.01.x | Variant A (`0000fd48` + `559eb` chars) | `<redacted>` | pcapng from kstr (Wireshark, Geberit Home App session) | Firmware RS3.0 TS89. Full working app session captured. Init sequence byte-for-byte identical to Johannes's device. GetDeviceIdentification also encrypted (same scheme). Cross-device XOR analysis suggests device-specific key. See `docs/developer/alba-ble-encryption.md`. |
 
 ---
 
