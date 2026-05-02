@@ -974,6 +974,52 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
   **Effort:** moderate code changes + translation content (machine translation is fine for a first pass; native speaker review recommended). ~1 focused session.
 
+- **Agentic BLE protocol fuzzer — discover unknown Mera Comfort functionality.**
+
+  The Geberit protocol has procedure codes 0x00–0xFF. We know ~15 of them. An agentic
+  Claude with BLE access (via the bridge REST API or directly via bleak/ESPHome) could
+  systematically probe the full procedure space and map unknown functionality without
+  requiring prior captures from the official app.
+
+  **What to probe and expected yield:**
+
+  | Target | Method | Expected yield |
+  |--------|--------|---------------|
+  | Unknown procedure codes | Probe 0x00–0xFF; note which ACK with data | Find the discrete DpId procedure code that maps to `BLE_COMMAND_REFERENCE.md` entries (water hardness, error registers, flush counters, UV lamp hours, etc.) |
+  | `GetStoredCommonSetting` IDs 4–255 | Probe proc 0x51 with each ID | Water hardness, flush volume, descaling intervals, orientation light extras — all settings the official app exposes but the bridge can't yet read |
+  | `GetStoredProfileSetting` IDs 11–255 | Probe proc 0x53 with each ID | Dryer spray intensity, WC lid settings — currently "unknown" in `docs/developer/profile-settings.md` |
+  | `SetCommand` codes 48–255 | Probe proc 0x09 with each value | Any commands beyond the 18 already in `Commands.py` |
+  | Proc 0x07 argument space | Send 0x07 with args 0x00–0x1F | Node topology — which hardware nodes does the device expose? |
+  | `GetFilterStatus` record IDs 12–255 | Probe proc 0x59 with each ID | iPhone may use 12 IDs; we use 8; what do IDs 9–11 contain? |
+
+  **The most valuable target: the discrete DpId procedure code.** `BLE_COMMAND_REFERENCE.md`
+  lists ~100 data points reachable via a procedure code we haven't identified yet. The agent
+  would find it by elimination — it's whichever unknown proc responds with structured data
+  keyed by DpId values from that document.
+
+  **Safety constraint — skip known-dangerous SetCommand codes:**
+  Some probes trigger physical device actions. The agent must skip these or prompt before
+  sending:
+
+  | Code | Command | Effect |
+  |------|---------|--------|
+  | 33 | `StartLidPositionCalibration` | Lid starts moving |
+  | 34–36 | `LidPositionOffset*` | Lid position shifts |
+  | 4 | `StartCleaningDevice` | Unknown; possibly self-cleaning cycle |
+  | 37 | `TriggerFlushManually` | Toilet flushes |
+  | 6–9 | Descaling commands | Starts descaling cycle |
+
+  All `Get*` procedure probes are read-only and safe to run unattended. `SetCommand` probes
+  should be run interactively with the device accessible and the user present.
+
+  **Implementation approach:**
+  - A new script `tools/geberit-ble-fuzz.py` that accepts `--mode read-procs` /
+    `--mode setcommand` / `--mode common-settings` / `--mode profile-settings`
+  - Reuses `BluetoothLeConnector` + `AquaCleanClient` from the bridge (DRY — no new BLE code)
+  - Logs every response to a JSON file for offline analysis
+  - Correlates discovered common/profile setting IDs against `BLE_COMMAND_REFERENCE.md` DpIds
+  - Safe defaults: skip the dangerous SetCommand codes listed above unless `--unsafe` is passed
+
 - **install.sh: show progress during slow pip steps.** On a Raspberry Pi, the
   `pip install --upgrade pip setuptools wheel` and `pip install --force-reinstall ...`
   steps can take several minutes with no output — users assume it has hung and cancel.
