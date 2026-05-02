@@ -164,6 +164,106 @@ The tool outputs:
 - **Passive advertising only** — if the Android phone was scanning passively,
   the log contains advertisement reports but no connection-layer traffic
   unless the phone actively connected to the device.
+- **Variant A GATT handles not decoded** — `android-ble-analyze.py` knows the
+  Mera Comfort GATT handles (`3334429d` profile). Alba devices use a different
+  service (`0000fd48`) with write handle `0x001e` and notify handle `0x0020`.
+  The tool will not decode Geberit protocol frames from these handles. Use
+  the tshark fallback below for Variant A captures.
+
+---
+
+## tshark Fallback for Wireshark pcapng / Variant A Captures
+
+When `android-ble-analyze.py` cannot decode a capture (e.g. Wireshark pcapng
+files, or Android logs from an Alba device with Variant A GATT handles), use
+`tshark` to extract ATT-layer payloads directly.
+
+### Prerequisites
+
+```bash
+# macOS
+brew install wireshark   # tshark is included
+
+# Linux
+sudo apt install tshark
+```
+
+### Find BLE addresses in a pcapng
+
+```bash
+tshark -r file.pcapng -Y "bthci_evt.bd_addr" \
+  -T fields -e bthci_evt.bd_addr 2>/dev/null | sort -u
+```
+
+### Dump all ATT frames with timestamps
+
+```bash
+tshark -r file.pcapng -Y "btatt" \
+  -T fields \
+  -e frame.time_relative \
+  -e btatt.opcode \
+  -e btatt.handle \
+  -e btatt.value \
+  2>/dev/null
+```
+
+Output format: `<time_s>\t<opcode_hex>\t<handle_hex>\t<value_hex>`
+
+Example:
+```
+21.625319    0x1b    0x0020    002442114ec64f99eabe40bc...
+21.626045    0x12    0x001e    00042ff5d900
+```
+
+### Find Geberit frames on Variant A handles
+
+Geberit frames use write handle `0x001e` (ATT opcode `0x12`) and notify handle
+`0x0020` (ATT opcode `0x1b`). Filter for GetDeviceIdentification responses
+(cleartext header `002442`):
+
+```bash
+tshark -r file.pcapng -Y "btatt" \
+  -T fields \
+  -e frame.time_relative -e btatt.opcode -e btatt.handle -e btatt.value \
+  2>/dev/null \
+  | grep "0x1b.*0x0020" | grep "002442"
+```
+
+### Identify the device MAC from ATT traffic
+
+If you don't know which MAC is the Geberit device, filter for ATT Handle Value
+Notification frames (opcode 0x1b) and look for the Geberit frame header:
+
+```bash
+tshark -r file.pcapng -Y "btatt.opcode == 0x1b" \
+  -T fields -e bthci_acl.connection_handle -e btatt.handle -e btatt.value \
+  2>/dev/null | grep "002442"
+```
+
+Then cross-reference the ACL connection handle with the HCI connection events
+to find the MAC address.
+
+### Decode a complete session from a Wireshark pcapng
+
+```bash
+# 1. Dump all ATT traffic to a text file
+tshark -r file.pcapng -Y "btatt" \
+  -T fields \
+  -e frame.time_relative -e btatt.opcode -e btatt.handle -e btatt.value \
+  2>/dev/null > session.txt
+
+# 2. Filter for Geberit frames (both directions)
+grep -E "(0x001e|0x0020)" session.txt
+```
+
+ATT opcodes for context:
+
+| Opcode | Meaning |
+|--------|---------|
+| `0x12` | Write Request (app → device, handle 0x001e) |
+| `0x13` | Write Response (device → app, ACK) |
+| `0x1b` | Handle Value Notification (device → app, handle 0x0020) |
+| `0x52` | Write Command (no ACK expected) |
 
 ---
 
