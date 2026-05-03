@@ -240,7 +240,10 @@ The MITM device pretends to be the Alba toward the iPhone, and pretends to be th
 **Why it is very high effort:**
 
 - **Two simultaneous BLE roles required.** A BLE adapter can only act as Central or Peripheral on one connection at a time. The proxy needs two adapters running in parallel — one acting as a peripheral toward the iPhone, one as a central toward the Alba.
-- **BLE Secure Connections defeats classical MITM.** If the Alba uses `LE Secure Connections` pairing (likely given the encrypted protocol), the Passkey/Numeric Comparison exchange is specifically designed to detect a MITM. Bypassing it requires extracting the Long-Term Key from the iPhone's Keychain, which requires a jailbroken iPhone.
+- **Just Works pairing makes MITM straightforward (confirmed 2026-05-03).** The Alba
+  uses "Just Works" (no PIN, no passkey confirmation) — confirmed by `bluetoothctl pair`
+  on a Raspberry Pi. A MITM device can accept the iPhone's pairing request silently, with
+  no user interaction and no LTK extraction needed. No jailbreak required.
 - **Ciphertext is session-specific, but the key may be static.** The handshake (`00 04 2F F5 D9 00` ↔ `00 04 63 9D 51 00`) is byte-for-byte identical across sessions, suggesting the master key is static or deterministic. The ciphertext still differs per session, likely due to a per-session IV or changing plaintext content. Replaying captured ciphertext from one session into a different session would therefore still fail — but the key itself is likely reusable.
 - **Real-time relay latency.** Both ends must receive responses quickly enough not to time out and disconnect.
 

@@ -465,59 +465,38 @@ active. The zero SMP frame count is strong evidence but not a mathematical proof
 frames are readable → link layer confirmed unencrypted. If opaque → some form of
 link-layer protection is in use (though absence of SMP makes this very unlikely).
 
-### Open question — can the Alba be paired at all?
+### BLE pairing — confirmed Just Works (Linux, 2026-05-03)
 
-The Geberit Home App never initiates BLE pairing. That does not necessarily mean the
-device is incapable of pairing — the app may be deliberately skipping link-layer
-security in favour of its own application-layer scheme. Testing whether the Alba
-responds to a pairing request (independently of the app) would resolve this.
+**Confirmed:** `bluetoothctl pair <alba-mac>` on a Raspberry Pi completed with
+`Bonded: yes` and no PIN prompt. The device's IO capability is `NoInputNoOutput` →
+BT spec §3.5.3.2 selects "Just Works" automatically. An LTK was exchanged.
 
-Also note: the 4-digit PIN is only used at the **Geberit application layer**
-(proc 0x44/0x64 key exchange), several steps into the protocol after GATT discovery.
-BLE connection and GATT discovery succeed without any PIN involvement — confirmed by
-the bridge connecting to an Alba and reaching the "unsupported GATT profile" detection
-point without any PIN prompt or pairing attempt.
+| Platform | Result |
+|----------|--------|
+| **Linux (Raspberry Pi)** | **Just Works — no PIN, Bonded: yes** ✅ confirmed 2026-05-03 |
+| Android | not yet tested |
+| Windows | not yet tested |
+| iOS | not testable (CoreBluetooth hides raw pairing) |
 
-**How to test — no code required:**
+**What this means:**
 
-> Make sure the Geberit Home App is fully closed (not just backgrounded) before
-> running the test — the Alba only accepts one BLE connection at a time.
+- The 4-digit PIN is **only** at the Geberit application layer (proc 0x44/0x64). The
+  BLE Security Manager never sees it — confirmed at both the HCI level (zero SMP frames)
+  and by the pairing test (no PIN prompt).
+- After bonding, the next BLE connection will use AES-128-CCM link-layer encryption
+  (BlueZ uses the stored LTK automatically). OTA frames will be opaque to a passive
+  sniffer on that session.
+- **For nRF52840 sniffing:** unpair the device first (`bluetoothctl remove <mac>`)
+  before capturing. An un-bonded session is unencrypted OTA — readable by the sniffer.
+- **Geberit's app deliberately skips pairing** (zero SMP frames even on fresh install),
+  so normal bridge use remains unencrypted OTA regardless of whether a bond exists.
 
-**Android** (easiest — phone already at hand):
-1. Force-close the Geberit Home App
-2. Settings → Connected devices → Pair new device
-3. Wait for the Alba to appear → tap it → observe
+**Cryptanalysis implication:**
 
-**Linux** (e.g. Raspberry Pi):
-```
-bluetoothctl
-scan on
-pair <BLE address>
-```
-
-**Windows**: Settings → Bluetooth & devices → Add device → Bluetooth → wait for
-the Alba → click it
-
-**macOS**: System Settings → Bluetooth → wait for the Alba → click Connect
-
-Note for iOS: Apple's Bluetooth settings only shows devices that advertise themselves
-as pairable; the Alba may not appear there at all.
-
-**Three possible outcomes:**
-
-| Outcome | What the device does | Interpretation |
-|---------|---------------------|----------------|
-| **1** — Pairing Failed (code 0x05) | Explicitly rejects the SMP Pairing Request | nRF52 firmware configured to refuse all pairing; link-layer security is intentionally absent by Geberit's design |
-| **2** — Just Works (silent pair) | Negotiates LTK, no PIN asked | Link-layer encryption *is* available but the Geberit app deliberately skips it; a bridge could pair and get AES-128-CCM for free |
-| **3** — Passkey Entry (PIN dialog) | Asks for the 4-digit PIN | Surprising given zero SMP frames, but would mean the device supports LESC and the app never triggers it |
-
-**What outcomes 2 or 3 would add to the cryptanalysis:**
-
-If the device accepts pairing, the bridge could establish link-layer AES-128-CCM
-encryption, making OTA sniffing by third parties much harder. Additionally, for
-outcome 3, the LTK derivation during pairing involves the device's internal keys —
-if the same key material is used for the application-layer AES-CTR, the pairing
-ceremony could be a side channel into the static device key.
+Just Works pairing is trivially MITMable — no user interaction, no passkey confirmation.
+A MITM proxy (see section in `gatt-uuid-variants.md`) no longer requires a jailbroken
+iPhone or LTK extraction. Any BLE adapter acting as a peripheral toward the iPhone can
+accept the Just Works pairing exchange and relay traffic in plaintext to the real device.
 
 ---
 
