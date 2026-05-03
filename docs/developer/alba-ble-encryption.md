@@ -403,6 +403,70 @@ including the Geberit protocol frames.
 
 ---
 
+## BLE link-layer security model — confirmed findings (2026-05-03)
+
+### Geberit does NOT use BLE Secure Connections
+
+Standard BLE Secure Connections (LESC) would mean:
+- ECDH P-256 key exchange during pairing
+- PIN as passkey for MITM protection
+- AES-128-CCM encrypts the link layer
+- Long Term Key (LTK) stored for future sessions
+
+**Geberit's actual implementation is different.** Zero SMP (Security Manager Protocol)
+frames appear in any capture — including `GeberitFirstconnection.pcapng`, which was taken
+during a fresh app install when the PIN was entered for the first time. LESC pairing
+_requires_ SMP PDUs on L2CAP CID 0x0006; their complete absence rules out standard
+BLE pairing.
+
+Verified by counting L2CAP CIDs across the fresh-install pcapng:
+
+```
+ATT  (CID 0x0004):  683 frames
+SIG  (CID 0x0005):   12 frames
+SMP  (CID 0x0006):    0 frames  ← no pairing/LESC
+```
+
+### What Geberit actually does
+
+```
+BLE link layer:       unencrypted (no BLE Secure Connections pairing)
+Application layer:    Geberit's own AES-CTR with device-specific key
+PIN role:             used only at Geberit app layer (proc 0x44/0x64 key exchange)
+                      — the BLE Security Manager never sees the PIN
+```
+
+The device accepts BLE connections without any link-layer pairing ceremony. The
+"encryption" we are fighting is entirely at the Geberit application layer, on top of
+a plaintext BLE connection.
+
+### Security comparison
+
+| Property | Standard BLE (LESC) | Geberit Alba |
+|----------|--------------------|----|
+| Link-layer encryption | AES-128-CCM | None |
+| OTA sniffability | Opaque without LTK | Fully readable |
+| Key exchange | ECDH P-256 (standard) | Proprietary proc 0x44/0x64 |
+| PIN scope | MITM protection for pairing | App-layer only |
+| Session key source | ECDH shared secret | Device-specific static key + counter |
+
+Geberit's implementation is **weaker** than standard LESC: any sniffer dongle sees
+all GATT frames over the air. The only protection is the application-layer AES-CTR
+with a key that was burned into the device at manufacturing and never transmitted.
+
+### Caveat — definitive proof requires OTA sniff
+
+All existing captures are from the HCI layer (Android BTSnoop, iPhone PacketLogger).
+The Bluetooth controller decrypts link-layer frames before passing them to the host,
+so HCI captures are always readable regardless of whether link-layer encryption is
+active. The zero SMP frame count is strong evidence but not a mathematical proof.
+
+**An nRF52840 Dongle OTA sniff is the only definitive test.** If the over-the-air
+frames are readable → link layer confirmed unencrypted. If opaque → some form of
+link-layer protection is in use (though absence of SMP makes this very unlikely).
+
+---
+
 ## Analysis tool
 
 `tools/alba-decrypt-analysis.py` — tries all orderings and SAP suffix variants,
