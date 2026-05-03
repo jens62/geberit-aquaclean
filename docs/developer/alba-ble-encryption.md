@@ -465,6 +465,60 @@ active. The zero SMP frame count is strong evidence but not a mathematical proof
 frames are readable → link layer confirmed unencrypted. If opaque → some form of
 link-layer protection is in use (though absence of SMP makes this very unlikely).
 
+### Open question — can the Alba be paired at all?
+
+The Geberit Home App never initiates BLE pairing. That does not necessarily mean the
+device is incapable of pairing — the app may be deliberately skipping link-layer
+security in favour of its own application-layer scheme. Testing whether the Alba
+responds to a pairing request (independently of the app) would resolve this.
+
+Also note: the 4-digit PIN is only used at the **Geberit application layer**
+(proc 0x44/0x64 key exchange), several steps into the protocol after GATT discovery.
+BLE connection and GATT discovery succeed without any PIN involvement — confirmed by
+the bridge connecting to an Alba and reaching the "unsupported GATT profile" detection
+point without any PIN prompt or pairing attempt.
+
+**How to test — no code required:**
+
+> Make sure the Geberit Home App is fully closed (not just backgrounded) before
+> running the test — the Alba only accepts one BLE connection at a time.
+
+**Android** (easiest — phone already at hand):
+1. Force-close the Geberit Home App
+2. Settings → Connected devices → Pair new device
+3. Wait for the Alba to appear → tap it → observe
+
+**Linux** (e.g. Raspberry Pi):
+```
+bluetoothctl
+scan on
+pair <BLE address>
+```
+
+**Windows**: Settings → Bluetooth & devices → Add device → Bluetooth → wait for
+the Alba → click it
+
+**macOS**: System Settings → Bluetooth → wait for the Alba → click Connect
+
+Note for iOS: Apple's Bluetooth settings only shows devices that advertise themselves
+as pairable; the Alba may not appear there at all.
+
+**Three possible outcomes:**
+
+| Outcome | What the device does | Interpretation |
+|---------|---------------------|----------------|
+| **1** — Pairing Failed (code 0x05) | Explicitly rejects the SMP Pairing Request | nRF52 firmware configured to refuse all pairing; link-layer security is intentionally absent by Geberit's design |
+| **2** — Just Works (silent pair) | Negotiates LTK, no PIN asked | Link-layer encryption *is* available but the Geberit app deliberately skips it; a bridge could pair and get AES-128-CCM for free |
+| **3** — Passkey Entry (PIN dialog) | Asks for the 4-digit PIN | Surprising given zero SMP frames, but would mean the device supports LESC and the app never triggers it |
+
+**What outcomes 2 or 3 would add to the cryptanalysis:**
+
+If the device accepts pairing, the bridge could establish link-layer AES-128-CCM
+encryption, making OTA sniffing by third parties much harder. Additionally, for
+outcome 3, the LTK derivation during pairing involves the device's internal keys —
+if the same key material is used for the application-layer AES-CTR, the pairing
+ceremony could be a side channel into the static device key.
+
 ---
 
 ## Analysis tool
