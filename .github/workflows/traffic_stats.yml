@@ -1,0 +1,105 @@
+name: GitHub Traffic Stats
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # daily at 01:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch and merge traffic data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Pull existing accumulated data from traffic-stats branch.
+          # Falls back to an empty structure on the very first run.
+          git fetch origin traffic-stats 2>/dev/null || true
+          git show origin/traffic-stats:traffic.json > /tmp/existing.json 2>/dev/null \
+            || echo '{"views":{},"clones":{},"referrers":{},"paths":{}}' \
+                 > /tmp/existing.json
+
+          python3 << 'PYEOF'
+          import json, os, urllib.request
+          from datetime import datetime, timezone
+
+          token = os.environ['GH_TOKEN']
+          repo  = os.environ['REPO']
+          hdrs  = {
+              'Authorization': f'Bearer {token}',
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+          }
+
+          def fetch(path):
+              req = urllib.request.Request(
+                  f'https://api.github.com/repos/{repo}/traffic/{path}',
+                  headers=hdrs)
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          with open('/tmp/existing.json') as f:
+              data = json.load(f)
+
+          views     = data.get('views', {})
+          clones    = data.get('clones', {})
+          referrers = data.get('referrers', {})
+          paths     = data.get('paths', {})
+
+          # Views and clones: deduplicate by date — API returns 14-day windows,
+          # so consecutive daily runs overlap. Merging by date key is correct.
+          for day in fetch('views')['views']:
+              d = day['timestamp'][:10]
+              views[d] = {'count': day['count'], 'uniques': day['uniques']}
+
+          for day in fetch('clones')['clones']:
+              d = day['timestamp'][:10]
+              clones[d] = {'count': day['count'], 'uniques': day['uniques']}
+
+          # Referrers and paths: API returns top-10 for the last 14 days with no
+          # daily breakdown. Store one snapshot per fetch-date.
+          today = datetime.now(timezone.utc).date().isoformat()
+          referrers[today] = fetch('popular/referrers')
+          paths[today]     = fetch('popular/paths')
+
+          result = {
+              'views':     dict(sorted(views.items())),
+              'clones':    dict(sorted(clones.items())),
+              'referrers': dict(sorted(referrers.items())),
+              'paths':     dict(sorted(paths.items())),
+          }
+          with open('/tmp/updated.json', 'w') as f:
+              json.dump(result, f, indent=2)
+
+          print(f"views: {len(views)} days | clones: {len(clones)} days | "
+                f"referrers: {len(referrers)} snapshots | paths: {len(paths)} snapshots")
+          PYEOF
+
+      - name: Commit to traffic-stats branch
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          # Switch to traffic-stats, creating it as an orphan on first run.
+          if git ls-remote --exit-code origin traffic-stats >/dev/null 2>&1; then
+            git checkout traffic-stats
+          else
+            git checkout --orphan traffic-stats
+            git rm -rf . --quiet || true
+          fi
+
+          cp /tmp/updated.json traffic.json
+          git add traffic.json
+          git diff --staged --quiet \
+            || git commit -m "chore: traffic stats $(date -u +%Y-%m-%d)"
+          git push origin traffic-stats
