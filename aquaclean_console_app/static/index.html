@@ -1091,6 +1091,7 @@
       if (state.esphome_api_connection !== undefined) updateEsp32ApiConnection(state.esphome_api_connection);
       // Identification arrives via SSE state after the first on-demand poll.
       if (state.sap_number != null) onIdentification(state);
+      if (state.ble_dis_info != null) onBleDisInfo(state);
       if (state.initial_operation_date != null) onInitialOpDate(state);
       if (state.firmware_versions != null) onFirmwareVersions(state.firmware_versions);
       if (state.firmware_update != null) onFirmwareUpdate(state.firmware_update);
@@ -1292,6 +1293,16 @@
       set('info-serial',      data.serial_number);
       set('info-sap',         data.sap_number);
       set('info-production',  data.production_date);
+    }
+    function onBleDisInfo(state) {
+      // Fallback: show BLE DIS model/serial only when Geberit protocol hasn't provided them.
+      // Overwritten silently by onIdentification when Geberit data arrives (standard devices).
+      const dis = state.ble_dis_info;
+      if (!dis) return;
+      if (state.serial_number == null && dis.serial_number)
+        set('info-serial',      '(BLE) ' + dis.serial_number);
+      if (state.description == null && dis.model_number)
+        set('info-description', '(BLE) ' + dis.model_number);
     }
 
     function clearInitialOpDate() {

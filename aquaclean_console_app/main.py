@@ -570,6 +570,7 @@ class ServiceMode:
             "profile_settings": None,       # dict {id: value} from GetStoredProfileSetting (proc 0x53)
             "common_settings": None,        # dict {id: value} from GetStoredCommonSetting (proc 0x51)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
+            "ble_dis_info": None,           # BLE Device Information Service (0x180a) data; populated on every connect
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -694,6 +695,7 @@ class ServiceMode:
                 self.device_state["last_connect_ms"] = int((time.perf_counter() - t0) * 1000)
                 self.device_state["last_esphome_api_ms"] = bluetooth_connector.last_esphome_api_ms
                 self.device_state["last_ble_ms"] = bluetooth_connector.last_ble_ms
+                self.device_state["ble_dis_info"] = bluetooth_connector.ble_dis_info
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
@@ -2434,6 +2436,7 @@ class ApiMode:
             self.service.device_state["last_esphome_api_ms"] = connector.last_esphome_api_ms
             self.service.device_state["last_ble_ms"] = connector.last_ble_ms
             self.service.device_state["ble_rssi"] = connector.rssi
+            self.service.device_state["ble_dis_info"] = connector.ble_dis_info
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
