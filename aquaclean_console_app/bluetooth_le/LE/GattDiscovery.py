@@ -48,6 +48,9 @@ class GattProfile:
     notify_uuids: List[str] = field(default_factory=list)
     """Notify characteristic UUIDs (populated for non-standard devices)."""
 
+    dis_info: dict | None = None
+    """BLE Device Information Service (0x180a) data read after connect, if available."""
+
 
 def _has_write(char) -> bool:
     """Return True if the characteristic supports writing.

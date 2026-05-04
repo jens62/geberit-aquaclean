@@ -19,7 +19,7 @@
     },
     "abort": {
       "already_configured": "Denne AquaClean-enhed er allerede konfigureret.",
-      "unsupported_device": "Geberit-enheden ({mac}) oprettede forbindelse via Bluetooth, men bruger en GATT-profil, der endnu ikke understøttes af denne integration.\n\nÅbn et GitHub-issue på https://github.com/jens62/geberit-aquaclean/issues/new og inkludér følgende:\n\n- **GATT-service UUID:** {svc_uuid}\n- **Skrivekarakteristik:** {write_uuids}\n- **Notifikationskarakteristik:** {notify_uuids}\n- **Firmwareversion** (fra Geberit Home App → ⓘ)\n- **Nøjagtig enhedsbeskrivelse** (fra Geberit Home App → ⓘ)\n\nIntegrationsversion: {version}"
+      "unsupported_device": "Geberit-enheden ({mac}) oprettede forbindelse via Bluetooth, men bruger en GATT-profil, der endnu ikke understøttes af denne integration.\n\n**Enhedsmodel:** {device_model}  \n**Serienummer:** {device_serial}\n\nÅbn et GitHub-issue på https://github.com/jens62/geberit-aquaclean/issues/new og inkludér følgende:\n\n- **GATT-service UUID:** {svc_uuid}\n- **Skrivekarakteristik:** {write_uuids}\n- **Notifikationskarakteristik:** {notify_uuids}\n- **Firmwareversion** (fra Geberit Home App → ⓘ)\n\nIntegrationsversion: {version}"
     }
   },
   "options": {

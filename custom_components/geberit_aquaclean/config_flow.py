@@ -79,9 +79,10 @@ async def _test_connection(
         await client.connect_ble_only(device_id)
         _LOGGER.info("[AquaClean] Config flow: connection test succeeded")
         profile = connector.get_gatt_profile()
+        profile.dis_info = connector.ble_dis_info
         _LOGGER.info(
-            "[AquaClean] Config flow: GATT profile — is_standard=%s svc_uuid=%s",
-            profile.is_standard, profile.svc_uuid,
+            "[AquaClean] Config flow: GATT profile — is_standard=%s svc_uuid=%s dis=%s",
+            profile.is_standard, profile.svc_uuid, profile.dis_info,
         )
         return profile
     except Exception:
@@ -91,11 +92,12 @@ async def _test_connection(
         # connector.client is still set and we can read the GATT services to
         # return a useful unsupported_device abort instead of cannot_connect.
         profile = connector.get_gatt_profile()
+        profile.dis_info = connector.ble_dis_info
         if not profile.is_standard:
             _LOGGER.info(
                 "[AquaClean] Config flow: BLE connected but non-standard GATT profile "
-                "detected after init failure — svc=%s write=%s notify=%s",
-                profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                "detected after init failure — svc=%s write=%s notify=%s dis=%s",
+                profile.svc_uuid, profile.write_uuids, profile.notify_uuids, profile.dis_info,
             )
             return profile
         raise
@@ -155,10 +157,12 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
                 else:
                     if profile is not None and not profile.is_standard:
+                        dis = profile.dis_info or {}
                         _LOGGER.warning(
                             "[AquaClean] Config flow: unsupported GATT profile — "
-                            "svc=%s write=%s notify=%s",
+                            "svc=%s write=%s notify=%s model=%s serial=%s",
                             profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                            dis.get("model_number", ""), dis.get("serial_number", ""),
                         )
                         return self.async_abort(
                             reason="unsupported_device",
@@ -167,6 +171,8 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "svc_uuid": profile.svc_uuid,
                                 "write_uuids": ", ".join(profile.write_uuids) or "—",
                                 "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                                "device_model": dis.get("model_number") or "—",
+                                "device_serial": dis.get("serial_number") or "—",
                                 "version": version,
                             },
                         )
@@ -234,10 +240,12 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                     errors["base"] = "cannot_connect"
                 else:
                     if profile is not None and not profile.is_standard:
+                        dis = profile.dis_info or {}
                         _LOGGER.warning(
                             "[AquaClean] Options flow: unsupported GATT profile — "
-                            "svc=%s write=%s notify=%s",
+                            "svc=%s write=%s notify=%s model=%s serial=%s",
                             profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                            dis.get("model_number", ""), dis.get("serial_number", ""),
                         )
                         return self.async_abort(
                             reason="unsupported_device",
@@ -246,6 +254,8 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                                 "svc_uuid": profile.svc_uuid,
                                 "write_uuids": ", ".join(profile.write_uuids) or "—",
                                 "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                                "device_model": dis.get("model_number") or "—",
+                                "device_serial": dis.get("serial_number") or "—",
                                 "version": version,
                             },
                         )

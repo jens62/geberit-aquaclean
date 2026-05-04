@@ -473,6 +473,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "max_wifi_rssi": self._wifi_rssi_max,
                 # Transport type
                 "transport": self._transport,
+                # BLE Device Information Service (0x180a) — available on all Geberit devices
+                "ble_dis_info": connector.ble_dis_info,
             }
 
         except UpdateFailed:
