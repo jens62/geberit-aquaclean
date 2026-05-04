@@ -57,6 +57,37 @@ class BtSigDataService(Service):
         return b"\x00"
 
 
+class DeviceInformationService(Service):
+    """Standard BLE Device Information Service (0x180a) with placeholder Alba values."""
+
+    def __init__(self):
+        super().__init__("0000180a-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("00002a29-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def manufacturer_name(self, options):
+        return b"Geberit"
+
+    @characteristic("00002a24-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def model_number(self, options):
+        return b"AcAlba"
+
+    @characteristic("00002a25-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def serial_number(self, options):
+        return b"SB-MOCK-00000001"
+
+    @characteristic("00002a26-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def firmware_revision(self, options):
+        return b"RS3.0 TS89"
+
+    @characteristic("00002a27-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def hardware_revision(self, options):
+        return b"1.0"
+
+    @characteristic("00002a28-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def software_revision(self, options):
+        return b"3.0.89"
+
+
 # --- Helper functions --------------------------------------------------------
 async def find_first_adapter_path_and_address(bus):
     """
@@ -149,11 +180,13 @@ async def main():
     # Instantiate services
     geb_service = GeberitServiceA()
     sig_service = BtSigDataService()
+    dis_service = DeviceInformationService()
 
     # Register services under unique DBus paths
     try:
         await geb_service.register(bus, "/org/bluez/example/geberit", adapter_wrapper)
         await sig_service.register(bus, "/org/bluez/example/sigdata", adapter_wrapper)
+        await dis_service.register(bus, "/org/bluez/example/dis", adapter_wrapper)
     except Exception as e:
         print("Service registration failed:", e)
         # continue to attempt advertisement or cleanup
@@ -204,6 +237,7 @@ async def main():
         # Unregister services (Service.unregister() takes no arguments)
         await safe_call(geb_service, "unregister")
         await safe_call(sig_service, "unregister")
+        await safe_call(dis_service, "unregister")
 
         # Disconnect bus (synchronous in dbus-next — do not await)
         try:

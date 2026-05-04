@@ -76,6 +76,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._esphome_max_free_block_key: int | None = None  # aioesphomeapi entity key for max free block sensor
         self._hass = hass  # Home Assistant instance (HACS integration only); None = standalone bridge
         self._subscribed_characteristics: list = []  # BleakGATTCharacteristic objects registered via start_notify()
+        self.ble_dis_info: dict | None = None  # BLE Device Information Service data (0x180a), read after connect
 
 
     async def connect_async(self, device_id):
@@ -481,7 +482,78 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         return name
 
 
+    def _apply_gatt_variant_overrides(self):
+        """Detect Variant A GATT profile and override UUID instance attributes.
+
+        If the connected device does not expose the standard Geberit service UUID
+        (3334429d-...) but does expose the 559eb/0000fd48 data channel, shadow the
+        class-level UUID constants with the device's actual write/notify UUIDs so
+        that all subsequent send_message() and _list_services() calls use them.
+        No-op when the standard profile is present or no candidate is found.
+        """
+        from aquaclean_console_app.bluetooth_le.LE.GattDiscovery import classify_services
+        try:
+            profile = classify_services(self.client.services)
+        except Exception:
+            return
+        if profile.is_standard or not profile.write_uuids or not profile.notify_uuids:
+            return
+        write_uuid = UUID(profile.write_uuids[0])
+        notify_uuid = UUID(profile.notify_uuids[0])
+        self.SERVICE_UUID = UUID(profile.svc_uuid)
+        self.BULK_CHAR_BULK_WRITE_0_UUID = write_uuid
+        self.BULK_CHAR_BULK_WRITE_1_UUID = write_uuid
+        self.BULK_CHAR_BULK_WRITE_2_UUID = write_uuid
+        self.BULK_CHAR_BULK_WRITE_3_UUID = write_uuid
+        self.BULK_CHAR_BULK_READ_0_UUID = notify_uuid
+        self.BULK_CHAR_BULK_READ_1_UUID = notify_uuid
+        self.BULK_CHAR_BULK_READ_2_UUID = notify_uuid
+        self.BULK_CHAR_BULK_READ_3_UUID = notify_uuid
+        logger.info(
+            f"Variant A GATT profile detected — overriding UUIDs: "
+            f"svc={profile.svc_uuid} write={profile.write_uuids[0]} notify={profile.notify_uuids[0]}"
+        )
+
+    async def _read_device_information(self):
+        """Read BLE Device Information Service (0x180a) characteristics.
+
+        Stores results in self.ble_dis_info as a dict with keys like
+        manufacturer_name, model_number, serial_number, firmware_revision.
+        Silently skips on any error (DIS absent or read_gatt_char not supported).
+        """
+        DIS_SVC = "0000180a-0000-1000-8000-00805f9b34fb"
+        CHARS = {
+            "00002a29-0000-1000-8000-00805f9b34fb": "manufacturer_name",
+            "00002a24-0000-1000-8000-00805f9b34fb": "model_number",
+            "00002a25-0000-1000-8000-00805f9b34fb": "serial_number",
+            "00002a26-0000-1000-8000-00805f9b34fb": "firmware_revision",
+            "00002a27-0000-1000-8000-00805f9b34fb": "hardware_revision",
+            "00002a28-0000-1000-8000-00805f9b34fb": "software_revision",
+        }
+        try:
+            dis_svc = next(
+                (s for s in self.client.services if s.uuid.lower() == DIS_SVC), None
+            )
+            if dis_svc is None:
+                return
+            info = {}
+            for char in dis_svc.characteristics:
+                key = CHARS.get(char.uuid.lower())
+                if key:
+                    try:
+                        raw = await self.client.read_gatt_char(char)
+                        info[key] = raw.decode("utf-8", errors="replace").strip("\x00").strip()
+                    except Exception as e:
+                        logger.debug(f"DIS read {char.uuid} failed: {e}")
+            if info:
+                self.ble_dis_info = info
+                logger.debug(f"BLE DIS: {info}")
+        except Exception as e:
+            logger.debug(f"_read_device_information failed: {e}")
+
     async def _post_connect(self):
+        self._apply_gatt_variant_overrides()
+        await self._read_device_information()
         self.read_characteristics = {
             self.BULK_CHAR_BULK_READ_0_UUID: self.data_received,
             self.BULK_CHAR_BULK_READ_1_UUID: self.data_received,
