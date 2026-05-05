@@ -11,7 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
-
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -164,17 +164,27 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
                             dis.get("model_number", ""), dis.get("serial_number", ""),
                         )
+                        _placeholders = {
+                            "mac": data[CONF_DEVICE_ID],
+                            "svc_uuid": profile.svc_uuid,
+                            "write_uuids": ", ".join(profile.write_uuids) or "—",
+                            "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                            "device_model": dis.get("model_number") or "—",
+                            "device_serial": dis.get("serial_number") or "—",
+                            "version": version,
+                        }
+                        async_create_issue(
+                            self.hass,
+                            DOMAIN,
+                            f"unsupported_device_{data[CONF_DEVICE_ID].replace(':', '').lower()}",
+                            is_fixable=False,
+                            severity=IssueSeverity.WARNING,
+                            translation_key="unsupported_device",
+                            translation_placeholders=_placeholders,
+                        )
                         return self.async_abort(
                             reason="unsupported_device",
-                            description_placeholders={
-                                "mac": data[CONF_DEVICE_ID],
-                                "svc_uuid": profile.svc_uuid,
-                                "write_uuids": ", ".join(profile.write_uuids) or "—",
-                                "notify_uuids": ", ".join(profile.notify_uuids) or "—",
-                                "device_model": dis.get("model_number") or "—",
-                                "device_serial": dis.get("serial_number") or "—",
-                                "version": version,
-                            },
+                            description_placeholders=_placeholders,
                         )
                     await self.async_set_unique_id(data[CONF_DEVICE_ID])
                     self._abort_if_unique_id_configured()
@@ -247,17 +257,27 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                             profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
                             dis.get("model_number", ""), dis.get("serial_number", ""),
                         )
+                        _placeholders = {
+                            "mac": data[CONF_DEVICE_ID],
+                            "svc_uuid": profile.svc_uuid,
+                            "write_uuids": ", ".join(profile.write_uuids) or "—",
+                            "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                            "device_model": dis.get("model_number") or "—",
+                            "device_serial": dis.get("serial_number") or "—",
+                            "version": version,
+                        }
+                        async_create_issue(
+                            self.hass,
+                            DOMAIN,
+                            f"unsupported_device_{data[CONF_DEVICE_ID].replace(':', '').lower()}",
+                            is_fixable=False,
+                            severity=IssueSeverity.WARNING,
+                            translation_key="unsupported_device",
+                            translation_placeholders=_placeholders,
+                        )
                         return self.async_abort(
                             reason="unsupported_device",
-                            description_placeholders={
-                                "mac": data[CONF_DEVICE_ID],
-                                "svc_uuid": profile.svc_uuid,
-                                "write_uuids": ", ".join(profile.write_uuids) or "—",
-                                "notify_uuids": ", ".join(profile.notify_uuids) or "—",
-                                "device_model": dis.get("model_number") or "—",
-                                "device_serial": dis.get("serial_number") or "—",
-                                "version": version,
-                            },
+                            description_placeholders=_placeholders,
                         )
                     return self.async_create_entry(title="", data=data)
 

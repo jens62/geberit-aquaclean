@@ -22,6 +22,12 @@
       "unsupported_device": "Geberit-laite ({mac}) muodosti yhteyden Bluetoothin kautta, mutta käyttää GATT-profiilia, jota tämä integraatio ei vielä tue.\n\n**Laitteen malli:** {device_model}  \n**Sarjanumero:** {device_serial}\n\nAvaa GitHub-ongelma osoitteessa https://github.com/jens62/geberit-aquaclean/issues/new ja sisällytä seuraavat tiedot:\n\n- **GATT-palvelun UUID:** {svc_uuid}\n- **Kirjoitusominaisuus:** {write_uuids}\n- **Ilmoitusominaisuus:** {notify_uuids}\n- **Laiteohjelmiston versio** (Geberit Home -sovelluksesta → ⓘ)\n\nIntegration versio: {version}"
     }
   },
+  "issues": {
+    "unsupported_device": {
+      "title": "Ei-tuettu Geberit-laitevariantti",
+      "description": "Geberit-laite **{mac}** muodosti yhteyden Bluetoothin kautta, mutta käyttää GATT-profiilia, jota ei vielä tueta.\n\n**Laitteen malli:** {device_model}  \n**Sarjanumero:** {device_serial}\n\nAvaa GitHub-ongelma osoitteessa https://github.com/jens62/geberit-aquaclean/issues/new ja sisällytä:\n\n- **GATT-palvelun UUID:** {svc_uuid}\n- **Kirjoitusominaisuus:** {write_uuids}\n- **Ilmoitusominaisuus:** {notify_uuids}\n- **Laiteohjelmiston versio** (Geberit Home -sovelluksesta → ⓘ)\n\nIntegration versio: {version}"
+    }
+  },
   "options": {
     "step": {
       "init": {
