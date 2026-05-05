@@ -537,6 +537,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 (s for s in self.client.services if s.uuid.lower() == DIS_SVC), None
             )
             if dis_svc is None:
+                logger.debug("_read_device_information: DIS service (0x180a) not found in GATT services")
                 return
             info = {}
             for char in dis_svc.characteristics:
@@ -546,12 +547,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         raw = await self.client.read_gatt_char(char)
                         info[key] = raw.decode("utf-8", errors="replace").strip("\x00").strip()
                     except Exception as e:
-                        logger.debug(f"DIS read {char.uuid} failed: {e}")
+                        logger.warning(f"DIS read {char.uuid} ({key}) failed: {e}")
             if info:
                 self.ble_dis_info = info
                 logger.debug(f"BLE DIS: {info}")
+            else:
+                logger.warning("_read_device_information: DIS service found but all char reads failed")
         except Exception as e:
-            logger.debug(f"_read_device_information failed: {e}")
+            logger.warning(f"_read_device_information failed: {e}")
 
     async def _post_connect(self):
         self._apply_gatt_variant_overrides()
