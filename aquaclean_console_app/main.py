@@ -28,7 +28,7 @@ from aquaclean_console_app.RestApiService                                       
 from aquaclean_console_app.myEvent                                                  import myEvent
 from aquaclean_console_app.aquaclean_utils                                          import utils
 from aquaclean_console_app.ErrorCodes                                               import (
-    ErrorCode, ErrorManager, E0000, E0001, E0002, E0003, E1001, E1002,
+    ErrorCode, ErrorManager, E0000, E0001, E0002, E0003, E0010, E1001, E1002,
     E2001, E2002, E2003, E2004, E2005,
     E3002, E3003, E4001, E4002, E4003, E7002, E7004
 )
@@ -407,6 +407,15 @@ class ManualReconnectRequested(Exception):
     pass
 
 
+class UnsupportedDeviceError(Exception):
+    """Raised when a non-standard Geberit GATT profile variant is detected post-connect.
+
+    The string representation contains "Model (Serial)" for display in the web UI
+    and MQTT. Polling is stopped permanently when this is raised.
+    """
+    pass
+
+
 class NullMqttService:
     """Drop-in replacement for MqttService when MQTT is disabled."""
     def __init__(self):
@@ -696,6 +705,15 @@ class ServiceMode:
                 self.device_state["last_esphome_api_ms"] = bluetooth_connector.last_esphome_api_ms
                 self.device_state["last_ble_ms"] = bluetooth_connector.last_ble_ms
                 self.device_state["ble_dis_info"] = bluetooth_connector.ble_dis_info
+                if bluetooth_connector.ble_dis_info:
+                    await self.mqtt_service.send_data_async(
+                        f"{self.mqttConfig['topic']}/peripheralDevice/information/BleDeviceInfo",
+                        json.dumps(bluetooth_connector.ble_dis_info),
+                    )
+                if bluetooth_connector.is_variant_a:
+                    model  = (bluetooth_connector.ble_dis_info or {}).get("model_number", "unknown model")
+                    serial = (bluetooth_connector.ble_dis_info or {}).get("serial_number", "unknown serial")
+                    raise UnsupportedDeviceError(f"{model} ({serial})")
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
@@ -831,6 +849,13 @@ class ServiceMode:
                 if shutdown_requested:
                     break  # exit recovery loop
 
+            except UnsupportedDeviceError as e:
+                msg = f"Unsupported device: {e}"
+                logger.warning(msg)
+                await self.mqtt_service.send_data_async(
+                    f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0010, msg))
+                await self._set_ble_status("error", error_msg=msg, error_code=E0010.code, error_hint=E0010.hint)
+                break  # stop recovery loop — polling permanently disabled for unsupported devices
             except ManualReconnectRequested:
                 logger.info("Manual reconnect requested — reconnecting...")
                 await self.mqtt_service.send_data_async(
@@ -2437,6 +2462,15 @@ class ApiMode:
             self.service.device_state["last_ble_ms"] = connector.last_ble_ms
             self.service.device_state["ble_rssi"] = connector.rssi
             self.service.device_state["ble_dis_info"] = connector.ble_dis_info
+            if connector.ble_dis_info:
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/peripheralDevice/information/BleDeviceInfo",
+                    json.dumps(connector.ble_dis_info),
+                )
+            if connector.is_variant_a:
+                model  = (connector.ble_dis_info or {}).get("model_number", "unknown model")
+                serial = (connector.ble_dis_info or {}).get("serial_number", "unknown serial")
+                raise UnsupportedDeviceError(f"{model} ({serial})")
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
@@ -2484,7 +2518,9 @@ class ApiMode:
                 pass
             if _exc is not None:
                 # Map exception to error code so webapp shows the right status.
-                if isinstance(_exc, BLEPeripheralTimeoutError):
+                if isinstance(_exc, UnsupportedDeviceError):
+                    _ec = E0010
+                elif isinstance(_exc, BLEPeripheralTimeoutError):
                     _ec = E0003
                 elif isinstance(_exc, ESPHomeConnectionError):
                     _ec = E1001 if _exc.timeout else E1002
@@ -2699,6 +2735,11 @@ class ApiMode:
                     transport=_od_transport,
                 )
                 await self._publish_performance_stats_mqtt()
+            except UnsupportedDeviceError as e:
+                logger.warning(f"Unsupported device detected — stopping poll loop: {e}")
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/centralDevice/error", ErrorManager.to_json(E0010, str(e)))
+                return  # stop polling permanently; bridge stays alive for REST access
             except ESPHomeConnectionError as e:
                 error_code_obj = E1001 if e.timeout else E1002
                 _consecutive_poll_failures += 1

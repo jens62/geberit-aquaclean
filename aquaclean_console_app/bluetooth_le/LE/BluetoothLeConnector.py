@@ -77,6 +77,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._hass = hass  # Home Assistant instance (HACS integration only); None = standalone bridge
         self._subscribed_characteristics: list = []  # BleakGATTCharacteristic objects registered via start_notify()
         self.ble_dis_info: dict | None = None  # BLE Device Information Service data (0x180a), read after connect
+        self.is_variant_a: bool = False       # True when a non-standard Geberit GATT profile is detected
 
 
     async def connect_async(self, device_id):
@@ -509,6 +510,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.BULK_CHAR_BULK_READ_1_UUID = notify_uuid
         self.BULK_CHAR_BULK_READ_2_UUID = notify_uuid
         self.BULK_CHAR_BULK_READ_3_UUID = notify_uuid
+        self.is_variant_a = True
         logger.info(
             f"Variant A GATT profile detected — overriding UUIDs: "
             f"svc={profile.svc_uuid} write={profile.write_uuids[0]} notify={profile.notify_uuids[0]}"
@@ -554,6 +556,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     async def _post_connect(self):
         self._apply_gatt_variant_overrides()
         await self._read_device_information()
+        if self.is_variant_a:
+            # Unsupported protocol variant — skip GATT setup and SubscribeNotifications.
+            # The caller checks is_variant_a and raises UnsupportedDeviceError immediately.
+            return
         self.read_characteristics = {
             self.BULK_CHAR_BULK_READ_0_UUID: self.data_received,
             self.BULK_CHAR_BULK_READ_1_UUID: self.data_received,
