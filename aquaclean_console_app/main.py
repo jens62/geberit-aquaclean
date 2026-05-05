@@ -713,6 +713,10 @@ class ServiceMode:
                 if bluetooth_connector.is_variant_a:
                     model  = (bluetooth_connector.ble_dis_info or {}).get("model_number", "unknown model")
                     serial = (bluetooth_connector.ble_dis_info or {}).get("serial_number", "unknown serial")
+                    _t = self.mqttConfig['topic']
+                    for _sub in ("SapNumber", "SerialNumber", "ProductionDate", "Description"):
+                        await self.mqtt_service.send_data_async(
+                            f"{_t}/peripheralDevice/information/Identification/{_sub}", "")
                     raise UnsupportedDeviceError(f"{model} ({serial})")
                 await self._set_ble_status(
                     "connected",
@@ -2470,6 +2474,9 @@ class ApiMode:
             if connector.is_variant_a:
                 model  = (connector.ble_dis_info or {}).get("model_number", "unknown model")
                 serial = (connector.ble_dis_info or {}).get("serial_number", "unknown serial")
+                for _sub in ("SapNumber", "SerialNumber", "ProductionDate", "Description"):
+                    await self.service.mqtt_service.send_data_async(
+                        f"{topic}/peripheralDevice/information/Identification/{_sub}", "")
                 raise UnsupportedDeviceError(f"{model} ({serial})")
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
