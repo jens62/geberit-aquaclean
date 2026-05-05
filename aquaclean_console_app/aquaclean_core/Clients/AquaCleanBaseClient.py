@@ -151,6 +151,8 @@ class AquaCleanBaseClient:
     async def connect_async(self, device_id):
         logger.trace(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
         await self.bluetooth_le_connector.connect_async(device_id)
+        if self.bluetooth_le_connector.is_variant_a:
+            return  # unsupported variant — skip info-frame wait; caller checks is_variant_a
         await self.frame_service.wait_for_info_frames_async()
 
 
