@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Enter the BLE MAC address of your AquaClean device. Optionally configure an ESPHome Bluetooth proxy if the device is not in range of this machine.",
+        "description": "Version {version}\n\nEnter the BLE MAC address of your AquaClean device. Leave the ESPHome Proxy Host empty to use a local Bluetooth adapter on this machine. A connection test is performed on save — allow up to 30 seconds.",
         "data": {
           "device_id": "BLE MAC Address (XX:XX:XX:XX:XX:XX)",
           "esphome_host": "ESPHome Proxy Host (optional)",
@@ -14,7 +14,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings. Also make sure no other device (e.g. the Geberit Home App or the standalone bridge) is connected via Bluetooth — the AquaClean only advertises when no BLE connection is active."
+      "cannot_connect": "Cannot connect to the AquaClean device. Check the MAC address, ensure the device is powered on and in BLE range, and verify any ESPHome proxy settings. Also make sure no other device (e.g. the Geberit Home App or the standalone bridge) is connected via Bluetooth — the AquaClean only advertises when no BLE connection is active.",
+      "no_bluetooth": "No local Bluetooth adapter found on this machine. An ESPHome Bluetooth proxy host is required."
     },
     "abort": {
       "already_configured": "This AquaClean device is already configured.",
@@ -31,7 +32,7 @@
     "step": {
       "init": {
         "title": "Geberit AquaClean — Settings",
-        "description": "Update the device address or proxy settings. A connection test is performed on save.",
+        "description": "Version {version}\n\nUpdate the device address or proxy settings. A live connection test is performed on save — allow up to 30 seconds.",
         "data": {
           "device_id": "BLE MAC Address (XX:XX:XX:XX:XX:XX)",
           "esphome_host": "ESPHome Proxy Host (leave empty for local BLE)",
