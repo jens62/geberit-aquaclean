@@ -34,6 +34,8 @@ class AquaCleanClient(IAquaCleanClient):
         """Standard connection and info fetching. No infinite loop here."""
         logger.trace(f"Connecting to {device_id}...")
         await self.base_client.connect_async(device_id)
+        if self.base_client.bluetooth_le_connector.is_variant_a:
+            return  # unsupported variant — skip subscribe; caller checks is_variant_a
         await self.base_client.subscribe_notifications_async()
 
         # Fetch Identification Data
@@ -57,6 +59,8 @@ class AquaCleanClient(IAquaCleanClient):
         query_ms captures only the actual data request, not eager pre-fetches."""
         logger.trace(f"BLE-only connect to {device_id}...")
         await self.base_client.connect_async(device_id)
+        if self.base_client.bluetooth_le_connector.is_variant_a:
+            return  # unsupported variant — skip subscribe; caller checks is_variant_a
         await self.base_client.subscribe_notifications_async()
 
     async def start_polling(self, interval: float, on_poll_done=None):
