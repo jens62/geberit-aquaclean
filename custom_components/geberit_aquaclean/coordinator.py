@@ -307,8 +307,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 model  = (connector.ble_dis_info or {}).get("model_number", "—")
                 serial = (connector.ble_dis_info or {}).get("serial_number", "—")
                 try:
-                    from importlib.metadata import version as _pkg_version
-                    _ver = _pkg_version("geberit-aquaclean")
+                    import json as _json, pathlib as _pathlib
+                    _manifest = _json.loads(
+                        (_pathlib.Path(__file__).parent / "manifest.json").read_text()
+                    )
+                    _ver = _manifest.get("version", "unknown")
                 except Exception:
                     _ver = "unknown"
                 async_create_issue(

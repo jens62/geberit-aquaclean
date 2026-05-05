@@ -413,7 +413,22 @@ class UnsupportedDeviceError(Exception):
     The string representation contains "Model (Serial)" for display in the web UI
     and MQTT. Polling is stopped permanently when this is raised.
     """
-    pass
+    def __init__(self, message, svc_uuid=None, write_uuid=None, notify_uuid=None):
+        super().__init__(message)
+        self.svc_uuid = svc_uuid
+        self.write_uuid = write_uuid
+        self.notify_uuid = notify_uuid
+
+    def hint(self):
+        base = E0010.hint
+        if self.svc_uuid:
+            base += (
+                f"\n\nGATT UUIDs detected:"
+                f"\n• Service: {self.svc_uuid}"
+                f"\n• Write:   {self.write_uuid}"
+                f"\n• Notify:  {self.notify_uuid}"
+            )
+        return base
 
 
 class NullMqttService:
@@ -717,7 +732,12 @@ class ServiceMode:
                     for _sub in ("SapNumber", "SerialNumber", "ProductionDate", "Description"):
                         await self.mqtt_service.send_data_async(
                             f"{_t}/peripheralDevice/information/Identification/{_sub}", "")
-                    raise UnsupportedDeviceError(f"{model} ({serial})")
+                    raise UnsupportedDeviceError(
+                        f"{model} ({serial})",
+                        svc_uuid=str(bluetooth_connector.SERVICE_UUID),
+                        write_uuid=str(bluetooth_connector.BULK_CHAR_BULK_WRITE_0_UUID),
+                        notify_uuid=str(bluetooth_connector.BULK_CHAR_BULK_READ_0_UUID),
+                    )
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
@@ -858,7 +878,7 @@ class ServiceMode:
                 logger.warning(msg)
                 await self.mqtt_service.send_data_async(
                     f"{self.mqttConfig['topic']}/centralDevice/error", ErrorManager.to_json(E0010, msg))
-                await self._set_ble_status("error", error_msg=msg, error_code=E0010.code, error_hint=E0010.hint)
+                await self._set_ble_status("error", error_msg=msg, error_code=E0010.code, error_hint=e.hint())
                 break  # stop recovery loop — polling permanently disabled for unsupported devices
             except ManualReconnectRequested:
                 logger.info("Manual reconnect requested — reconnecting...")
@@ -2477,7 +2497,12 @@ class ApiMode:
                 for _sub in ("SapNumber", "SerialNumber", "ProductionDate", "Description"):
                     await self.service.mqtt_service.send_data_async(
                         f"{topic}/peripheralDevice/information/Identification/{_sub}", "")
-                raise UnsupportedDeviceError(f"{model} ({serial})")
+                raise UnsupportedDeviceError(
+                    f"{model} ({serial})",
+                    svc_uuid=str(connector.SERVICE_UUID),
+                    write_uuid=str(connector.BULK_CHAR_BULK_WRITE_0_UUID),
+                    notify_uuid=str(connector.BULK_CHAR_BULK_READ_0_UUID),
+                )
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
@@ -2539,7 +2564,8 @@ class ApiMode:
                     _ec = E0003
                 else:
                     _ec = E7002
-                await self.service._set_ble_status("error", error_msg=str(_exc) or _ec.message, error_code=_ec.code, error_hint=_ec.hint.replace("<BT-ADDRESS>", device_id))
+                _hint = _exc.hint() if isinstance(_exc, UnsupportedDeviceError) else _ec.hint.replace("<BT-ADDRESS>", device_id)
+                await self.service._set_ble_status("error", error_msg=str(_exc) or _ec.message, error_code=_ec.code, error_hint=_hint)
             else:
                 await self.service._set_ble_status("disconnected")
                 if esphome_host:
