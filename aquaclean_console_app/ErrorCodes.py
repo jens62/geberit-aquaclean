@@ -107,6 +107,12 @@ E0009 = ErrorCode(
          "Power cycle the Geberit AquaClean. "
          "If using an ESP32 proxy, also power cycle it.",
 )
+E0010 = ErrorCode(
+    "E0010", "Unsupported Geberit device variant", "BLE", "ERROR",
+    hint="This device connected over BLE but uses a protocol variant not yet supported. "
+         "Please open an issue at https://github.com/jens62/geberit-aquaclean/issues "
+         "and include the device model, serial number, and firmware version.",
+)
 
 # ============================================================================
 # E1xxx - ESP32 Proxy Errors
