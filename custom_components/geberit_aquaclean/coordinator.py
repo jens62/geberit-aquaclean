@@ -105,6 +105,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # None when the local BLE path is used or after a TCP-level failure.
         self._esphome_connector = None   # BluetoothLeConnector
         self._esphome_client = None      # AquaCleanClient paired with _esphome_connector
+        self._unsupported_device = False  # set permanently when a Variant A / unknown GATT device is detected
 
         super().__init__(
             hass,
@@ -189,6 +190,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
+        if self._unsupported_device:
+            from aquaclean_console_app.ErrorCodes import E0010
+            raise UpdateFailed(f"{E0010.code} — {E0010.message}")
+
         # When circuit is open: extra sleep before probing to reduce ESP32 hammering.
         # Sleep happens OUTSIDE the lock so a pending command can still run during backoff.
         if self._circuit_open and self._esphome_host:
@@ -257,7 +262,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             ESPHomeConnectionError,
             ESPHomeDeviceNotFoundError,
         )
-        from aquaclean_console_app.ErrorCodes import E0002, E0003, E0004, E1002, E7002
+        from aquaclean_console_app.ErrorCodes import E0002, E0003, E0004, E0010, E1002, E7002
 
         poll_start = datetime.now(timezone.utc)
 
@@ -296,6 +301,15 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 # All Phase-1 exceptions represent a connection-level failure → E0003.
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
+
+            if connector.is_variant_a:
+                model  = (connector.ble_dis_info or {}).get("model_number", "unknown model")
+                serial = (connector.ble_dis_info or {}).get("serial_number", "unknown serial")
+                self._unsupported_device = True
+                self._set_error(E0010)
+                raise UpdateFailed(
+                    f"{E0010.code} — {E0010.message}: {model} ({serial})"
+                )
 
             connect_ms = int((time.perf_counter() - t_connect) * 1000)
             self._last_connect_ms = connect_ms
