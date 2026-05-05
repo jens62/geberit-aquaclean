@@ -22,6 +22,12 @@
       "unsupported_device": "L'appareil Geberit ({mac}) s'est connecté avec succès via Bluetooth, mais utilise un profil GATT non encore pris en charge par cette intégration.\n\n**Modèle d'appareil :** {device_model}  \n**Numéro de série :** {device_serial}\n\nVeuillez ouvrir un ticket GitHub sur https://github.com/jens62/geberit-aquaclean/issues/new en incluant les informations suivantes :\n\n- **UUID du service GATT :** {svc_uuid}\n- **Caractéristique d'écriture :** {write_uuids}\n- **Caractéristique de notification :** {notify_uuids}\n- **Version du firmware** (dans l'application Geberit Home → ⓘ)\n\nVersion de l'intégration : {version}"
     }
   },
+  "issues": {
+    "unsupported_device": {
+      "title": "Variante d'appareil Geberit non prise en charge",
+      "description": "L'appareil Geberit **{mac}** s'est connecté via Bluetooth, mais utilise un profil GATT non encore pris en charge.\n\n**Modèle d'appareil :** {device_model}  \n**Numéro de série :** {device_serial}\n\nVeuillez ouvrir un ticket GitHub sur https://github.com/jens62/geberit-aquaclean/issues/new en incluant :\n\n- **UUID du service GATT :** {svc_uuid}\n- **Caractéristique d'écriture :** {write_uuids}\n- **Caractéristique de notification :** {notify_uuids}\n- **Version du firmware** (dans l'application Geberit Home → ⓘ)\n\nVersion de l'intégration : {version}"
+    }
+  },
   "options": {
     "step": {
       "init": {

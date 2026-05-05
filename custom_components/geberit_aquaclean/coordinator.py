@@ -8,6 +8,7 @@ import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import BLEPeripheralTimeoutError
@@ -303,8 +304,30 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
 
             if connector.is_variant_a:
-                model  = (connector.ble_dis_info or {}).get("model_number", "unknown model")
-                serial = (connector.ble_dis_info or {}).get("serial_number", "unknown serial")
+                model  = (connector.ble_dis_info or {}).get("model_number", "—")
+                serial = (connector.ble_dis_info or {}).get("serial_number", "—")
+                try:
+                    from importlib.metadata import version as _pkg_version
+                    _ver = _pkg_version("geberit-aquaclean")
+                except Exception:
+                    _ver = "unknown"
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    f"unsupported_device_{self._device_id.replace(':', '').lower()}",
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="unsupported_device",
+                    translation_placeholders={
+                        "mac": self._device_id,
+                        "svc_uuid": str(connector.SERVICE_UUID),
+                        "write_uuids": str(connector.BULK_CHAR_BULK_WRITE_0_UUID),
+                        "notify_uuids": str(connector.BULK_CHAR_BULK_READ_0_UUID),
+                        "device_model": model,
+                        "device_serial": serial,
+                        "version": _ver,
+                    },
+                )
                 self._unsupported_device = True
                 self._set_error(E0010)
                 raise UpdateFailed(
