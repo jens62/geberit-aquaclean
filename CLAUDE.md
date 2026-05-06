@@ -1321,6 +1321,53 @@ Some code comment labels are misleading. Actual semantics confirmed from toilet-
 - Purpose unknown — possibly "session ready" / "enable remote control"
 - The lid opening 17s after Proc(0x55) in the Stuhlgang log was coincidental: the device's own proximity sensor opened the lid independently; the app just happened to connect while the user was approaching
 
+### BLE advertising payload — SensorState and device identification
+
+The device broadcasts BLE advertisements while idle (not connected). The
+manufacturer-specific advertising payload is 8 bytes or 11 bytes:
+
+| Offset | Content |
+|--------|---------|
+| 0 | State byte A — `0xAA` means `IsEmergencyConnectPermitted` |
+| 1 | (firmware version chars, part of RS number) |
+| 2 | State byte B — `0x01` means `IsButtonPressed` |
+| 3–7 | Article number characters (e.g. `828.86`) |
+| 8–10 | RS firmware number chars (11-byte variant only) |
+
+`SensorState` is a 2-bit byte derived from this payload:
+
+| Bit | Property | Source |
+|-----|----------|--------|
+| 0 | `IsButtonPressed` | `data[2] == 1` |
+| 1 | `IsEmergencyConnectPermitted` | `data[0] == 0xAA` |
+
+**`SensorState` does NOT carry proximity or approach detection.** There are only these
+two bits. The complete list of hardware node types includes `0x0A` (user detection) and
+`0x0B` (proximity sensor), but neither exposes real-time state over BLE — they drive
+device-side behaviour (lid opening) entirely in hardware without reporting to the app.
+
+### Proximity / approach detection — NOT available over BLE
+
+**There is no BLE-accessible state for "someone is nearby."**
+
+- The proximity sensor (hardware node `0x0B`) triggers automatic lid opening when a user
+  approaches within the configured range. This is a local hardware decision — no BLE event
+  is emitted, no GATT characteristic changes, no advertisement flag is set.
+- `AC_STATUS_USER_PRESENT` (SPL index 0) is **seat detection only**, not approach detection.
+  Description: *"Indicates whether the shower may be started. This is mostly the case when
+  a user is sitting on the toilet."*
+- The Geberit app does not read approach state either — there is no DpId for it.
+
+**What CAN be observed as an indirect signal:**
+- `userIsSitting` (SPL index 0) transitions `false → true` when someone sits down — but
+  that is after the person is already seated, not while approaching.
+- The lid opening event is device-autonomous and not reflected in any polled state.
+
+**Lid sensor range** is a configurable stored common setting (5 levels, AcMeraComfort
+exclusive). It controls how close a user must approach before the lid opens automatically.
+The common setting ID is not yet confirmed — it requires probing via `GetStoredCommonSetting`
+(proc 0x51) or a BLE capture of the app changing this setting.
+
 ### Quick-win new commands (zero new protocol code needed)
 All unexposed Commands enum entries just need REST endpoints + web UI wiring.
 No new protocol code needed — `SetCommandAsync(Commands.X)` already handles all of them.
