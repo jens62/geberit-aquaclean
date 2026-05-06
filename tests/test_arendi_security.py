@@ -321,7 +321,7 @@ async def test_tampered_frame_dropped():
     print("PASS test_tampered_frame_dropped")
 
 
-async def test_wrong_preshared_key_fails_cmac():
+async def test_wrong_auth_key_fails_cmac():
     """
     If the server uses a different key for CMAC verification, KE_REQ fails.
     This confirms the CMAC check actually gates on the correct key.
@@ -375,7 +375,7 @@ async def test_wrong_preshared_key_fails_cmac():
     exc = server_task.exception() if server_task.done() else None
     assert exc is not None and "CMAC FAILED" in str(exc), \
         f"Expected server CMAC failure, got: {exc}"
-    print("PASS test_wrong_preshared_key_fails_cmac")
+    print("PASS test_wrong_auth_key_fails_cmac")
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +389,7 @@ async def _run_all():
         test_server_to_client_encryption,
         test_round_trip_multiple_frames,
         test_tampered_frame_dropped,
-        test_wrong_preshared_key_fails_cmac,
+        test_wrong_auth_key_fails_cmac,
     ]
     passed = 0
     failed = 0

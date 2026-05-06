@@ -11,7 +11,7 @@ Then verifies:
     expected_cmac = AES-CMAC(auth_key, client_pubkey)
     assert expected_cmac == client_cmac
 
-A passing CMAC check proves that aquacleanBridgeId is the preshared key the
+A passing CMAC check proves that aquacleanBridgeId is the auth key the
 real Alba device at E4:85:01:CD:6B:04 (kstr) uses.  No DH private key is
 needed — only the cleartext handshake fields.
 
@@ -220,7 +220,7 @@ def _extract_sessions(pcapng: pathlib.Path) -> list[dict]:
 
 def _verify_cmac(session: dict) -> bool:
     """
-    Verify the client's CMAC from a captured KE_REQ against our preshared key.
+    Verify the client's CMAC from a captured KE_REQ against our auth key.
 
         auth_key      = HKDF(aquacleanBridgeId, salt=nonce1, length=16)
         expected_cmac = AES-CMAC(auth_key, client_pubkey)
@@ -260,7 +260,7 @@ def test_cmac_all_sessions_4x_capture():
     """
     Every session in GeberitConnect4xViaApp.pcapng passes the CMAC check.
 
-    A passing CMAC confirms aquacleanBridgeId is the correct preshared key
+    A passing CMAC confirms aquacleanBridgeId is the correct auth key
     used by the kstr Alba device (E4:85:01:CD:6B:04).
     """
     pcapng = PCAPNG_DIR / "GeberitConnect4xViaApp.pcapng"

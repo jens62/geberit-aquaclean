@@ -1,7 +1,7 @@
 # Alba BLE Encryption — Protocol Analysis
 
 This document records all findings on the Geberit AquaClean Alba BLE encryption protocol,
-including a correction of an earlier misidentification and the confirmed presharedKey.
+including a correction of an earlier misidentification and the confirmed authKey.
 
 ---
 
@@ -24,7 +24,7 @@ including a correction of an earlier misidentification and the confirmed preshar
 
 ### What was previously believed
 
-Prior analysis (before APK decompilation) identified the 34-byte payload at timestamp
+Prior analysis (before APK analysis) identified the 34-byte payload at timestamp
 `22:17:52.900` as an *encrypted GetDeviceIdentification response*.  A 5-session
 known-plaintext attack was conducted against that payload.  The attack failed to find
 a repeating keystream, leading to the hypothesis that the encryption uses a
@@ -32,8 +32,8 @@ a repeating keystream, leading to the hypothesis that the encryption uses a
 
 ### What is actually happening
 
-After extracting and decompiling `Geberit.ComLib.Bluetooth.dll` from the Android APK
-(`local-assets/geberit-home/decompiled/ComLib.Bluetooth/`), the correct interpretation is:
+After extracting `Geberit.ComLib.Bluetooth.dll` from the Android APK
+(`local-assets/geberit-home/sources/ComLib.Bluetooth/`), the correct interpretation is:
 
 **The frame at `22:17:52.900` is the Encrypt Parameter Response (Security frame type
 `0x11`) — it contains `nonce1 (16 bytes) + nonce2 (16 bytes)` sent in CLEARTEXT.**
@@ -95,13 +95,13 @@ Geberit outer layer; the Arendi Security layer sits inside.
                   ← The frame previously misidentified as "ciphertext"
 
 5. App computes:
-     auth_key = HKDF-SHA256(IKM=presharedKey, salt=nonce1, info=b"", length=16)
+     auth_key = HKDF-SHA256(IKM=authKey, salt=nonce1, info=b"", length=16)
      client_CMAC = AES-CMAC(key=auth_key, message=client_public)
 
 6. App → Device:  [ctrl:00 len:33] + Security(type=0x12,
                     client_public[32], client_CMAC[16], keyset_id[1])
                                                                     Key Exchange Request
-7. Device verifies CMAC (same HKDF computation with device's presharedKey)
+7. Device verifies CMAC (same HKDF computation with device's authKey)
 8. Device computes:
      server_CMAC = AES-CMAC(key=auth_key, message=server_public)
 9. Device → App:  [ctrl:00 len:31] + Security(type=0x13,
@@ -135,15 +135,15 @@ The AES-CTR implementation in `aj.a` (inner class):
 
 ---
 
-## Confirmed presharedKey
+## Confirmed authKey
 
 ### Extraction method
 
 `Geberit.ComLib.Bluetooth.dll` was extracted from the Android APK:
 `local-assets/geberit-home/app/src/main/config.armeabi_v7a.apk/lib/armeabi-v7a/libassemblies.armeabi-v7a.blob.so`
-(XABA Xamarin Assembly Store, LZ4-compressed DLLs) and decompiled with `ilspycmd`.
+(XABA Xamarin Assembly Store, LZ4-compressed DLLs) and analyzed with `ilspycmd`.
 
-The presharedKey is stored in class `am`, field `t`, as a FieldRVA byte array literal
+The authKey is stored in class `am`, field `t`, as a FieldRVA byte array literal
 in the IL:
 
 ```il
@@ -154,7 +154,7 @@ in the IL:
 )
 ```
 
-The `Security` static constructor initializes `Security::v` (the presharedKey) from
+The `Security` static constructor initializes `Security::v` (the authKey) from
 this FieldRVA via `RuntimeHelpers.InitializeArray`.
 
 ### Verification
@@ -163,31 +163,31 @@ this FieldRVA via `RuntimeHelpers.InitializeArray`.
 
 | Parameter | Value |
 |-----------|-------|
-| presharedKey | `D1 21 8A 89 F6 0A C2 94 2D 44 20 79 74 50 97 BE` |
+| authKey | `D1 21 8A 89 F6 0A C2 94 2D 44 20 79 74 50 97 BE` |
 | nonce1 (from frame 0x11) | `4E C6 4F 99 EA BE 40 BC 6C 86 24 1C 2D F3 A6 1A` |
 | client_public (from frame 0x12) | `70 3A AA 56 ED 5E 8A 1B 69 7E BB 0E BA DE 38 8F` `AE 59 81 15 69 5A 30 CC 3C F7 4D C8 56 01 19 3F` |
-| auth_key = HKDF(presharedKey, nonce1, [], 16) | `00 8C 88 95 78 81 37 C0 27 03 3D F9 0B 33 0C A6` |
+| auth_key = HKDF(authKey, nonce1, [], 16) | `00 8C 88 95 78 81 37 C0 27 03 3D F9 0B 33 0C A6` |
 | computed CMAC = AES-CMAC(auth_key, client_public) | `AE F9 0A 14 0E 12 3C 1D 4B 50 08 80 CB 9E 70 54` |
 | expected CMAC (from captured frame 0x12) | `AE F9 0A 14 0E 12 3C 1D 4B 50 08 80 CB 9E 70 54` |
 
 **MATCH confirmed.** The device accepted the key exchange request (replied with 0x13),
 which independently confirms the CMAC was valid.
 
-Verification script: `/tmp/verify_preshared_key.py`
+Verification script: `/tmp/verify_auth_key.py`
 
-### What the presharedKey enables
+### What the authKey enables
 
-The presharedKey is used **only for mutual authentication** during the key exchange
+The authKey is used **only for mutual authentication** during the key exchange
 (steps 5–7 above).  It does not directly encrypt session data.
 
-With the presharedKey, the bridge can:
+With the authKey, the bridge can:
 1. Complete the Security.cs handshake and authenticate with the Alba device
 2. Establish its own DH session keys (bridge generates its own keypair)
 3. Send and receive encrypted procs (GetDeviceIdentification, GetSystemParameterList, etc.)
 
-Without the presharedKey, the handshake CMAC check fails and the device closes the connection.
+Without the authKey, the handshake CMAC check fails and the device closes the connection.
 
-### What the presharedKey alone does NOT enable
+### What the authKey alone does NOT enable
 
 - Passive decryption of previously captured sessions (session keys are ephemeral DH)
 - Decryption of captures from `connect.txt`, `connect+actions.txt`, kstr captures, etc.
@@ -285,7 +285,7 @@ SMP  (CID 0x0006):    0 frames  ← no pairing/LESC
 
 ```
 BLE link layer:       unencrypted (no BLE Secure Connections pairing)
-Application layer:    Arendi Security.cs DH + AES-CTR with presharedKey authentication
+Application layer:    Arendi Security.cs DH + AES-CTR with authKey authentication
 PIN role:             used only at Geberit app layer (proc 0x44 key exchange)
                       — the BLE Security Manager never sees the PIN
 ```
@@ -299,7 +299,7 @@ session encryption is entirely at the Geberit/Arendi application layer.
 |----------|--------------------|----|
 | Link-layer encryption | AES-128-CCM | None |
 | OTA sniffability | Opaque without LTK | Fully readable |
-| Key exchange | ECDH P-256 (standard) | Arendi Curve25519 DH + presharedKey auth |
+| Key exchange | ECDH P-256 (standard) | Arendi Curve25519 DH + authKey |
 | PIN scope | MITM protection for pairing | App-layer only (proc 0x44) |
 | Session key | ECDH shared secret | Curve25519 DH shared secret + HKDF |
 
@@ -351,7 +351,7 @@ the nRF52 UICR. The DRK is provisioned at manufacturing; not accessible without 
 
 ## Path forward: implementing Alba support in the bridge
 
-With the presharedKey confirmed, all cryptographic components are available:
+With the authKey confirmed, all cryptographic components are available:
 
 | Component | Status |
 |-----------|--------|
@@ -359,7 +359,7 @@ With the presharedKey confirmed, all cryptographic components are available:
 | HKDF-SHA256 | Python: `cryptography.hazmat.primitives.hashes.HKDF` |
 | AES-CMAC | Python: `cryptography.hazmat.primitives.cmac.CMAC` |
 | AES-CTR | Python: `cryptography.hazmat.primitives.ciphers.Cipher` |
-| presharedKey | `D1 21 8A 89 F6 0A C2 94 2D 44 20 79 74 50 97 BE` |
+| authKey | `D1 21 8A 89 F6 0A C2 94 2D 44 20 79 74 50 97 BE` |
 
 **Implementation plan:**
 1. Implement `AriendiSecurity` class in Python mirroring `Security.cs`:
@@ -382,12 +382,12 @@ for the Alba.  The first successful connection will reveal the proc structure.
 
 | File | Description |
 |------|-------------|
-| `local-assets/geberit-home/decompiled/ComLib.Bluetooth/Geberit.ComLib.Bluetooth.Crypto/Security.cs` | Client-side security protocol |
-| `local-assets/geberit-home/decompiled/ComLib.Bluetooth/Geberit.ComLib.Bluetooth.Crypto/SecurityServer.cs` | Device-side security protocol |
-| `local-assets/geberit-home/decompiled/ComLib.Bluetooth/aj.cs` | AES-CTR cipher + AES-CMAC |
-| `local-assets/geberit-home/decompiled/ComLib.Bluetooth/ak.cs` | Curve25519 ECDH |
-| `local-assets/geberit-home/decompiled/ComLib.Bluetooth/al.cs` | HKDF-SHA256 |
-| `local-assets/geberit-home/decompiled/ComLib.Bluetooth/am.cs` | Contains FieldRVA for presharedKey |
-| `/tmp/security_il.txt` | Full IL of Geberit.ComLib.Bluetooth.dll (presharedKey at line 123904) |
+| `local-assets/geberit-home/sources/ComLib.Bluetooth/Geberit.ComLib.Bluetooth.Crypto/Security.cs` | Client-side security protocol |
+| `local-assets/geberit-home/sources/ComLib.Bluetooth/Geberit.ComLib.Bluetooth.Crypto/SecurityServer.cs` | Device-side security protocol |
+| `local-assets/geberit-home/sources/ComLib.Bluetooth/aj.cs` | AES-CTR cipher + AES-CMAC |
+| `local-assets/geberit-home/sources/ComLib.Bluetooth/ak.cs` | Curve25519 ECDH |
+| `local-assets/geberit-home/sources/ComLib.Bluetooth/al.cs` | HKDF-SHA256 |
+| `local-assets/geberit-home/sources/ComLib.Bluetooth/am.cs` | Contains FieldRVA for authKey |
+| `/tmp/security_il.txt` | Full IL of Geberit.ComLib.Bluetooth.dll (authKey at line 123904) |
 | `tools/alba-decrypt-analysis.py` | Earlier analysis tool (now superseded) |
-| `/tmp/verify_preshared_key.py` | Python CMAC verification script |
+| `/tmp/verify_auth_key.py` | Python CMAC verification script |

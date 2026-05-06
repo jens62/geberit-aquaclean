@@ -274,7 +274,7 @@ No BLE hardware required. Runs on any machine with the project venv.
 | `test_server_to_client_encryption` | Server encrypts; client decrypts to original plaintext |
 | `test_round_trip_multiple_frames` | 5 frames in each direction all decrypt correctly |
 | `test_tampered_frame_dropped` | A byte-flipped frame is rejected by the CRC check |
-| `test_wrong_preshared_key_fails_cmac` | Wrong key causes KE_REQ CMAC verification to fail |
+| `test_wrong_auth_key_fails_cmac` | Wrong key causes KE_REQ CMAC verification to fail |
 
 ### How to run
 
@@ -293,7 +293,7 @@ PASS test_client_to_server_encryption
 PASS test_server_to_client_encryption
 PASS test_round_trip_multiple_frames
 PASS test_tampered_frame_dropped
-PASS test_wrong_preshared_key_fails_cmac
+PASS test_wrong_auth_key_fails_cmac
 
 6 passed, 0 failed
 ```

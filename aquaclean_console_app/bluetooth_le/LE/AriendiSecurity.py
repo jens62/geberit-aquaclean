@@ -19,7 +19,7 @@ Security frame types above HDLC:
     0x20  Encrypted data    (both directions: type + AES-CTR ciphertext)
 
 Key derivation:
-    auth_key   = HKDF-SHA256(ikm=preshared_key, salt=nonce1, info=b'', length=16)
+    auth_key   = HKDF-SHA256(ikm=device_auth_secret, salt=nonce1, info=b'', length=16)
     client_CMAC = AES-CMAC(auth_key, client_public)
     shared     = X25519(our_private, peer_public)
     key_mat    = HKDF-SHA256(ikm=shared, salt=nonce1, info=b'', length=32)
