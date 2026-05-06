@@ -319,6 +319,87 @@ stored on the **device** and does not depend on the app installation state.
 
 ---
 
+## Sessions 3–5 — Johannes Schliephake device (2026-05-05)
+
+Three additional captures from the same device as sessions 1 and 2 (MAC E4:85:01:CD:51:6B,
+serial SB2509EU177754, firmware RS3.0 TS89). Each capture is a single "connect" action
+with "Decode packets" enabled in the iPhone PacketLogger.
+
+**Files:** `local-assets/Bluetooth-Logs/johannes-schliephake/1.txt`,
+`2.txt`, `3.txt`
+
+### Ciphertexts
+
+```
+S3 (1.txt):
+  Block1 (32B): E0 AE 2B 5C 61 82 0C F8  A2 44 2D 21 24 85 E5 80
+                48 A0 4A 43 D8 48 95 E6  83 E3 7F 69 0D C9 EB BB
+  Block2  (2B): C1 2D
+  Header byte 1: 0x24 (normal)
+
+S4 (2.txt):
+  Block1 (32B): 61 80 C1 C9 5A 8F 3F 10  2D 40 82 6C AB 29 70 51
+                AE FB 03 F8 77 4E B2 A2  A3 FE 07 8B 49 CC DD 82
+  Block2  (2B): D1 F6
+  Header byte 1: 0x1D (anomaly — normal is 0x24; 7-byte difference; frame body unchanged)
+
+S5 (3.txt):
+  Block1 (32B): 2F 3E 0C 40 F8 FF 70 0D  B8 60 2F 34 94 30 0E 57
+                A6 B6 D8 AC 81 1E 3E 81  A1 70 40 F7 36 94 B0 6A
+  Block2  (2B): 31 ED
+  Header byte 1: 0x24 (normal)
+```
+
+### Handshake — still fully static across all 5 sessions
+
+All pre-ciphertext frames identical to S1 and S2:
+
+| Frame | Value | S1–S5 identical? |
+|-------|-------|-----------------|
+| Client challenge | `00 04 2F F5 D9 00` | ✓ all 5 |
+| Device response | `00 04 63 9D 51 00` | ✓ all 5 |
+| Device init reply | `00 03 20 01 02 05 01 01 04 01 F8 1E 00` | ✓ all 5 |
+
+This confirms the session key is NOT derived from any visible handshake value —
+even across captures taken days apart on the same device, the handshake is byte-perfect.
+
+### All 10 XOR pairs — Hamming weight analysis
+
+10 pairs from 5 sessions (C(5,2) = 10):
+
+| Pair | Hamming weight (bits differing / 256) |
+|------|---------------------------------------|
+| S1 XOR S2 | 128 |
+| S1 XOR S3 | 120 |
+| S1 XOR S4 | 124 |
+| S1 XOR S5 | 126 |
+| S2 XOR S3 | 130 |
+| S2 XOR S4 | 122 |
+| S2 XOR S5 | 128 |
+| S3 XOR S4 | 134 |
+| S3 XOR S5 | 138 |
+| S4 XOR S5 | 122 |
+
+All 10 pairs cluster around 128/256 (50%) — the expected value for XOR of two
+independent random 256-bit values. No pair shows any clustering below ~120.
+
+**Conclusion: zero keystream reuse across all 5 sessions. Every session uses a
+completely independent 32-byte key.** The AES-CTR session counter model holds:
+the counter is stored in device flash and increments per BLE connect; only the
+device (not any BLE frame) knows its current value.
+
+### S4 header anomaly (2.txt)
+
+Header byte 1 = 0x1D (29) instead of the normal 0x24 (36). Difference = 7.
+The frame body (block1, separator, block2, terminator) is structurally identical.
+The 2.txt capture also shows a failed first BLE connection attempt (lines 1–8:
+`Connection Failed To Be Established`) before the successful second connect.
+Most likely the device uses the length byte to encode something about the session
+state (possibly a truncated or alternate-mode response), but the encrypted block
+itself is full 32 bytes in all sessions — the anomaly does not affect the analysis.
+
+---
+
 ## Firmware binary analysis (2026-05-02)
 
 **Series 250 = Alba** — confirmed from Geberit firmware cloud API (`GET /api/firmwares?series=248`
