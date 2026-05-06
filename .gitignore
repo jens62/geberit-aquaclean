@@ -3,10 +3,10 @@ readme.txt
 aiorun.py
 haggis/
 
-# Private reverse-engineering report — contains cryptographic material, must not be published
-docs/developer/alba-reverse-engineering-report.md
+# Private protocol analysis report — contains sensitive material, must not be published
+docs/developer/alba-protocol-analysis.md
 
-# Arendi Security capture parser — contains preshared key reference, must not be published
+# Arendi Security capture parser — contains sensitive material, must not be published
 tools/arendi-parse-capture.py
 
 # Claude Code configuration

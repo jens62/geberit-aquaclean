@@ -1,7 +1,7 @@
 # GATT UUID Variants — Non-Standard Geberit BLE Profiles
 
 **Analysis date:** 2026-04-24 (updated)
-**Status:** Variant A confirmed as AquaClean Alba. iPhone BLE captures analyzed — **encrypted application-layer protocol confirmed**. Alba support is not feasible with the current bridge approach; app reverse-engineering is legally questionable; a BLE MITM proxy is the remaining option but very high effort.
+**Status:** Variant A confirmed as AquaClean Alba. iPhone BLE captures analyzed — **encrypted application-layer protocol confirmed**. Alba support is not feasible with the current bridge approach; app binary analysis is legally questionable; a BLE MITM proxy is the remaining option but very high effort.
 
 ---
 
@@ -57,7 +57,7 @@ Full GATT table:
 | WRITE_1 | Unknown — possibly `559eb101-...` (unconfirmed) |
 
 **What is NOT yet known for Variant A (as of 2026-04-24):**
-- How to decode the encrypted data payloads — requires app reverse-engineering or a known encryption key
+- How to decode the encrypted data payloads — requires app binary analysis or a known encryption key
 - Which other Geberit models (beyond the confirmed Alba) use this profile
 
 **Confirmed for Variant A (2026-04-21):**
@@ -210,13 +210,13 @@ No. BLE link-layer encryption (derived from the PIN/Passkey via the Long-Term Ke
 
 The encrypted `00 0D`/`00 0E` frames are a separate application-layer encryption, implemented in the Geberit Home app itself, above GATT. Its key has nothing to do with the BLE PIN. Knowing the PIN would not help decrypt these frames.
 
-The application-layer key is likely either hardcoded in the Geberit Home app binary or derived during the `00 04 2F F5 D9 00` ↔ `00 04 63 9D 51 00` challenge-response handshake — both of which require app reverse-engineering to recover.
+The application-layer key is likely either hardcoded in the Geberit Home app binary or derived during the `00 04 2F F5 D9 00` ↔ `00 04 63 9D 51 00` challenge-response handshake — both of which require app binary analysis to recover.
 
 ### What would be needed to proceed
 
 To support the Alba in the bridge, one of the following is required:
 
-1. **Encryption key extraction** — requires reverse-engineering the Geberit Home iOS app (`.ipa` binary analysis) or the firmware on the device itself. Note: reverse-engineering a commercial app binary is likely prohibited by Geberit's Terms of Service and may violate applicable law (e.g. DMCA in the US, similar provisions in the EU). This option is not pursued in this project.
+1. **Encryption key extraction** — requires binary analysis of the Geberit Home iOS app (`.ipa`) or the firmware on the device itself. Note: binary analysis of a commercial app is likely prohibited by Geberit's Terms of Service and may violate applicable law (e.g. DMCA in the US, similar provisions in the EU). This option is not pursued in this project.
 2. **Protocol documentation** from Geberit (unlikely to be available)
 3. **Man-in-the-middle BLE proxy** (see below)
 
