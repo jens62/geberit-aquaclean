@@ -1,6 +1,6 @@
 # Capturing BLE Traffic Between the Geberit Home App and the Toilet
 
-Recording the Bluetooth Low Energy traffic between the Geberit Home App and an AquaClean toilet is the primary method for reverse-engineering device behavior: identifying unknown procedure codes, mapping parameter indices, and verifying protocol implementation.
+Recording the Bluetooth Low Energy traffic between the Geberit Home App and an AquaClean toilet is the primary method for analyzing device behavior: identifying unknown procedure codes, mapping parameter indices, and verifying protocol implementation.
 
 Two capture methods are available depending on which phone you have:
 

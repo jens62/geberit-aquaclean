@@ -489,7 +489,7 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 - **SQLite change log + raw data debug panel (standalone bridge + HACS).**
 
   **Goal:** log every raw value change from every Geberit procedure to disk, persistently, whether
-  or not the user is watching the web UI. Used for systematic reverse engineering of unknown
+  or not the user is watching the web UI. Used for systematic analysis of unknown
   parameters (SPL params 8–11, packed fields like the anal-shower 1280/1281 value, etc.).
 
   ### Scope: all procedures, not just GetSPL
@@ -541,7 +541,7 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
   **Annotation endpoint:** `POST /debug/annotate` with a free-text note writes a record into
   the `annotations` table with the current timestamp. This is the key feature for systematic
-  reverse engineering: write the annotation ("about to start shower, temp=3, pressure=2"),
+  protocol analysis: write the annotation ("about to start shower, temp=3, pressure=2"),
   perform the action, then query changes that occurred within N seconds of the annotation.
   Example query:
   ```sql
@@ -1233,7 +1233,7 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
 
 ### Two-layer protocol
 
-The code uses reverse-engineered C# enum codes, NOT the DpIds from `BLE_COMMAND_REFERENCE.md`.
+The code uses documented C# enum codes, NOT the DpIds from `BLE_COMMAND_REFERENCE.md`.
 The DpIds (e.g. 563 = anal shower) are Geberit's device-level data point IDs — useful as a
 conceptual reference for what the device supports, but not directly callable from the code.
 

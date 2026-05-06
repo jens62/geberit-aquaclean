@@ -1,7 +1,7 @@
 # Android BLE Log Format
 
 This document describes the Android `BTSNOOP_LOG_SUMMARY` file format as
-reverse-engineered from a Samsung Redmi Note 9 capture (2026-04-21), and
+derived from a Samsung Redmi Note 9 capture (2026-04-21), and
 explains how to use `tools/android-ble-analyze.py` to extract HCI packets
 from it.
 

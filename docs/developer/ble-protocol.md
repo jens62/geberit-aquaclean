@@ -347,7 +347,7 @@ echo with no structured data to extract.
 
 The thomas-bingel C# reference implementation
 ([github.com/thomas-bingel/geberit-aquaclean](https://github.com/thomas-bingel/geberit-aquaclean))
-is the closest known public reverse-engineering of the Geberit BLE protocol. The
+is the closest known public analysis of the Geberit BLE protocol. The
 aquaclean-bridge goes beyond it in the following areas — discovered independently
 through iPhone BLE traffic analysis and empirical testing.
 
@@ -411,7 +411,7 @@ from iPhone traffic logs. The bridge decodes positionally and documents this exp
 `tools/ble-decode.py` parses Xcode PacketLogger `.txt` exports.
 See `tools/ble-decode.md` for full usage documentation.
 
-For reverse-engineering a new procedure:
+For analyzing a new procedure:
 1. Capture iPhone traffic while performing the feature (PacketLogger + BT profile)
 2. Run `ble-decode.py session.txt --filter 0xNN --verbose` to see raw result bytes
 3. Use `--markdown --output session.md` for a full annotated session view

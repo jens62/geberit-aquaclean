@@ -74,7 +74,7 @@ names, command codes, and profile setting names.
 /Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --filter-status
 /Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --filter-status --decode-filter
 
-# Show Python implementation hints after each procedure (useful when reverse-engineering a new feature)
+# Show Python implementation hints after each procedure (useful when analyzing a new feature)
 /Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --impl
 /Users/jens/venv/bin/python local-assets/Bluetooth-Logs/ble-decode.py session.txt --filter 0x51 --impl
 ```
@@ -213,10 +213,10 @@ Response: N records of 5 bytes each: `[ID (1 byte)][value uint32 LE (4 bytes)]`
 
 ---
 
-## Workflow: reverse-engineer a new feature from a new log
+## Workflow: analyze a new feature from a new log
 
 **Step 1 — Capture**
-Open the iOS Geberit Home app, perform the feature you want to reverse-engineer
+Open the iOS Geberit Home app, perform the feature you want to analyze
 (e.g. change water hardness, read filter status, trigger descaling). Export the
 PacketLogger log.
 
