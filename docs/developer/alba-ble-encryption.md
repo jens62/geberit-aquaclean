@@ -377,6 +377,67 @@ for the Alba.  The first successful connection will reveal the proc structure.
 
 ---
 
+## Frame reassembly: Alba vs Mera Comfort
+
+The Mera Comfort and Alba use fundamentally different framing strategies.
+Understanding this explains why the Alba probe script (`tools/alba-ble20-probe.py`)
+needs no frame-assembly code of its own.
+
+### Mera Comfort — application-layer multi-frame assembly
+
+```
+BLE notification (20 bytes, fixed)
+  → FrameService: accumulate SINGLE / FIRST / CONS frames → complete message
+    → AquaCleanClient: parse procedure response
+```
+
+Each BLE notification carries exactly one 20-byte Geberit frame.  Long responses
+are split by the device into a FIRST frame followed by one or more CONS frames.
+`FrameService.py` tracks the expected CONS count and holds the partial message
+until all frames arrive, then delivers the assembled payload to `AquaCleanClient`.
+
+### Alba — transport-layer reassembly inside `AriendiSecurity`
+
+```
+BLE notification (variable length)
+  → AriendiSecurity._rx_buf: accumulate raw bytes until 0x00 delimiter
+    → complete COBS frame extracted
+      → COBS decode → HDLC strip → CRC-16 verify → AES-CTR decrypt
+        → data_received_handlers fires with complete, decrypted Ble20 message
+          → application code (probe script / future bridge client)
+```
+
+`AriendiSecurity` maintains `_rx_buf` (a `bytearray`) and `feed_att_bytes()`.
+Every BLE notification is appended to the buffer.  `_process_rx_buf()` then
+scans for `0x00` delimiters (COBS frame boundaries), extracts complete COBS
+frames one at a time, and decrypts each one.  Only after decryption does
+`data_received_handlers` fire — delivering one complete, decrypted Ble20
+application message per call.
+
+This means **by the time the probe script's `_on_data` callback fires, the
+message is already fully assembled and decrypted**.  No further reassembly is
+needed at the application layer.
+
+### Why individual Ble20 messages stay small
+
+The Ble20 protocol is also designed to avoid large multi-part responses.
+`DataPointInventory` sends one `0x02` InventoryData frame **per DpId** rather
+than batching all DpIds into a single large response.  Each read/write operation
+is similarly one request → one response.  This keeps individual Ble20 messages
+short enough that COBS-framed, AES-CTR-encrypted form fits comfortably within
+a single or small number of BLE notifications.
+
+### Summary
+
+| Aspect | Mera Comfort | Alba |
+|--------|-------------|------|
+| Assembly layer | Application (`FrameService.py`) | Transport (`AriendiSecurity._rx_buf`) |
+| Frame delimiter | Fixed 20-byte BLE packets + FIRST/CONS type bytes | `0x00` COBS boundary bytes |
+| What application code receives | Raw procedure bytes after FIRST+CONS assembly | Decrypted Ble20 message, fully assembled |
+| Application-layer multi-frame | Yes (FIRST + N×CONS per response) | No — one message per DpId operation |
+
+---
+
 ## Source files
 
 | File | Description |
