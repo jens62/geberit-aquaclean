@@ -80,9 +80,10 @@ async def _test_connection(
         _LOGGER.info("[AquaClean] Config flow: connection test succeeded")
         profile = connector.get_gatt_profile()
         profile.dis_info = connector.ble_dis_info
+        profile.arendi_handshake_done = connector.arendi_handshake_done
         _LOGGER.info(
-            "[AquaClean] Config flow: GATT profile — is_standard=%s svc_uuid=%s dis=%s",
-            profile.is_standard, profile.svc_uuid, profile.dis_info,
+            "[AquaClean] Config flow: GATT profile — is_standard=%s arendi_ok=%s svc_uuid=%s dis=%s",
+            profile.is_standard, profile.arendi_handshake_done, profile.svc_uuid, profile.dis_info,
         )
         return profile
     except Exception:
@@ -156,7 +157,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.exception("[AquaClean] Config flow: connection test failed")
                     errors["base"] = "cannot_connect"
                 else:
-                    if profile is not None and not profile.is_standard:
+                    if profile is not None and not profile.is_standard and not profile.arendi_handshake_done:
                         dis = profile.dis_info or {}
                         _LOGGER.warning(
                             "[AquaClean] Config flow: unsupported GATT profile — "
@@ -249,7 +250,7 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                     _LOGGER.exception("[AquaClean] Options flow: connection test failed")
                     errors["base"] = "cannot_connect"
                 else:
-                    if profile is not None and not profile.is_standard:
+                    if profile is not None and not profile.is_standard and not profile.arendi_handshake_done:
                         dis = profile.dis_info or {}
                         _LOGGER.warning(
                             "[AquaClean] Options flow: unsupported GATT profile — "

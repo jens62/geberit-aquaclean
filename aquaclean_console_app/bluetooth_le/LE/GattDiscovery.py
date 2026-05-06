@@ -51,6 +51,9 @@ class GattProfile:
     dis_info: dict | None = None
     """BLE Device Information Service (0x180a) data read after connect, if available."""
 
+    arendi_handshake_done: bool = False
+    """True when a Variant A (Alba) device completed the Arendi Security handshake."""
+
 
 def _has_write(char) -> bool:
     """Return True if the characteristic supports writing.

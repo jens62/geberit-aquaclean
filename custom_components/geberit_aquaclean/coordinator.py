@@ -303,7 +303,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._set_error(E0003)
                 raise UpdateFailed(f"{E0003.code} — {E0003.message}: {exc}") from exc
 
-            if connector.is_variant_a:
+            if connector.is_variant_a and not connector.arendi_handshake_done:
                 model  = (connector.ble_dis_info or {}).get("model_number", "—")
                 serial = (connector.ble_dis_info or {}).get("serial_number", "—")
                 try:
