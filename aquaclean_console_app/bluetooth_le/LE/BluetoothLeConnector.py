@@ -78,6 +78,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._subscribed_characteristics: list = []  # BleakGATTCharacteristic objects registered via start_notify()
         self.ble_dis_info: dict | None = None  # BLE Device Information Service data (0x180a), read after connect
         self.is_variant_a: bool = False       # True when a non-standard Geberit GATT profile is detected
+        self._arendi_security = None          # AriendiSecurity instance for Variant A (Alba)
+
+    @property
+    def arendi_handshake_done(self) -> bool:
+        return self._arendi_security is not None and self._arendi_security.handshake_done
 
 
     async def connect_async(self, device_id):
@@ -560,8 +565,21 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._apply_gatt_variant_overrides()
         await self._read_device_information()
         if self.is_variant_a:
-            # Unsupported protocol variant — skip GATT setup and SubscribeNotifications.
-            # The caller checks is_variant_a and raises UnsupportedDeviceError immediately.
+            from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import AriendiSecurity
+            self._arendi_security = AriendiSecurity()
+            self.read_characteristics = {
+                self.BULK_CHAR_BULK_READ_0_UUID: self.data_received,
+                self.BULK_CHAR_BULK_READ_1_UUID: self.data_received,
+                self.BULK_CHAR_BULK_READ_2_UUID: self.data_received,
+                self.BULK_CHAR_BULK_READ_3_UUID: self.data_received,
+            }
+            await self._list_services()
+            async def _raw_write(att_bytes: bytes):
+                await self.client.write_gatt_char(
+                    self.BULK_CHAR_BULK_WRITE_0_UUID, att_bytes, response=False
+                )
+            await self._arendi_security.perform_handshake(_raw_write)
+            self.connection_status_changed_handlers(self, True, self.device_address, self.device_name)
             return
         self.read_characteristics = {
             self.BULK_CHAR_BULK_READ_0_UUID: self.data_received,
@@ -612,7 +630,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.silly("BluetoothLeConnector: _on_data_received")
         logger.silly(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
 
-        await self.data_received_handlers.invoke_async(data)
+        if self._arendi_security is not None:
+            decrypted_list = self._arendi_security.feed_att_bytes(bytes(data))
+            for payload in decrypted_list:
+                await self.data_received_handlers.invoke_async(payload)
+        else:
+            await self.data_received_handlers.invoke_async(data)
 
 
     def _on_disconnected(self, client):
@@ -622,12 +645,13 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
     async def send_message(self, data):
         logger.silly(f"in function {utils.currentClassName()}.{utils.currentFuncName()} called by {utils.currentClassName(1)}.{utils.currentFuncName(1)}")
-        # 13:03:18:989	18.11.2024 13:03:18: Sending data to characteristic 3334429d-90f3-4c41-a02d-5cb3a13e0000 data: 700008000F000000000000000000000000000000
         logger.silly(f"Sending data to characteristic {self.BULK_CHAR_BULK_WRITE_0_UUID} data: {''.join(f'{b:02X}' for b in data)}")
-        # result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
-        result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
-
-        logger.silly(f"result: {result}")
+        if self._arendi_security is not None and self._arendi_security.handshake_done:
+            att_bytes = self._arendi_security.wrap_for_send(data)
+            await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, att_bytes, response=False)
+        else:
+            result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
+            logger.silly(f"result: {result}")
 
     async def send_message_cons(self, data):
         """Send a CONS frame to WRITE_1 (second BLE write characteristic)."""
@@ -729,6 +753,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # leaving the old subscription on the ESP32 until it expires.
         # See CLAUDE.md trap 12 / commit 0c6ba46.
 
+        # Reset Arendi Security state — fresh handshake required on every BLE connect.
+        self._arendi_security = None
+
         # Do NOT reset self._esphome_api or esphome_proxy_connected — TCP stays alive.
 
     async def disconnect(self):
@@ -779,6 +806,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             except Exception:
                 pass
             self._esphome_unsub_adv = None
+
+        # Reset Arendi Security state so the next connect gets a fresh handshake
+        self._arendi_security = None
 
         # Reset ESP32 proxy connection state
         if self.esphome_host:

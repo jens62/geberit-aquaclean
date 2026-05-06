@@ -34,9 +34,11 @@ class AquaCleanClient(IAquaCleanClient):
         """Standard connection and info fetching. No infinite loop here."""
         logger.trace(f"Connecting to {device_id}...")
         await self.base_client.connect_async(device_id)
-        if self.base_client.bluetooth_le_connector.is_variant_a:
+        ble_conn = self.base_client.bluetooth_le_connector
+        if ble_conn.is_variant_a and not ble_conn.arendi_handshake_done:
             return  # unsupported variant — skip subscribe; caller checks is_variant_a
-        await self.base_client.subscribe_notifications_async()
+        if not ble_conn.is_variant_a:
+            await self.base_client.subscribe_notifications_async()
 
         # Fetch Identification Data
         self.soc_application_versions = await self.base_client.get_soc_application_versions_async()
@@ -59,9 +61,11 @@ class AquaCleanClient(IAquaCleanClient):
         query_ms captures only the actual data request, not eager pre-fetches."""
         logger.trace(f"BLE-only connect to {device_id}...")
         await self.base_client.connect_async(device_id)
-        if self.base_client.bluetooth_le_connector.is_variant_a:
+        ble_conn = self.base_client.bluetooth_le_connector
+        if ble_conn.is_variant_a and not ble_conn.arendi_handshake_done:
             return  # unsupported variant — skip subscribe; caller checks is_variant_a
-        await self.base_client.subscribe_notifications_async()
+        if not ble_conn.is_variant_a:
+            await self.base_client.subscribe_notifications_async()
 
     async def start_polling(self, interval: float, on_poll_done=None):
         """The infinite loop logic from your original connect method.

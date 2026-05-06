@@ -725,7 +725,7 @@ class ServiceMode:
                         f"{self.mqttConfig['topic']}/peripheralDevice/information/BleDeviceInfo",
                         json.dumps(bluetooth_connector.ble_dis_info),
                     )
-                if bluetooth_connector.is_variant_a:
+                if bluetooth_connector.is_variant_a and not bluetooth_connector.arendi_handshake_done:
                     model  = (bluetooth_connector.ble_dis_info or {}).get("model_number", "unknown model")
                     serial = (bluetooth_connector.ble_dis_info or {}).get("serial_number", "unknown serial")
                     _t = self.mqttConfig['topic']
@@ -2491,7 +2491,7 @@ class ApiMode:
                     f"{topic}/peripheralDevice/information/BleDeviceInfo",
                     json.dumps(connector.ble_dis_info),
                 )
-            if connector.is_variant_a:
+            if connector.is_variant_a and not connector.arendi_handshake_done:
                 model  = (connector.ble_dis_info or {}).get("model_number", "unknown model")
                 serial = (connector.ble_dis_info or {}).get("serial_number", "unknown serial")
                 for _sub in ("SapNumber", "SerialNumber", "ProductionDate", "Description"):
