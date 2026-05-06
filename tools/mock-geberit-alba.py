@@ -58,7 +58,12 @@ class BtSigDataService(Service):
 
 
 class DeviceInformationService(Service):
-    """Standard BLE Device Information Service (0x180a) with placeholder Alba values."""
+    """Standard BLE Device Information Service (0x180a) with real Alba values from kstr's device.
+
+    Source: local-assets/Android-BLE-Logs/kstr/aquaclean2.log (E4:85:01:CD:6B:04)
+    Note: model_number is the SAP article number, NOT the Geberit product name ("AcAlba").
+    "AcAlba" is only available via proc 0x82 GetDeviceIdentification (application layer).
+    """
 
     def __init__(self):
         super().__init__("0000180a-0000-1000-8000-00805f9b34fb", True)
@@ -69,23 +74,23 @@ class DeviceInformationService(Service):
 
     @characteristic("00002a24-0000-1000-8000-00805f9b34fb", CharFlags.READ)
     def model_number(self, options):
-        return b"AcAlba"
+        return b"828.860.00.A"
 
     @characteristic("00002a25-0000-1000-8000-00805f9b34fb", CharFlags.READ)
     def serial_number(self, options):
-        return b"SB-MOCK-00000001"
+        return b"93136"
 
     @characteristic("00002a26-0000-1000-8000-00805f9b34fb", CharFlags.READ)
     def firmware_revision(self, options):
-        return b"RS3.0 TS89"
+        return b"RS03TS89"
 
     @characteristic("00002a27-0000-1000-8000-00805f9b34fb", CharFlags.READ)
     def hardware_revision(self, options):
-        return b"1.0"
+        return b"00"
 
     @characteristic("00002a28-0000-1000-8000-00805f9b34fb", CharFlags.READ)
     def software_revision(self, options):
-        return b"3.0.89"
+        return b"1.14.1 1.2.0"
 
 
 # --- Helper functions --------------------------------------------------------
