@@ -13,6 +13,19 @@ from aquaclean_console_app.myEvent import myEvent
 
 logger = logging.getLogger(__name__)
 
+# GetSystemParameterList (proc 0x0D) indices valid for AquaClean Mera Comfort.
+# Indices 0–7 are supported by all standard AquaClean device variants.
+# Indices 8–14 are device-variant specific:
+#   8  = StateSprayCalibration — not valid for Mera Comfort
+#   9  = StateOrientationLight — AcSela only, not valid for Mera Comfort
+#   10 = StateDraining         — AcCama/AcCamaTestset only, not valid for Mera Comfort
+#   12 = LidOffsetPosition     — Mera Comfort only, requires firmware ≥ RS25
+# Sending unsupported indices leaves the device in a state where subsequent
+# GetFilterStatus (proc 0x59) calls time out until the device is power-cycled.
+# NOTE: if support for other device models (AcSela, AcCama, …) is added, a
+# per-model parameter list will be needed here — do not simply extend this list.
+SPL_PARAMS_MERA_COMFORT = [0, 1, 2, 3, 4, 5, 6, 7]
+
 class AquaCleanClient(IAquaCleanClient):
     def __init__(self, bluetooth_connector):
         self.SOCApplicationVersions = myEvent.EventHandler()
@@ -83,12 +96,8 @@ class AquaCleanClient(IAquaCleanClient):
             await asyncio.sleep(interval)
 
     async def _state_changed_timer_elapsed(self):
-        """Poll using the iPhone's 12-param list [0,1,2,3,4,5,6,7,4,8,9,10].
-        Params 8/9/10 are not supported on HB2304EU298413 (idx_echo=0) but sending them is
-        safe here: this method is only called during continuous polling, where GetFilterStatus
-        is not called in the same session — so the device-side state corruption triggered by
-        unsupported params does not matter."""
-        result = await self.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 4, 8, 9, 10])
+        """Poll live device state via GetSystemParameterList (proc 0x0D)."""
+        result = await self.base_client.get_system_parameter_list_async(SPL_PARAMS_MERA_COMFORT)
         device_state_changed_event_args = DeviceStateChangedEventArgs(
             IsUserSitting=result.data_array[0] != 0,
             IsAnalShowerRunning=result.data_array[3] != 0,  # param 3 confirmed = anal shower

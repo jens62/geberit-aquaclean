@@ -1277,13 +1277,39 @@ Reads/writes stored user settings by index. Getters already in `AquaCleanClient`
 | `DryerState` | 9 | ✅ | ❌ |
 | `SystemFlush` | 10 | ✅ | ❌ |
 
-**Layer 3 — `GetSystemParameterList([0,1,2,3,4,5,7,9])`**
-Reads live device state (what's happening right now). Indices 0–9 are the only ones known.
-These are NOT DpIds — separate index space.
+**Layer 3 — `GetSystemParameterList([0,1,2,3,4,5,6,7])` for Mera Comfort**
+Reads live device state (what's happening right now). These are NOT DpIds — separate index space.
+Indices 0–7 are valid for all standard AquaClean device variants. Indices 8–14 are
+device-variant specific — sending unsupported indices to a Mera Comfort leaves the device in
+a state where subsequent `GetFilterStatus` calls time out until a power-cycle.
+`SPL_PARAMS_MERA_COMFORT` in `AquaCleanClient.py` defines this list.
+**If other device models (AcSela, AcCama, …) are ever supported, a per-model parameter
+list will be needed — do not simply extend the Mera Comfort list.**
 
-**SPL parameter semantics — confirmed from BLE log (2026-04-15):**
+**SPL parameter index definitions (full range, per Geberit protocol specification):**
+
+| Index | Name | Device restriction |
+|-------|------|--------------------|
+| 0 | StateUserPresent | all |
+| 1 | StateShowerAnal | all |
+| 2 | StateShowerLady | all |
+| 3 | StateDryer | all |
+| 4 | StateDescaling | all |
+| 5 | DurationDescaling | all |
+| 6 | LastError | all |
+| 7 | StateService | all |
+| 8 | StateSprayCalibration | restricted — not for Mera Comfort |
+| 9 | StateOrientationLight | AcSela only |
+| 10 | StateDraining | AcCama/AcCamaTestset only |
+| 11 | ConnectedSsmDevices | AcSela only |
+| 12 | LidOffsetPosition | AcMeraComfort, firmware ≥ RS25 |
+| 13 | ShowerArmOffsetPosition | — |
+| 14 | DryerArmOffsetPosition | — |
+| 255 | EndiannessCheck | — |
+
+**SPL parameter semantics — confirmed from BLE log analysis:**
 Some code comment labels are misleading. Actual semantics confirmed from toilet-use session log:
-- **Index 0** — `userIsSitting` — **confirmed correct**. Proximity detection is a separate hardware feature not yet mapped to any SPL index.
+- **Index 0** — `StateUserPresent` — **confirmed correct**. Proximity detection is a separate hardware feature not yet mapped to any SPL index.
 - **Index 1** — labelled `analShowerIsRunning` in code, actually tracks **user sitting**
 - **Index 3** — labelled `dryerIsRunning`, actually tracks **anal shower running** (confirmed: changes when anal shower started by pressing device button)
 - Dryer state: not visible in any SPL parameter change in the captured session — may be at an index not polled by the bridge, or polled differently by the iPhone

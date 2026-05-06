@@ -15,7 +15,7 @@ from aiorun import run, shutdown_waits_for
 
 from bleak import BleakScanner
 from bleak.exc import BleakError
-from aquaclean_console_app.aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient
+from aquaclean_console_app.aquaclean_core.Clients.AquaCleanClient                   import AquaCleanClient, SPL_PARAMS_MERA_COMFORT
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
 from aquaclean_console_app.aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
 from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
@@ -2870,8 +2870,7 @@ class ApiMode:
             return
 
     async def _fetch_state(self, client, _skip_profile: bool = False):
-        from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetSystemParameterList import GetSystemParameterList
-        result = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3, 4, 5, 6, 7, 4, 8, 9, 10])
+        result = await client.base_client.get_system_parameter_list_async(SPL_PARAMS_MERA_COMFORT)
         # Update device_state before _on_demand's finally fires so the
         # "disconnected" SSE broadcast carries fresh values.
         self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
@@ -2898,10 +2897,8 @@ class ApiMode:
     async def _fetch_state_and_info(self, client):
         """Used for the first on-demand poll only: fetch state + identification in one BLE session."""
         ident = await client.base_client.get_device_identification_async(0)
-        # GetFilterStatus MUST come before GetSPL: sending GetSPL with unsupported param indices
-        # (8, 9, 10 on HB2304EU298413) leaves the device in a state where it ACKs but ignores
-        # the next GetFilterStatus — 5 s silence → BLEPeripheralTimeoutError.  By calling
-        # GetFilterStatus first (while the device is still clean), we always get valid data.
+        # GetFilterStatus before GetSPL: read filter data while the device is in a clean state
+        # at the start of the session (no prior proc calls that could affect its response).
         try:
             filter_status = await client.base_client.get_filter_status_async()
         except BLEPeripheralTimeoutError:
