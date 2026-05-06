@@ -445,6 +445,68 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **Auto-generate REST API docs (Swagger UI / OpenAPI) via GitHub Actions.**
+
+  FastAPI already exposes `/openapi.json` and Swagger UI at `/docs` at runtime. The goal
+  is to generate static documentation on every push to `main` and commit it to the repo
+  so it is browsable without running the server.
+
+  **Proposed workflow** (`.github/workflows/generate-api-docs.yml`):
+
+  ```yaml
+  name: Generate REST API Docs
+
+  on:
+    push:
+      branches: [ "main" ]
+    workflow_dispatch:
+
+  jobs:
+    docs:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-python@v5
+          with:
+            python-version: "3.11"
+        - name: Install dependencies
+          run: pip install -e ".[test]"
+        - name: Start API server
+          run: nohup python -m aquaclean_console_app --mode api &
+        - name: Wait for API
+          run: |
+            for i in {1..20}; do
+              curl -sf http://localhost:8080/openapi.json && break || sleep 1
+            done
+        - name: Download OpenAPI spec
+          run: curl -o swagger.json http://localhost:8080/openapi.json
+        - name: Generate Markdown docs
+          run: |
+            npx @openapitools/openapi-generator-cli generate \
+              -i swagger.json -g markdown -o docs/generated-api/
+        - name: Commit changes
+          run: |
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add docs/generated-api swagger.json
+            git commit -m "docs: update REST API docs [skip ci]" || echo "No changes"
+            git push
+  ```
+
+  **Notes / open questions before implementing:**
+  - The API server needs a minimal `config.ini` (or env-var defaults) to start in CI
+    without a real BLE device — it must not crash on missing config. Check whether
+    `--mode api` already handles this gracefully or needs a `--dry-run` flag.
+  - `pip install @openapitools/openapi-generator-cli` in the original draft is wrong
+    (it's an npm package, not a pip package) — use `npx` as corrected above, or the
+    Docker image `openapitools/openapi-generator-cli`.
+  - Consider generating Swagger UI HTML (static) instead of Markdown for a richer
+    browsable output: `-g html2` or `-g html`.
+  - Committed generated docs can create noisy diffs on every API change. Alternative:
+    publish to GitHub Pages instead of committing to the repo.
+  - Add `[skip ci]` to the auto-commit message to prevent the push from triggering
+    the workflow again.
+
 - **HACS config flow: validate ESPHome host field syntax before attempting connection.**
   Entering a malformed IP address (e.g. `192,168.0.114` with a comma) passes `cv.string`
   validation and reaches `aioesphomeapi` which then fails with an unresolvable hostname error —
