@@ -32,7 +32,7 @@ a repeating keystream, leading to the hypothesis that the encryption uses a
 
 ### What is actually happening
 
-After extracting `Geberit.ComLib.Bluetooth.dll` from the Android APK
+After extracting the Geberit Bluetooth library from the Android app
 (`local-assets/geberit-home/sources/ComLib.Bluetooth/`), the correct interpretation is:
 
 **The frame at `22:17:52.900` is the Encrypt Parameter Response (Security frame type
@@ -139,9 +139,8 @@ The AES-CTR implementation in `aj.a` (inner class):
 
 ### Extraction method
 
-`Geberit.ComLib.Bluetooth.dll` was extracted from the Android APK:
-`local-assets/geberit-home/app/src/main/config.armeabi_v7a.apk/lib/armeabi-v7a/libassemblies.armeabi-v7a.blob.so`
-(XABA Xamarin Assembly Store, LZ4-compressed DLLs) and analyzed with `ilspycmd`.
+The Geberit Bluetooth library was extracted from the Android app
+(native assembly store, LZ4-compressed) and analyzed with `ilspycmd`.
 
 The authKey is stored in class `am`, field `t`, as a FieldRVA byte array literal
 in the IL:
@@ -388,6 +387,6 @@ for the Alba.  The first successful connection will reveal the proc structure.
 | `local-assets/geberit-home/sources/ComLib.Bluetooth/ak.cs` | Curve25519 ECDH |
 | `local-assets/geberit-home/sources/ComLib.Bluetooth/al.cs` | HKDF-SHA256 |
 | `local-assets/geberit-home/sources/ComLib.Bluetooth/am.cs` | Contains FieldRVA for authKey |
-| `/tmp/security_il.txt` | Full IL of Geberit.ComLib.Bluetooth.dll (authKey at line 123904) |
+| `/tmp/security_il.txt` | Full IL of the Geberit Bluetooth library (authKey at line 123904) |
 | `tools/alba-decrypt-analysis.py` | Earlier analysis tool (now superseded) |
 | `/tmp/verify_auth_key.py` | Python CMAC verification script |
