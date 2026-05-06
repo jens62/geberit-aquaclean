@@ -1,6 +1,6 @@
 # Geberit AquaClean — BLE Protocol Reference
 
-Reverse-engineered from iOS PacketLogger captures (April 2026) and validated against
+Derived from iOS PacketLogger captures (April 2026) and validated against
 the thomas-bingel C# reference implementation.
 
 ---
