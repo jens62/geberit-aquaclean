@@ -9,7 +9,7 @@ This document lists every Geberit AquaClean device that has been confirmed to wo
 
 | Device | Serial / Prefix | GATT Profile | BLE MAC | Tested By | Notes |
 |--------|----------------|--------------|---------|-----------|-------|
-| AquaClean Mera Comfort | HB2304EU298413 | Standard (`3334429d`) | `38:AB:41:2A:0D:67` | Developer (primary device) | All features tested; BLE logs in `local-assets/Bluetooth-Logs/` |
+| AquaClean Mera Comfort | HB2304EU298413 | Standard (`3334429d`) | `38:AB:41:2A:0D:67` | Developer (primary device) | All features tested; BLE logs in `local-assets/Bluetooth-Logs/`. DIS: model/serial/hw = `n/a`; fw `BLD 01 1`; sw `APP 10 18` |
 
 ---
 
@@ -32,15 +32,34 @@ Geberit devices expose two separate sets of identification data:
 | **BLE DIS** (`0x180a`) | `read_gatt_char` on standard BLE characteristics | `model_number` = SAP article number, `serial_number` = hardware/PCB serial | model `828.860.00.A`, serial `93136` |
 | **Geberit proc `0x82`** (`GetDeviceIdentification`) | Proprietary Geberit protocol over GATT data channel | product name (`AcAlba`), full Geberit serial (`SB2603EU208023`), SAP | only reachable on Standard profile |
 
-The DIS `model_number` is **not** the Geberit Artikelnummer shown in the app (e.g. `146.350.01.x`
-for the Alba). It is an unknown internal identifier — possibly a PCB/board model or BLE module
-number. Its exact meaning is unconfirmed; a comparison against the Mera Comfort DIS values is needed.
+The BLE DIS fields have different meanings across device generations and are **not reliable
+cross-device identifiers**. Confirmed from comparing Mera Comfort vs. Alba DIS reads:
 
-The product name (`AcAlba`) and full serial (`SB...`) only come from proc `0x82`
-(GetDeviceIdentification), which requires the Standard GATT profile.
+| DIS field | Mera Comfort (`38:AB:41:2A:0D:67`) | Alba kstr (`E4:85:01:CD:6B:04`) |
+|---|---|---|
+| `manufacturer_name` | `Geberit` | `Geberit` |
+| `model_number` | `n/a` | `828.860.00.A` |
+| `serial_number` | `n/a` | `93136` |
+| `firmware_revision` | `BLD 01 1` | `RS03TS89` |
+| `hardware_revision` | `n/a` | `00` |
+| `software_revision` | `APP 10 18` | `1.14.1 1.2.0` |
 
-On Variant A devices the bridge falls back to BLE DIS for identification — this is why the
-unsupported-device error shows `828.860.00.A (93136)` rather than `AcAlba (SB...)`.
+The Mera Comfort deliberately returns `n/a` for model/serial — Geberit expects those to be read
+via proc `0x82` (GetDeviceIdentification). The Alba does populate them with internal values.
+
+`828.860.00.A` follows the Geberit `XXX.XXX.XX.X` article-number format but is NOT the toilet's
+Artikelnummer (`146.350.01.x` shown in the app). It is likely the article number of the **BLE
+electronics board/module** inside the Alba. `93136` (5 digits) is likely that board's serial,
+not the Geberit toilet serial (`SB2603EU208023`).
+
+The Mera firmware format (`BLD 01 1` / `APP 10 18`) vs. Alba format (`RS03TS89` / `1.14.1 1.2.0`)
+indicates different electronics generations; the Alba's DIS firmware string matches the proc `0x82`
+RS/TS format, the Mera's does not.
+
+The product name (`AcAlba`) and full Geberit serial (`SB...`) only come from proc `0x82`
+(GetDeviceIdentification), which requires the Standard GATT profile. On Variant A devices the
+bridge falls back to BLE DIS — the unsupported-device error shows `828.860.00.A (93136)`, not
+`AcAlba (SB...)`.
 
 ---
 
