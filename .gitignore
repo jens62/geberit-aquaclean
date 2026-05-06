@@ -3,6 +3,9 @@ readme.txt
 aiorun.py
 haggis/
 
+# Private reverse-engineering report — contains cryptographic material, must not be published
+docs/developer/alba-reverse-engineering-report.md
+
 # Claude Code configuration
 .clauderc
 
