@@ -40,6 +40,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _API_URL = "https://prod.firmwarev1.services.geberit.com/api/firmwares"
+
+# Credential stored XOR-obfuscated so the raw value is not a greppable string.
 _AUTH_STORED = bytes([46, 244, 102, 171, 135, 170, 42, 230, 170, 158, 80, 104, 91, 238, 198, 184, 6, 104, 239, 250, 109, 53, 132, 183])
 _AUTH_MASK   = bytes([70, 155, 11, 206, 230, 218, 90, 220, 153, 200, 23, 17, 14, 141, 144, 139, 104, 57, 220, 201, 52, 70, 227, 230])
 _AUTH = "Basic " + base64.b64encode(bytes(a ^ b for a, b in zip(_AUTH_STORED, _AUTH_MASK))).decode()
