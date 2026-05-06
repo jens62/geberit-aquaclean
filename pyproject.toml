@@ -27,3 +27,9 @@ include = ["aquaclean_console_app*"]
 
 [tool.setuptools.package-data]
 "aquaclean_console_app" = ["static/*", "config.ini"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
