@@ -625,7 +625,7 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
 
 ### Two-layer protocol
 
-The code uses reverse-engineered C# enum codes, NOT the DpIds from `BLE_COMMAND_REFERENCE.md`.
+The code uses documented C# enum codes, NOT the DpIds from `BLE_COMMAND_REFERENCE.md`.
 The DpIds (e.g. 563 = anal shower) are Geberit's device-level data point IDs — useful as a
 conceptual reference for what the device supports, but not directly callable from the code.
 
