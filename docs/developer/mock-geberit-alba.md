@@ -2,9 +2,16 @@
 
 **File:** `tools/mock-geberit-alba.py`
 
-Simulates the AquaClean Alba BLE peripheral on Linux (BlueZ) for testing the
-unsupported-device detection in the HACS config flow and the connection test
-script — without requiring a physical Alba device.
+Simulates the AquaClean Alba BLE peripheral on Linux (BlueZ). Supports two
+modes:
+
+| Mode | Purpose |
+|------|---------|
+| `--mode unsupported` (default) | Advertises the Alba GATT profile but ignores all writes — triggers the unsupported-device detection path in the HACS config flow |
+| `--mode handshake` | Implements the full server-side Arendi Security protocol — use this to test end-to-end encryption without a physical Alba |
+
+For a purely in-process crypto test (no BLE hardware at all) see
+**`tests/test_arendi_security.py`** below.
 
 ---
 
@@ -17,9 +24,7 @@ script — without requiring a physical Alba device.
 
 ```bash
 pip install dbus-next bluez_peripheral
-sudo python tools/mock-geberit-alba.py
-# or with a venv that has the required packages:
-sudo /home/jens/venv/bin/python ./mock-geberit-alba.py
+sudo /home/jens/venv/bin/python tools/mock-geberit-alba.py --mode handshake
 ```
 
 ---
@@ -41,19 +46,8 @@ Characteristics on `0000fd48`:
 | `559eb001-2390-11e8-b467-0ed5f89f718b` | WRITE_NO_RESP | Command channel (write) |
 | `559eb002-2390-11e8-b467-0ed5f89f718b` | NOTIFY | Notification channel (read) |
 
-The `0000fd48` service + `559eb001`/`559eb002` characteristics are what
-`classify_services()` in `GattDiscovery.py` identifies as the Alba candidate
-profile (non-standard, `is_standard=False`).
-
----
-
-## What the mock does NOT implement
-
-The mock does not respond to any Geberit protocol frames. Writing to
-`559eb001` is accepted at the GATT level but produces no notification on
-`559eb002`. This causes `subscribe_notifications_async()` to time out with
-`BLEPeripheralTimeoutError` — which is the correct trigger for the
-unsupported-device detection path added in `config_flow.py` (v2.4.81-pre).
+`classify_services()` in `GattDiscovery.py` identifies this as the Alba
+candidate profile (`is_standard=False`).
 
 ---
 
@@ -61,39 +55,107 @@ unsupported-device detection path added in `config_flow.py` (v2.4.81-pre).
 
 The mock's BLE address is the Linux BT adapter's own MAC — whatever
 `hci0` reports (e.g. `88:A2:9E:2C:EA:F7` on the dev Raspberry Pi).
+The mock prints it at startup as **"Adapter BLE address"**.
 Use this MAC in all test invocations.
 
 ---
 
-## Known behaviour / gotchas
+## Mode: `--mode handshake` — testing Alba decryption
 
-### 1. May stop re-advertising after a connect/disconnect cycle
+### What it tests
 
-BlueZ peripheral advertising can pause or stop after a client connects and
-then disconnects. **Always restart the mock fresh before each test session.**
-Do not rely on a long-running mock instance for back-to-back tests.
+Verifies that the bridge's `AriendiSecurity.py` implementation can:
+1. Complete the full Arendi Security handshake against a live BLE peer
+2. Encrypt outgoing Geberit frames correctly
+3. Decrypt incoming encrypted frames correctly
 
-### 2. HA ESPHome integration must be disabled
+The mock generates fresh ephemeral X25519 keys and random nonces on every
+run, so each session is cryptographically independent.
 
-If the `aquaclean-proxy` ESPHome integration is enabled in Home Assistant, it
-silently holds the BLE advertisement subscription slot on the ESP32. The
-connection test and the HACS config flow both get "0 packets received" even
-though the subscription is accepted. Disable (not delete) the integration in
-HA → Settings → Integrations before testing.
+### How it works
 
-### 3. Connection test Step 5 may fail even if Step 4 finds the device
+`_AriendiServerSide` in `mock-geberit-alba.py` implements the device role of
+the protocol, importing the crypto primitives directly from
+`aquaclean_console_app/bluetooth_le/LE/AriendiSecurity.py` (no duplication).
 
-The connection test script runs a 20-second passive scan in Step 4, then
-re-subscribes for Step 5. The re-subscription gap plus possible advertising
-pause causes Step 5 to miss the mock. Step 6 (GATT discovery via direct
-connect) still works correctly. This is a test-script timing artifact, not a
-mock defect.
+Handshake sequence (device side):
+
+| Step | Receives | Sends |
+|------|----------|-------|
+| 1 | SABM (U-frame) | UA (U-frame) |
+| 2 | VERSION_REQ (0x00) | VERSION_RESP (0x01) — proto v2 |
+| 3 | EP_REQ (0x10) | EP_RESP (0x11) — fresh nonce1 + nonce2 |
+| 4 | KE_REQ (0x12) — client pubkey + CMAC | KE_RESP (0x13) — server pubkey + CMAC |
+| 5 | S-RR ACK | — |
+
+After the handshake the mock loops on incoming encrypted frames: it decrypts
+each one, prints the plaintext hex, and sends back a fake `GetDeviceIdentification`
+OK response (encrypted).
+
+Key derivation (device perspective):
+- `key_material = HKDF(shared_secret, salt=nonce1, length=32)`
+- `tx_key = key_material[0:16]` — device encrypts outgoing with this
+- `rx_key = key_material[16:32]` — device decrypts incoming with this
+
+(Reversed from the client perspective in `AriendiSecurity.perform_handshake`.)
+
+### Step-by-step
+
+**Step 1 — Start the mock on the Raspberry Pi:**
+```bash
+sudo /home/jens/venv/bin/python tools/mock-geberit-alba.py --mode handshake
+```
+Wait for `--- Mock Device Active (mode=handshake) ---` and note the printed
+adapter MAC address.
+
+**Step 2 — Point the bridge at the mock MAC.**
+Edit `config.ini` on the Pi:
+```ini
+[BLE]
+device_id = 88:A2:9E:2C:EA:F7   # ← replace with your adapter MAC
+```
+
+**Step 3 — Start the bridge:**
+```bash
+/home/jens/venv/bin/python -m aquaclean_console_app --mode service
+```
+
+**Expected mock output when the handshake succeeds:**
+```
+[Mock] BLE client connected:    XX:XX:XX:XX:XX:XX
+[MockServer] ← SABM
+[MockServer] → UA
+[MockServer] ← VERSION_REQ
+[MockServer] → VERSION_RESP (proto v2)
+[MockServer] ← EP_REQ
+[MockServer] → EP_RESP  nonce1=<32 hex chars>  nonce2=<32 hex chars>
+[MockServer] ← KE_REQ
+[MockServer] client CMAC verified ✓
+[MockServer] → KE_RESP  server_pub=<16 hex chars>...
+[MockServer] *** HANDSHAKE COMPLETE — session keys established ***
+[MockServer] ← encrypted frame DECRYPTED: <hex of Geberit request>
+[MockServer] → fake GetDeviceIdentification response (encrypted)
+```
+
+The line `client CMAC verified ✓` confirms the `aquacleanBridgeId` in
+`AriendiSecurity.py` is correct. If it says `CMAC verification FAILED`, the
+key stored in the bridge does not match what the real device expects.
+
+### HACS config flow with `--mode handshake`
+
+When `arendi_handshake_done = True`, the HACS coordinator and config flow no
+longer abort with E0010 / unsupported-device — the Alba is treated as a
+supported device and polling proceeds normally. The first poll will send a
+`GetSystemParameterList` request; the mock decrypts it and responds with the
+fake `GetDeviceIdentification` blob. The bridge may log a parse warning on the
+fake response, but the decryption layer is confirmed working.
 
 ---
 
-## Testing the HACS unsupported-device detection
+## Mode: `--mode unsupported` (default) — testing HACS unsupported-device detection
 
 ### Goal
+
 Verify that the HACS config flow shows the `unsupported_device` abort screen
 (with GATT UUID details) instead of the generic `cannot_connect` error.
 
@@ -115,46 +177,35 @@ compete for that slot and must both be cleared before testing:
 
 ### Steps
 
-1. Apply the prerequisite above (ESPHome integration disabled, poll interval raised
-   or existing Geberit integration disabled).
+1. Apply the prerequisite above.
 
-2. Start the mock fresh on the Linux host (Raspberry Pi or similar):
+2. Start the mock:
    ```bash
-   sudo /home/jens/venv/bin/python ./mock-geberit-alba.py
+   sudo /home/jens/venv/bin/python tools/mock-geberit-alba.py
    ```
-   Wait for `--- Mock Device Active ---` before proceeding.
+   Wait for `--- Mock Device Active (mode=unsupported) ---`.
 
 3. **Immediately** go to HA: Settings → Integrations → **"Eintrag hinzufügen"**
-   (German UI) / **"Add entry"** (English UI) button at the bottom-right of the
-   Integrations page → search "Geberit AquaClean" → select it.
-   - BLE MAC: `<adapter MAC printed by mock, e.g. 88:A2:9E:2C:EA:F7>`
-   - ESPHome host: `<ESP32 IP>` (or leave empty for local BLE if HA host is in BLE
-     range of the mock)
+   (German UI) / **"Add entry"** (English UI) → search "Geberit AquaClean" → select it.
+   - BLE MAC: `<adapter MAC printed by mock>`
+   - ESPHome host: `<ESP32 IP>` (or leave empty for local BLE)
    - Port: `6053`
 
    **Do not** use the existing integration's Configure button — that reconfigures the
-   real device. "Eintrag hinzufügen" / "Add entry" adds a new second instance
-   pointing to the mock.
+   real device. "Add entry" adds a second instance pointing to the mock.
 
 4. Click Submit. Wait up to 30 seconds.
 
-5. Expected result: the "unsupported device" abort screen appears with:
-   - GATT service UUID: `0000fd48-0000-1000-8000-00805f9b34fb`
-   - Write characteristic: `559eb001-2390-11e8-b467-0ed5f89f718b`
-   - Notify characteristic: `559eb002-2390-11e8-b467-0ed5f89f718b`
-   - Link to open a GitHub issue
+5. Expected result: "unsupported device" abort screen with the GATT UUIDs and a
+   link to open a GitHub issue.
 
-   The mock terminal should print:
+   Mock terminal should print:
    ```
    [Mock] BLE client connected:    XX:XX:XX:XX:XX:XX
    [Mock] BLE client disconnected: /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX
    ```
-   If the mock prints nothing, the ESP32 never found the device (see troubleshooting
-   below).
 
 ### Confirming via HA logs
-
-Add to `configuration.yaml` to see the INFO trace:
 
 ```yaml
 logger:
@@ -163,44 +214,120 @@ logger:
     custom_components.geberit_aquaclean: info
 ```
 
-Expected log lines (in order):
-
+Expected log lines:
 ```
 INFO  [AquaClean] Config flow: BLE connected but non-standard GATT profile
       detected after init failure — svc=0000fd48... write=[559eb001...] notify=[559eb002...]
 WARNING [AquaClean] Config flow: unsupported GATT profile — svc=0000fd48...
 ```
 
-If instead you see `ERROR [AquaClean] Config flow: connection test failed`, check
-the preceding line for the `ESPHomeDeviceNotFoundError` detail:
-
-```
-ESPHomeDeviceNotFoundError: AquaClean device ... not found via ESPHome proxy
-  (received 0 total BLE advertisement packet(s) during 10 s scan —
-   scanner may be stuck or subscription slot in use)
-```
-→ 0 packets: `aquaclean-proxy` ESPHome integration is still enabled, or another
-  client holds the slot. Disable it and retry.
-
-```
-  (received 847 packet(s) during 10 s scan — device not advertising)
-```
-→ N > 0 packets: scanner is healthy but the mock wasn't advertising at the right
-  moment. Restart the mock and submit the form immediately.
+If you see `connection test failed` with `0 total BLE advertisement packet(s)`:
+the `aquaclean-proxy` ESPHome integration is still enabled or another client
+holds the subscription slot.
 
 ---
 
-## How the detection works (v2.4.81-pre)
+## Known behaviour / gotchas
+
+### 1. May stop re-advertising after a connect/disconnect cycle
+
+BlueZ peripheral advertising can pause after a client connects and disconnects.
+**Always restart the mock fresh before each test session.**
+
+### 2. HA ESPHome integration must be disabled
+
+See prerequisite above — this is the most common cause of `0 packets received`.
+
+### 3. Connection test Step 5 may fail even if Step 4 finds the device
+
+The re-subscription gap between Steps 4 and 5 in `aquaclean-connection-test.py`
+plus the advertising pause can cause Step 5 to miss the mock. Step 6 (GATT
+discovery via direct connect) still works. This is a timing artifact in the
+test script, not a mock defect.
+
+### 4. Notification sending (`--mode handshake`)
+
+The mock sends BLE notifications by calling
+`emit_properties_changed({'Value': Variant('ay', data)})` on the notify
+characteristic's dbus-next `ServiceInterface`. BlueZ intercepts this D-Bus
+`PropertiesChanged` signal and converts it to a BLE ATT Handle Value
+Notification. This relies on bluez_peripheral storing characteristic objects
+in `Service._chars` in declaration order (`_chars[0]` = sig_write,
+`_chars[1]` = sig_notify) — an implementation detail that may change across
+bluez_peripheral versions. If notifications are not received by the bridge,
+check the mock's `"Notify characteristic interface wired."` startup line; if
+it prints `"notifications disabled"` instead, the `_chars` layout has changed
+and the index needs updating in `mock-geberit-alba.py:main()`.
+
+---
+
+## In-process unit test — `tests/test_arendi_security.py`
+
+No BLE hardware required. Runs on any machine with the project venv.
+
+### What it tests
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_handshake_completes` | Both client and server reach `handshake_done = True` |
+| `test_client_to_server_encryption` | Client encrypts; server decrypts to original plaintext |
+| `test_server_to_client_encryption` | Server encrypts; client decrypts to original plaintext |
+| `test_round_trip_multiple_frames` | 5 frames in each direction all decrypt correctly |
+| `test_tampered_frame_dropped` | A byte-flipped frame is rejected by the CRC check |
+| `test_wrong_preshared_key_fails_cmac` | Wrong key causes KE_REQ CMAC verification to fail |
+
+### How to run
+
+```bash
+# Standalone
+/Users/jens/venv/bin/python tests/test_arendi_security.py
+
+# With pytest
+/Users/jens/venv/bin/python -m pytest tests/test_arendi_security.py -v
+```
+
+Expected output:
+```
+PASS test_handshake_completes
+PASS test_client_to_server_encryption
+PASS test_server_to_client_encryption
+PASS test_round_trip_multiple_frames
+PASS test_tampered_frame_dropped
+PASS test_wrong_preshared_key_fails_cmac
+
+6 passed, 0 failed
+```
+
+### How it works
+
+The test instantiates a real `AriendiSecurity` (client) and a `_ServerSide`
+(device role, same logic as `_AriendiServerSide` in the mock) and pipes ATT
+bytes between them via `asyncio.Queue` — no BLE stack involved. Each test runs
+a fresh handshake with random nonces and ephemeral keys, so the session keys
+differ on every run.
+
+**Run this before any hardware test.** If any test fails here, both the mock
+and a real Alba will fail for the same reason — fix the crypto layer first.
+
+---
+
+## How the unsupported-device detection works (v2.4.81-pre)
 
 `connect_ble_only()` partially succeeds for the Alba device:
 1. BLE connects → `connector.client` is set with full GATT service table
 2. `subscribe_notifications_async()` times out (mock ignores Geberit frames) → exception
 
-Before v2.4.81-pre the exception was caught as `cannot_connect` immediately.
-The fix in `config_flow._test_connection()` catches the exception, calls
-`connector.get_gatt_profile()` (which reads `connector.client.services`), and
-if the profile is non-standard returns it to the caller — which then aborts
-with `reason="unsupported_device"` instead of showing the generic error.
+The exception handler in `config_flow._test_connection()` calls
+`connector.get_gatt_profile()`, and if the profile is non-standard returns it
+to the caller — which aborts with `reason="unsupported_device"` instead of the
+generic error.
+
+## How Alba support works when the handshake succeeds
+
+`_post_connect()` detects Variant A, creates `AriendiSecurity`, and calls
+`perform_handshake()`. If the handshake completes, `connector.arendi_handshake_done`
+is `True`. The coordinator and config flow check `is_variant_a and not arendi_handshake_done`
+before raising E0010 — so a successful handshake falls through to normal polling.
 
 ---
 
@@ -211,12 +338,12 @@ with `reason="unsupported_device"` instead of showing the generic error.
 /Users/jens/venv/bin/python tools/aquaclean-connection-test.py \
   --mac 88:A2:9E:2C:EA:F7 --dynamic-uuids --host 192.168.0.114
 
-# Via local BLE (HA host in BLE range of mock)
+# Via local BLE
 /Users/jens/venv/bin/python tools/aquaclean-connection-test.py \
   --mac 88:A2:9E:2C:EA:F7 --dynamic-uuids
 ```
 
 Expected result: Step 6 GATT discovery succeeds and shows the `0000fd48`
-service; protocol probe fails with `BLEPeripheralTimeoutError` (expected).
-The GATT profile FAIL / candidate detection confirms `classify_services()`
-correctly identifies the Alba profile as non-standard.
+service; protocol probe fails with `BLEPeripheralTimeoutError` (expected for
+`--mode unsupported`). With `--mode handshake` the probe completes the
+handshake and the connection test reports success.
