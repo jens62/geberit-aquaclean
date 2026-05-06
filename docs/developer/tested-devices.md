@@ -32,8 +32,12 @@ Geberit devices expose two separate sets of identification data:
 | **BLE DIS** (`0x180a`) | `read_gatt_char` on standard BLE characteristics | `model_number` = SAP article number, `serial_number` = hardware/PCB serial | model `828.860.00.A`, serial `93136` |
 | **Geberit proc `0x82`** (`GetDeviceIdentification`) | Proprietary Geberit protocol over GATT data channel | product name (`AcAlba`), full Geberit serial (`SB2603EU208023`), SAP | only reachable on Standard profile |
 
-The DIS `model_number` is the **Geberit SAP article number** (e.g. `828.860.00.A`), not the product name.
-The product name (`AcAlba`) only comes from proc `0x82`, which requires the Standard GATT profile.
+The DIS `model_number` is **not** the Geberit Artikelnummer shown in the app (e.g. `146.350.01.x`
+for the Alba). It is an unknown internal identifier — possibly a PCB/board model or BLE module
+number. Its exact meaning is unconfirmed; a comparison against the Mera Comfort DIS values is needed.
+
+The product name (`AcAlba`) and full serial (`SB...`) only come from proc `0x82`
+(GetDeviceIdentification), which requires the Standard GATT profile.
 
 On Variant A devices the bridge falls back to BLE DIS for identification — this is why the
 unsupported-device error shows `828.860.00.A (93136)` rather than `AcAlba (SB...)`.
