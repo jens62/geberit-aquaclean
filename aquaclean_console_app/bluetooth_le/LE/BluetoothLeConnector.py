@@ -575,9 +575,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             }
             await self._list_services()
             async def _raw_write(att_bytes: bytes):
-                await self.client.write_gatt_char(
-                    self.BULK_CHAR_BULK_WRITE_0_UUID, att_bytes, response=False
-                )
+                # Fragment into ATT MTU-sized chunks — the device may negotiate
+                # a smaller MTU than the mock; COBS reassembles on the far end.
+                chunk_size = max(20, getattr(self.client, 'mtu_size', 23) - 3)
+                for off in range(0, len(att_bytes), chunk_size):
+                    await self.client.write_gatt_char(
+                        self.BULK_CHAR_BULK_WRITE_0_UUID,
+                        att_bytes[off:off + chunk_size],
+                        response=False,
+                    )
             await self._arendi_security.perform_handshake(_raw_write)
             self.connection_status_changed_handlers(self, True, self.device_address, self.device_name)
             return
