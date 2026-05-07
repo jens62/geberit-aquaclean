@@ -321,9 +321,12 @@ class BtSigDataService(Service):
         """Push ATT bytes to the connected BLE client via NOTIFY."""
         self._notify_value = att_bytes
         if self._notify_char_iface is not None:
-            self._notify_char_iface.emit_properties_changed(
-                {'Value': Variant('ay', list(att_bytes))}
-            )
+            if hasattr(self._notify_char_iface, 'changed'):
+                self._notify_char_iface.changed(att_bytes)
+            else:
+                self._notify_char_iface.emit_properties_changed(
+                    {'Value': Variant('ay', list(att_bytes))}
+                )
         else:
             print("[MockServer] WARNING: notify char interface not set — cannot send notification")
 
@@ -472,14 +475,24 @@ async def main(mode: str):
         print("Service registration failed:", e)
 
     # Wire up the notify characteristic interface so send_notify() can push frames.
-    # bluez_peripheral stores registered characteristic objects in Service._chars
-    # in declaration order: [0] = sig_write, [1] = sig_notify.
-    # Each is a _Characteristic that extends dbus-next ServiceInterface.
-    if hasattr(sig_service, '_chars') and len(sig_service._chars) >= 2:
-        sig_service.set_notify_char_iface(sig_service._chars[1])
+    # Search whichever attribute holds characteristics (_characteristics in newer
+    # bluez_peripheral, _chars in older versions) and find the NOTIFY char by flags
+    # rather than by index — the order differs across library versions.
+    notify_char = None
+    for attr in ('_characteristics', '_chars'):
+        chars = getattr(sig_service, attr, None)
+        if chars:
+            for c in chars:
+                if hasattr(c, 'flags') and CharFlags.NOTIFY in c.flags:
+                    notify_char = c
+                    break
+        if notify_char:
+            break
+    if notify_char is not None:
+        sig_service.set_notify_char_iface(notify_char)
         print("Notify characteristic interface wired.")
     else:
-        print("WARNING: could not find notify characteristic in _chars — notifications disabled")
+        print("WARNING: could not find notify characteristic — notifications disabled")
 
     adv = Advertisement(
         "Geberit-Alba-Mock",
