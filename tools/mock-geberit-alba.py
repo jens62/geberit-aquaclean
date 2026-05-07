@@ -2,7 +2,7 @@
 """
 Mock BLE peripheral using bluez_peripheral on Linux (BlueZ).
 
-Two modes:
+Three modes:
   --mode unsupported  (default)
       Advertises the Alba GATT profile but never responds to any frame.
       Use this to test the unsupported-device detection in the HACS config flow.
@@ -12,6 +12,11 @@ Two modes:
       frame exchange.  Use this to test that AriendiSecurity.py (bridge side)
       can complete the handshake against a live BLE peer and exchange encrypted
       Geberit frames.
+
+  --mode ble20
+      Like handshake but the mock dispatches real Ble20 application-layer frames
+      (Inventory / Read / Write) after the handshake.  Use this to develop and
+      test Ble20Client.py against live BLE without real Alba hardware.
 
 Requirements:
   - Linux with BlueZ (Experimental=true may be required)
@@ -29,6 +34,7 @@ import asyncio
 import inspect
 import os
 import pathlib
+import struct
 import sys
 
 from dbus_next.aio import MessageBus
@@ -54,6 +60,127 @@ from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
 )
+
+
+# ---------------------------------------------------------------------------
+# Ble20 application-layer constants
+# ---------------------------------------------------------------------------
+
+CMD_INVENTORY        = 0x00
+CMD_INVENTORY_COUNT  = 0x01
+CMD_INVENTORY_DATA   = 0x02
+CMD_READ             = 0x10
+CMD_READ_ANS         = 0x11
+CMD_READ_ERROR       = 0x12
+CMD_WRITE            = 0x20
+CMD_WRITE_ACK        = 0x21
+CMD_WRITE_ERROR      = 0x22
+
+
+# ---------------------------------------------------------------------------
+# Ble20 in-memory device mock (--mode ble20)
+# ---------------------------------------------------------------------------
+
+class _Ble20AppLayer:
+    """
+    Server-side Ble20 application layer.
+
+    Maintains a small in-memory DpId store and dispatches decrypted Ble20
+    frames after the Arendi Security handshake completes.
+
+    Handles:
+      CMD_INVENTORY (0x00) → CMD_INVENTORY_COUNT + N × CMD_INVENTORY_DATA
+      CMD_READ      (0x10) → CMD_READ_ANS or CMD_READ_ERROR
+      CMD_WRITE     (0x20) → CMD_WRITE_ACK or CMD_WRITE_ERROR
+    """
+
+    # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
+    # datatype: 10=Enum  11=OffOn  15=Signed
+    # behavior: 1=Status  2=Command
+    _DEFAULT_STORE = [
+        (60,   None, 1, 11, 0, 1,   1, b'\x00'),            # USER_PRESENT
+        (563,  None, 1, 11, 0, 1,   2, b'\x00'),            # START_STOP_ANAL_SHOWER
+        (564,  None, 1, 10, 0, 5,   1, b'\x00'),            # ANAL_SHOWER_STATUS
+        (1008, None, 1, 15, 0, 100, 1, b'\x00\x00\x00\x00'),# LID_LIFTER_POSITION
+        (1009, None, 1, 11, 0, 1,   2, b'\x00'),            # TRIGGER_LID_LIFTING
+    ]
+
+    def __init__(self):
+        self._store: dict = {}
+        for dp_id, inst, ver, dt, mn, mx, beh, val in self._DEFAULT_STORE:
+            self._store[(dp_id, inst)] = {
+                'version': ver, 'datatype': dt,
+                'min_s': mn,    'max_s': mx,
+                'behavior': beh,
+                'value': bytearray(val),
+            }
+
+    @staticmethod
+    def _enc_addr(dp_id: int, instance) -> bytes:
+        lo = dp_id & 0xFF
+        hi = (dp_id >> 8) & 0x7F
+        if instance is not None:
+            return bytes([lo, hi | 0x80, instance])
+        return bytes([lo, hi])
+
+    @staticmethod
+    def _dec_addr(data: bytes, offset: int = 1):
+        lo = data[offset]
+        hi = data[offset + 1]
+        has_inst = bool(hi & 0x80)
+        dp_id = ((hi & 0x7F) << 8) | lo
+        if has_inst:
+            return dp_id, data[offset + 2], offset + 3
+        return dp_id, None, offset + 2
+
+    async def dispatch(self, plaintext: bytes) -> list:
+        """Dispatch one decrypted Ble20 frame; return list of response payloads."""
+        if not plaintext:
+            return []
+        cmd = plaintext[0]
+        if cmd == CMD_INVENTORY:
+            return self._inventory()
+        if cmd == CMD_READ:
+            return self._read(plaintext)
+        if cmd == CMD_WRITE:
+            return self._write(plaintext)
+        print(f"[MockBle20] unknown cmd=0x{cmd:02X} — ignored")
+        return []
+
+    def _inventory(self) -> list:
+        count = len(self._store)
+        frames = [struct.pack('<BH', CMD_INVENTORY_COUNT, count)]
+        for (dp_id, inst), e in sorted(self._store.items()):
+            addr = self._enc_addr(dp_id, inst)
+            payload = (bytes([e['version'], e['datatype']]) +
+                       struct.pack('<ii', e['min_s'], e['max_s']) +
+                       bytes([e['behavior'] & 0x7F]))
+            frames.append(bytes([CMD_INVENTORY_DATA]) + addr + payload)
+            print(f"[MockBle20] → INVENTORY_DATA DpId={dp_id}")
+        return frames
+
+    def _read(self, frame: bytes) -> list:
+        dp_id, inst, _ = self._dec_addr(frame, 1)
+        addr = self._enc_addr(dp_id, inst)
+        entry = self._store.get((dp_id, inst)) or self._store.get((dp_id, None))
+        if entry is None:
+            print(f"[MockBle20] ← READ DpId={dp_id} → InvalidId")
+            return [bytes([CMD_READ_ERROR]) + addr + bytes([0x01])]
+        val = bytes(entry['value'])
+        print(f"[MockBle20] ← READ DpId={dp_id} → {val.hex()}")
+        return [bytes([CMD_READ_ANS]) + addr + val]
+
+    def _write(self, frame: bytes) -> list:
+        dp_id, inst, off = self._dec_addr(frame, 1)
+        addr = self._enc_addr(dp_id, inst)
+        value = frame[off:]
+        entry = self._store.get((dp_id, inst)) or self._store.get((dp_id, None))
+        if entry is None:
+            print(f"[MockBle20] ← WRITE DpId={dp_id} → InvalidId")
+            return [bytes([CMD_WRITE_ERROR]) + addr + bytes([0x01])]
+        entry['value'] = bytearray(value)
+        print(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK")
+        return [bytes([CMD_WRITE_ACK]) + addr]
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +304,13 @@ class _AriendiServerSide:
     # Handshake + encrypted data exchange
     # -----------------------------------------------------------------------
 
-    async def run(self, send_fn) -> None:
+    async def run(self, send_fn, app_handler=None) -> None:
         """
         Run the full server-side handshake, then loop on incoming encrypted frames.
 
-        send_fn: async callable(att_bytes: bytes) — BLE notification sender.
+        send_fn:     async callable(att_bytes: bytes) — BLE notification sender.
+        app_handler: async callable(plaintext: bytes) -> list[bytes] — Ble20 dispatch;
+                     if None, sends back a fake Legacy GetDeviceIdentification response.
         """
         print("[MockServer] waiting for SABM...")
 
@@ -262,20 +391,24 @@ class _AriendiServerSide:
             plaintext = self._rx_cipher.process(payload[1:])
             print(f"[MockServer] ← encrypted frame DECRYPTED: {plaintext.hex()}")
 
-            # Send back a fake Geberit GetDeviceIdentification OK response.
-            # Format: SINGLE frame (0x24), counter=0, context=0x00, proc=0x82,
-            #         status=OK (0x00), then "AcAlba" ASCII padded to 20 bytes.
-            fake_resp = bytes([
-                0x24, 0x00, 0x00,           # SINGLE frame header, counter=0
-                0x00, 0x82, 0x00,           # ctx=0x00, proc=GetDeviceIdentification, OK
-                0x41, 0x63, 0x41, 0x6C,     # "AcAl"
-                0x62, 0x61, 0x00, 0x00,     # "ba\x00\x00"
-                0x00, 0x00, 0x00, 0x00,     # padding
-                0x00, 0x00,                 # padding (total = 20 bytes)
-            ])
-            encrypted_resp = self._tx_cipher.process(fake_resp)
-            await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
-            print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
+            if app_handler is not None:
+                responses = await app_handler(plaintext)
+                for resp in responses:
+                    encrypted_resp = self._tx_cipher.process(resp)
+                    await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
+            else:
+                # Fallback: fake Legacy GetDeviceIdentification response.
+                fake_resp = bytes([
+                    0x24, 0x00, 0x00,           # SINGLE frame header, counter=0
+                    0x00, 0x82, 0x00,           # ctx=0x00, proc=GetDeviceIdentification, OK
+                    0x41, 0x63, 0x41, 0x6C,     # "AcAl"
+                    0x62, 0x61, 0x00, 0x00,     # "ba\x00\x00"
+                    0x00, 0x00, 0x00, 0x00,     # padding
+                    0x00, 0x00,                 # padding (total = 20 bytes)
+                ])
+                encrypted_resp = self._tx_cipher.process(fake_resp)
+                await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
+                print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +437,7 @@ class BtSigDataService(Service):
         super().__init__("0000fd48-0000-1000-8000-00805f9b34fb", True)
         self._mode = mode
         self._notify_value = bytes([0])
-        self._arendi = _AriendiServerSide() if mode == "handshake" else None
+        self._arendi = _AriendiServerSide() if mode in ("handshake", "ble20") else None
         # Populated after register() to enable pushing notifications.
         # bluez_peripheral stores characteristic _Characteristic objects in
         # Service._chars in declaration order: [0]=sig_write, [1]=sig_notify.
@@ -337,7 +470,7 @@ class BtSigDataService(Service):
     @sig_write.setter
     def sig_write(self, value, options):
         data = bytes(value)
-        if self._mode == "handshake" and self._arendi is not None:
+        if self._mode in ("handshake", "ble20") and self._arendi is not None:
             self._arendi.feed(data)
         else:
             print(f"Data Channel [Write]: {data.hex()}")
@@ -515,10 +648,13 @@ async def main(mode: str):
     print("Advertising as: Geberit-Alba-Mock")
 
     async def _handshake_loop():
+        app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         while True:
             sig_service._arendi = _AriendiServerSide()
+            if mode == "ble20":
+                app_handler = _Ble20AppLayer().dispatch  # fresh store per session
             try:
-                await sig_service._arendi.run(sig_service.send_notify)
+                await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler)
                 print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
             except asyncio.CancelledError:
                 raise
@@ -530,7 +666,7 @@ async def main(mode: str):
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
 
     server_task = None
-    if mode == "handshake":
+    if mode in ("handshake", "ble20"):
         print("Waiting for bridge to connect and start handshake (60 s timeout)...")
         server_task = asyncio.create_task(_handshake_loop())
 
@@ -591,19 +727,30 @@ Modes
         2. Encrypt outgoing Geberit frames correctly
         3. Decrypt incoming encrypted frames correctly
 
-      Expected output when handshake succeeds:
-        [MockServer] ← SABM
-        [MockServer] → UA
-        [MockServer] ← VERSION_REQ
-        [MockServer] → VERSION_RESP (proto v2)
-        [MockServer] ← EP_REQ
-        [MockServer] → EP_RESP  nonce1=...  nonce2=...
-        [MockServer] ← KE_REQ
-        [MockServer] client CMAC verified ✓
-        [MockServer] → KE_RESP  server_pub=...
-        [MockServer] *** HANDSHAKE COMPLETE — session keys established ***
-        [MockServer] ← encrypted frame DECRYPTED: <hex of Geberit request>
-        [MockServer] → fake GetDeviceIdentification response (encrypted)
+  --mode ble20
+      Like --mode handshake but after the handshake the mock dispatches real
+      Ble20 application-layer frames:
+        Inventory (0x00) → InventoryCount + N × InventoryData
+        Read      (0x10) → ReadAns or ReadError
+        Write     (0x20) → WriteAck or WriteError
+
+      In-memory DpId store (fresh per session):
+        DpId  60  USER_PRESENT        (OffOn,   init=0x00)
+        DpId 563  START_STOP_SHOWER   (OffOn,   init=0x00)
+        DpId 564  ANAL_SHOWER_STATUS  (Enum,    init=0x00)
+        DpId 1008 LID_LIFTER_POSITION (Signed,  init=0x00000000)
+        DpId 1009 TRIGGER_LID_LIFTING (OffOn,   init=0x00)
+
+      Use this to test Ble20Client.py (bridge side) end-to-end without
+      real Alba hardware.
+
+      Expected output on inventory:
+        [MockServer] ← encrypted frame DECRYPTED: 0000
+        [MockBle20] → INVENTORY_DATA DpId=60
+        [MockBle20] → INVENTORY_DATA DpId=563
+        ...
+        [MockServer] ← encrypted frame DECRYPTED: 10<addr>
+        [MockBle20] ← READ DpId=60 → 00
 
 Unsupported-device detection test (--mode unsupported)
 ------------------------------------------------------
@@ -622,10 +769,11 @@ Test sequence:
     )
     parser.add_argument(
         "--mode",
-        choices=["unsupported", "handshake"],
+        choices=["unsupported", "handshake", "ble20"],
         default="unsupported",
         help="unsupported: no responses (HACS detection test); "
-             "handshake: full Arendi Security server (decryption test)",
+             "handshake: full Arendi Security server (decryption test); "
+             "ble20: Arendi Security + Ble20 application layer (Ble20Client test)",
     )
     args = parser.parse_args()
 
