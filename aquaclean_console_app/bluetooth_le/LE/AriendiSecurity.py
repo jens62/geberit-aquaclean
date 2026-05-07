@@ -213,6 +213,7 @@ class AriendiSecurity:
         self._rx_ack = 0   # N(R) for outgoing frames = (peer N(S) + 1) mod 8
         self._rx_cipher: _AesCtrState | None = None
         self._tx_cipher: _AesCtrState | None = None
+        self._inner_cobs_buf: bytearray = bytearray()
         self.handshake_done = False
 
     def reset(self) -> None:
@@ -222,6 +223,7 @@ class AriendiSecurity:
         self._rx_ack = 0
         self._rx_cipher = None
         self._tx_cipher = None
+        self._inner_cobs_buf = bytearray()
         self.handshake_done = False
 
     # -------------------------------------------------------------------------
@@ -264,6 +266,41 @@ class AriendiSecurity:
     # Feed incoming ATT bytes (call from _on_data_received)
     # -------------------------------------------------------------------------
 
+    def _feed_inner_cobs(self, data: bytes) -> list[bytes]:
+        """Streaming inner-COBS decoder. Accumulates bytes across Security payloads.
+
+        Inner COBS stream format: ...[0x00][COBS(payload+CRC16_LE)][0x00]...
+        Multiple frames may arrive in one Security payload; a frame may split
+        across two consecutive Security payloads.
+        """
+        results = []
+        self._inner_cobs_buf.extend(data)
+        while 0 in self._inner_cobs_buf:
+            idx = self._inner_cobs_buf.index(0)
+            if idx == 0:
+                # Leading zero delimiter — discard and continue
+                del self._inner_cobs_buf[0]
+                continue
+            # [0..idx-1] is a COBS frame; byte at idx is the trailing zero delimiter
+            frame_bytes = bytes(self._inner_cobs_buf[:idx])
+            del self._inner_cobs_buf[:idx + 1]
+            try:
+                decoded = _cobs_decode(frame_bytes)
+            except ValueError as e:
+                logger.debug(f"AriendiSecurity: inner COBS decode error: {e}")
+                continue
+            if len(decoded) < 2:
+                continue
+            crc_recv = decoded[-2] | (decoded[-1] << 8)
+            if _crc16_kermit(decoded[:-2]) == crc_recv:
+                results.append(decoded[:-2])
+            else:
+                logger.debug(
+                    f"AriendiSecurity: inner COBS CRC mismatch "
+                    f"(got 0x{crc_recv:04X}, calc 0x{_crc16_kermit(decoded[:-2]):04X})"
+                )
+        return results
+
     def feed_att_bytes(self, data: bytes) -> list:
         """
         Feed raw ATT notification bytes.
@@ -284,14 +321,7 @@ class AriendiSecurity:
                 ft, ctrl, payload = self._rx_queue.get_nowait()
                 if ft == 'I' and payload and payload[0] == _SEC_ENCRYPTED:
                     decrypted = self._rx_cipher.process(payload[1:])
-                    inner = _inner_cobs_decode(decrypted)
-                    if inner is not None:
-                        results.append(inner)
-                    else:
-                        logger.debug(
-                            f"AriendiSecurity: inner COBS decode failed "
-                            f"(decrypted={decrypted.hex() if decrypted else ''})"
-                        )
+                    results.extend(self._feed_inner_cobs(decrypted))
                 elif ft == 'I':
                     logger.debug(
                         f"AriendiSecurity: post-handshake unexpected Security type "
