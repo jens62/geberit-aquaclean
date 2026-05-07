@@ -120,10 +120,21 @@ TX_STATUS = {
 
 # Known DpId names (subset from DpId.cs; inventory shows the rest as unnamed)
 DP_NAMES = {
-    42:   "ORIENTATION_LIGHT_LED",
-    44:   "ORIENTATION_LIGHT_MODE",
-    48:   "ORIENTATION_LIGHT_INTENSITY",
-    50:   "ORIENTATION_LIGHT_FOLLOW_UP_TIME",
+    # Orientation light (Alba Ble20 — direct DpId control, no power-cycle needed)
+    42:   "ORIENTATION_LIGHT_LED",              # Status, Percent 0-100, notifiable
+    43:   "ORIENTATION_LIGHT_SET_LED",          # Command, Percent 0-100 (only in override mode)
+    44:   "ORIENTATION_LIGHT_MODE",             # Nvm, OffOnAuto: 0=Off 1=On 2=Auto
+    45:   "ORIENTATION_LIGHT_SENSOR_DEPENDENT", # Nvm, OffOn: auto mode uses proximity sensor
+    46:   "ORIENTATION_LIGHT_AMBIENT_DEPENDENT",# Nvm, OffOn: auto mode uses ambient light sensor
+    47:   "ORIENTATION_LIGHT_LED_OVERRIDE",     # Command, OffOn: 1=bypass firmware, enable SET_LED
+    48:   "ORIENTATION_LIGHT_INTENSITY",        # Nvm, Enum 0-4 (brightness step)
+    50:   "ORIENTATION_LIGHT_FOLLOW_UP_TIME",   # Nvm, Enum 0-4 (follow-up duration step)
+    51:   "ORIENTATION_LIGHT_SENSOR_DIST",      # Nvm, Enum 0-4 (proximity trigger distance)
+    53:   "ORIENTATION_LIGHT_SENSOR_SENS",      # Nvm, Enum 0-4 (proximity sensitivity)
+    55:   "ORIENTATION_LIGHT_SENSOR_MOVE",      # Status, OffOn, notifiable — movement detected
+    56:   "ORIENTATION_LIGHT_AMBIENT_SENS",     # Nvm, Enum 0-4 (ambient light threshold)
+    58:   "ORIENTATION_LIGHT_AMBIENT_DARK",     # Status, OffOn, notifiable — ambient is dark
+    66:   "ORIENTATION_LIGHT_FOLLOW_UP_TIME_STEPS", # Nvm, internal steps table
     112:  "BLOCK_FLUSH",
     118:  "PRE_FLUSH",
     119:  "POST_FLUSH",
