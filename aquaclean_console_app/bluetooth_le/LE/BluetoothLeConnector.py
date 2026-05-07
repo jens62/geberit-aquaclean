@@ -574,10 +574,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.BULK_CHAR_BULK_READ_3_UUID: self.data_received,
             }
             await self._list_services()
+            mtu = getattr(self.client, 'mtu_size', 23)
+            chunk_size = max(20, mtu - 3)
+            logger.debug(f"Alba ATT MTU: {mtu} bytes  (max write payload: {chunk_size})")
             async def _raw_write(att_bytes: bytes):
                 # Fragment into ATT MTU-sized chunks — the device may negotiate
                 # a smaller MTU than the mock; COBS reassembles on the far end.
-                chunk_size = max(20, getattr(self.client, 'mtu_size', 23) - 3)
+                n = (len(att_bytes) + chunk_size - 1) // chunk_size
+                if n > 1:
+                    logger.debug(f"Alba write {len(att_bytes)} bytes → {n} chunks of ≤{chunk_size}")
                 for off in range(0, len(att_bytes), chunk_size):
                     await self.client.write_gatt_char(
                         self.BULK_CHAR_BULK_WRITE_0_UUID,
