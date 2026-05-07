@@ -48,7 +48,7 @@ from bluez_peripheral.util import Adapter
 # Adds the repo root to sys.path so we can import from aquaclean_console_app.
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
-    _crc16_kermit, _cobs_encode, _cobs_decode,
+    _crc16_kermit, _cobs_encode, _cobs_decode, _inner_cobs_decode,
     _hkdf, _aes_cmac, _AesCtrState,
     aquacleanBridgeId,
     _SEC_VERSION_REQ, _SEC_VERSION_RESP,
@@ -60,6 +60,17 @@ from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
 )
+
+
+# ---------------------------------------------------------------------------
+# Inner COBS encode helper (mirrors CobsFraming.Transmit in C# — wraps app data
+# before it is passed to the Security layer for encryption)
+# ---------------------------------------------------------------------------
+
+def _inner_cobs_encode(data: bytes) -> bytes:
+    """Wrap data in inner COBS frame: [0x00] + COBS(data + CRC16_LE) + [0x00]."""
+    crc = _crc16_kermit(data)
+    return b'\x00' + _cobs_encode(data + bytes([crc & 0xFF, (crc >> 8) & 0xFF])) + b'\x00'
 
 
 # ---------------------------------------------------------------------------
@@ -388,13 +399,17 @@ class _AriendiServerSide:
                 print(f"[MockServer] unexpected I-frame sec_type={sec_str} — ignored")
                 continue
 
-            plaintext = self._rx_cipher.process(payload[1:])
+            decrypted = self._rx_cipher.process(payload[1:])
+            plaintext = _inner_cobs_decode(decrypted)
+            if plaintext is None:
+                print(f"[MockServer] ← inner COBS decode failed: {decrypted.hex()}")
+                continue
             print(f"[MockServer] ← encrypted frame DECRYPTED: {plaintext.hex()}")
 
             if app_handler is not None:
                 responses = await app_handler(plaintext)
                 for resp in responses:
-                    encrypted_resp = self._tx_cipher.process(resp)
+                    encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
                     await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
             else:
                 # Fallback: fake Legacy GetDeviceIdentification response.
@@ -406,7 +421,7 @@ class _AriendiServerSide:
                     0x00, 0x00, 0x00, 0x00,     # padding
                     0x00, 0x00,                 # padding (total = 20 bytes)
                 ])
-                encrypted_resp = self._tx_cipher.process(fake_resp)
+                encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(fake_resp))
                 await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
                 print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
 

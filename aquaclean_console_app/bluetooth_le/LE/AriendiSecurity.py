@@ -119,6 +119,26 @@ def _cobs_decode(data: bytes) -> bytes:
     return bytes(result)
 
 
+def _inner_cobs_decode(frame: bytes) -> bytes | None:
+    """Decode an inner COBS frame: [0x00] + COBS(data + CRC16_LE) + [0x00].
+    Returns the application payload, or None on any error."""
+    if len(frame) < 4 or frame[0] != 0:
+        return None
+    end = frame.find(b'\x00', 1)
+    if end == -1 or end == 1:
+        return None
+    try:
+        decoded = _cobs_decode(bytes(frame[1:end]))
+    except ValueError:
+        return None
+    if len(decoded) < 2:
+        return None
+    crc_recv = decoded[-2] | (decoded[-1] << 8)
+    if _crc16_kermit(decoded[:-2]) != crc_recv:
+        return None
+    return decoded[:-2]
+
+
 class _AesCtrState:
     """
     AES-CTR streaming cipher matching aj.cs inner class a.
@@ -263,7 +283,15 @@ class AriendiSecurity:
             try:
                 ft, ctrl, payload = self._rx_queue.get_nowait()
                 if ft == 'I' and payload and payload[0] == _SEC_ENCRYPTED:
-                    results.append(self._rx_cipher.process(payload[1:]))
+                    decrypted = self._rx_cipher.process(payload[1:])
+                    inner = _inner_cobs_decode(decrypted)
+                    if inner is not None:
+                        results.append(inner)
+                    else:
+                        logger.debug(
+                            f"AriendiSecurity: inner COBS decode failed "
+                            f"(decrypted={decrypted.hex() if decrypted else ''})"
+                        )
                 elif ft == 'I':
                     logger.debug(
                         f"AriendiSecurity: post-handshake unexpected Security type "
@@ -462,8 +490,12 @@ class AriendiSecurity:
 
     def wrap_for_send(self, geberit_payload: bytes) -> bytes:
         """
-        Encrypt a Geberit frame payload and wrap in Security(0x20) HDLC I-frame.
+        Inner-COBS-frame, encrypt, and wrap in Security(0x20) HDLC I-frame.
         Returns raw ATT bytes ready to write to the BLE characteristic.
         """
-        ciphertext = self._tx_cipher.process(geberit_payload)
+        crc = _crc16_kermit(geberit_payload)
+        inner_frame = (b'\x00'
+                       + _cobs_encode(geberit_payload + bytes([crc & 0xFF, (crc >> 8) & 0xFF]))
+                       + b'\x00')
+        ciphertext = self._tx_cipher.process(inner_frame)
         return self._att_i(bytes([_SEC_ENCRYPTED]) + ciphertext)

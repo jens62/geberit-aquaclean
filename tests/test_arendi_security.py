@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 
 from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
     AriendiSecurity,
-    _crc16_kermit, _cobs_encode, _cobs_decode,
+    _crc16_kermit, _cobs_encode, _cobs_decode, _inner_cobs_decode,
     _hkdf, _aes_cmac, _AesCtrState,
     aquacleanBridgeId,
     _SEC_VERSION_REQ, _SEC_VERSION_RESP,
@@ -178,7 +178,11 @@ class _ServerSide:
         self.handshake_done = True
 
     def encrypt(self, plaintext: bytes) -> bytes:
-        return self._att_i(bytes([_SEC_ENCRYPTED]) + self._tx_cipher.process(plaintext))
+        crc = _crc16_kermit(plaintext)
+        inner_frame = (b'\x00'
+                       + _cobs_encode(plaintext + bytes([crc & 0xFF, (crc >> 8) & 0xFF]))
+                       + b'\x00')
+        return self._att_i(bytes([_SEC_ENCRYPTED]) + self._tx_cipher.process(inner_frame))
 
     def decrypt_next(self, att_bytes: bytes) -> bytes | None:
         """Feed att_bytes; return decrypted plaintext if an encrypted I-frame was received."""
@@ -186,7 +190,8 @@ class _ServerSide:
         while not self._rx_queue.empty():
             ft, ctrl, payload = self._rx_queue.get_nowait()
             if ft == 'I' and payload and payload[0] == _SEC_ENCRYPTED:
-                return self._rx_cipher.process(payload[1:])
+                decrypted = self._rx_cipher.process(payload[1:])
+                return _inner_cobs_decode(decrypted)
         return None
 
 
