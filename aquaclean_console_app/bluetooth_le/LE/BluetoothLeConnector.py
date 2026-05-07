@@ -590,6 +590,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         response=False,
                     )
             await self._arendi_security.perform_handshake(_raw_write)
+            self._arendi_security._ack_send_fn = _raw_write
             self.connection_status_changed_handlers(self, True, self.device_address, self.device_name)
             return
         self.read_characteristics = {

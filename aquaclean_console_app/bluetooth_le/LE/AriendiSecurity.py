@@ -214,6 +214,7 @@ class AriendiSecurity:
         self._rx_cipher: _AesCtrState | None = None
         self._tx_cipher: _AesCtrState | None = None
         self._inner_cobs_buf: bytearray = bytearray()
+        self._ack_send_fn = None   # set by caller after handshake for auto-RR
         self.handshake_done = False
 
     def reset(self) -> None:
@@ -224,6 +225,7 @@ class AriendiSecurity:
         self._rx_cipher = None
         self._tx_cipher = None
         self._inner_cobs_buf = bytearray()
+        self._ack_send_fn = None
         self.handshake_done = False
 
     # -------------------------------------------------------------------------
@@ -380,6 +382,13 @@ class AriendiSecurity:
                 self._rx_queue.put_nowait(('I', ctrl, hdlc_payload))
                 sec_str = f"0x{hdlc_payload[0]:02X}" if hdlc_payload else "0x??"
                 logger.debug(f"AriendiSecurity: I-frame rx peer_ns={peer_ns} sec_type={sec_str}")
+                if self.handshake_done and self._ack_send_fn is not None:
+                    try:
+                        asyncio.get_running_loop().create_task(
+                            self._ack_send_fn(self._att_s_rr())
+                        )
+                    except RuntimeError:
+                        pass
             elif (ctrl & 0x03) == 0x03:  # U-frame
                 self._rx_queue.put_nowait(('U', ctrl, hdlc_payload))
                 logger.debug(f"AriendiSecurity: U-frame rx ctrl=0x{ctrl:02X}")
