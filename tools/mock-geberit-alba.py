@@ -186,7 +186,7 @@ class _AriendiServerSide:
         print("[MockServer] waiting for SABM...")
 
         # 1. SABM → UA
-        await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE))
+        await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE), timeout=60.0)
         print("[MockServer] ← SABM")
         await send_fn(self._att_u(_HDLC_UA_TYPE))
         print("[MockServer] → UA")
@@ -514,28 +514,33 @@ async def main(mode: str):
     print(f"--- Mock Device Active (mode={mode}) ---")
     print("Advertising as: Geberit-Alba-Mock")
 
+    async def _handshake_loop():
+        while True:
+            sig_service._arendi = _AriendiServerSide()
+            try:
+                await sig_service._arendi.run(sig_service.send_notify)
+                print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                msg = str(exc)
+                if msg:
+                    print(f"[MockServer] ERROR: {msg}")
+                else:
+                    print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
+
     server_task = None
     if mode == "handshake":
-        print("Waiting for bridge to connect and start handshake...")
-        server_task = asyncio.create_task(
-            sig_service._arendi.run(sig_service.send_notify)
-        )
+        print("Waiting for bridge to connect and start handshake (60 s timeout)...")
+        server_task = asyncio.create_task(_handshake_loop())
 
     stop_event = asyncio.Event()
     try:
         if server_task:
-            done, _ = await asyncio.wait(
+            await asyncio.wait(
                 [server_task, asyncio.ensure_future(stop_event.wait())],
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if server_task in done:
-                exc = server_task.exception()
-                if exc:
-                    print(f"[MockServer] ERROR: {exc}")
-                else:
-                    print("[MockServer] session complete")
-                print("Press Ctrl-C to exit.")
-                await stop_event.wait()
         else:
             await stop_event.wait()
     except asyncio.CancelledError:
