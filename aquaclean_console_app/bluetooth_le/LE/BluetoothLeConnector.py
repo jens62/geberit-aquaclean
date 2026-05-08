@@ -579,10 +579,16 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     await self.client._acquire_mtu()
                 except Exception as e:
                     logger.debug(f"Alba MTU negotiation failed, using default: {e}")
-            # max_write_without_response_size is the bleak-recommended cross-platform
-            # way to get the write payload limit (avoids the BlueZ mtu_size warning).
-            write_char = self.client.services.get_characteristic(self.BULK_CHAR_BULK_WRITE_0_UUID)
-            chunk_size = write_char.max_write_without_response_size if write_char else 20
+            # max_write_without_response_size is the bleak-recommended way to get the
+            # write payload limit without triggering the BlueZ mtu_size warning.
+            # ESPHomeGATTServiceCollection has no get_characteristic() — fall back to 20.
+            chunk_size = 20
+            try:
+                write_char = self.client.services.get_characteristic(self.BULK_CHAR_BULK_WRITE_0_UUID)
+                if write_char is not None:
+                    chunk_size = write_char.max_write_without_response_size
+            except AttributeError:
+                pass
             logger.debug(f"Alba write chunk size: {chunk_size} bytes")
             async def _raw_write(att_bytes: bytes):
                 # Fragment into ATT MTU-sized chunks — the device may negotiate
