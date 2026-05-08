@@ -31,11 +31,18 @@ Quick start:
 
 import argparse
 import asyncio
+import builtins
 import inspect
 import os
 import pathlib
 import struct
 import sys
+from datetime import datetime
+
+_builtin_print = builtins.print
+def print(*args, **kwargs):  # noqa: A001
+    now = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    _builtin_print(now, *args, **kwargs)
 
 from dbus_next.aio import MessageBus
 from dbus_next import BusType, Variant
@@ -562,6 +569,7 @@ class BtSigDataService(Service):
     @sig_write.setter
     def sig_write(self, value, options):
         data = bytes(value)
+        print(f"[Write→sig_write] {data.hex()}")
         if self._mode in ("handshake", "ble20") and self._arendi is not None:
             self._arendi.feed(data)
         else:
