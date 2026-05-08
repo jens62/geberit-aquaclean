@@ -579,6 +579,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     await self.client._acquire_mtu()
                 except Exception as e:
                     logger.debug(f"Alba MTU negotiation failed, using default: {e}")
+            # If _acquire_mtu was unavailable or failed, _mtu_size stays None and
+            # bleak emits a UserWarning on every mtu_size access.  Set it to the
+            # BLE baseline (23) explicitly so the warning is suppressed.
+            if hasattr(self.client, '_mtu_size') and self.client._mtu_size is None:
+                self.client._mtu_size = 23
             mtu = getattr(self.client, 'mtu_size', 23)
             chunk_size = max(20, mtu - 3)
             logger.debug(f"Alba ATT MTU: {mtu} bytes  (max write payload: {chunk_size})")

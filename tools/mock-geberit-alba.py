@@ -114,6 +114,7 @@ class _Ble20AppLayer:
         (13,  None,  0,  8, 0,         6,          3, b''),                  # ACCESS_CODE
         (14,  None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'), # ACCESS_REVOCATION
         (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 1746652800)),  # RTC_TIME
+        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),             # DP_NAME
         (62,  None,  1, 10, 0,         4,          2, b'\x00'),              # (Enum Command ver=1)
         (83,  None,  1, 10, 0,         1,          2, b'\x00'),              # (Enum Command ver=1)
         (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'), # (Binary Status ver=1)
