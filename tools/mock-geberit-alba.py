@@ -52,8 +52,12 @@ try:
 except Exception:
     _BRIDGE_VERSION = "unknown"
 
-from dbus_next.aio import MessageBus
-from dbus_next import BusType, Variant
+try:
+    from dbus_fast.aio import MessageBus
+    from dbus_fast import BusType, Variant
+except ImportError:
+    from dbus_next.aio import MessageBus
+    from dbus_next import BusType, Variant
 from bluez_peripheral.gatt.service import Service
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.advert import Advertisement
@@ -714,6 +718,26 @@ async def main(mode: str):
         await dis_service.register(bus, "/org/bluez/example/dis", adapter_wrapper)
     except Exception as e:
         print("Service registration failed:", e)
+
+    # Diagnostic: confirm CharFlags values and what D-Bus flags sig_write is advertising.
+    print(f"[Diag] CharFlags: READ={int(CharFlags.READ)} WRITE_WITHOUT_RESPONSE={int(CharFlags.WRITE_WITHOUT_RESPONSE)} WRITE={int(CharFlags.WRITE)} NOTIFY={int(CharFlags.NOTIFY)}")
+    for attr in ('_characteristics', '_chars'):
+        chars = getattr(sig_service, attr, None)
+        if not chars:
+            continue
+        for c in chars:
+            uuid_str = str(getattr(c, '_uuid', getattr(c, 'uuid', '?')))
+            flags_val = getattr(c, 'flags', getattr(c, '_flags', '?'))
+            service_ref = getattr(c, '_service', 'NOT SET')
+            setter_ref = getattr(c, '_setter_func', 'NOT SET')
+            dbus_flags = None
+            if hasattr(c, '_get_flags'):
+                try:
+                    dbus_flags = c._get_flags()
+                except Exception as e:
+                    dbus_flags = f"ERROR: {e}"
+            print(f"[Diag] char {uuid_str}: flags={flags_val}({int(flags_val) if hasattr(flags_val,'value') or isinstance(flags_val,int) else '?'}) dbus_flags={dbus_flags} _service={'set' if service_ref not in (None,'NOT SET') else service_ref} _setter={'set' if setter_ref not in (None,'NOT SET') else setter_ref}")
+        break
 
     # Wire up the notify characteristic interface so send_notify() can push frames.
     # Search whichever attribute holds characteristics (_characteristics in newer
