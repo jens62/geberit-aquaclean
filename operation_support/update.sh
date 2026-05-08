@@ -59,9 +59,6 @@ echo "==> Upgrading aquaclean-bridge to ${VERSION}..."
 "${VENV}/bin/pip" install --quiet --force-reinstall \
     "git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
 
-echo "==> Upgrading mock tool dependencies (bluez-peripheral)..."
-"${VENV}/bin/pip" install --quiet "bluez-peripheral>=0.2.0a5"
-
 echo "==> Restoring config.ini..."
 cp "$BACKUP" "$CONFIG"
 rm -f "$BACKUP"

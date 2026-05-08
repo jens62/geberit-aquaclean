@@ -52,16 +52,20 @@ try:
 except Exception:
     _BRIDGE_VERSION = "unknown"
 
-try:
-    from dbus_fast.aio import MessageBus
-    from dbus_fast import BusType, Variant
-except ImportError:
-    from dbus_next.aio import MessageBus
-    from dbus_next import BusType, Variant
+# Import bluez_peripheral first so it loads its internal DBus library (dbus_next for
+# 0.1.x, dbus_fast for 0.2.x).  Then mirror that choice for our own MessageBus /
+# BusType / Variant imports — mixing libraries causes a ServiceInterface type error.
 from bluez_peripheral.gatt.service import Service
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.advert import Advertisement
 from bluez_peripheral.util import Adapter
+import sys as _sys
+if "dbus_fast" in _sys.modules:
+    from dbus_fast.aio import MessageBus
+    from dbus_fast import BusType, Variant
+else:
+    from dbus_next.aio import MessageBus
+    from dbus_next import BusType, Variant
 
 # --- Import Arendi Security crypto from the bridge package -------------------
 # Adds the repo root to sys.path so we can import from aquaclean_console_app.
@@ -720,7 +724,7 @@ async def main(mode: str):
         print("Service registration failed:", e)
 
     # Diagnostic: confirm CharFlags values and what D-Bus flags sig_write is advertising.
-    print(f"[Diag] CharFlags: READ={int(CharFlags.READ)} WRITE_WITHOUT_RESPONSE={int(CharFlags.WRITE_WITHOUT_RESPONSE)} WRITE={int(CharFlags.WRITE)} NOTIFY={int(CharFlags.NOTIFY)}")
+    print(f"[Diag] CharFlags: READ={CharFlags.READ.value} WRITE_WITHOUT_RESPONSE={CharFlags.WRITE_WITHOUT_RESPONSE.value} WRITE={CharFlags.WRITE.value} NOTIFY={CharFlags.NOTIFY.value}")
     for attr in ('_characteristics', '_chars'):
         chars = getattr(sig_service, attr, None)
         if not chars:
@@ -736,7 +740,8 @@ async def main(mode: str):
                     dbus_flags = c._get_flags()
                 except Exception as e:
                     dbus_flags = f"ERROR: {e}"
-            print(f"[Diag] char {uuid_str}: flags={flags_val}({int(flags_val) if hasattr(flags_val,'value') or isinstance(flags_val,int) else '?'}) dbus_flags={dbus_flags} _service={'set' if service_ref not in (None,'NOT SET') else service_ref} _setter={'set' if setter_ref not in (None,'NOT SET') else setter_ref}")
+            flags_int = flags_val.value if hasattr(flags_val, 'value') else (flags_val if isinstance(flags_val, int) else '?')
+            print(f"[Diag] char {uuid_str}: flags={flags_val}({flags_int}) dbus_flags={dbus_flags} _service={'set' if service_ref not in (None,'NOT SET') else service_ref} _setter={'set' if setter_ref not in (None,'NOT SET') else setter_ref}")
         break
 
     # Wire up the notify characteristic interface so send_notify() can push frames.
