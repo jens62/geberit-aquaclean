@@ -71,7 +71,6 @@ _add_level('TRACE', 5)
 _FMT = '%(asctime)s %(name)s %(lineno)d %(levelname)s: %(message)s'
 logging.basicConfig(level=logging.WARNING, format=_FMT)
 log = logging.getLogger('alba-probe')
-log.setLevel(logging.DEBUG)
 
 # ---------------------------------------------------------------------------
 # Bridge imports
@@ -242,7 +241,15 @@ async def run(args):
         inv = await session.inventory()
         print(f"  {len(inv)} DpIds returned.")
 
-        _print_inventory(inv)
+        any_action = (
+            args.identify or
+            args.read is not None or
+            args.write is not None or
+            args.toggle_lid or
+            args.watch is not None
+        )
+        if not any_action:
+            _print_inventory(inv)
 
         # ── Optional: device identification ──────────────────────────────────
         if args.identify:
