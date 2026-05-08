@@ -19,6 +19,7 @@ from aquaclean_console_app.aquaclean_core.Clients.AquaCleanClient               
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
 from aquaclean_console_app.aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
 from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
+from aquaclean_console_app.aquaclean_core.Clients.AlbaClient                        import AlbaClient
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
 from aquaclean_console_app.aquaclean_core.Message.MessageService                    import MessageService
 from aquaclean_console_app.aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
@@ -296,6 +297,35 @@ if log_level not in ('TRACE', 'SILLY'):
 # garbled literal escape sequences in log files when aioesphomeapi logs the
 # raw protobuf payload at DEBUG level.
 _ansi_re = re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
+
+async def _dispatch_to_alba_if_needed(connector, old_client):
+    """After connect_async(), swap to AlbaClient when the device is an Alba.
+
+    Returns (client, swapped):
+      swapped=True  → returned client is a fresh AlbaClient; the stale Mera
+                      Comfort frame handler was removed from connector.
+      swapped=False → returned client is old_client unchanged.
+
+    No-op (swapped=False) if old_client is already an AlbaClient — handles
+    the persistent-ESPHome path where this is called on every poll cycle.
+    """
+    if connector.is_variant_a and connector.arendi_handshake_done:
+        if isinstance(old_client, AlbaClient):
+            # Already dispatched on a previous cycle; run inventory again (fresh connect).
+            await old_client.post_connect()
+            return old_client, False
+        alba = AlbaClient(connector)
+        await alba.post_connect()
+        # Remove the stale Mera Comfort frame handler that AquaCleanBaseClient
+        # registered during __init__.  If left, FrameService.process_data
+        # raises on every Ble20 frame, blocking _ble20._on_data from firing.
+        try:
+            connector.data_received_handlers -= old_client.base_client.frame_service.process_data
+        except (ValueError, AttributeError):
+            pass  # handler already removed or old_client has no base_client
+        return alba, True
+    return old_client, False
+
 
 class _AnsiFilter(logging.Filter):
     def filter(self, record):
@@ -738,6 +768,13 @@ class ServiceMode:
                         write_uuid=str(bluetooth_connector.BULK_CHAR_BULK_WRITE_0_UUID),
                         notify_uuid=str(bluetooth_connector.BULK_CHAR_BULK_READ_0_UUID),
                     )
+                # Dispatch: if Alba (Arendi handshake done), swap to AlbaClient and re-wire events.
+                self.client, _swapped = await _dispatch_to_alba_if_needed(bluetooth_connector, self.client)
+                if _swapped:
+                    self.client.DeviceStateChanged += self.on_device_state_changed
+                    self.client.SOCApplicationVersions += self.soc_application_versions
+                    self.client.DeviceInitialOperationDate += self.device_initial_operation_date
+                    self.client.DeviceIdentification += self.on_device_identification
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
@@ -2503,6 +2540,10 @@ class ApiMode:
                     write_uuid=str(connector.BULK_CHAR_BULK_WRITE_0_UUID),
                     notify_uuid=str(connector.BULK_CHAR_BULK_READ_0_UUID),
                 )
+            # Dispatch: Alba (Arendi handshake done) → swap to AlbaClient.
+            client, _swapped = await _dispatch_to_alba_if_needed(connector, client)
+            if _swapped and use_persistent:
+                self._esphome_client = client
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
@@ -3861,6 +3902,7 @@ async def run_cli(args):
 
         logger.info(f"Connecting to {device_id}...")
         await client.connect(device_id)
+        client, _ = await _dispatch_to_alba_if_needed(connector, client)
 
         result["device"]        = client.Description
         result["serial_number"] = client.SerialNumber
