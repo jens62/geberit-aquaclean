@@ -95,9 +95,22 @@ class _Ble20AppLayer:
     """
 
     # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
-    # datatype: 10=Enum  11=OffOn  15=Signed
+    # datatype: 1=Binary  8=String  9=Counter  10=Enum  11=OffOn  15=Signed
     # behavior: 1=Status  2=Command
     _DEFAULT_STORE = [
+        # ── Device identification ──────────────────────────────────────────
+        (0,   None, 1,  1, 0, 255,          1, b'\x02'),                   # DEVICE_SERIES  = 2
+        (1,   None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_VARIANT = 0
+        (2,   None, 1, 15, -2147483648, 2147483647, 1,
+              struct.pack('<i', 123)),                                       # DEVICE_NUMBER  = 123 (mock-serial-123)
+        (4,   None, 1,  8, 0, 0,            1, b'828.860.00.A\x00'),       # DEVICE_SAP_NUMBER
+        (8,   None, 1,  8, 0, 0,            1, b'03'),                     # FW_RS_VERSION  = "03" → assembled: RS03TS89
+        (9,   None, 1,  9, 0, 255,          1, b'\x59'),                   # FW_TS_VERSION  = 89
+        (16,  None, 1,  8, 0, 0,            1, b'AcAlba\x00'),             # NAME
+        (236, None, 1,  9, 0, 4294967295,   1, struct.pack('<I', 123)),    # UNIQUE_DEVICE_NUMBER = 123
+        (304, None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_MODEL   = 0
+        (337, None, 1,  1, 0, 255,          1, b'\x00'),                   # BOOTLOADER_VARIANT = 0
+        # ── Application state ─────────────────────────────────────────────
         (60,   None, 1, 11, 0, 1,   1, b'\x00'),            # USER_PRESENT
         (563,  None, 1, 11, 0, 1,   2, b'\x00'),            # START_STOP_ANAL_SHOWER
         (564,  None, 1, 10, 0, 5,   1, b'\x00'),            # ANAL_SHOWER_STATUS
