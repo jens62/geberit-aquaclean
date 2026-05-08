@@ -574,6 +574,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.BULK_CHAR_BULK_READ_3_UUID: self.data_received,
             }
             await self._list_services()
+            if hasattr(self.client, '_acquire_mtu'):
+                try:
+                    await self.client._acquire_mtu()
+                except Exception as e:
+                    logger.debug(f"Alba MTU negotiation failed, using default: {e}")
             mtu = getattr(self.client, 'mtu_size', 23)
             chunk_size = max(20, mtu - 3)
             logger.debug(f"Alba ATT MTU: {mtu} bytes  (max write payload: {chunk_size})")
