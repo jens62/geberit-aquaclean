@@ -95,27 +95,93 @@ class _Ble20AppLayer:
     """
 
     # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
-    # datatype: 1=Binary  8=String  9=Counter  10=Enum  11=OffOn  15=Signed
-    # behavior: 1=Status  2=Command
+    # datatype: 0=Unused 1=Binary 2=MilliSeconds 3=Seconds 8=String 9=Counter
+    #           10=Enum 11=OffOn 13=TimeStampUtc
+    # behavior: 0=Info  1=Status  2=Command  3=Nvm  4=Protected
+    #
+    # 78 DpIds mirroring a real kstr AquaClean Alba (AC250) inventory.
     _DEFAULT_STORE = [
-        # ── Device identification ──────────────────────────────────────────
-        (0,   None, 1,  1, 0, 255,          1, b'\x02'),                   # DEVICE_SERIES  = 2
-        (1,   None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_VARIANT = 0
-        (2,   None, 1, 15, -2147483648, 2147483647, 1,
-              struct.pack('<i', 123)),                                       # DEVICE_NUMBER  = 123 (mock-serial-123)
-        (4,   None, 1,  8, 0, 0,            1, b'828.860.00.A\x00'),       # DEVICE_SAP_NUMBER
-        (8,   None, 1,  8, 0, 0,            1, b'03'),                     # FW_RS_VERSION  = "03" → assembled: RS03TS89
-        (9,   None, 1,  9, 0, 255,          1, b'\x59'),                   # FW_TS_VERSION  = 89
-        (16,  None, 1,  8, 0, 0,            1, b'AcAlba\x00'),             # NAME
-        (236, None, 1,  9, 0, 4294967295,   1, struct.pack('<I', 123)),    # UNIQUE_DEVICE_NUMBER = 123
-        (304, None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_MODEL   = 0
-        (337, None, 1,  1, 0, 255,          1, b'\x00'),                   # BOOTLOADER_VARIANT = 0
-        # ── Application state ─────────────────────────────────────────────
-        (60,   None, 1, 11, 0, 1,   1, b'\x00'),            # USER_PRESENT
-        (563,  None, 1, 11, 0, 1,   2, b'\x00'),            # START_STOP_ANAL_SHOWER
-        (564,  None, 1, 10, 0, 5,   1, b'\x00'),            # ANAL_SHOWER_STATUS
-        (1008, None, 1, 15, 0, 100, 1, b'\x00\x00\x00\x00'),# LID_LIFTER_POSITION
-        (1009, None, 1, 11, 0, 1,   2, b'\x00'),            # TRIGGER_LID_LIFTING
+        # ── System / device identification ────────────────────────────────
+        (0,   None,  0,  9, 0,         255,        0, b'\x02\x00\x00\x00'),  # DEVICE_SERIES = 2
+        (1,   None,  0,  9, 0,         255,        0, b'\x00\x00\x00\x00'),  # DEVICE_VARIANT = 0
+        (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 123)),# DEVICE_NUMBER = 123 (mock-serial-123)
+        (3,   None,  0, 13, 0,         0,          4, b'\x00\x00\x00\x00'),  # DEVICE_PRODUCTION_DATE
+        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.A'),      # DEVICE_SAP_NUMBER
+        (8,   None,  0,  8, 2,         2,          0, b'03'),                # FW_RS_VERSION = "03" → RS03TS89
+        (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),# FW_TS_VERSION = 89
+        (10,  None,  0,  8, 2,         2,          4, b'00'),                # HW_RS_VERSION = "00"
+        (12,  None,  0,  8, 0,         4,          4, b''),                  # PAIRING_SECRET
+        (13,  None,  0,  8, 0,         6,          3, b''),                  # ACCESS_CODE
+        (14,  None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'), # ACCESS_REVOCATION
+        (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 1746652800)),  # RTC_TIME
+        (62,  None,  1, 10, 0,         4,          2, b'\x00'),              # (Enum Command ver=1)
+        (83,  None,  1, 10, 0,         1,          2, b'\x00'),              # (Enum Command ver=1)
+        (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'), # (Binary Status ver=1)
+        (148, None,  0,  3, 0,         0,          1, b'\x00\x00\x00\x00'), # (Seconds Status)
+        (149, None,  0,  3, 0,         0,          1, b'\x00\x00\x00\x00'), # (Seconds Status)
+        (153, None,  0,  0, 0,         0,          2, b''),                  # (Unused Command)
+        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 123)),# UNIQUE_DEVICE_NUMBER = 123
+        (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 1746652800)),  # SET_RTC_TIME
+        (313, None,  0,  8, 0,         20,         4, b''),                  # SALES_SAP_NUMBER
+        (337, None,  0,  9, 0,         255,        0, b'\x00\x00\x00\x00'), # BOOTLOADER_VARIANT = 0
+        (369, None,  0,  8, 0,         20,         4, b'mock-serial-123'),  # SALES_PRODUCT_SERIAL_NUMBER
+        (370, None,  0, 13, 0,         0,          4, b'\x00\x00\x00\x00'), # (TsUtc Protected)
+        (371, None,  0,  8, 0,         12,         4, b''),                  # SALES_PRODUCT_SAP_NUMBER
+        (431, None,  0,  3, 0,         0,          4, b'\x00\x00\x00\x00'), # (Seconds Protected)
+        # ── Anal shower ───────────────────────────────────────────────────
+        (563, None,  0, 10, 0,         1,          2, b'\x00'),             # START_STOP_ANAL_SHOWER
+        (564, None,  0, 10, 0,         7,          1, b'\x00'),             # ANAL_SHOWER_STATUS
+        (566, None,  0, 10, 0,         1,          2, b'\x00'),             # (Enum Command)
+        (567, None,  0, 10, 0,         5,          1, b'\x00'),             # (Enum Status)
+        (569, None,  0, 10, 0,         0,          2, b'\x00'),             # (Enum Command)
+        (570, None,  0, 10, 0,         4,          2, b'\x00'),             # SET_ACTIVE_ANAL_SPRAY_INTENSITY
+        (571, None,  0, 10, 0,         4,          1, b'\x00'),             # (Enum Status)
+        (572, None,  0, 10, 0,         4,          2, b'\x00'),             # SET_ACTIVE_ANAL_SPRAY_ARM_POSITION
+        (573, None,  0, 10, 0,         4,          1, b'\x00'),             # (Enum Status)
+        (574, None,  0, 10, 0,         5,          2, b'\x00'),             # (Enum Command)
+        (575, None,  0, 10, 0,         5,          1, b'\x00'),             # (Enum Status)
+        (576, None,  0, 11, 0,         1,          2, b'\x00'),             # (OffOn Command)
+        (577, None,  0, 11, 0,         1,          1, b'\x00'),             # (OffOn Status)
+        (580, None,  0, 10, 0,         4,          3, b'\x00'),             # STORED_ANAL_SPRAY_INTENSITY
+        (581, None,  0, 10, 0,         4,          3, b'\x00'),             # STORED_ANAL_SPRAY_ARM_POSITION
+        (582, None,  0, 10, 0,         5,          3, b'\x00'),             # (Enum Nvm)
+        (583, None,  0, 11, 0,         1,          3, b'\x00'),             # (OffOn Nvm)
+        (584, None,  0, 10, 0,         1,          2, b'\x00'),             # (Enum Command)
+        (585, None,  0, 10, 0,         4,          1, b'\x00'),             # (Enum Status)
+        (588, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
+        (589, None,  0,  9, 0,         0,          1, b'\x00\x00\x00\x00'),# (Counter Status)
+        (590, None,  0, 13, 0,         0,          3, b'\x00\x00\x00\x00'),# (TsUtc Nvm)
+        (591, None,  0, 13, 0,         0,          3, b'\x00\x00\x00\x00'),# (TsUtc Nvm)
+        (592, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
+        (607, None,  0, 10, 0,         1,          1, b'\x00'),             # (Enum Status)
+        (711, None,  0,  9, 0,         0,          1, b'\x00\x00\x00\x00'),# (Counter Status)
+        (764, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
+        (765, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
+        (766, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
+        (781, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
+        (789, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
+        (790, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
+        (795, None,  0, 11, 0,         1,          3, b'\x00'),             # (OffOn Nvm)
+        (796, None,  0, 10, 0,         2,          3, b'\x00'),             # (Enum Nvm)
+        (802, None,  0,  0, 0,         0,          2, b''),                 # (Unused Command)
+        (803, None,  0, 11, 0,         1,          4, b'\x00'),             # (OffOn Protected)
+        (810, None,  0, 11, 0,         1,          1, b'\x00'),             # (OffOn Status)
+        (820, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
+        (977, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
+        (978, None,  0,  0, 0,         0,          2, b''),                 # (Unused Command)
+        (979, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
+        (982, None,  0,  1, 4,         4,          0, b'\x00\x00\x00\x00'),# (Binary Info)
+        (983, None,  0, 11, 0,         1,          1, b'\x00'),             # (OffOn Status)
+        # ── Instanced DpIds ───────────────────────────────────────────────
+        (786,  2,    0,  9, 0,         0,          0, b'\x00\x00\x00\x00'),# Counter Info inst=2
+        (785,  3,    0,  9, 0,         0,          0, b'\x00\x00\x00\x00'),# Counter Info inst=3
+        (787,  3,    0,  9, 0,         0,          0, b'\x00\x00\x00\x00'),# Counter Info inst=3
+        (565,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),# ANAL_SHOWER_PROGRESS inst=4
+        (568,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),# (MilliSec Status inst=4)
+        (586,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),# (MilliSec Status inst=4)
+        (405, 31,    1,  9, 0,  999999999,         1, b'\x00\x00\x00\x00'),# Counter Status ver=1 inst=31
+        (688, 31,    1,  9, 0,  999999999,         1, b'\x00\x00\x00\x00'),# Counter Status ver=1 inst=31
+        (689, 31,    1,  9, 0,  999999999,         1, b'\x00\x00\x00\x00'),# Counter Status ver=1 inst=31
     ]
 
     def __init__(self):
