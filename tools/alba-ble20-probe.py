@@ -161,7 +161,7 @@ def _print_identification(di: Ble20DeviceIdentification) -> None:
     _row("Device Number",      di.device_number)
     _row("Device SAP Number",  di.device_sap_number)
     _row("Unique Device ID",   f"0x{di.device_unique_id:08X}" if di.device_unique_id is not None else None)
-    _row("FW RS Version",      f"RS{di.fw_rs_version}" if di.fw_rs_version else None)
+    _row("FW RS Version",      di.fw_rs_version)
     _row("FW TS Version",      di.fw_ts_version)
     _row("Boot Variant",       di.device_boot_variant)
 
