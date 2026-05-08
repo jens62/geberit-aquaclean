@@ -32,6 +32,7 @@ Quick start:
 import argparse
 import asyncio
 import builtins
+import hashlib
 import inspect
 import os
 import pathlib
@@ -43,6 +44,13 @@ _builtin_print = builtins.print
 def print(*args, **kwargs):  # noqa: A001
     now = datetime.now().strftime('%H:%M:%S.%f')[:-3]
     _builtin_print(now, *args, **kwargs)
+
+_SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
+try:
+    from importlib.metadata import version as _pkg_ver
+    _BRIDGE_VERSION = _pkg_ver("geberit-aquaclean")
+except Exception:
+    _BRIDGE_VERSION = "unknown"
 
 from dbus_next.aio import MessageBus
 from dbus_next import BusType, Variant
@@ -745,6 +753,7 @@ async def main(mode: str):
         print("Advertisement registration failed:", e)
 
     print(f"--- Mock Device Active (mode={mode}) ---")
+    print(f"    script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
     print("Advertising as: Geberit-Alba-Mock")
 
     async def _handshake_loop():

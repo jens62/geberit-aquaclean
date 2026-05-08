@@ -41,12 +41,22 @@ Usage
 import argparse
 import asyncio
 import configparser
+import hashlib
 import logging
 import os
+import pathlib
 import struct
 import sys
 from datetime import datetime
 from typing import Optional
+
+# Script fingerprint — printed at startup so the running version is always visible.
+_SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
+try:
+    from importlib.metadata import version as _pkg_ver
+    _BRIDGE_VERSION = _pkg_ver("geberit-aquaclean")
+except Exception:
+    _BRIDGE_VERSION = "unknown"
 
 # ---------------------------------------------------------------------------
 # Project root on path (works when installed via pip and when run from repo)
@@ -203,7 +213,7 @@ async def run(args):
         log.error("No device address.  Provide --device or set [BLE] device_id in config.ini.")
         return 1
 
-    print(f"\nAlba Ble20 Probe")
+    print(f"\nAlba Ble20 Probe  [script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}]")
     print(f"  Device  : {device}")
     if host:
         print(f"  Via     : ESPHome proxy {host}:{port}")
