@@ -607,6 +607,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             except AttributeError:
                 pass
             logger.debug(f"Alba write chunk size: {chunk_size} bytes")
+            # Via ESPHome, force ATT Write Request (response=True).  Some peripheral
+            # stacks (including bluez_peripheral on Linux) advertise WRITE_WITHOUT_RESPONSE
+            # (properties=4) even for characteristics that should be WRITE (properties=8).
+            # ESPHomeAPIClient auto-detects response=False from properties=4, sending an
+            # ATT Write Command — which BlueZ handles in kernel space without invoking the
+            # D-Bus WriteValue callback, so the setter is never called.  Forcing
+            # response=True sends ATT Write Request instead, which always triggers the D-Bus
+            # callback on the peripheral side.
+            _esphome_write_response = bool(self.esphome_host)
             async def _raw_write(att_bytes: bytes):
                 # Fragment into ATT MTU-sized chunks — the device may negotiate
                 # a smaller MTU than the mock; COBS reassembles on the far end.
@@ -617,6 +626,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     await self.client.write_gatt_char(
                         self.BULK_CHAR_BULK_WRITE_0_UUID,
                         att_bytes[off:off + chunk_size],
+                        response=_esphome_write_response,
                     )
             await self._arendi_security.perform_handshake(_raw_write)
             self._arendi_security._ack_send_fn = _raw_write
