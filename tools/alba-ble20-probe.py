@@ -74,229 +74,20 @@ log = logging.getLogger('alba-probe')
 log.setLevel(logging.DEBUG)
 
 # ---------------------------------------------------------------------------
-# Bridge import
+# Bridge imports
 # ---------------------------------------------------------------------------
 from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
-
-# ---------------------------------------------------------------------------
-# Ble20 protocol constants
-# ---------------------------------------------------------------------------
-CMD_INVENTORY       = 0x00
-CMD_INVENTORY_COUNT = 0x01
-CMD_INVENTORY_DATA  = 0x02
-CMD_READ            = 0x10
-CMD_READ_ANS        = 0x11
-CMD_READ_ERROR      = 0x12
-CMD_WRITE           = 0x20
-CMD_WRITE_ACK       = 0x21
-CMD_WRITE_ERROR     = 0x22
-CMD_CAPABILITIES    = 0xFD
-CMD_CAPABILITIES_ACK= 0xFE
-CMD_DEVICE_STATUS   = 0xE0
-
-# DataPointType enum (index = wire byte value, from DataPointType.cs)
-DP_TYPES = {
-    0:  "Unused",        1:  "Binary",       2:  "MilliSeconds",
-    3:  "Seconds",       4:  "Minutes",      5:  "Hours",
-    6:  "Permill",       7:  "Percent",      8:  "String",
-    9:  "Counter",       10: "Enum",         11: "OffOn",
-    12: "OffOnAuto",     13: "TimeStampUtc", 14: "TimeStampLocal",
-    15: "Signed",
-}
-
-# DpBehavior enum (index = wire value, from DpBehavior.cs)
-DP_BEHAVIORS = {
-    0: "Info", 1: "Status", 2: "Command",
-    3: "Nvm",  4: "Protected", 5: "CommandLocked",
-}
-
-# TransmissionStatus codes
-TX_STATUS = {
-    0x00: "Ok",           0x01: "InvalidId",       0x02: "InvalidInstance",
-    0x03: "OutOfRange",   0x04: "InvalidStorage",  0x05: "Locked",
-    0x06: "NotNotifiable",0x07: "OptionNotSupported",0x08: "InvalidLength",
-    0x09: "InvalidType",  0x0A: "InvalidBehavior", 0x0B: "AlreadyInUse",
-}
-
-# Known DpId names (subset from DpId.cs; inventory shows the rest as unnamed)
-DP_NAMES = {
-    # Orientation light (Alba Ble20 — direct DpId control, no power-cycle needed)
-    42:   "ORIENTATION_LIGHT_LED",              # Status, Percent 0-100, notifiable
-    43:   "ORIENTATION_LIGHT_SET_LED",          # Command, Percent 0-100 (only in override mode)
-    44:   "ORIENTATION_LIGHT_MODE",             # Nvm, OffOnAuto: 0=Off 1=On 2=Auto
-    45:   "ORIENTATION_LIGHT_SENSOR_DEPENDENT", # Nvm, OffOn: auto mode uses proximity sensor
-    46:   "ORIENTATION_LIGHT_AMBIENT_DEPENDENT",# Nvm, OffOn: auto mode uses ambient light sensor
-    47:   "ORIENTATION_LIGHT_LED_OVERRIDE",     # Command, OffOn: 1=bypass firmware, enable SET_LED
-    48:   "ORIENTATION_LIGHT_INTENSITY",        # Nvm, Enum 0-4 (brightness step)
-    50:   "ORIENTATION_LIGHT_FOLLOW_UP_TIME",   # Nvm, Enum 0-4 (follow-up duration step)
-    51:   "ORIENTATION_LIGHT_SENSOR_DIST",      # Nvm, Enum 0-4 (proximity trigger distance)
-    53:   "ORIENTATION_LIGHT_SENSOR_SENS",      # Nvm, Enum 0-4 (proximity sensitivity)
-    55:   "ORIENTATION_LIGHT_SENSOR_MOVE",      # Status, OffOn, notifiable — movement detected
-    56:   "ORIENTATION_LIGHT_AMBIENT_SENS",     # Nvm, Enum 0-4 (ambient light threshold)
-    58:   "ORIENTATION_LIGHT_AMBIENT_DARK",     # Status, OffOn, notifiable — ambient is dark
-    66:   "ORIENTATION_LIGHT_FOLLOW_UP_TIME_STEPS", # Nvm, internal steps table
-    112:  "BLOCK_FLUSH",
-    118:  "PRE_FLUSH",
-    119:  "POST_FLUSH",
-    563:  "START_STOP_ANAL_SHOWER",
-    564:  "ANAL_SHOWER_STATUS",
-    565:  "ANAL_SHOWER_PROGRESS",
-    570:  "SET_ACTIVE_ANAL_SPRAY_INTENSITY",
-    572:  "SET_ACTIVE_ANAL_SPRAY_ARM_POSITION",
-    580:  "STORED_ANAL_SPRAY_INTENSITY",
-    581:  "STORED_ANAL_SPRAY_ARM_POSITION",
-    849:  "SET_ACTIVE_ANAL_SHOWER_TIME",
-    852:  "SET_ACTIVE_ANAL_SHOWER_WATER_TEMP",
-    868:  "START_STOP_LADY_SHOWER",
-    872:  "LADY_SHOWER_STATUS",
-    873:  "LADY_SHOWER_PROGRESS",
-    60:   "USER_PRESENT",                       # AC_STATUS_USER_PRESENT (65596 truncates to 60)
-    990:  "ACTIVE_LID_LIFTING_OPENING_BEHAVIOR",
-    992:  "STORED_LID_LIFTING_OPENING_BEHAVIOR",
-    996:  "ACTIVE_LID_LIFTING_CLOSING_DELAY",
-    999:  "ACTIVE_LID_LIFTING_CLOSING_BEHAVIOR",
-    1002: "ACTIVE_LID_LIFTING_DETECTION_RANGE",
-    1008: "LID_LIFTER_POSITION",
-    1009: "TRIGGER_LID_LIFTING",           # ← ToggleLid equivalent
-}
-
-# ---------------------------------------------------------------------------
-# Address helpers
-# ---------------------------------------------------------------------------
-def _encode_address(dp_id: int, instance: Optional[int] = None) -> bytes:
-    lo = dp_id & 0xFF
-    hi = (dp_id >> 8) & 0x7F          # strip bit 15 (used for instance flag)
-    if instance is not None:
-        return bytes([lo, hi | 0x80, instance])
-    return bytes([lo, hi])
+from aquaclean_console_app.bluetooth_le.LE.dp_ids import dp_name
+from aquaclean_console_app.bluetooth_le.LE.dp_type import DpType
+from aquaclean_console_app.bluetooth_le.LE.dp_behavior import DpBehavior
+from aquaclean_console_app.bluetooth_le.LE.Ble20Client import Ble20Client, encode_address, decode_address
 
 
-def _decode_address(data: bytes, offset: int = 1):
-    """Parse wire address at offset.  Returns (dp_id, instance_or_None, next_offset)."""
-    lo = data[offset]
-    hi = data[offset + 1]
-    has_instance = bool(hi & 0x80)
-    dp_id = ((hi & 0x7F) << 8) | lo
-    if has_instance:
-        return dp_id, data[offset + 2], offset + 3
-    return dp_id, None, offset + 2
-
-
-# ---------------------------------------------------------------------------
-# Ble20Session — async send/receive over the Arendi-encrypted channel
-# ---------------------------------------------------------------------------
-class Ble20Session:
-    RECV_TIMEOUT = 15.0
-
-    def __init__(self, connector: BluetoothLeConnector):
-        self.connector = connector
-        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
-        connector.data_received_handlers += self._on_data
-
-    async def _on_data(self, data: bytes):
-        await self._queue.put(bytes(data))
-
-    async def _recv(self, timeout: Optional[float] = None) -> bytes:
-        return await asyncio.wait_for(
-            self._queue.get(),
-            timeout=timeout or self.RECV_TIMEOUT,
-        )
-
-    async def send(self, data: bytes):
-        log.debug(f"→ {data.hex()}")
-        await self.connector.send_message(data)
-
-    # ── Inventory ────────────────────────────────────────────────────────────
-
-    async def inventory(self) -> list[dict]:
-        """Run DataPointInventory.  Returns list of entry dicts."""
-        await self.send(bytes([CMD_INVENTORY, 0x00]))
-
-        # Collect InventoryCount, discarding any unsolicited frames that arrive first
-        while True:
-            frame = await self._recv()
-            log.debug(f"← {frame.hex()}")
-            if frame[0] == CMD_INVENTORY_COUNT:
-                break
-            log.debug(f"  (skipping pre-inventory frame cmd=0x{frame[0]:02X})")
-
-        count = struct.unpack_from('<H', frame, 1)[0]
-        log.debug(f"Inventory count: {count}")
-
-        entries = []
-        received = 0
-        while received < count:
-            frame = await self._recv()
-            log.debug(f"← {frame.hex()}")
-            if frame[0] != CMD_INVENTORY_DATA:
-                log.debug(f"  (skipping non-inventory frame cmd=0x{frame[0]:02X})")
-                continue
-            dp_id, instance, payload_off = _decode_address(frame)
-            payload = frame[payload_off:]
-            if len(payload) < 11:
-                log.warning(f"Short InventoryData payload for DpId {dp_id}: {payload.hex()}")
-                received += 1
-                continue
-            version  = payload[0]
-            datatype = payload[1]
-            min_s = struct.unpack_from('<i', payload, 2)[0]
-            max_s = struct.unpack_from('<i', payload, 6)[0]
-            min_u = struct.unpack_from('<I', payload, 2)[0]
-            max_u = struct.unpack_from('<I', payload, 6)[0]
-            flags = payload[10]
-            entries.append({
-                'dp_id':       dp_id,
-                'instance':    instance,
-                'version':     version,
-                'datatype':    datatype,
-                'min_s':       min_s,
-                'max_s':       max_s,
-                'min_u':       min_u,
-                'max_u':       max_u,
-                'is_internal': bool(flags & 0x80),
-                'behavior':    flags & 0x7F,
-            })
-            received += 1
-
-        return entries
-
-    # ── Read ─────────────────────────────────────────────────────────────────
-
-    async def read(self, dp_id: int, instance: Optional[int] = None) -> bytes:
-        addr = _encode_address(dp_id, instance)
-        await self.send(bytes([CMD_READ]) + addr)
-        while True:
-            frame = await self._recv()
-            log.debug(f"← {frame.hex()}")
-            if frame[0] in (CMD_READ_ANS, CMD_READ_ERROR):
-                break
-            log.debug(f"  (skipping frame cmd=0x{frame[0]:02X} while waiting for read response)")
-        if frame[0] == CMD_READ_ERROR:
-            _, _, payload_off = _decode_address(frame)
-            status = frame[payload_off] if payload_off < len(frame) else 0xFF
-            raise IOError(
-                f"ReadError dp_id={dp_id}: {TX_STATUS.get(status, f'0x{status:02X}')}"
-            )
-        _, _, payload_off = _decode_address(frame)
-        return frame[payload_off:]
-
-    # ── Write ─────────────────────────────────────────────────────────────────
-
-    async def write(self, dp_id: int, value: bytes, instance: Optional[int] = None):
-        addr = _encode_address(dp_id, instance)
-        await self.send(bytes([CMD_WRITE]) + addr + value)
-        while True:
-            frame = await self._recv()
-            log.debug(f"← {frame.hex()}")
-            if frame[0] in (CMD_WRITE_ACK, CMD_WRITE_ERROR):
-                break
-            log.debug(f"  (skipping frame cmd=0x{frame[0]:02X} while waiting for write response)")
-        if frame[0] == CMD_WRITE_ERROR:
-            _, _, payload_off = _decode_address(frame)
-            status = frame[payload_off] if payload_off < len(frame) else 0xFF
-            raise IOError(
-                f"WriteError dp_id={dp_id}: {TX_STATUS.get(status, f'0x{status:02X}')}"
-            )
+def _dp_type_name(dt: int) -> str:
+    try:
+        return DpType(dt).name
+    except ValueError:
+        return f"0x{dt:02X}"
 
 
 # ---------------------------------------------------------------------------
@@ -305,14 +96,14 @@ class Ble20Session:
 def _format_value(raw: bytes, datatype: int) -> str:
     if not raw:
         return "(empty)"
-    if datatype == 15:          # Signed — int32
+    if datatype == DpType.Signed:
         if len(raw) >= 4:
             return str(struct.unpack_from('<i', raw)[0])
-    elif datatype == 11:        # OffOn
+    elif datatype == DpType.OffOn:
         return "On" if raw[0] else "Off"
-    elif datatype == 12:        # OffOnAuto
+    elif datatype == DpType.OffOnAuto:
         return {0: "Off", 1: "On", 2: "Auto"}.get(raw[0], str(raw[0]))
-    elif datatype == 8:         # String
+    elif datatype == DpType.String:
         return raw.rstrip(b'\x00').decode('ascii', errors='replace')
     # Generic: show as uint32 / hex
     if len(raw) >= 4:
@@ -326,10 +117,9 @@ def _format_value(raw: bytes, datatype: int) -> str:
     return f"[{raw.hex()}]"
 
 
-def _print_inventory(entries: list[dict]):
-    # Separate external and internal for clarity
-    external = [e for e in entries if not e['is_internal']]
-    internal = [e for e in entries if e['is_internal']]
+def _print_inventory(inv: dict[int, dict]):
+    external = sorted((k, v) for k, v in inv.items() if not v['is_internal'])
+    internal = sorted((k, v) for k, v in inv.items() if v['is_internal'])
 
     for section, section_entries in [("External", external), ("Internal", internal)]:
         if not section_entries:
@@ -338,15 +128,16 @@ def _print_inventory(entries: list[dict]):
         print(f"{'DpId':>6}  {'Inst':>4}  {'Type':<13}  {'Behavior':<14}  "
               f"{'Min':>10}  {'Max':>10}  {'Ver':>3}  Name")
         print("─" * 100)
-        for e in sorted(section_entries, key=lambda x: (x['instance'] or 0, x['dp_id'])):
-            dp_id = e['dp_id']
+        for dp_id, e in sorted(section_entries, key=lambda x: (x[1]['instance'] or 0, x[0])):
             inst  = f"{e['instance']}" if e['instance'] is not None else ""
-            tp    = DP_TYPES.get(e['datatype'], f"0x{e['datatype']:02X}")
-            beh   = DP_BEHAVIORS.get(e['behavior'], f"{e['behavior']}")
-            # Use signed min/max for Signed type, unsigned for everything else
-            min_v = e['min_s'] if e['datatype'] == 15 else e['min_u']
-            max_v = e['max_s'] if e['datatype'] == 15 else e['max_u']
-            name  = DP_NAMES.get(dp_id, "")
+            tp    = _dp_type_name(e['datatype'])
+            try:
+                beh = DpBehavior(e['behavior']).name
+            except ValueError:
+                beh = f"{e['behavior']}"
+            min_v = e['min_s'] if e['datatype'] == DpType.Signed else e['min_u']
+            max_v = e['max_s'] if e['datatype'] == DpType.Signed else e['max_u']
+            name  = dp_name(dp_id)
             print(f"{dp_id:>6}  {inst:>4}  {tp:<13}  {beh:<14}  "
                   f"{min_v:>10}  {max_v:>10}  {e['version']:>3}  {name}")
 
@@ -393,7 +184,7 @@ async def run(args):
         esphome_port=port,
         esphome_noise_psk=psk,
     )
-    session = Ble20Session(connector)
+    session = Ble20Client(connector)
 
     try:
         print("Connecting + Arendi handshake...", flush=True)
@@ -415,23 +206,20 @@ async def run(args):
 
         # ── Always run inventory first (mandatory per protocol; gives us DpId types) ──
         print("Running DataPointInventory...", flush=True)
-        entries = await session.inventory()
-        print(f"  {len(entries)} DpIds returned.")
+        inv = await session.inventory()
+        print(f"  {len(inv)} DpIds returned.")
 
-        _print_inventory(entries)
-
-        # Build DpId → entry lookup for type info
-        dp_map = {(e['dp_id'], e['instance']): e for e in entries}
+        _print_inventory(inv)
 
         # ── Optional: read one DpId ───────────────────────────────────────────
         if args.read is not None:
             dp_id = args.read
-            entry = dp_map.get((dp_id, None)) or dp_map.get((dp_id, 0))
-            name  = DP_NAMES.get(dp_id, f"DpId {dp_id}")
+            entry = inv.get(dp_id)
+            name  = dp_name(dp_id) or f"DpId {dp_id}"
             print(f"\nRead {name} (DpId {dp_id})...")
             raw = await session.read(dp_id)
             datatype = entry['datatype'] if entry else -1
-            tp  = DP_TYPES.get(datatype, f"0x{datatype:02X}")
+            tp  = _dp_type_name(datatype)
             print(f"  Raw   : {raw.hex()}")
             print(f"  Type  : {tp}")
             print(f"  Value : {_format_value(raw, datatype)}")
@@ -452,11 +240,11 @@ async def run(args):
                 write_value_b = struct.pack('<I', write_int)
 
         if write_dp_id is not None:
-            entry = dp_map.get((write_dp_id, None)) or dp_map.get((write_dp_id, 0))
+            entry = inv.get(write_dp_id)
             if entry is None:
                 print(f"\nWARNING: DpId {write_dp_id} not found in inventory — "
                       f"device may not support it.  Attempting write anyway.")
-            name = DP_NAMES.get(write_dp_id, f"DpId {write_dp_id}")
+            name = dp_name(write_dp_id) or f"DpId {write_dp_id}"
             print(f"\nWrite {name} (DpId {write_dp_id})  value={write_value_b.hex()}")
             if not args.yes:
                 confirm = input("  Confirm? [y/N] ").strip().lower()
@@ -469,10 +257,10 @@ async def run(args):
         # ── Optional: watch a DpId (poll until Ctrl+C) ───────────────────────
         if args.watch is not None:
             dp_id = args.watch
-            entry  = dp_map.get((dp_id, None)) or dp_map.get((dp_id, 0))
-            name   = DP_NAMES.get(dp_id, f"DpId {dp_id}")
+            entry  = inv.get(dp_id)
+            name   = dp_name(dp_id) or f"DpId {dp_id}"
             dt     = entry['datatype'] if entry else -1
-            tp     = DP_TYPES.get(dt, f"0x{dt:02X}")
+            tp     = _dp_type_name(dt)
             ivl    = args.interval
             print(f"\nWatching {name} (DpId {dp_id}, type={tp})  every {ivl}s — Ctrl+C to stop\n")
             last_raw = None

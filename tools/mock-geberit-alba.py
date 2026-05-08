@@ -47,6 +47,8 @@ from bluez_peripheral.util import Adapter
 # --- Import Arendi Security crypto from the bridge package -------------------
 # Adds the repo root to sys.path so we can import from aquaclean_console_app.
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from aquaclean_console_app.bluetooth_le.LE.command_id import CommandId
+from aquaclean_console_app.bluetooth_le.LE.Ble20Client import encode_address, decode_address
 from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
     _crc16_kermit, _cobs_encode, _cobs_decode, _inner_cobs_decode,
     _hkdf, _aes_cmac, _AesCtrState,
@@ -74,21 +76,6 @@ def _inner_cobs_encode(data: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Ble20 application-layer constants
-# ---------------------------------------------------------------------------
-
-CMD_INVENTORY        = 0x00
-CMD_INVENTORY_COUNT  = 0x01
-CMD_INVENTORY_DATA   = 0x02
-CMD_READ             = 0x10
-CMD_READ_ANS         = 0x11
-CMD_READ_ERROR       = 0x12
-CMD_WRITE            = 0x20
-CMD_WRITE_ACK        = 0x21
-CMD_WRITE_ERROR      = 0x22
-
-
-# ---------------------------------------------------------------------------
 # Ble20 in-memory device mock (--mode ble20)
 # ---------------------------------------------------------------------------
 
@@ -100,9 +87,9 @@ class _Ble20AppLayer:
     frames after the Arendi Security handshake completes.
 
     Handles:
-      CMD_INVENTORY (0x00) → CMD_INVENTORY_COUNT + N × CMD_INVENTORY_DATA
-      CMD_READ      (0x10) → CMD_READ_ANS or CMD_READ_ERROR
-      CMD_WRITE     (0x20) → CMD_WRITE_ACK or CMD_WRITE_ERROR
+      Inventory (0x00) → InventoryCount + N × InventoryData
+      ReadCmd   (0x10) → ReadAns or ReadError
+      WriteCmd  (0x20) → WriteAck or WriteError
     """
 
     # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
@@ -126,72 +113,54 @@ class _Ble20AppLayer:
                 'value': bytearray(val),
             }
 
-    @staticmethod
-    def _enc_addr(dp_id: int, instance) -> bytes:
-        lo = dp_id & 0xFF
-        hi = (dp_id >> 8) & 0x7F
-        if instance is not None:
-            return bytes([lo, hi | 0x80, instance])
-        return bytes([lo, hi])
-
-    @staticmethod
-    def _dec_addr(data: bytes, offset: int = 1):
-        lo = data[offset]
-        hi = data[offset + 1]
-        has_inst = bool(hi & 0x80)
-        dp_id = ((hi & 0x7F) << 8) | lo
-        if has_inst:
-            return dp_id, data[offset + 2], offset + 3
-        return dp_id, None, offset + 2
-
     async def dispatch(self, plaintext: bytes) -> list:
         """Dispatch one decrypted Ble20 frame; return list of response payloads."""
         if not plaintext:
             return []
         cmd = plaintext[0]
-        if cmd == CMD_INVENTORY:
+        if cmd == CommandId.Inventory:
             return self._inventory()
-        if cmd == CMD_READ:
+        if cmd == CommandId.ReadCmd:
             return self._read(plaintext)
-        if cmd == CMD_WRITE:
+        if cmd == CommandId.WriteCmd:
             return self._write(plaintext)
         print(f"[MockBle20] unknown cmd=0x{cmd:02X} — ignored")
         return []
 
     def _inventory(self) -> list:
         count = len(self._store)
-        frames = [struct.pack('<BH', CMD_INVENTORY_COUNT, count)]
+        frames = [struct.pack('<BH', CommandId.InventoryCount, count)]
         for (dp_id, inst), e in sorted(self._store.items()):
-            addr = self._enc_addr(dp_id, inst)
+            addr = encode_address(dp_id, inst)
             payload = (bytes([e['version'], e['datatype']]) +
                        struct.pack('<ii', e['min_s'], e['max_s']) +
                        bytes([e['behavior'] & 0x7F]))
-            frames.append(bytes([CMD_INVENTORY_DATA]) + addr + payload)
+            frames.append(bytes([CommandId.InventoryData]) + addr + payload)
             print(f"[MockBle20] → INVENTORY_DATA DpId={dp_id}")
         return frames
 
     def _read(self, frame: bytes) -> list:
-        dp_id, inst, _ = self._dec_addr(frame, 1)
-        addr = self._enc_addr(dp_id, inst)
+        dp_id, inst, _ = decode_address(frame, 1)
+        addr = encode_address(dp_id, inst)
         entry = self._store.get((dp_id, inst)) or self._store.get((dp_id, None))
         if entry is None:
             print(f"[MockBle20] ← READ DpId={dp_id} → InvalidId")
-            return [bytes([CMD_READ_ERROR]) + addr + bytes([0x01])]
+            return [bytes([CommandId.ReadError]) + addr + bytes([0x01])]
         val = bytes(entry['value'])
         print(f"[MockBle20] ← READ DpId={dp_id} → {val.hex()}")
-        return [bytes([CMD_READ_ANS]) + addr + val]
+        return [bytes([CommandId.ReadAns]) + addr + val]
 
     def _write(self, frame: bytes) -> list:
-        dp_id, inst, off = self._dec_addr(frame, 1)
-        addr = self._enc_addr(dp_id, inst)
+        dp_id, inst, off = decode_address(frame, 1)
+        addr = encode_address(dp_id, inst)
         value = frame[off:]
         entry = self._store.get((dp_id, inst)) or self._store.get((dp_id, None))
         if entry is None:
             print(f"[MockBle20] ← WRITE DpId={dp_id} → InvalidId")
-            return [bytes([CMD_WRITE_ERROR]) + addr + bytes([0x01])]
+            return [bytes([CommandId.WriteError]) + addr + bytes([0x01])]
         entry['value'] = bytearray(value)
         print(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK")
-        return [bytes([CMD_WRITE_ACK]) + addr]
+        return [bytes([CommandId.WriteAck]) + addr]
 
 
 # ---------------------------------------------------------------------------
