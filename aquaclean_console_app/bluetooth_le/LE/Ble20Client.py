@@ -15,12 +15,38 @@ Usage:
 import asyncio
 import logging
 import struct
+from dataclasses import dataclass
 from typing import Optional
 
 from .command_id import CommandId
+from .dp_type import DpType
 from .transmission_status import TransmissionStatus
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Device identification result
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Ble20DeviceIdentification:
+    """Device identification data read from Ble20 DpIds.
+
+    Field-to-DpId mapping mirrors DeviceIdentification in the Geberit vendor
+    application source.  Fields are None when the device did not return data
+    for that DpId.
+    """
+    name:                Optional[str] = None   # DpId 16  DP_NAME
+    device_series:       Optional[int] = None   # DpId 0   DP_DEVICE_SERIES
+    device_variant:      Optional[int] = None   # DpId 1   DP_DEVICE_VARIANT
+    device_boot_variant: Optional[int] = None   # DpId 337 DP_BOOTLOADER_VARIANT
+    device_model:        Optional[int] = None   # DpId 304 DP_DEVICE_MODEL
+    device_number:       Optional[int] = None   # DpId 2   DP_DEVICE_NUMBER
+    device_unique_id:    Optional[int] = None   # DpId 236 DP_UNIQUE_DEVICE_NUMBER
+    fw_rs_version:       Optional[str] = None   # DpId 8   DP_FW_RS_VERSION
+    fw_ts_version:       Optional[int] = None   # DpId 9   DP_FW_TS_VERSION
+    device_sap_number:   Optional[str] = None   # DpId 4   DP_DEVICE_SAP_NUMBER
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +273,87 @@ class Ble20Client:
             except Exception:
                 logger.debug(f"Ble20: poll_state DpId={dp_id} unavailable", exc_info=True)
         return result
+
+    # ── Device identification ─────────────────────────────────────────────────
+
+    async def get_device_identification(
+        self,
+        inv: Optional[dict[int, dict]] = None,
+    ) -> Ble20DeviceIdentification:
+        """Read device identification DpIds and return a Ble20DeviceIdentification.
+
+        inv: inventory dict from inventory() — used for correct datatype decoding.
+             When None, raw bytes are decoded by sensible defaults per field.
+
+        DpIds absent from the device (ReadError) are silently skipped (field = None).
+        """
+        from .dp_ids import DpId
+
+        async def _try(dp_id: int) -> Optional[bytes]:
+            try:
+                return await self.read(dp_id)
+            except Exception:
+                logger.debug(f"Ble20: get_device_identification DpId={dp_id} unavailable")
+                return None
+
+        def _datatype(dp_id: int) -> int:
+            if inv and dp_id in inv:
+                return inv[dp_id]['datatype']
+            return -1
+
+        def _str(raw: Optional[bytes]) -> Optional[str]:
+            if not raw:
+                return None
+            s = raw.rstrip(b'\x00').decode('ascii', errors='replace')
+            return s or None
+
+        def _u8(raw: Optional[bytes]) -> Optional[int]:
+            return raw[0] if raw else None
+
+        def _i32(raw: Optional[bytes]) -> Optional[int]:
+            if raw and len(raw) >= 4:
+                return struct.unpack_from('<i', raw)[0]
+            if raw and len(raw) >= 2:
+                return struct.unpack_from('<h', raw)[0]
+            return raw[0] if raw else None
+
+        def _u32(raw: Optional[bytes]) -> Optional[int]:
+            if raw and len(raw) >= 4:
+                return struct.unpack_from('<I', raw)[0]
+            if raw and len(raw) >= 2:
+                return struct.unpack_from('<H', raw)[0]
+            return raw[0] if raw else None
+
+        def _auto(raw: Optional[bytes], dp_id: int) -> Optional[int]:
+            dt = _datatype(dp_id)
+            if dt == DpType.Signed:
+                return _i32(raw)
+            return _u32(raw)
+
+        name_raw    = await _try(DpId.DP_NAME)
+        series_raw  = await _try(DpId.DP_DEVICE_SERIES)
+        variant_raw = await _try(DpId.DP_DEVICE_VARIANT)
+        number_raw  = await _try(DpId.DP_DEVICE_NUMBER)
+        sap_raw     = await _try(DpId.DP_DEVICE_SAP_NUMBER)
+        fw_rs_raw   = await _try(DpId.DP_FW_RS_VERSION)
+        fw_ts_raw   = await _try(DpId.DP_FW_TS_VERSION)
+        model_raw   = await _try(DpId.DP_DEVICE_MODEL)
+        unique_raw  = await _try(DpId.DP_UNIQUE_DEVICE_NUMBER)
+        boot_raw    = await _try(DpId.DP_BOOTLOADER_VARIANT)
+
+        return Ble20DeviceIdentification(
+            name                = _str(name_raw),
+            device_series       = _u8(series_raw),
+            device_variant      = _u8(variant_raw),
+            device_number       = _auto(number_raw, DpId.DP_DEVICE_NUMBER),
+            device_sap_number   = _str(sap_raw) if sap_raw and _datatype(DpId.DP_DEVICE_SAP_NUMBER) == DpType.String
+                                  else (_u32(sap_raw) if sap_raw else None),
+            fw_rs_version       = _str(fw_rs_raw),
+            fw_ts_version       = _u32(fw_ts_raw),
+            device_model        = _u8(model_raw),
+            device_unique_id    = _u32(unique_raw),
+            device_boot_variant = _u8(boot_raw),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -80,7 +80,9 @@ from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import Bluetooth
 from aquaclean_console_app.bluetooth_le.LE.dp_ids import dp_name
 from aquaclean_console_app.bluetooth_le.LE.dp_type import DpType
 from aquaclean_console_app.bluetooth_le.LE.dp_behavior import DpBehavior
-from aquaclean_console_app.bluetooth_le.LE.Ble20Client import Ble20Client, encode_address, decode_address
+from aquaclean_console_app.bluetooth_le.LE.Ble20Client import (
+    Ble20Client, Ble20DeviceIdentification, encode_address, decode_address,
+)
 
 
 def _dp_type_name(dt: int) -> str:
@@ -140,6 +142,37 @@ def _print_inventory(inv: dict[int, dict]):
             name  = dp_name(dp_id)
             print(f"{dp_id:>6}  {inst:>4}  {tp:<13}  {beh:<14}  "
                   f"{min_v:>10}  {max_v:>10}  {e['version']:>3}  {name}")
+
+
+# ---------------------------------------------------------------------------
+# Identification display
+# ---------------------------------------------------------------------------
+
+def _print_identification(di: Ble20DeviceIdentification) -> None:
+    print("\n── Device Identification " + "─" * 55)
+
+    def _row(label: str, value) -> None:
+        if value is not None:
+            print(f"  {label:<22}: {value}")
+
+    _row("Name",               di.name)
+    _row("Device Series",      di.device_series)
+    _row("Device Variant",     di.device_variant)
+    _row("Device Model",       di.device_model)
+    _row("Device Number",      di.device_number)
+    _row("Device SAP Number",  di.device_sap_number)
+    _row("Unique Device ID",   f"0x{di.device_unique_id:08X}" if di.device_unique_id is not None else None)
+    _row("FW RS Version",      f"RS{di.fw_rs_version}" if di.fw_rs_version else None)
+    _row("FW TS Version",      di.fw_ts_version)
+    _row("Boot Variant",       di.device_boot_variant)
+
+    assembled = None
+    if di.fw_rs_version is not None and di.fw_ts_version is not None:
+        assembled = f"RS{di.fw_rs_version}TS{di.fw_ts_version:02d}"
+    elif di.fw_rs_version is not None:
+        assembled = f"RS{di.fw_rs_version}"
+    if assembled:
+        _row("Firmware (assembled)", assembled)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +243,12 @@ async def run(args):
         print(f"  {len(inv)} DpIds returned.")
 
         _print_inventory(inv)
+
+        # ── Optional: device identification ──────────────────────────────────
+        if args.identify:
+            print("\nReading device identification...", flush=True)
+            di = await session.get_device_identification(inv)
+            _print_identification(di)
 
         # ── Optional: read one DpId ───────────────────────────────────────────
         if args.read is not None:
@@ -315,6 +354,9 @@ Examples:
   # Full inventory:
   python tools/alba-ble20-probe.py --device E4:85:01:CD:B0:08
 
+  # Inventory + device identification (name, serial, firmware, SAP, model):
+  python tools/alba-ble20-probe.py --device E4:85:01:CD:B0:08 --identify
+
   # Read lid position:
   python tools/alba-ble20-probe.py --device E4:85:01:CD:B0:08 --read 1008
 
@@ -335,6 +377,8 @@ Examples:
 """)
     p.add_argument('--device', metavar='MAC',
                    help='BLE MAC address (default: [BLE] device_id in config.ini)')
+    p.add_argument('--identify', action='store_true',
+                   help='After inventory, read device identification DpIds and print a summary')
     p.add_argument('--read', type=int, metavar='DPID',
                    help='After inventory, read this DpId and print the value')
     p.add_argument('--write', nargs=2, metavar=('DPID', 'VALUE'), action=_WriteAction,

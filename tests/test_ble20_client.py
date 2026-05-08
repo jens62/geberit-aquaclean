@@ -331,6 +331,47 @@ async def test_poll_state():
     print(f"  test_poll_state: PASS (state keys: {sorted(state.keys())})")
 
 
+async def test_get_device_identification():
+    """get_device_identification() decodes known DpIds; absent ones return None."""
+    c, client, server = _make()
+
+    # Seed identification DpIds into the server store.
+    # datatype 8 = DpType.String, 1 = DpType.Binary, 15 = DpType.Signed
+    server._store[(16, None)]  = {'version': 1, 'datatype': 8,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'AcAlba\x00')}
+    server._store[(0,  None)]  = {'version': 1, 'datatype': 1,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'\x02')}
+    server._store[(1,  None)]  = {'version': 1, 'datatype': 1,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'\x00')}
+    server._store[(2,  None)]  = {'version': 1, 'datatype': 15, 'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(struct.pack('<i', 93136))}
+    server._store[(8,  None)]  = {'version': 1, 'datatype': 8,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'03')}
+    server._store[(9,  None)]  = {'version': 1, 'datatype': 1,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'\x59')}   # 89
+
+    # 10 reads total; server handles them all (ReadError for absent DpIds)
+    _N_READS = 10
+    async def _serve():
+        for _ in range(_N_READS):
+            await server.run_once()
+
+    # inventory needed first to populate datatype info passed to get_device_identification
+    inv_task = asyncio.create_task(client.inventory())
+    srv_inv  = asyncio.create_task(server.run_once())   # inventory = 1 frame
+    inv = (await asyncio.wait_for(asyncio.gather(inv_task, srv_inv), timeout=5.0))[0]
+
+    di_task  = asyncio.create_task(client.get_device_identification(inv))
+    srv_task = asyncio.create_task(_serve())
+    results  = await asyncio.wait_for(asyncio.gather(di_task, srv_task), timeout=10.0)
+    di = results[0]
+
+    assert di.name           == 'AcAlba',  f"name={di.name!r}"
+    assert di.device_series  == 2,         f"series={di.device_series}"
+    assert di.device_variant == 0,         f"variant={di.device_variant}"
+    assert di.device_number  == 93136,     f"number={di.device_number}"
+    assert di.fw_rs_version  == '03',      f"fw_rs={di.fw_rs_version!r}"
+    assert di.fw_ts_version  == 89,        f"fw_ts={di.fw_ts_version}"
+    # absent DpIds → None
+    assert di.device_model is None
+    assert di.device_unique_id is None
+    print(f"  test_get_device_identification: PASS  name={di.name!r}  fw=RS{di.fw_rs_version}TS{di.fw_ts_version:02d}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -347,6 +388,7 @@ async def _run_all() -> bool:
         test_write_triggers_notify,
         test_disable_notification,
         test_poll_state,
+        test_get_device_identification,
     ]
     passed = 0
     failed = 0
