@@ -570,7 +570,7 @@ class BtSigDataService(Service):
         else:
             print("[MockServer] WARNING: notify char interface not set — cannot send notification")
 
-    @characteristic("559eb001-2390-11e8-b467-0ed5f89f718b", CharFlags.WRITE_WITHOUT_RESPONSE)
+    @characteristic("559eb001-2390-11e8-b467-0ed5f89f718b", CharFlags.WRITE)
     def sig_write(self, options):
         pass
 

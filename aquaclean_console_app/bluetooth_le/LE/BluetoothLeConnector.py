@@ -617,7 +617,6 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     await self.client.write_gatt_char(
                         self.BULK_CHAR_BULK_WRITE_0_UUID,
                         att_bytes[off:off + chunk_size],
-                        response=False,
                     )
             await self._arendi_security.perform_handshake(_raw_write)
             self._arendi_security._ack_send_fn = _raw_write
