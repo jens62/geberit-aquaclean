@@ -254,6 +254,7 @@ async def run(args):
         any_action = (
             args.identify or
             args.read is not None or
+            args.readall or
             args.write is not None or
             args.toggle_lid or
             args.watch is not None
@@ -279,6 +280,47 @@ async def run(args):
             print(f"  Raw   : {raw.hex()}")
             print(f"  Type  : {tp}")
             print(f"  Value : {_format_value(raw, datatype)}")
+
+        # ── Optional: read all DpIds ──────────────────────────────────────────
+        if args.readall:
+            candidates = sorted(inv.items())
+            if not args.include_internal:
+                candidates = [(k, v) for k, v in candidates if not v['is_internal']]
+
+            print(f"\n── Read All DpIds ({len(candidates)} to probe) " + "─" * 50)
+            print(f"{'DpId':>6}  {'Behavior':<14}  {'Type':<13}  {'Value / Error'}")
+            print(f"{'':>6}  {'':14}  {'':13}  {'Name'}")
+            print("─" * 90)
+
+            ok_count = err_count = 0
+            for dp_id, entry in candidates:
+                beh_val = entry['behavior']
+                try:
+                    beh_name = DpBehavior(beh_val).name
+                except ValueError:
+                    beh_name = f"{beh_val}"
+                dt   = entry['datatype']
+                tp   = _dp_type_name(dt)
+                name = dp_name(dp_id) or ""
+
+                print(f"  {dp_id:>5}  ", end="", flush=True)
+                try:
+                    raw   = await session.read(dp_id)
+                    value = _format_value(raw, dt)
+                    print(f"{beh_name:<14}  {tp:<13}  {value}")
+                    print(f"  {'':>5}  {'':14}  {'':13}  {name}")
+                    ok_count += 1
+                except IOError as exc:
+                    print(f"{beh_name:<14}  {tp:<13}  ERROR: {exc}")
+                    print(f"  {'':>5}  {'':14}  {'':13}  {name}")
+                    err_count += 1
+                except asyncio.TimeoutError:
+                    print(f"{beh_name:<14}  {tp:<13}  ERROR: timeout")
+                    print(f"  {'':>5}  {'':14}  {'':13}  {name}")
+                    err_count += 1
+
+            print("─" * 90)
+            print(f"  {ok_count} read OK  |  {err_count} errors  |  {len(candidates)} probed")
 
         # ── Optional: write one DpId ─────────────────────────────────────────
         write_dp_id    = None
@@ -391,6 +433,12 @@ Examples:
 
   # Watch lid angle every 0.5s:
   python tools/alba-ble20-probe.py --device E4:85:01:CD:6B:04 --watch 1008 --interval 0.5
+
+  # Read all external DpIds (shows value or error for each):
+  python tools/alba-ble20-probe.py --device E4:85:01:CD:6B:04 --readall
+
+  # Read all DpIds including internal ones:
+  python tools/alba-ble20-probe.py --device E4:85:01:CD:6B:04 --readall --include-internal
 """)
     p.add_argument('--device', metavar='MAC',
                    help='BLE MAC address (default: [BLE] device_id in config.ini)')
@@ -398,6 +446,10 @@ Examples:
                    help='After inventory, read device identification DpIds and print a summary')
     p.add_argument('--read', type=int, metavar='DPID',
                    help='After inventory, read this DpId and print the value')
+    p.add_argument('--readall', action='store_true',
+                   help='After inventory, attempt to read every DpId and print a table of values/errors')
+    p.add_argument('--include-internal', action='store_true',
+                   help='With --readall: also probe internal DpIds (excluded by default)')
     p.add_argument('--write', nargs=2, metavar=('DPID', 'VALUE'), action=_WriteAction,
                    help='After inventory, write VALUE (int) to DPID')
     p.add_argument('--toggle-lid', action='store_true',
