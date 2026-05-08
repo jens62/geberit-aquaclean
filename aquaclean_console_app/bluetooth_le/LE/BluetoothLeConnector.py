@@ -573,7 +573,20 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.BULK_CHAR_BULK_READ_2_UUID: self.data_received,
                 self.BULK_CHAR_BULK_READ_3_UUID: self.data_received,
             }
-            await self._list_services()
+            # Subscribe to the Variant A notify characteristic directly rather than
+            # going through _list_services() service-UUID matching.  _list_services()
+            # silently finds nothing when the UUID string format returned by
+            # ESPHomeGATTServiceCollection differs from str(self.SERVICE_UUID),
+            # leaving notifications unsubscribed and the Arendi handshake stuck.
+            notify_uuid_str = str(self.BULK_CHAR_BULK_READ_0_UUID)
+            if hasattr(self.client, 'stop_notify'):
+                try:
+                    await self.client.stop_notify(notify_uuid_str)
+                except Exception:
+                    pass
+            await self.client.start_notify(notify_uuid_str, self._on_data_received)
+            self._subscribed_characteristics.append(self.BULK_CHAR_BULK_READ_0_UUID)
+            logger.debug(f"Alba notify subscribed: {notify_uuid_str}")
             if hasattr(self.client, '_acquire_mtu'):
                 try:
                     await self.client._acquire_mtu()
@@ -626,8 +639,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         else:
             logger.silly('1. in subscribe 1: connected.')
 
+        svc_uuids = [s.uuid for s in self.client.services]
+        logger.debug(f"_list_services: looking for {self.SERVICE_UUID} in {svc_uuids}")
+        matched = False
         for service in self.client.services:
             if service.uuid == str(self.SERVICE_UUID):
+                matched = True
                 for characteristic in service.characteristics:
                     logger.silly(f"got characteristic.uuid {characteristic.uuid}")
                     if characteristic.uuid in str(self.read_characteristics):
@@ -649,6 +666,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                                 logger.debug(f"Preemptive stop_notify failed (expected if not notifying): {characteristic.uuid}: {type(_stop_exc).__name__}: {_stop_exc}")
                         await self.client.start_notify(characteristic, self._on_data_received)
                         self._subscribed_characteristics.append(characteristic)
+        if not matched:
+            logger.debug(f"_list_services: service {self.SERVICE_UUID} not found — no notifications subscribed")
 
 
     async def _on_data_received(self, sender, data):
