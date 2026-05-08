@@ -314,15 +314,16 @@ async def _dispatch_to_alba_if_needed(connector, old_client):
             # Already dispatched on a previous cycle; run inventory again (fresh connect).
             await old_client.post_connect()
             return old_client, False
-        alba = AlbaClient(connector)
-        await alba.post_connect()
-        # Remove the stale Mera Comfort frame handler that AquaCleanBaseClient
-        # registered during __init__.  If left, FrameService.process_data
-        # raises on every Ble20 frame, blocking _ble20._on_data from firing.
+        # Remove the stale Mera Comfort frame handler BEFORE creating AlbaClient.
+        # FrameService.process_data raises on non-20-byte frames; if it stays registered
+        # during post_connect(), it fires first on every Ble20 response frame and blocks
+        # _ble20._on_data from receiving the inventory reply → post_connect() times out.
         try:
             connector.data_received_handlers -= old_client.base_client.frame_service.process_data
         except (ValueError, AttributeError):
             pass  # handler already removed or old_client has no base_client
+        alba = AlbaClient(connector)
+        await alba.post_connect()
         return alba, True
     return old_client, False
 
