@@ -38,11 +38,11 @@ import os
 import pathlib
 import struct
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 _builtin_print = builtins.print
 def print(*args, **kwargs):  # noqa: A001
-    now = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    now = datetime.now(tz=timezone.utc).astimezone().strftime('%H:%M:%S.%f')[:-3]
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
