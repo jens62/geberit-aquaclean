@@ -527,7 +527,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         Stores results in self.ble_dis_info as a dict with keys like
         manufacturer_name, model_number, serial_number, firmware_revision.
         Silently skips on any error (DIS absent or read_gatt_char not supported).
+        ESPHomeAPIClient does not implement read_gatt_char — DIS reads are skipped.
         """
+        if not hasattr(self.client, 'read_gatt_char'):
+            logger.debug("_read_device_information: read_gatt_char not available (ESPHome path) — skipping DIS reads")
+            return
         DIS_SVC = "0000180a-0000-1000-8000-00805f9b34fb"
         CHARS = {
             "00002a29-0000-1000-8000-00805f9b34fb": "manufacturer_name",
