@@ -88,6 +88,9 @@ echo "==> Installing aquaclean-bridge @ ${VERSION}..."
 "${VENV}/bin/pip" install --force-reinstall \
     "git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
 
+echo "==> Installing mock tool dependencies (bluez-peripheral)..."
+"${VENV}/bin/pip" install "bluez-peripheral>=0.2.0a5"
+
 echo ""
 echo "==> Installed version:"
 "${VENV}/bin/aquaclean-bridge" --version
