@@ -579,14 +579,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     await self.client._acquire_mtu()
                 except Exception as e:
                     logger.debug(f"Alba MTU negotiation failed, using default: {e}")
-            # If _acquire_mtu was unavailable or failed, _mtu_size stays None and
-            # bleak emits a UserWarning on every mtu_size access.  Set it to the
-            # BLE baseline (23) explicitly so the warning is suppressed.
-            if hasattr(self.client, '_mtu_size') and self.client._mtu_size is None:
-                self.client._mtu_size = 23
-            mtu = getattr(self.client, 'mtu_size', 23)
-            chunk_size = max(20, mtu - 3)
-            logger.debug(f"Alba ATT MTU: {mtu} bytes  (max write payload: {chunk_size})")
+            # max_write_without_response_size is the bleak-recommended cross-platform
+            # way to get the write payload limit (avoids the BlueZ mtu_size warning).
+            write_char = self.client.services.get_characteristic(self.BULK_CHAR_BULK_WRITE_0_UUID)
+            chunk_size = write_char.max_write_without_response_size if write_char else 20
+            logger.debug(f"Alba write chunk size: {chunk_size} bytes")
             async def _raw_write(att_bytes: bytes):
                 # Fragment into ATT MTU-sized chunks — the device may negotiate
                 # a smaller MTU than the mock; COBS reassembles on the far end.
