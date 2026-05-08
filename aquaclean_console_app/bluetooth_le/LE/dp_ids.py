@@ -1366,7 +1366,7 @@ class DpId(IntEnum):
     AC_CMD_SHOWER_ARM_OFFSET_START                = 65703
     AC_CMD_SHOWER_ARM_OFFSET_SAVE                 = 65704
     AC_CMD_SHOWER_ARM_OFFSET_INC                  = 65705
-    AC_CMD_DRYER_ARM_OFFSET_DEC                   = 65712
+    AC_CMD_SHOWER_ARM_OFFSET_DEC                  = 65712
     AC_CMD_DRYER_ARM_OFFSET_START                 = 65713
     AC_CMD_DRYER_ARM_OFFSET_SAVE                  = 65714
     AC_CMD_DRYER_ARM_OFFSET_INC                   = 65715

@@ -87,9 +87,11 @@ class _Ble20AppLayer:
     frames after the Arendi Security handshake completes.
 
     Handles:
-      Inventory (0x00) → InventoryCount + N × InventoryData
-      ReadCmd   (0x10) → ReadAns or ReadError
-      WriteCmd  (0x20) → WriteAck or WriteError
+      Inventory   (0x00) → InventoryCount + N × InventoryData
+      ReadCmd     (0x10) → ReadAns or ReadError
+      WriteCmd    (0x20) → WriteAck or WriteError (+ NotifyData if subscribed)
+      NotifyEnable  (0x30) → NotifyAck or NotifyError
+      NotifyDisable (0x31) → NotifyAck
     """
 
     # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
@@ -105,6 +107,7 @@ class _Ble20AppLayer:
 
     def __init__(self):
         self._store: dict = {}
+        self._notify_subscribed: set = set()
         for dp_id, inst, ver, dt, mn, mx, beh, val in self._DEFAULT_STORE:
             self._store[(dp_id, inst)] = {
                 'version': ver, 'datatype': dt,
@@ -124,6 +127,10 @@ class _Ble20AppLayer:
             return self._read(plaintext)
         if cmd == CommandId.WriteCmd:
             return self._write(plaintext)
+        if cmd == CommandId.NotifyEnable:
+            return self._notify_enable(plaintext)
+        if cmd == CommandId.NotifyDisable:
+            return self._notify_disable(plaintext)
         print(f"[MockBle20] unknown cmd=0x{cmd:02X} — ignored")
         return []
 
@@ -160,7 +167,28 @@ class _Ble20AppLayer:
             return [bytes([CommandId.WriteError]) + addr + bytes([0x01])]
         entry['value'] = bytearray(value)
         print(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK")
-        return [bytes([CommandId.WriteAck]) + addr]
+        responses = [bytes([CommandId.WriteAck]) + addr]
+        if dp_id in self._notify_subscribed:
+            responses.append(bytes([CommandId.NotifyData]) + encode_address(dp_id) + value)
+            print(f"[MockBle20] → NOTIFY_DATA DpId={dp_id} value={value.hex()}")
+        return responses
+
+    def _notify_enable(self, frame: bytes) -> list:
+        dp_id, inst, _ = decode_address(frame, 1)
+        addr = encode_address(dp_id, inst)
+        if (dp_id, inst) not in self._store and (dp_id, None) not in self._store:
+            print(f"[MockBle20] ← NOTIFY_ENABLE DpId={dp_id} → InvalidId")
+            return [bytes([CommandId.NotifyError]) + addr + bytes([0x01])]
+        self._notify_subscribed.add(dp_id)
+        print(f"[MockBle20] ← NOTIFY_ENABLE DpId={dp_id} → ACK")
+        return [bytes([CommandId.NotifyAck]) + addr]
+
+    def _notify_disable(self, frame: bytes) -> list:
+        dp_id, inst, _ = decode_address(frame, 1)
+        addr = encode_address(dp_id, inst)
+        self._notify_subscribed.discard(dp_id)
+        print(f"[MockBle20] ← NOTIFY_DISABLE DpId={dp_id} → ACK")
+        return [bytes([CommandId.NotifyAck]) + addr]
 
 
 # ---------------------------------------------------------------------------
