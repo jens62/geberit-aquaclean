@@ -1054,6 +1054,53 @@
             <button onclick="albaCmdNoVal('sync-rtc', this)"><span class="spinner"></span>Sync to Browser Time</button>
           </div>
 
+          <!-- Dangerous commands -->
+          <div style="margin-top:1rem;border:1px solid rgba(244,67,54,0.4);border-radius:8px;padding:0.75rem">
+            <div style="color:#f44336;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin-bottom:0.75rem">
+              ⚠ Dangerous — may cause unexpected device behaviour
+            </div>
+
+            <!-- RESTART -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Restart:</span>
+              <button style="border-color:rgba(244,67,54,0.5)" onclick="albaCmdNoVal('restart', this)"><span class="spinner"></span>Restart Device</button>
+            </div>
+
+            <!-- START_BOOTLOADER -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Start Bootloader (0–1):</span>
+              <div class="ps-stepper" data-alba-cmd="start-bootloader" data-min="0" data-max="1">
+                <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+                <span class="ps-step-val">0</span>
+                <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+              </div>
+            </div>
+
+            <!-- LOAD_PROFILE -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Load Profile:</span>
+              <button style="border-color:rgba(244,67,54,0.5)" onclick="albaCmdNoVal('load-profile', this)"><span class="spinner"></span>Load Profile</button>
+              <span style="color:var(--muted);font-size:0.75rem;font-style:italic">could silently overwrite user profile</span>
+            </div>
+
+            <!-- START_USER_SESSION -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Start User Session:</span>
+              <button style="border-color:rgba(244,67,54,0.5)" onclick="albaCmdNoVal('start-user-session', this)"><span class="spinner"></span>Start User Session</button>
+              <span style="color:var(--muted);font-size:0.75rem;font-style:italic">unknown effect</span>
+            </div>
+
+            <!-- RESET -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Reset (0–4):</span>
+              <div class="ps-stepper" data-alba-cmd="reset" data-min="0" data-max="4">
+                <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+                <span class="ps-step-val">0</span>
+                <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </section>

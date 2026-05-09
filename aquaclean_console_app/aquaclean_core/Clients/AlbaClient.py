@@ -123,12 +123,14 @@ class AlbaClient(IAquaCleanClient):
     # ── Toggle commands via Ble20 write ──────────────────────────────────────
 
     async def toggle_anal_shower(self) -> None:
+        # 563 (START_STOP_ANAL_SHOWER) is write-only; read running state from 564 (ANAL_SHOWER_STATUS) instead.
+        # Status enum ≥3 = active (Prerinsing/ArmExtending/Shower/ArmRetracting/Postrinsing).
         try:
-            raw = await self._ble20.read(DpId.DP_START_STOP_ANAL_SHOWER)
-            current = raw[0] if raw else 0
+            raw = await self._ble20.read(int(DpId.DP_ANAL_SHOWER_STATUS))
+            running = (raw[0] if raw else 0) >= 3
         except Exception:
-            current = 0
-        await self._ble20.write(DpId.DP_START_STOP_ANAL_SHOWER, bytes([0 if current else 1]))
+            running = False
+        await self._ble20.write(DpId.DP_START_STOP_ANAL_SHOWER, bytes([0 if running else 1]))
 
     async def toggle_lady_shower(self) -> None:
         try:
@@ -185,6 +187,23 @@ class AlbaClient(IAquaCleanClient):
         import time as _time
         ts = int(_time.time())
         await self.base_client.write_dp_async(int(DpId.DP_SET_RTC_TIME), ts)
+
+    # ── Alba dangerous commands (write-only DpIds, excluded from normal UI) ──
+
+    async def reset_device(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_RESET), value)
+
+    async def start_bootloader(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_START_BOOTLOADER), value)
+
+    async def restart_device(self) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_RESTART), 0)
+
+    async def load_profile(self) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_LOAD_PROFILE), 0)
+
+    async def start_user_session(self) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_START_USER_SESSION), 0)
     async def start_cleaning_device(self):                self._unsupported("start_cleaning_device")
     async def execute_next_cleaning_step(self):           self._unsupported("execute_next_cleaning_step")
     async def start_lid_position_calibration(self):       self._unsupported("start_lid_position_calibration")

@@ -3101,6 +3101,21 @@ class ApiMode:
                 if value is None or value < rng[0] or value > rng[1]:
                     raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
                 await client.set_active_oscillation(value)
+            # ── Dangerous commands ────────────────────────────────────────────
+            elif command == "reset":
+                if value is None or value < 0 or value > 4:
+                    raise HTTPException(status_code=400, detail="value must be 0–4")
+                await client.reset_device(value)
+            elif command == "start-bootloader":
+                if value is None or value < 0 or value > 1:
+                    raise HTTPException(status_code=400, detail="value must be 0–1")
+                await client.start_bootloader(value)
+            elif command == "restart":
+                await client.restart_device()
+            elif command == "load-profile":
+                await client.load_profile()
+            elif command == "start-user-session":
+                await client.start_user_session()
             else:
                 raise HTTPException(status_code=400, detail=f"Unknown Alba command: {command}")
 
