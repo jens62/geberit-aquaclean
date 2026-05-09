@@ -13,12 +13,32 @@ from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
-# (data_key, friendly_name, device_class, icon_on, icon_off)
-BINARY_SENSORS: list[tuple[str, str, BinarySensorDeviceClass | None, str, str]] = [
-    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on",  "geberit:is_user_sitting-off"),
-    ("is_anal_shower_running", "Anal Shower Running", None,                               "geberit:analshower",           "geberit:analshower"),
-    ("is_lady_shower_running", "Lady Shower Running", None,                               "geberit:ladywash",             "geberit:ladywash"),
-    ("is_dryer_running",       "Dryer Running",       None,                               "geberit:dryer-on",             "geberit:dryer-off"),
+# (data_key, friendly_name, device_class, icon_on, icon_off, mera_only)
+BINARY_SENSORS: list[tuple] = [
+    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on", "geberit:is_user_sitting-off", False),
+    ("is_anal_shower_running", "Anal Shower Running", None,                              "geberit:analshower",         "geberit:analshower",          False),
+    ("is_lady_shower_running", "Lady Shower Running", None,                              "geberit:ladywash",           "geberit:ladywash",            True),
+    ("is_dryer_running",       "Dryer Running",       None,                              "geberit:dryer-on",           "geberit:dryer-off",           True),
+]
+
+# (data_key, friendly_name, device_class, icon)
+# Binary sensors only available on AquaClean Alba devices.
+ALBA_BINARY_SENSORS: list[tuple] = [
+    # Error indicators — True means the fault is present
+    ("alba_error_power_supply",        "Power Supply Error",    BinarySensorDeviceClass.PROBLEM, "mdi:power-plug-off"),
+    ("alba_error_water_heater",        "Water Heater Error",    BinarySensorDeviceClass.PROBLEM, "mdi:water-boiler-off"),
+    ("alba_error_level_control",       "Level Control Error",   BinarySensorDeviceClass.PROBLEM, "mdi:gauge-low"),
+    ("alba_error_user_detection",      "User Detection Error",  BinarySensorDeviceClass.PROBLEM, "mdi:account-alert"),
+    ("alba_error_water_pump",          "Water Pump Error",      BinarySensorDeviceClass.PROBLEM, "mdi:water-pump-off"),
+    ("alba_error_spray_arm_drive",     "Spray Arm Drive Error", BinarySensorDeviceClass.PROBLEM, "mdi:cog-off"),
+    ("alba_error_maintenance_request", "Maintenance Request",   BinarySensorDeviceClass.PROBLEM, "mdi:wrench-clock"),
+    ("alba_error_descaling",           "Descaling Error",       BinarySensorDeviceClass.PROBLEM, "mdi:water-remove"),
+    # Operating modes
+    ("alba_demo_mode",                 "Demo Mode",             None,                            "mdi:monitor-eye"),
+    ("alba_showroom_mode",             "Showroom Mode",         None,                            "mdi:store-outline"),
+    ("alba_dry_run_mode",              "Dry Run Mode",          None,                            "mdi:water-off-outline"),
+    # Active oscillation
+    ("alba_active_oscillation",        "Spray Arm Oscillation", None,                            "mdi:rotate-360"),
 ]
 
 
@@ -29,17 +49,24 @@ async def async_setup_entry(
 ) -> None:
     coordinator: AquaCleanCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list = [
-        AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off)
-        for key, name, device_class, icon_on, icon_off in BINARY_SENSORS
+        AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off, mera_only)
+        for key, name, device_class, icon_on, icon_off, mera_only in BINARY_SENSORS
     ]
     entities.append(AquaCleanBleConnectedSensor(coordinator, entry))
     if coordinator._esphome_host:
         entities.append(AquaCleanEspHomeConnectedSensor(coordinator, entry))
+    # Alba-specific binary sensors — always registered; only available when device_type == "alba"
+    entities += [
+        AquaCleanAlbaBinarySensor(coordinator, entry, key, name, device_class, icon)
+        for key, name, device_class, icon in ALBA_BINARY_SENSORS
+    ]
     async_add_entities(entities)
 
 
 class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
-    def __init__(self, coordinator, entry, key, name, device_class, icon_on, icon_off) -> None:
+    def __init__(
+        self, coordinator, entry, key, name, device_class, icon_on, icon_off, mera_only: bool = False
+    ) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}"
@@ -47,6 +74,13 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
         self._attr_device_class = device_class
         self._icon_on = icon_on
         self._icon_off = icon_off
+        self._mera_only = mera_only
+
+    @property
+    def available(self) -> bool:
+        if self._mera_only and (self.coordinator.data or {}).get("device_type") == "alba":
+            return False
+        return super().available
 
     @property
     def icon(self) -> str:
@@ -57,6 +91,29 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return bool(self.coordinator.data.get(self._key))
+
+
+class AquaCleanAlbaBinarySensor(AquaCleanEntity, BinarySensorEntity):
+    """Binary sensor only available on AquaClean Alba devices."""
+
+    def __init__(self, coordinator, entry, key, name, device_class, icon) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
+        self._attr_name = name
+        self._attr_device_class = device_class
+        self._attr_icon = icon
+
+    @property
+    def available(self) -> bool:
+        return (self.coordinator.data or {}).get("device_type") == "alba" and super().available
+
+    @property
+    def is_on(self) -> bool | None:
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._key)
+        return bool(val) if val is not None else None
 
 
 class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):

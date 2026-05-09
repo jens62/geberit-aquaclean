@@ -16,6 +16,7 @@ from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
 # (data_key, friendly_name, unit, device_class, state_class, icon)
+# Sensors present on both Mera Comfort and Alba devices.
 SENSORS: list[tuple] = [
     # Identification — static, changes only after factory reset / replacement
     ("serial_number",           "Serial Number",              None,  None,                          None,                              "mdi:identifier"),
@@ -45,6 +46,29 @@ SENSORS: list[tuple] = [
     ("ble_rssi",      "BLE Signal",     "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, "mdi:signal"),
 ]
 
+# (data_key, friendly_name, unit, device_class, state_class, icon)
+# Sensors only available on AquaClean Alba devices.
+ALBA_SENSORS: list[tuple] = [
+    ("alba_spray_arm_cleaning_status",              "Spray Arm Cleaning Status",      None, None,                          None,                             "mdi:spray-bottle"),
+    ("alba_descaling_status",                       "Descaling Status",               None, None,                          None,                             "mdi:water-remove"),
+    ("alba_days_until_next_descaling",              "Days Until Next Descaling",      "d",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,     "mdi:water-remove"),
+    ("alba_descaling_cycles",                       "Descaling Cycles",               None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_credits_until_next_descaling",           "Credits Until Next Descaling",   None, None,                          SensorStateClass.MEASUREMENT,     "mdi:counter"),
+    ("alba_descaling_device_lock_remaining_days",   "Descaling Lock Remaining Days",  "d",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,     "mdi:lock-clock"),
+    ("alba_descaling_device_relock_remaining_cycles","Descaling Relock Remaining Cycles", None, None,                     SensorStateClass.MEASUREMENT,     "mdi:counter"),
+    ("alba_descaling_device_lock_status",           "Descaling Device Lock",          None, None,                          None,                             "mdi:lock"),
+    ("alba_unaccounted_shower_cycles",              "Unaccounted Shower Cycles",      None, None,                          SensorStateClass.MEASUREMENT,     "mdi:counter"),
+    ("alba_timestamp_last_descaling",               "Last Descaling",                 None, None,                          None,                             "mdi:calendar-clock"),
+    ("alba_timestamp_last_descaling_request",       "Last Descaling Request",         None, None,                          None,                             "mdi:calendar-clock"),
+    ("alba_rtc_time",                               "RTC Time",                       None, None,                          None,                             "mdi:clock-outline"),
+    ("alba_operation_time_total_s",                 "Operation Time Total",           "s",  SensorDeviceClass.DURATION,    SensorStateClass.TOTAL_INCREASING, "mdi:timer"),
+    ("alba_operation_time_since_power_up_s",        "Operation Time Since Power-Up",  "s",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,     "mdi:timer-outline"),
+    ("alba_product_registration_level",             "Product Registration Level",     None, None,                          None,                             "mdi:certificate-outline"),
+    ("alba_active_intensity",                       "Active Spray Intensity",         None, None,                          SensorStateClass.MEASUREMENT,     "mdi:water-boiler"),
+    ("alba_active_position",                        "Active Spray Position",          None, None,                          SensorStateClass.MEASUREMENT,     "mdi:arrow-left-right"),
+    ("alba_active_temperature",                     "Active Water Temperature",       None, None,                          SensorStateClass.MEASUREMENT,     "mdi:thermometer-water"),
+]
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -57,6 +81,12 @@ async def async_setup_entry(
         for key, name, unit, device_class, state_class, icon in SENSORS
     ]
     entities.append(AquaCleanBleConnectionSensor(coordinator, entry))
+
+    # Alba-specific sensors — always registered; only available when device_type == "alba"
+    entities += [
+        AquaCleanAlbaSensor(coordinator, entry, key, name, unit, device_class, state_class, icon)
+        for key, name, unit, device_class, state_class, icon in ALBA_SENSORS
+    ]
 
     # Performance/timing/BLE RSSI stats — always added regardless of transport.
     # Valid for both local BLE and ESP32 proxy modes; live on the main toilet device.
@@ -98,6 +128,32 @@ class AquaCleanSensor(AquaCleanEntity, SensorEntity):
         self._attr_device_class = device_class
         self._attr_state_class = state_class
         self._attr_icon = icon
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get(self._key)
+
+
+class AquaCleanAlbaSensor(AquaCleanEntity, SensorEntity):
+    """Sensor only available on AquaClean Alba devices."""
+
+    def __init__(
+        self, coordinator, entry, key, name, unit, device_class, state_class, icon
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
+        self._attr_name = name
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_state_class = state_class
+        self._attr_icon = icon
+
+    @property
+    def available(self) -> bool:
+        return (self.coordinator.data or {}).get("device_type") == "alba" and super().available
 
     @property
     def native_value(self):
