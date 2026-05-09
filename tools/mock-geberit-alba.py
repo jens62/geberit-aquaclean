@@ -807,13 +807,24 @@ async def main(mode: str):
                     print(f"[MockServer] ERROR: {msg}")
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
-            # After each session BlueZ stops advertising — re-register so the mock
-            # is discoverable by the next bridge poll.
+            # After each session BlueZ stops advertising — create a fresh Advertisement
+            # object and register it. Re-using the same instance fails because its DBus
+            # interface (/com/spacecheese/bluez_peripheral/advert0) is still exported
+            # after unregister() — only a new object gets a clean DBus slot.
             await safe_call(adv, "unregister", bus, adapter_wrapper)
             await safe_call(adv, "unregister", adapter_wrapper)
             await safe_call(adv, "unregister", bus)
             await safe_call(adv, "unregister")
             adv_registered = False
+            adv = Advertisement(
+                "Geberit-Alba-Mock",
+                [
+                    "559eb100-2390-11e8-b467-0ed5f89f718b",
+                    "0000fd48-0000-1000-8000-00805f9b34fb"
+                ],
+                appearance=0,
+                timeout=0
+            )
             try:
                 await adv.register(bus, adapter_wrapper)
                 adv_registered = True
