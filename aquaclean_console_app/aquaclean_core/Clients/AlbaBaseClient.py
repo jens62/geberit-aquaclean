@@ -252,6 +252,71 @@ class AlbaBaseClient:
             result["pairing_secret_hex"] = None
         return result
 
+    async def get_instanced_stats_async(self) -> dict:
+        """Read all instanced DpIds: progress indicators, version strings, statistics counters."""
+
+        async def _u32i(dp_id: DpId, instance: int) -> Optional[int]:
+            try:
+                raw = await self._ble20.read(int(dp_id), instance)
+                if not raw:
+                    return None
+                if len(raw) >= 4:
+                    return struct.unpack_from('<I', raw)[0]
+                return raw[0]
+            except Exception:
+                return None
+
+        result: dict = {}
+
+        # Progress DpIds — 4 instances: 0=MaxTotal, 1=ElapsedTotal, 2=MaxStep, 3=ElapsedStep
+        for dp_id, key in [
+            (DpId.DP_ANAL_SHOWER_PROGRESS,        "anal_shower_progress"),
+            (DpId.DP_SPRAY_ARM_CLEANING_PROGRESS, "spray_arm_cleaning_progress"),
+            (DpId.DP_DESCALING_PROGRESS,          "descaling_progress"),
+        ]:
+            max_total     = await _u32i(dp_id, 0)
+            elapsed_total = await _u32i(dp_id, 1)
+            max_step      = await _u32i(dp_id, 2)
+            elapsed_step  = await _u32i(dp_id, 3)
+            pct = round(elapsed_total / max_total * 100, 1) if max_total else None
+            result[key] = {
+                "max_total":     max_total,
+                "elapsed_total": elapsed_total,
+                "max_step":      max_step,
+                "elapsed_step":  elapsed_step,
+                "pct":           pct,
+            }
+
+        # Version DpIds
+        async def _version(dp_id: DpId, n_instances: int) -> Optional[str]:
+            parts = [await _u32i(dp_id, i) for i in range(n_instances)]
+            if all(p is None for p in parts):
+                return None
+            return ".".join(str(p or 0) for p in parts)
+
+        result["fus_version"]            = await _version(DpId.DP_FUS_VERSION, 3)
+        result["geberit_loader_version"] = await _version(DpId.DP_GEBERIT_LOADER_VERSION, 2)
+        result["wireless_stack_version"] = await _version(DpId.DP_WIRELESS_STACK_VERSION, 3)
+
+        # Statistics counters — instances: 2=UseWithFlush, 31-36=AquaClean-specific
+        _STAT_INSTANCES: dict[int, str] = {
+            2:  "use_with_flush",
+            31: "aquaclean_usages",
+            32: "aquaclean_anal_showers",
+            33: "aquaclean_lady_showers",
+            34: "aquaclean_dryings",
+            35: "aquaclean_descalings",
+            36: "aquaclean_spray_arm_cleanings",
+        }
+        for dp_id, key in [
+            (DpId.DP_STATISTIC_COUNTER_SINCE_POWER_UP, "stats_since_power_up"),
+            (DpId.DP_STATISTIC_COUNTER_SINCE_RESET,    "stats_since_reset"),
+            (DpId.DP_STATISTIC_COUNTER_TOTAL,          "stats_total"),
+        ]:
+            result[key] = {name: await _u32i(dp_id, inst) for inst, name in _STAT_INSTANCES.items()}
+
+        return result
+
     async def write_dp_async(self, dp_id: int, value: int) -> None:
         """Write a uint32 value to a DpId (little-endian)."""
         await self._ble20.write(dp_id, struct.pack('<I', value))

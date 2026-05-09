@@ -3059,6 +3059,22 @@ class ApiMode:
                 return await client.base_client.get_misc_state_async()
             return await self._on_demand(_fetch)
 
+    async def get_alba_instanced_state(self) -> dict:
+        """GET /alba/instanced-state — reads instanced DpIds (progress, versions, statistics)."""
+        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient as _AlbaClient
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            if not isinstance(self.service.client, _AlbaClient):
+                self._http_error(400, E3002, "Device is not an Alba")
+            return await self.service.client.base_client.get_instanced_stats_async()
+        else:
+            async def _fetch(client):
+                if not isinstance(client, _AlbaClient):
+                    raise HTTPException(status_code=400, detail="Device is not an Alba")
+                return await client.base_client.get_instanced_stats_async()
+            return await self._on_demand(_fetch)
+
     _ALBA_COMMAND_RANGES: dict = {
         "spray-arm-cleaning":  (0, 1),
         "set-active-intensity": (0, 4),
