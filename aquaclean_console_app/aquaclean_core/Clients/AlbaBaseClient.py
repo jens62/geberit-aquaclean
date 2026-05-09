@@ -12,6 +12,7 @@ from typing import Optional
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos.SystemParameterList import SystemParameterList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import BLEPeripheralTimeoutError
+from aquaclean_console_app.aquaclean_core.DeviceNameUtil import get_full_name
 from aquaclean_console_app.bluetooth_le.LE.dp_ids import DpId
 
 logger = logging.getLogger(__name__)
@@ -75,11 +76,15 @@ class AlbaBaseClient:
         di = await self._ble20.get_device_identification(self._inv)
         sap    = str(di.device_sap_number) if di.device_sap_number is not None else ""
         serial = str(di.device_number)     if di.device_number     is not None else ""
+        if di.device_series is not None and di.device_variant is not None:
+            description = get_full_name(di.device_series, di.device_variant)
+        else:
+            description = di.name or "Geberit AquaClean Alba"
         return DeviceIdentification(
             sap_number      = sap,
             serial_number   = serial,
             production_date = "",
-            description     = di.name or "Geberit AquaClean Alba",
+            description     = description,
         )
 
     async def get_device_initial_operation_date(self) -> str:
