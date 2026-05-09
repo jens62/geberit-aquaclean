@@ -790,6 +790,7 @@ async def main(mode: str):
     print("Advertising as: Geberit-Alba-Mock")
 
     async def _handshake_loop():
+        nonlocal adv_registered
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         while True:
             sig_service._arendi = _AriendiServerSide()
@@ -806,6 +807,19 @@ async def main(mode: str):
                     print(f"[MockServer] ERROR: {msg}")
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
+            # After each session BlueZ stops advertising — re-register so the mock
+            # is discoverable by the next bridge poll.
+            await safe_call(adv, "unregister", bus, adapter_wrapper)
+            await safe_call(adv, "unregister", adapter_wrapper)
+            await safe_call(adv, "unregister", bus)
+            await safe_call(adv, "unregister")
+            adv_registered = False
+            try:
+                await adv.register(bus, adapter_wrapper)
+                adv_registered = True
+                print("[Mock] Advertising resumed — ready for next client")
+            except Exception as e:
+                print(f"[Mock] Advertisement re-registration failed: {e}")
 
     server_task = None
     if mode in ("handshake", "ble20"):
