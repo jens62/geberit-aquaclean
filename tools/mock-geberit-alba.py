@@ -123,89 +123,93 @@ class _Ble20AppLayer:
     # behavior: 0=Info  1=Status  2=Command  3=Nvm  4=Protected
     #
     # 78 DpIds mirroring a real kstr AquaClean Alba (AC250) inventory.
+    # Values from kstr readall 2026-05-08 with obfuscation applied:
+    #   Timestamps / Seconds: real value − 457751 (= 5d 7h 9m 11s)
+    #   Counters (serial/device IDs): real value − 57911
+    #   Strings: last identifying segment replaced with X/zeros
     _DEFAULT_STORE = [
         # ── System / device identification ────────────────────────────────
-        (0,   None,  0,  9, 0,         255,        0, b'\x02\x00\x00\x00'),  # DEVICE_SERIES = 2
-        (1,   None,  0,  9, 0,         255,        0, b'\x00\x00\x00\x00'),  # DEVICE_VARIANT = 0
-        (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 123)),# DEVICE_NUMBER = 123 (mock-serial-123)
-        (3,   None,  0, 13, 0,         0,          4, b'\x00\x00\x00\x00'),  # DEVICE_PRODUCTION_DATE
-        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.A'),      # DEVICE_SAP_NUMBER
-        (8,   None,  0,  8, 2,         2,          0, b'03'),                # FW_RS_VERSION = "03" → RS03TS89
-        (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),# FW_TS_VERSION = 89
-        (10,  None,  0,  8, 2,         2,          4, b'00'),                # HW_RS_VERSION = "00"
-        (12,  None,  0,  8, 0,         4,          4, b''),                  # PAIRING_SECRET
-        (13,  None,  0,  8, 0,         6,          3, b''),                  # ACCESS_CODE
-        (14,  None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'), # ACCESS_REVOCATION
-        (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 1746652800)),  # RTC_TIME
-        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),             # DP_NAME
-        (62,  None,  1, 10, 0,         4,          2, b'\x00'),              # (Enum Command ver=1)
-        (83,  None,  1, 10, 0,         1,          2, b'\x00'),              # (Enum Command ver=1)
-        (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'), # (Binary Status ver=1)
-        (148, None,  0,  3, 0,         0,          1, b'\x00\x00\x00\x00'), # (Seconds Status)
-        (149, None,  0,  3, 0,         0,          1, b'\x00\x00\x00\x00'), # (Seconds Status)
-        (153, None,  0,  0, 0,         0,          2, b''),                  # (Unused Command)
-        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 123)),# UNIQUE_DEVICE_NUMBER = 123
-        (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 1746652800)),  # SET_RTC_TIME
-        (313, None,  0,  8, 0,         20,         4, b''),                  # SALES_SAP_NUMBER
-        (337, None,  0,  9, 0,         255,        0, b'\x00\x00\x00\x00'), # BOOTLOADER_VARIANT = 0
-        (369, None,  0,  8, 0,         20,         4, b'mock-serial-123'),  # SALES_PRODUCT_SERIAL_NUMBER
-        (370, None,  0, 13, 0,         0,          4, b'\x00\x00\x00\x00'), # (TsUtc Protected)
-        (371, None,  0,  8, 0,         12,         4, b''),                  # SALES_PRODUCT_SAP_NUMBER
-        (431, None,  0,  3, 0,         0,          4, b'\x00\x00\x00\x00'), # (Seconds Protected)
+        (0,   None,  0,  9, 0,         255,        0, struct.pack('<I', 250)),        # DEVICE_SERIES = 250 (Aquaclean)
+        (1,   None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # DEVICE_VARIANT = 0 (Alba)
+        (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 35225)),      # DEVICE_NUMBER (obf)
+        (3,   None,  0, 13, 0,         0,          4, struct.pack('<I', 1757175271)), # DEVICE_PRODUCTION_DATE (obf)
+        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.X'),               # DEVICE_SAP_NUMBER (obf)
+        (8,   None,  0,  8, 2,         2,          0, b'03'),                         # FW_RS_VERSION → RS03TS89
+        (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
+        (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
+        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (obf)
+        (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
+        (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
+        (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf; never set — equals 2000-01-01 epoch + OPERATION_TIME_TOTAL)
+        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),                     # DP_NAME
+        (62,  None,  1, 10, 0,         4,          2, b'\x00'),                       # RESET (Command, write-only)
+        (83,  None,  1, 10, 0,         1,          2, b'\x00'),                       # START_BOOTLOADER (Command, write-only)
+        (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # POWER_SUPPLY_ERROR_STATUS = 0
+        (148, None,  0,  3, 0,         0,          1, struct.pack('<I', 601643)),     # OPERATION_TIME_TOTAL (obf; = RTC − 2000-01-01 epoch)
+        (149, None,  0,  3, 0,         0,          1, struct.pack('<I', 492999)),     # OPERATION_TIME_SINCE_POWER_UP (obf)
+        (153, None,  0,  0, 0,         0,          2, b''),                           # RESTART (Command, write-only)
+        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 34761370)),   # UNIQUE_DEVICE_NUMBER (obf)
+        (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 947286443)), # SET_RTC_TIME (Command, write-only)
+        (313, None,  0,  8, 0,         20,         4, b'245.832.00.X'),               # SALES_SAP_NUMBER (obf)
+        (337, None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # BOOTLOADER_VARIANT = 0
+        (369, None,  0,  8, 0,         20,         4, b'SB0000EU000000'),             # SALES_PRODUCT_SERIAL_NUMBER (obf)
+        (370, None,  0, 13, 0,         0,          4, struct.pack('<I', 1774187093)), # SALES_PRODUCT_PRODUCTION_DATE (obf)
+        (371, None,  0,  8, 0,         12,         4, b'146.350.01.x'),               # SALES_PRODUCT_SAP_NUMBER (confirms Alba 250 toilet)
+        (431, None,  0,  3, 0,         0,          4, struct.pack('<I', 0)),          # OPERATION_TIME_OFFSET = 0
         # ── Anal shower ───────────────────────────────────────────────────
-        (563, None,  0, 10, 0,         1,          2, b'\x00'),             # START_STOP_ANAL_SHOWER
-        (564, None,  0, 10, 0,         7,          1, b'\x00'),             # ANAL_SHOWER_STATUS
-        (566, None,  0, 10, 0,         1,          2, b'\x00'),             # (Enum Command)
-        (567, None,  0, 10, 0,         5,          1, b'\x00'),             # (Enum Status)
-        (569, None,  0, 10, 0,         0,          2, b'\x00'),             # (Enum Command)
-        (570, None,  0, 10, 0,         4,          2, b'\x00'),             # SET_ACTIVE_ANAL_SPRAY_INTENSITY
-        (571, None,  0, 10, 0,         4,          1, b'\x00'),             # (Enum Status)
-        (572, None,  0, 10, 0,         4,          2, b'\x00'),             # SET_ACTIVE_ANAL_SPRAY_ARM_POSITION
-        (573, None,  0, 10, 0,         4,          1, b'\x00'),             # (Enum Status)
-        (574, None,  0, 10, 0,         5,          2, b'\x00'),             # (Enum Command)
-        (575, None,  0, 10, 0,         5,          1, b'\x00'),             # (Enum Status)
-        (576, None,  0, 11, 0,         1,          2, b'\x00'),             # (OffOn Command)
-        (577, None,  0, 11, 0,         1,          1, b'\x00'),             # (OffOn Status)
-        (580, None,  0, 10, 0,         4,          3, b'\x00'),             # STORED_ANAL_SPRAY_INTENSITY
-        (581, None,  0, 10, 0,         4,          3, b'\x00'),             # STORED_ANAL_SPRAY_ARM_POSITION
-        (582, None,  0, 10, 0,         5,          3, b'\x00'),             # (Enum Nvm)
-        (583, None,  0, 11, 0,         1,          3, b'\x00'),             # (OffOn Nvm)
-        (584, None,  0, 10, 0,         1,          2, b'\x00'),             # (Enum Command)
-        (585, None,  0, 10, 0,         4,          1, b'\x00'),             # (Enum Status)
-        (588, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
-        (589, None,  0,  9, 0,         0,          1, b'\x00\x00\x00\x00'),# (Counter Status)
-        (590, None,  0, 13, 0,         0,          3, b'\x00\x00\x00\x00'),# (TsUtc Nvm)
-        (591, None,  0, 13, 0,         0,          3, b'\x00\x00\x00\x00'),# (TsUtc Nvm)
-        (592, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
-        (607, None,  0, 10, 0,         1,          1, b'\x00'),             # (Enum Status)
-        (711, None,  0,  9, 0,         0,          1, b'\x00\x00\x00\x00'),# (Counter Status)
-        (764, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
-        (765, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
-        (766, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
-        (781, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
-        (789, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
-        (790, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
-        (795, None,  0, 11, 0,         1,          3, b'\x00'),             # (OffOn Nvm)
-        (796, None,  0, 10, 0,         2,          3, b'\x00'),             # (Enum Nvm)
-        (802, None,  0,  0, 0,         0,          2, b''),                 # (Unused Command)
-        (803, None,  0, 11, 0,         1,          4, b'\x00'),             # (OffOn Protected)
-        (810, None,  0, 11, 0,         1,          1, b'\x00'),             # (OffOn Status)
-        (820, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),# (Binary Status)
-        (977, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
-        (978, None,  0,  0, 0,         0,          2, b''),                 # (Unused Command)
-        (979, None,  0,  9, 0,         0,          3, b'\x00\x00\x00\x00'),# (Counter Nvm)
-        (982, None,  0,  1, 4,         4,          0, b'\x00\x00\x00\x00'),# (Binary Info)
-        (983, None,  0, 11, 0,         1,          1, b'\x00'),             # (OffOn Status)
+        (563, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_ANAL_SHOWER (Command, write-only)
+        (564, None,  0, 10, 0,         7,          1, b'\x01'),                       # ANAL_SHOWER_STATUS = 1 (Disabled at rest)
+        (566, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_SPRAY_ARM_CLEANING (Command, write-only)
+        (567, None,  0, 10, 0,         5,          1, b'\x02'),                       # SPRAY_ARM_CLEANING_STATUS = 2 (Ready)
+        (569, None,  0, 10, 0,         0,          2, b'\x00'),                       # LOAD_PROFILE (Command, write-only)
+        (570, None,  0, 10, 0,         4,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_INTENSITY (Command, write-only)
+        (571, None,  0, 10, 0,         4,          1, b'\x04'),                       # ACTIVE_ANAL_SPRAY_INTENSITY_STATUS = 4 (Level 5)
+        (572, None,  0, 10, 0,         4,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_ARM_POSITION (Command, write-only)
+        (573, None,  0, 10, 0,         4,          1, b'\x04'),                       # ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS = 4 (Position 5)
+        (574, None,  0, 10, 0,         5,          2, b'\x00'),                       # SET_ACTIVE_SHOWER_WATER_TEMPERATURE (Command, write-only)
+        (575, None,  0, 10, 0,         5,          1, b'\x05'),                       # ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS = 5 (Level 5)
+        (576, None,  0, 11, 0,         1,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION (Command, write-only)
+        (577, None,  0, 11, 0,         1,          1, b'\x00'),                       # ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS = Off
+        (580, None,  0, 10, 0,         4,          3, b'\x04'),                       # STORED_ANAL_SPRAY_INTENSITY = 4 (Level 5)
+        (581, None,  0, 10, 0,         4,          3, b'\x04'),                       # STORED_ANAL_SPRAY_ARM_POSITION = 4 (Position 5)
+        (582, None,  0, 10, 0,         5,          3, b'\x05'),                       # STORED_SHOWER_WATER_TEMPERATURE = 5 (Level 5)
+        (583, None,  0, 11, 0,         1,          3, b'\x00'),                       # STORED_ANAL_SPRAY_ARM_OSCILLATION = Off
+        (584, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_DESCALING (Command, write-only)
+        (585, None,  0, 10, 0,         4,          1, b'\x02'),                       # DESCALING_STATUS = 2 (Ready)
+        (588, None,  0,  9, 0,         0,          3, struct.pack('<I', 1)),          # UNACCOUNTED_SHOWER_CYCLES = 1
+        (589, None,  0,  9, 0,         0,          1, struct.pack('<I', 168)),        # DAYS_UNTIL_NEXT_DESCALING = 168
+        (590, None,  0, 13, 0,         0,          3, struct.pack('<I', 0)),          # TIMESTAMP_OF_LAST_DESCALING = 0 (never descaled)
+        (591, None,  0, 13, 0,         0,          3, struct.pack('<I', 0)),          # TIMESTAMP_OF_LAST_DESCALING_REQUEST = 0 (never)
+        (592, None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # DESCALING_CYCLES = 0
+        (607, None,  0, 10, 0,         1,          1, b'\x00'),                       # USER_DETECTION_STATUS = 0 (User absent)
+        (711, None,  0,  9, 0,         0,          1, struct.pack('<I', 340)),        # STATISTIC_COUNTER_SINCE_POWER_UP_SUM = 340
+        (764, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # WATER_HEATER_ERROR_STATUS = 0
+        (765, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # LEVEL_CONTROL_ERROR_STATUS = 0
+        (766, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # USER_DETECTION_ERROR_STATUS = 0
+        (781, None,  0,  9, 0,         0,          3, struct.pack('<I', 33600)),      # CREDITS_UNTIL_NEXT_DESCALING = 33600 (= 168 days × 200)
+        (789, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # WATER_PUMP_ERROR_STATUS = 0
+        (790, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_DRIVE_ERROR_STATUS = 0
+        (795, None,  0, 11, 0,         1,          3, b'\x00'),                       # DEMO_MODE = Off
+        (796, None,  0, 10, 0,         2,          3, b'\x00'),                       # PRODUCT_REGISTRATION_LEVEL = 0 (Unregistered)
+        (802, None,  0,  0, 0,         0,          2, b''),                           # START_USER_SESSION (Command, write-only)
+        (803, None,  0, 11, 0,         1,          4, b'\x00'),                       # SHOWROOM_MODE = Off
+        (810, None,  0, 11, 0,         1,          1, b'\x00'),                       # DRY_RUN_MODE = Off
+        (820, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # MAINTENANCE_REQUEST_STATUS = 0
+        (977, None,  0,  9, 0,         0,          3, struct.pack('<I', 14)),         # DESCALING_DEVICE_LOCK_REMAINING_DAYS = 14
+        (978, None,  0,  0, 0,         0,          2, b''),                           # DESCALING_UNLOCK_DEVICE (Command, write-only)
+        (979, None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # DESCALING_DEVICE_RELOCK_REMAINING_CYCLES = 0
+        (982, None,  0,  1, 4,         4,          0, b'\x00\x00\x00\x00'),          # DESCALING_ERROR_STATUS = 0
+        (983, None,  0, 11, 0,         1,          1, b'\x00'),                       # DESCALING_DEVICE_LOCK_STATUS = Off
         # ── Instanced DpIds ───────────────────────────────────────────────
-        (786,  2,    0,  9, 0,         0,          0, b'\x00\x00\x00\x00'),# Counter Info inst=2
-        (785,  3,    0,  9, 0,         0,          0, b'\x00\x00\x00\x00'),# Counter Info inst=3
-        (787,  3,    0,  9, 0,         0,          0, b'\x00\x00\x00\x00'),# Counter Info inst=3
-        (565,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),# ANAL_SHOWER_PROGRESS inst=4
-        (568,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),# (MilliSec Status inst=4)
-        (586,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),# (MilliSec Status inst=4)
-        (405, 31,    1,  9, 0,  999999999,         1, b'\x00\x00\x00\x00'),# Counter Status ver=1 inst=31
-        (688, 31,    1,  9, 0,  999999999,         1, b'\x00\x00\x00\x00'),# Counter Status ver=1 inst=31
-        (689, 31,    1,  9, 0,  999999999,         1, b'\x00\x00\x00\x00'),# Counter Status ver=1 inst=31
+        (786,  2,    0,  9, 0,         0,          0, struct.pack('<I', 0)),          # GEBERIT_LOADER_VERSION inst=2
+        (785,  3,    0,  9, 0,         0,          0, struct.pack('<I', 0)),          # FUS_VERSION inst=3
+        (787,  3,    0,  9, 0,         0,          0, struct.pack('<I', 0)),          # WIRELESS_STACK_VERSION inst=3
+        (565,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),          # ANAL_SHOWER_PROGRESS inst=4
+        (568,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_CLEANING_PROGRESS inst=4
+        (586,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),          # DESCALING_PROGRESS inst=4
+        (405, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_SINCE_POWER_UP inst=31
+        (688, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_SINCE_RESET inst=31
+        (689, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_TOTAL inst=31
     ]
 
     def __init__(self):
