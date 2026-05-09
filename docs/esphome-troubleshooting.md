@@ -236,6 +236,44 @@ the parsed one.
 
 ---
 
+## "Write not permitted" — stale Bluetooth cache on the ESP32
+
+**Symptom:** The integration fails to connect and the Home Assistant log shows:
+
+```
+ERROR [ESPHomeAPIClient] Write failed for 559eb001-...: Bluetooth GATT Error
+  handle=30 error=3 description=Write not permitted
+WARNING [config_flow] Config flow: unsupported GATT profile — svc=0000fd48-...
+```
+
+The integration then aborts with "Unsupported device", even though the toilet is an
+AquaClean Alba that should work.
+
+**Cause:** The ESP32 keeps an internal Bluetooth cache (called NVS) that maps service
+handles to characteristics. When a Bluetooth device is updated or re-paired, this cache
+can become outdated. The ESP32 then tries to write to the wrong internal address (handle
+30 in the example above), which the toilet rejects with "Write not permitted". A plain
+restart of the ESP32 does **not** fix this — the cache survives reboots.
+
+**Fix — reflash the ESP32 with "Clean Build":**
+
+1. Open your **ESPHome dashboard** in the browser.
+2. Find your `aquaclean-proxy` device and click **Edit**.
+3. Click the three-dot menu (⋮) in the top right corner, then choose **Clean Build Files**.
+4. Click **Install** → **Wirelessly**.
+
+ESPHome will erase the ESP32's flash completely and reflash from scratch. The stale cache
+is gone and the toilet connection will work normally after the reboot.
+
+> **Note:** Your WiFi credentials are part of the firmware that gets flashed, so the ESP32
+> will reconnect to your network automatically after the clean install. You do not need to
+> re-enter any settings.
+
+**How to confirm this was the problem:** after the clean install, try adding the Geberit
+AquaClean integration again in Home Assistant. The "Write not permitted" error will be gone.
+
+---
+
 ## "Only one API subscription is allowed at a time" — Home Assistant conflict
 
 **Symptom:** The bridge logs `Only one API subscription is allowed at a time` on every BLE scan
