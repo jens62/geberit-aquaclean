@@ -626,6 +626,7 @@ class ServiceMode:
             "common_settings": None,        # dict {id: value} from GetStoredCommonSetting (proc 0x51)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
             "ble_dis_info": None,           # BLE Device Information Service (0x180a) data; populated on every connect
+            "device_type": None,            # "alba" | "mera" — set after dispatch; drives web UI capability hiding
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -771,6 +772,7 @@ class ServiceMode:
                     )
                 # Dispatch: if Alba (Arendi handshake done), swap to AlbaClient and re-wire events.
                 self.client, _swapped = await _dispatch_to_alba_if_needed(bluetooth_connector, self.client)
+                self.device_state["device_type"] = "alba" if _swapped else "mera"
                 if _swapped:
                     self.client.DeviceStateChanged += self.on_device_state_changed
                     self.client.SOCApplicationVersions += self.soc_application_versions
@@ -2545,6 +2547,7 @@ class ApiMode:
                 )
             # Dispatch: Alba (Arendi handshake done) → swap to AlbaClient.
             client, _swapped = await _dispatch_to_alba_if_needed(connector, client)
+            self.service.device_state["device_type"] = "alba" if _swapped else "mera"
             if _swapped and use_persistent:
                 self._esphome_client = client
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
