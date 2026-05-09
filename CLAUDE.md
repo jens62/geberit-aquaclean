@@ -445,6 +445,83 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **Alba: read instanced DpIds — STATISTIC_COUNTER_*, progress indicators, version strings.**
+
+  The following DpIds returned `InvalidInstance` in the kstr readall probe (2026-05-08) because
+  they require an instance parameter in the Ble20 read request.  Instance mappings are **fully
+  known** from `local-assets/geberit-home/decompiled/ComLib.Core/` — no probing needed.
+
+  **Source files (decompiled app):**
+  - `Geberit.ComLib.Core.DataPoint/DataPointDefinitionProvider.cs` — DpId + instance count per DpId
+  - `Geberit.ComLib.Core.EventStorage/EsStatisticCause.cs` — statistics counter instance enum
+  - `Geberit.ComLib.Core.DataPoint/DataPointTextContainer.cs` — instance label strings
+
+  ---
+
+  **Progress DpIds (565, 568, 586) — 4 instances each:**
+
+  | Instance | Meaning |
+  |----------|---------|
+  | 0 | Maximum Total Time (full-cycle duration) |
+  | 1 | Elapsed Total Time |
+  | 2 | Maximum Step Time (current step duration) |
+  | 3 | Elapsed Step Time |
+
+  Progress % = instance[1] / instance[0] × 100.
+
+  | DpId | Name | Notes |
+  |------|------|-------|
+  | 565 | `DP_ANAL_SHOWER_PROGRESS` | Live during a shower session |
+  | 568 | `DP_SPRAY_ARM_CLEANING_PROGRESS` | Live during spray arm cleaning |
+  | 586 | `DP_DESCALING_PROGRESS` | Live during 60-min descaling cycle — highest priority |
+
+  ---
+
+  **Version DpIds (785–787):**
+
+  | DpId | Name | Instances |
+  |------|------|-----------|
+  | 785 | `DP_FUS_VERSION` | 0=Major, 1=Minor, 2=Bugfix — Field Update Service (OTA) |
+  | 786 | `DP_GEBERIT_LOADER_VERSION` | 0=Major, 1=Minor — Geberit bootloader |
+  | 787 | `DP_WIRELESS_STACK_VERSION` | 0=Major, 1=Minor, 2=Bugfix — BLE stack |
+
+  Readable version string: `f"{major}.{minor}.{bugfix}"`.
+
+  ---
+
+  **Statistics counter DpIds (405, 688, 689) — instance = `EsStatisticCause` index:**
+
+  The AquaClean-relevant instances (version 1 range, instances 31–36):
+
+  | Instance | `EsStatisticCause` | Meaning |
+  |----------|--------------------|---------|
+  | 2  | `UseWithFlush` | Toilet uses with flush |
+  | 31 | `AquacleanUsages` | Total AquaClean activations |
+  | 32 | `AquacleanAnalShowers` | Anal shower count |
+  | 33 | `AquacleanLadyShowers` | Lady shower count |
+  | 34 | `AquacleanDryings` | Dryer activations |
+  | 35 | `AquacleanDescalings` | Descaling cycles completed |
+  | 36 | `AquacleanSprayArmCleanings` | Spray arm cleaning cycles |
+
+  Instances 0–30 are flush-related (flush counts, volumes, timing variants).
+  Version 0 supports instances 0–15; version 1 supports 0–36.
+
+  | DpId | Name | Resets on |
+  |------|------|-----------|
+  | 405 | `DP_STATISTIC_COUNTER_SINCE_POWER_UP` | Each power cycle |
+  | 688 | `DP_STATISTIC_COUNTER_SINCE_RESET` | User/factory reset |
+  | 689 | `DP_STATISTIC_COUNTER_TOTAL` | Never (lifetime) |
+
+  ---
+
+  **Implementation approach:**
+  1. Check `Ble20.py` read wire format — verify whether an instance byte is already
+     supported or whether `read_instanced(dp_id, instance)` needs to be added
+  2. Add `get_instanced_misc_state_async()` (or extend `get_misc_state_async()`); start
+     with progress DpIds (most immediately useful) and version DpIds
+  3. Expose in `/alba/misc-state` and push via SSE for live progress bars in webui
+  4. For statistics counters: read instances 31–36 (AquaClean-specific) as usage summary
+
 - **Auto-generate REST API docs (Swagger UI / OpenAPI) via GitHub Actions.**
 
   FastAPI already exposes `/openapi.json` and Swagger UI at `/docs` at runtime. The goal
