@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 #   index 5 = descaling min       (no equivalent → 0)
 #   index 6 = last error code     (no equivalent → 0)
 #   index 7 = service state       (no equivalent → 0)
+# Mera Comfort profile setting ID → Alba stored DpId
+# (from docs/developer/mera-comfort-alba-mapping.md)
+_PROFILE_SETTING_DPID: dict[int, DpId] = {
+    1: DpId.DP_STORED_ANAL_SPRAY_ARM_OSCILLATION,  # range 0–1
+    2: DpId.DP_STORED_ANAL_SPRAY_INTENSITY,         # range 0–4
+    4: DpId.DP_STORED_ANAL_SPRAY_ARM_POSITION,      # range 0–4
+    6: DpId.DP_STORED_SHOWER_WATER_TEMPERATURE,     # range 0–5
+}
+
 _SPL_DPID: list[Optional[DpId]] = [
     DpId.DP_SENSOR_DISTANCE_STATUS,   # 0
     None,                              # 1  dryer — no equivalent
@@ -105,7 +114,20 @@ class AlbaBaseClient:
         return None
 
     async def get_stored_profile_settings_async(self) -> dict:
-        return {}
+        ps = {}
+        for sid, dp_id in _PROFILE_SETTING_DPID.items():
+            try:
+                raw = await self._ble20.read(int(dp_id))
+                ps[sid] = struct.unpack_from('<I', raw)[0] if len(raw) >= 4 else (raw[0] if raw else 0)
+            except Exception:
+                ps[sid] = 0
+        return ps
+
+    async def set_stored_profile_setting_async(self, setting_id: int, value: int) -> None:
+        dp_id = _PROFILE_SETTING_DPID.get(setting_id)
+        if dp_id is None:
+            raise BLEPeripheralTimeoutError(f"Profile setting ID {setting_id} not supported on Alba")
+        await self._ble20.write(int(dp_id), struct.pack('<I', value))
 
     async def get_stored_common_settings_async(self) -> dict:
         return {}

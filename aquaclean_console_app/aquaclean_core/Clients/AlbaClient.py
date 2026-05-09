@@ -161,7 +161,7 @@ class AlbaClient(IAquaCleanClient):
     async def lid_position_offset_save(self):             self._unsupported("lid_position_offset_save")
     async def lid_position_offset_increment(self):        self._unsupported("lid_position_offset_increment")
     async def lid_position_offset_decrement(self):        self._unsupported("lid_position_offset_decrement")
-    async def set_stored_profile_setting(self, sid, val): self._unsupported("set_stored_profile_setting")
+    async def set_stored_profile_setting(self, sid, val): await self.base_client.set_stored_profile_setting_async(sid, val)
     async def set_stored_common_setting(self, sid, val):  self._unsupported("set_stored_common_setting")
     async def get_anal_shower_position(self):             self._unsupported("get_anal_shower_position")
     async def get_anal_shower_pressure(self):             self._unsupported("get_anal_shower_pressure")
