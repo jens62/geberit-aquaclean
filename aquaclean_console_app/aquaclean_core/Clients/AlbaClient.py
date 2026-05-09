@@ -151,10 +151,18 @@ class AlbaClient(IAquaCleanClient):
     async def toggle_orientation_light(self):             self._unsupported("toggle_orientation_light")
     async def reset_filter_counter(self):                 self._unsupported("reset_filter_counter")
     async def trigger_flush_manually(self):               self._unsupported("trigger_flush_manually")
-    async def prepare_descaling(self):                    self._unsupported("prepare_descaling")
-    async def confirm_descaling(self):                    self._unsupported("confirm_descaling")
-    async def cancel_descaling(self):                     self._unsupported("cancel_descaling")
-    async def postpone_descaling(self):                   self._unsupported("postpone_descaling")
+    async def prepare_descaling(self):
+        await self._ble20.write(DpId.DP_START_STOP_DESCALING, bytes([0x01]))
+
+    async def confirm_descaling(self):
+        # Same DpId as prepare; device state (2=waiting) determines effect (2→3).
+        await self._ble20.write(DpId.DP_START_STOP_DESCALING, bytes([0x01]))
+
+    async def cancel_descaling(self):
+        await self._ble20.write(DpId.DP_START_STOP_DESCALING, bytes([0x00]))
+
+    async def postpone_descaling(self):
+        await self._ble20.write(DpId.DP_DESCALING_UNLOCK_DEVICE, bytes([0x01]))
     async def start_cleaning_device(self):                self._unsupported("start_cleaning_device")
     async def execute_next_cleaning_step(self):           self._unsupported("execute_next_cleaning_step")
     async def start_lid_position_calibration(self):       self._unsupported("start_lid_position_calibration")
