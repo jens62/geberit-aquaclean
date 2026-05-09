@@ -77,14 +77,21 @@ class AlbaBaseClient:
                 return struct.unpack_from('<I', raw)[0]
             return raw[0]
 
-        data = [0] * 12
+        all_data = [0] * 12
         for idx, dp_id in enumerate(_SPL_DPID):
-            data[idx] = _u32(dp_id)
+            all_data[idx] = _u32(dp_id)
         # Ble20 shower status enums: 0=Error, 1=Disabled, 2=Ready, >=3=active
-        # (Prerinsing/ArmExtending/Shower/ArmRetracting/Postrinsing)
         # Normalize to 0/1 so callers' != 0 checks work correctly.
-        data[2] = 1 if data[2] >= 3 else 0  # LADY_SHOWER_STATUS
-        data[3] = 1 if data[3] >= 3 else 0  # ANAL_SHOWER_STATUS
+        all_data[2] = 1 if all_data[2] >= 3 else 0  # LADY_SHOWER_STATUS
+        all_data[3] = 1 if all_data[3] >= 3 else 0  # ANAL_SHOWER_STATUS
+        # Mirror Mera Comfort behaviour: when a short params list is given,
+        # data_array[i] = value at params[i].  Full-range calls (e.g. [0..7])
+        # are a no-op since params[i] == i for every index.
+        if params and len(params) < len(all_data):
+            data = [all_data[p] if p < len(all_data) else 0 for p in params]
+            data += [0] * (12 - len(data))
+        else:
+            data = all_data
         return SystemParameterList(a=0, data_array=data)
 
     async def get_device_identification_async(self, profile_id: int = 0) -> DeviceIdentification:
