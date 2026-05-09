@@ -142,6 +142,101 @@ class AlbaBaseClient:
     async def get_node_list_async(self):
         return None
 
+    async def get_misc_state_async(self) -> dict:
+        """Read all 'misc' DpIds in one BLE session; return as a plain dict."""
+        import datetime as _dt
+
+        async def _u32(dp_id: DpId) -> Optional[int]:
+            try:
+                raw = await self._ble20.read(int(dp_id))
+                if not raw:
+                    return None
+                if len(raw) >= 4:
+                    return struct.unpack_from('<I', raw)[0]
+                return raw[0]
+            except Exception:
+                return None
+
+        async def _bool(dp_id: DpId) -> Optional[bool]:
+            v = await _u32(dp_id)
+            return None if v is None else bool(v)
+
+        async def _ts(dp_id: DpId) -> Optional[str]:
+            v = await _u32(dp_id)
+            if v is None or v == 0:
+                return None
+            try:
+                return _dt.datetime.fromtimestamp(v, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                return str(v)
+
+        _SPRAY_ARM_CLEANING_STATUS_LABELS = {
+            0: "Error", 1: "Disabled", 2: "Ready",
+            3: "Arm Extending", 4: "Cleaning", 5: "Arm Retracting",
+        }
+        _DESCALING_STATUS_LABELS = {
+            0: "Idle", 1: "Preparing", 2: "Waiting for descaler",
+            3: "Running", 4: "Done",
+        }
+        _PRODUCT_REGISTRATION_LABELS = {0: "None", 1: "Basic", 2: "Full"}
+        _SPRAY_ARM_CLEANING_STATUS_RAW = await _u32(DpId.DP_SPRAY_ARM_CLEANING_STATUS)
+
+        result: dict = {}
+        # Active shower parameters
+        result["active_intensity"]    = await _u32(DpId.DP_ACTIVE_ANAL_SPRAY_INTENSITY_STATUS)
+        result["active_position"]     = await _u32(DpId.DP_ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS)
+        result["active_temperature"]  = await _u32(DpId.DP_ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS)
+        result["active_oscillation"]  = await _bool(DpId.DP_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS)
+        # Spray arm
+        sac = _SPRAY_ARM_CLEANING_STATUS_RAW
+        result["spray_arm_cleaning_status_raw"] = sac
+        result["spray_arm_cleaning_status"]     = _SPRAY_ARM_CLEANING_STATUS_LABELS.get(sac, str(sac)) if sac is not None else None
+        # Descaling
+        ds_raw = await _u32(DpId.DP_DESCALING_STATUS)
+        result["descaling_status_raw"]    = ds_raw
+        result["descaling_status"]        = _DESCALING_STATUS_LABELS.get(ds_raw, str(ds_raw)) if ds_raw is not None else None
+        result["days_until_next_descaling"]       = await _u32(DpId.DP_DAYS_UNTIL_NEXT_DESCALING)
+        result["descaling_cycles"]                = await _u32(DpId.DP_DESCALING_CYCLES)
+        result["credits_until_next_descaling"]    = await _u32(DpId.DP_CREDITS_UNTIL_NEXT_DESCALING)
+        result["descaling_device_lock_remaining_days"]   = await _u32(DpId.DP_DESCALING_DEVICE_LOCK_REMAINING_DAYS)
+        result["descaling_device_relock_remaining_cycles"] = await _u32(DpId.DP_DESCALING_DEVICE_RELOCK_REMAINING_CYCLES)
+        desc_lock_raw = await _u32(DpId.DP_DESCALING_DEVICE_LOCK_STATUS)
+        result["descaling_device_lock_status_raw"] = desc_lock_raw
+        result["descaling_device_lock_status"]     = {0: "Unlocked", 1: "Pre-locked", 2: "Locked"}.get(desc_lock_raw, str(desc_lock_raw)) if desc_lock_raw is not None else None
+        result["unaccounted_shower_cycles"]       = await _u32(DpId.DP_UNACCOUNTED_SHOWER_CYCLES)
+        result["timestamp_last_descaling"]        = await _ts(DpId.DP_TIMESTAMP_OF_LAST_DESCALING)
+        result["timestamp_last_descaling_request"] = await _ts(DpId.DP_TIMESTAMP_OF_LAST_DESCALING_REQUEST)
+        # User presence
+        result["user_detection_status"] = await _bool(DpId.DP_USER_DETECTION_STATUS)
+        # Time / uptime
+        rtc_raw = await _u32(DpId.DP_RTC_TIME)
+        result["rtc_time"] = await _ts(DpId.DP_RTC_TIME) if rtc_raw else None
+        op_total = await _u32(DpId.DP_OPERATION_TIME_TOTAL)
+        op_up    = await _u32(DpId.DP_OPERATION_TIME_SINCE_POWER_UP)
+        result["operation_time_total_s"]        = op_total
+        result["operation_time_since_power_up_s"] = op_up
+        # Errors (0 = OK)
+        result["error_power_supply"]       = await _bool(DpId.DP_POWER_SUPPLY_ERROR_STATUS)
+        result["error_water_heater"]       = await _bool(DpId.DP_WATER_HEATER_ERROR_STATUS)
+        result["error_level_control"]      = await _bool(DpId.DP_LEVEL_CONTROL_ERROR_STATUS)
+        result["error_user_detection"]     = await _bool(DpId.DP_USER_DETECTION_ERROR_STATUS)
+        result["error_water_pump"]         = await _bool(DpId.DP_WATER_PUMP_ERROR_STATUS)
+        result["error_spray_arm_drive"]    = await _bool(DpId.DP_SPRAY_ARM_DRIVE_ERROR_STATUS)
+        result["error_maintenance_request"] = await _bool(DpId.DP_MAINTENANCE_REQUEST_STATUS)
+        result["error_descaling"]          = await _bool(DpId.DP_DESCALING_ERROR_STATUS)
+        # Modes
+        result["demo_mode"]     = await _bool(DpId.DP_DEMO_MODE)
+        result["showroom_mode"] = await _bool(DpId.DP_SHOWROOM_MODE)
+        result["dry_run_mode"]  = await _bool(DpId.DP_DRY_RUN_MODE)
+        prod_reg_raw = await _u32(DpId.DP_PRODUCT_REGISTRATION_LEVEL)
+        result["product_registration_level_raw"] = prod_reg_raw
+        result["product_registration_level"]     = _PRODUCT_REGISTRATION_LABELS.get(prod_reg_raw, str(prod_reg_raw)) if prod_reg_raw is not None else None
+        return result
+
+    async def write_dp_async(self, dp_id: int, value: int) -> None:
+        """Write a uint32 value to a DpId (little-endian)."""
+        await self._ble20.write(dp_id, struct.pack('<I', value))
+
     # ── Not implemented on Alba — raise so callers fall back gracefully ───────
 
     async def get_filter_status_async(self):

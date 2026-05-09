@@ -3041,6 +3041,77 @@ class ApiMode:
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
 
+    # ── Alba-only endpoints ───────────────────────────────────────────────────
+
+    async def get_alba_misc_state(self) -> dict:
+        """GET /alba/misc-state — reads all misc DpIds from an Alba device."""
+        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient as _AlbaClient
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            if not isinstance(self.service.client, _AlbaClient):
+                self._http_error(400, E3002, "Device is not an Alba")
+            return await self.service.client.base_client.get_misc_state_async()
+        else:
+            async def _fetch(client):
+                if not isinstance(client, _AlbaClient):
+                    raise HTTPException(status_code=400, detail="Device is not an Alba")
+                return await client.base_client.get_misc_state_async()
+            return await self._on_demand(_fetch)
+
+    _ALBA_COMMAND_RANGES: dict = {
+        "spray-arm-cleaning":  (0, 1),
+        "set-active-intensity": (0, 4),
+        "set-active-position":  (0, 4),
+        "set-active-temperature": (0, 5),
+        "set-active-oscillation": (0, 1),
+    }
+
+    async def run_alba_command(self, command: str, value=None) -> dict:
+        """POST /alba/command/<cmd> — Alba-specific commands."""
+        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient as _AlbaClient
+
+        async def _execute(client):
+            if not isinstance(client, _AlbaClient):
+                raise HTTPException(status_code=400, detail="Device is not an Alba")
+            if command == "sync-rtc":
+                await client.sync_rtc()
+            elif command == "spray-arm-cleaning":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.start_stop_spray_arm_cleaning(value)
+            elif command == "set-active-intensity":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_intensity(value)
+            elif command == "set-active-position":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_position(value)
+            elif command == "set-active-temperature":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_temperature(value)
+            elif command == "set-active-oscillation":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_oscillation(value)
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown Alba command: {command}")
+
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            await self._persistent_query(lambda client: _execute(client))
+        else:
+            await self._on_demand(_execute)
+        return {"status": "success", "command": command, "value": value}
+
 
 def get_ha_discovery_configs(topic_prefix: str) -> list:
     """

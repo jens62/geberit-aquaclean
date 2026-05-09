@@ -387,6 +387,37 @@
     }
     /* Hide Mera-Comfort-only elements when an Alba is connected */
     body.device-alba .mera-only { display: none !important; }
+    /* Hide Alba-only elements when NOT an Alba */
+    .alba-only { display: none !important; }
+    body.device-alba .alba-only { display: revert !important; }
+    /* Collapsible section toggle button */
+    .section-toggle-btn {
+      background: none; border: none; color: var(--muted);
+      font: inherit; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.1em; cursor: pointer; padding: 0;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    /* Misc-state display grid */
+    .misc-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.3rem 1rem;
+      font-size: 0.82rem;
+      margin-top: 0.6rem;
+    }
+    .misc-lbl { color: var(--muted); }
+    .misc-grid span:not(.misc-lbl):not(.misc-group-header) { font-weight: 500; }
+    .misc-group-header {
+      grid-column: 1 / -1;
+      color: var(--accent);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 0.5rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .misc-group-header:first-child { margin-top: 0; border-top: none; }
   </style>
 </head>
 <body>
@@ -903,6 +934,129 @@
         <dt>Unposted shower cycles</dt>       <dd id="ds-unposted">—</dd>
       </dl>
     </div>
+
+    <!-- ── Alba-only: Misc Queries ────────────────────────────────────── -->
+    <section class="alba-only" id="albaMiscQueriesSection" style="margin-top:1.5rem">
+      <h2>
+        <button class="section-toggle-btn" onclick="toggleAlbaMiscQueries()">
+          <span id="albaMiscQueriesChevron" style="display:inline-block;transition:transform 0.2s">&#9654;</span>
+          Alba Misc Queries
+        </button>
+      </h2>
+      <div id="albaMiscQueriesPanel" style="display:none">
+        <div class="controls" style="margin-bottom:0.5rem">
+          <button onclick="queryGet('/alba/misc-state', this, clearAlbaMiscState, onAlbaMiscState)">
+            <span class="spinner"></span>Read All
+          </button>
+        </div>
+        <div class="misc-grid" id="albaMiscGrid" style="display:none">
+          <span class="misc-group-header">Active Shower</span>
+          <span class="misc-lbl">Intensity</span>      <span id="am-intensity">—</span>
+          <span class="misc-lbl">Position</span>       <span id="am-position">—</span>
+          <span class="misc-lbl">Temperature</span>    <span id="am-temperature">—</span>
+          <span class="misc-lbl">Oscillation</span>    <span id="am-oscillation">—</span>
+          <span class="misc-group-header">Spray Arm</span>
+          <span class="misc-lbl">Cleaning Status</span><span id="am-spray-arm-cleaning">—</span>
+          <span class="misc-group-header">Descaling</span>
+          <span class="misc-lbl">Status</span>                        <span id="am-desc-status">—</span>
+          <span class="misc-lbl">Days until next</span>               <span id="am-desc-days">—</span>
+          <span class="misc-lbl">Cycles total</span>                  <span id="am-desc-cycles">—</span>
+          <span class="misc-lbl">Credits until next</span>            <span id="am-desc-credits">—</span>
+          <span class="misc-lbl">Lock remaining days</span>           <span id="am-desc-lock-days">—</span>
+          <span class="misc-lbl">Relock remaining cycles</span>       <span id="am-desc-relock-cycles">—</span>
+          <span class="misc-lbl">Lock status</span>                   <span id="am-desc-lock-status">—</span>
+          <span class="misc-lbl">Unaccounted shower cycles</span>     <span id="am-desc-unaccounted">—</span>
+          <span class="misc-lbl">Last descaling</span>                <span id="am-desc-ts-last">—</span>
+          <span class="misc-lbl">Last descaling request</span>        <span id="am-desc-ts-req">—</span>
+          <span class="misc-group-header">User / Time</span>
+          <span class="misc-lbl">User detection</span>   <span id="am-user-detect">—</span>
+          <span class="misc-lbl">RTC Time</span>         <span id="am-rtc-time">—</span>
+          <span class="misc-lbl">Operation time total</span>          <span id="am-op-total">—</span>
+          <span class="misc-lbl">Operation time since boot</span>     <span id="am-op-boot">—</span>
+          <span class="misc-group-header">Errors (0 = OK)</span>
+          <span class="misc-lbl">Power supply</span>     <span id="am-err-psu">—</span>
+          <span class="misc-lbl">Water heater</span>     <span id="am-err-heater">—</span>
+          <span class="misc-lbl">Level control</span>    <span id="am-err-level">—</span>
+          <span class="misc-lbl">User detection</span>   <span id="am-err-user-det">—</span>
+          <span class="misc-lbl">Water pump</span>       <span id="am-err-pump">—</span>
+          <span class="misc-lbl">Spray arm drive</span>  <span id="am-err-spray-arm">—</span>
+          <span class="misc-lbl">Maintenance request</span><span id="am-err-maintenance">—</span>
+          <span class="misc-lbl">Descaling</span>        <span id="am-err-descaling">—</span>
+          <span class="misc-group-header">Modes</span>
+          <span class="misc-lbl">Demo mode</span>            <span id="am-demo-mode">—</span>
+          <span class="misc-lbl">Showroom mode</span>        <span id="am-showroom-mode">—</span>
+          <span class="misc-lbl">Dry run mode</span>         <span id="am-dry-run-mode">—</span>
+          <span class="misc-lbl">Registration level</span>   <span id="am-reg-level">—</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Alba-only: Misc Commands ───────────────────────────────────── -->
+    <section class="alba-only" id="albaMiscCommandsSection" style="margin-top:1rem">
+      <h2>
+        <button class="section-toggle-btn" onclick="toggleAlbaMiscCommands()">
+          <span id="albaMiscCommandsChevron" style="display:inline-block;transition:transform 0.2s">&#9654;</span>
+          Alba Misc Commands
+        </button>
+      </h2>
+      <div id="albaMiscCommandsPanel" style="display:none">
+        <div class="controls" style="flex-direction:column;align-items:flex-start;gap:0.75rem">
+
+          <!-- Spray arm cleaning toggle -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Spray Arm Cleaning:</span>
+            <button onclick="albaCmd('spray-arm-cleaning', 1, this)"><span class="spinner"></span>Start</button>
+            <button onclick="albaCmd('spray-arm-cleaning', 0, this)"><span class="spinner"></span>Stop</button>
+          </div>
+
+          <!-- Active intensity -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Intensity (0–4):</span>
+            <div class="ps-stepper" data-alba-cmd="set-active-intensity" data-min="0" data-max="4">
+              <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+              <span class="ps-step-val">0</span>
+              <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+            </div>
+          </div>
+
+          <!-- Active position -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Position (0–4):</span>
+            <div class="ps-stepper" data-alba-cmd="set-active-position" data-min="0" data-max="4">
+              <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+              <span class="ps-step-val">0</span>
+              <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+            </div>
+          </div>
+
+          <!-- Active temperature -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Temperature (0–5):</span>
+            <div class="ps-stepper" data-alba-cmd="set-active-temperature" data-min="0" data-max="5">
+              <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+              <span class="ps-step-val">0</span>
+              <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+            </div>
+          </div>
+
+          <!-- Active oscillation -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Oscillation:</span>
+            <label class="ios-toggle">
+              <input type="checkbox" id="alba-osc-tog" onchange="albaCmd('set-active-oscillation', this.checked?1:0, null)">
+              <span class="ios-toggle-track"></span>
+            </label>
+          </div>
+
+          <!-- Sync RTC -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">RTC Clock:</span>
+            <button onclick="albaCmdNoVal('sync-rtc', this)"><span class="spinner"></span>Sync to Browser Time</button>
+          </div>
+
+        </div>
+      </div>
+    </section>
 
     <section id="sysInfoSection" style="margin-top:1.5rem">
       <h2>
@@ -1800,6 +1954,138 @@
         btn.classList.remove('loading');
         setTimeout(() => btn.classList.remove('success', 'error'), 2000);
       }
+    }
+
+    // ── Alba misc sections ────────────────────────────────────────────────
+
+    function toggleAlbaMiscQueries() {
+      const panel   = document.getElementById('albaMiscQueriesPanel');
+      const chevron = document.getElementById('albaMiscQueriesChevron');
+      const open    = panel.style.display !== 'none';
+      panel.style.display     = open ? 'none' : '';
+      chevron.style.transform = open ? '' : 'rotate(90deg)';
+    }
+
+    function toggleAlbaMiscCommands() {
+      const panel   = document.getElementById('albaMiscCommandsPanel');
+      const chevron = document.getElementById('albaMiscCommandsChevron');
+      const open    = panel.style.display !== 'none';
+      panel.style.display     = open ? 'none' : '';
+      chevron.style.transform = open ? '' : 'rotate(90deg)';
+    }
+
+    function clearAlbaMiscState() {
+      document.querySelectorAll('#albaMiscGrid span[id^="am-"]').forEach(el => el.textContent = '—');
+      document.getElementById('albaMiscGrid').style.display = 'none';
+    }
+
+    function fmtBool(v) { return v === null || v === undefined ? '—' : (v ? 'Yes' : 'No'); }
+    function fmtSeconds(s) {
+      if (s == null) return '—';
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+    }
+
+    function onAlbaMiscState(d) {
+      const s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = (v == null ? '—' : v); };
+      s('am-intensity',     d.active_intensity   != null ? d.active_intensity   : '—');
+      s('am-position',      d.active_position    != null ? d.active_position    : '—');
+      s('am-temperature',   d.active_temperature != null ? d.active_temperature : '—');
+      s('am-oscillation',   fmtBool(d.active_oscillation));
+      s('am-spray-arm-cleaning', d.spray_arm_cleaning_status || '—');
+      s('am-desc-status',   d.descaling_status   || '—');
+      s('am-desc-days',     d.days_until_next_descaling != null ? d.days_until_next_descaling + ' d' : '—');
+      s('am-desc-cycles',   d.descaling_cycles   != null ? d.descaling_cycles   : '—');
+      s('am-desc-credits',  d.credits_until_next_descaling != null ? d.credits_until_next_descaling : '—');
+      s('am-desc-lock-days',   d.descaling_device_lock_remaining_days != null ? d.descaling_device_lock_remaining_days + ' d' : '—');
+      s('am-desc-relock-cycles', d.descaling_device_relock_remaining_cycles != null ? d.descaling_device_relock_remaining_cycles : '—');
+      s('am-desc-lock-status', d.descaling_device_lock_status || '—');
+      s('am-desc-unaccounted', d.unaccounted_shower_cycles != null ? d.unaccounted_shower_cycles : '—');
+      s('am-desc-ts-last',  d.timestamp_last_descaling         || '—');
+      s('am-desc-ts-req',   d.timestamp_last_descaling_request || '—');
+      s('am-user-detect',   fmtBool(d.user_detection_status));
+      s('am-rtc-time',      d.rtc_time || '—');
+      s('am-op-total',      fmtSeconds(d.operation_time_total_s));
+      s('am-op-boot',       fmtSeconds(d.operation_time_since_power_up_s));
+      s('am-err-psu',       fmtBool(d.error_power_supply));
+      s('am-err-heater',    fmtBool(d.error_water_heater));
+      s('am-err-level',     fmtBool(d.error_level_control));
+      s('am-err-user-det',  fmtBool(d.error_user_detection));
+      s('am-err-pump',      fmtBool(d.error_water_pump));
+      s('am-err-spray-arm', fmtBool(d.error_spray_arm_drive));
+      s('am-err-maintenance', fmtBool(d.error_maintenance_request));
+      s('am-err-descaling', fmtBool(d.error_descaling));
+      s('am-demo-mode',     fmtBool(d.demo_mode));
+      s('am-showroom-mode', fmtBool(d.showroom_mode));
+      s('am-dry-run-mode',  fmtBool(d.dry_run_mode));
+      s('am-reg-level',     d.product_registration_level || '—');
+      document.getElementById('albaMiscGrid').style.display = '';
+    }
+
+    async function albaCmd(command, value, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.classList.remove('success', 'error');
+      }
+      try {
+        const r = await fetch(apiBase + '/alba/command/' + command, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+        if (btn) btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        if (btn) btn.classList.add('error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        }
+      }
+    }
+
+    async function albaCmdNoVal(command, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.classList.remove('success', 'error');
+      }
+      try {
+        const r = await fetch(apiBase + '/alba/command/' + command, { method: 'POST' });
+        if (btn) btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        if (btn) btn.classList.add('error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        }
+      }
+    }
+
+    function albaStepDec(btn) {
+      const st = btn.closest('.ps-stepper');
+      const valEl = st.querySelector('.ps-step-val');
+      const cur = parseInt(valEl.textContent);
+      const min = parseInt(st.dataset.min);
+      if (isNaN(cur) || cur <= min) return;
+      const newVal = cur - 1;
+      valEl.textContent = newVal;
+      albaCmd(st.dataset.albaCmd, newVal, null);
+    }
+
+    function albaStepInc(btn) {
+      const st = btn.closest('.ps-stepper');
+      const valEl = st.querySelector('.ps-step-val');
+      const cur = parseInt(valEl.textContent);
+      const max = parseInt(st.dataset.max);
+      if (isNaN(cur) || cur >= max) return;
+      const newVal = cur + 1;
+      valEl.textContent = newVal;
+      albaCmd(st.dataset.albaCmd, newVal, null);
     }
   </script>
 </body>

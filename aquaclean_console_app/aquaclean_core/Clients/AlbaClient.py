@@ -163,6 +163,28 @@ class AlbaClient(IAquaCleanClient):
 
     async def postpone_descaling(self):
         await self._ble20.write(DpId.DP_DESCALING_UNLOCK_DEVICE, bytes([0x01]))
+
+    # ── Alba misc commands ────────────────────────────────────────────────────
+
+    async def start_stop_spray_arm_cleaning(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_START_STOP_SPRAY_ARM_CLEANING), value)
+
+    async def set_active_intensity(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_SET_ACTIVE_ANAL_SPRAY_INTENSITY), value)
+
+    async def set_active_position(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_SET_ACTIVE_ANAL_SPRAY_ARM_POSITION), value)
+
+    async def set_active_temperature(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_SET_ACTIVE_SHOWER_WATER_TEMPERATURE), value)
+
+    async def set_active_oscillation(self, value: int) -> None:
+        await self.base_client.write_dp_async(int(DpId.DP_SET_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION), value)
+
+    async def sync_rtc(self) -> None:
+        import time as _time
+        ts = int(_time.time())
+        await self.base_client.write_dp_async(int(DpId.DP_SET_RTC_TIME), ts)
     async def start_cleaning_device(self):                self._unsupported("start_cleaning_device")
     async def execute_next_cleaning_step(self):           self._unsupported("execute_next_cleaning_step")
     async def start_lid_position_calibration(self):       self._unsupported("start_lid_position_calibration")
