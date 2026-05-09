@@ -209,7 +209,7 @@ tail -f /var/log/aquaclean/aquaclean.log
 
 | Device | Status | Firmware |
 |--------|--------|---------|
-| Geberit AquaClean Mera Comfort | ✅ Confirmed working | RS28.0 TS199, RS30.0 TS206 ([@Kiana321](https://github.com/Kiana321), [#12](https://github.com/jens62/geberit-aquaclean/issues/12#issuecomment-4319550984)) |
+| Geberit AquaClean Mera Comfort | ✅ Confirmed working | • RS28.0 TS199<br>• RS30.0 TS206 ([@Kiana321](https://github.com/Kiana321), [#12](https://github.com/jens62/geberit-aquaclean/issues/12#issuecomment-4319550984)) |
 | Geberit AquaClean Alba | 🚧 Work in progress ([#19](https://github.com/jens62/geberit-aquaclean/issues/19)) | Unknown |
 
 ---
