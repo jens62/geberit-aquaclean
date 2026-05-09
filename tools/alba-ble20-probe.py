@@ -288,9 +288,11 @@ async def run(args):
                 candidates = [(k, v) for k, v in candidates if not v['is_internal']]
 
             print(f"\n── Read All DpIds ({len(candidates)} to probe) " + "─" * 50)
-            print(f"{'DpId':>6}  {'Behavior':<14}  {'Type':<13}  {'Value / Error'}")
-            print(f"{'':>6}  {'':14}  {'':13}  {'Name'}")
-            print("─" * 90)
+            print(f"{'DpId':>6}  {'Inst':>4}  {'Behavior':<14}  {'Type':<13}  "
+                  f"{'Min':>10}  {'Max':>10}  {'Ver':>3}  {'Value / Error'}")
+            print(f"{'':>6}  {'':>4}  {'':14}  {'':13}  "
+                  f"{'':>10}  {'':>10}  {'':>3}  {'Name'}")
+            print("─" * 110)
 
             ok_count = err_count = 0
             for dp_id, entry in candidates:
@@ -302,24 +304,33 @@ async def run(args):
                 dt   = entry['datatype']
                 tp   = _dp_type_name(dt)
                 name = dp_name(dp_id) or ""
+                inst = f"{entry['instance']}" if entry.get('instance') is not None else ""
+                min_v = entry.get('min_s') if dt == DpType.Signed else entry.get('min_u', "")
+                max_v = entry.get('max_s') if dt == DpType.Signed else entry.get('max_u', "")
+                ver   = entry.get('version', "")
 
-                print(f"  {dp_id:>5}  ", end="", flush=True)
+                prefix = f"  {dp_id:>5}  {inst:>4}  "
+                meta   = f"{str(min_v):>10}  {str(max_v):>10}  {str(ver):>3}  "
+                blank_prefix = f"  {'':>5}  {'':>4}  "
+                blank_meta   = f"{'':>10}  {'':>10}  {'':>3}  "
+
+                print(f"{prefix}", end="", flush=True)
                 try:
                     raw   = await session.read(dp_id)
                     value = _format_value(raw, dt)
-                    print(f"{beh_name:<14}  {tp:<13}  {value}")
-                    print(f"  {'':>5}  {'':14}  {'':13}  {name}")
+                    print(f"{beh_name:<14}  {tp:<13}  {meta}{value}")
+                    print(f"{blank_prefix}{'':14}  {'':13}  {blank_meta}{name}")
                     ok_count += 1
                 except IOError as exc:
-                    print(f"{beh_name:<14}  {tp:<13}  ERROR: {exc}")
-                    print(f"  {'':>5}  {'':14}  {'':13}  {name}")
+                    print(f"{beh_name:<14}  {tp:<13}  {meta}ERROR: {exc}")
+                    print(f"{blank_prefix}{'':14}  {'':13}  {blank_meta}{name}")
                     err_count += 1
                 except asyncio.TimeoutError:
-                    print(f"{beh_name:<14}  {tp:<13}  ERROR: timeout")
-                    print(f"  {'':>5}  {'':14}  {'':13}  {name}")
+                    print(f"{beh_name:<14}  {tp:<13}  {meta}ERROR: timeout")
+                    print(f"{blank_prefix}{'':14}  {'':13}  {blank_meta}{name}")
                     err_count += 1
 
-            print("─" * 90)
+            print("─" * 110)
             print(f"  {ok_count} read OK  |  {err_count} errors  |  {len(candidates)} probed")
 
         # ── Optional: write one DpId ─────────────────────────────────────────
