@@ -46,6 +46,7 @@ class Ble20DeviceIdentification:
     device_unique_id:    Optional[int] = None   # DpId 236 DP_UNIQUE_DEVICE_NUMBER
     fw_rs_version:       Optional[str] = None   # DpId 8   DP_FW_RS_VERSION
     fw_ts_version:       Optional[int] = None   # DpId 9   DP_FW_TS_VERSION
+    device_production_date:     Optional[int] = None   # DpId 3   DP_DEVICE_PRODUCTION_DATE (TimeStampUtc)
     device_sap_number:          Optional[str] = None   # DpId 4   DP_DEVICE_SAP_NUMBER
     sales_product_sap_number:   Optional[str] = None   # DpId 371 DP_SALES_PRODUCT_SAP_NUMBER
     sales_product_serial_number: Optional[str] = None  # DpId 369 DP_SALES_PRODUCT_SERIAL_NUMBER
@@ -335,6 +336,7 @@ class Ble20Client:
         name_raw         = await _try(DpId.DP_NAME)
         series_raw       = await _try(DpId.DP_DEVICE_SERIES)
         variant_raw      = await _try(DpId.DP_DEVICE_VARIANT)
+        prod_date_raw    = await _try(DpId.DP_DEVICE_PRODUCTION_DATE)
         number_raw       = await _try(DpId.DP_DEVICE_NUMBER)
         sap_raw          = await _try(DpId.DP_DEVICE_SAP_NUMBER)
         fw_rs_raw        = await _try(DpId.DP_FW_RS_VERSION)
@@ -350,6 +352,7 @@ class Ble20Client:
             device_series               = _u8(series_raw),
             device_variant              = _u8(variant_raw),
             device_number               = _auto(number_raw, DpId.DP_DEVICE_NUMBER),
+            device_production_date      = _u32(prod_date_raw),
             device_sap_number           = _str(sap_raw) if sap_raw and _datatype(DpId.DP_DEVICE_SAP_NUMBER) == DpType.String
                                           else (_u32(sap_raw) if sap_raw else None),
             fw_rs_version               = _str(fw_rs_raw),

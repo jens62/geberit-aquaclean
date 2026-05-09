@@ -5,6 +5,7 @@ functions in main.py (_fetch_state, _fetch_identification, …) work unchanged
 against an Alba device.  Methods that have no Alba equivalent raise
 BLEPeripheralTimeoutError so the caller's existing try/except handles them.
 """
+import datetime
 import struct
 import logging
 from typing import Optional
@@ -80,10 +81,12 @@ class AlbaBaseClient:
             description = get_full_name(di.device_series, di.device_variant)
         else:
             description = di.name or "Geberit AquaClean Alba"
+        ts = di.device_production_date
+        prod_date = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d") if ts else ""
         return DeviceIdentification(
             sap_number      = sap,
             serial_number   = serial,
-            production_date = "",
+            production_date = prod_date,
             description     = description,
         )
 

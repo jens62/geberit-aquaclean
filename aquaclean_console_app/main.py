@@ -2026,18 +2026,20 @@ class ApiMode:
             if self.service.client is None:
                 self._http_error(503, E4003)
             c = self.service.client
-            result = {
+            result = {k: v for k, v in {
                 "sap_number": c.SapNumber,
                 "serial_number": c.SerialNumber,
                 "production_date": c.ProductionDate,
                 "description": c.Description,
                 "initial_operation_date": c.InitialOperationDate,
-            }
+            }.items() if v not in (None, "")}
         else:
             if self.service.device_state.get("sap_number") is not None:
-                result = {k: self.service.device_state[k] for k in
-                          ("sap_number", "serial_number", "production_date",
-                           "description", "initial_operation_date")}
+                result = {k: v for k, v in {
+                    k: self.service.device_state[k] for k in
+                    ("sap_number", "serial_number", "production_date",
+                     "description", "initial_operation_date")
+                }.items() if v not in (None, "")}
             else:
                 result = await self._on_demand(lambda client: self._fetch_info(client))
         return result
@@ -2982,15 +2984,15 @@ class ApiMode:
         except BLEPeripheralTimeoutError:
             logger.warning("GetFilterStatus (0x59) timed out — device may be stuck for this proc; skipping, filter_status=None")
             filter_status = None
-        return {
+        return {k: v for k, v in {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
             "production_date": ident.production_date,
             "description": ident.description,
-            "initial_operation_date": str(initial_op_date),
+            "initial_operation_date": str(initial_op_date) if initial_op_date else None,
             "firmware_versions": fw,
             "filter_status": filter_status,
-        }
+        }.items() if v not in (None, "")}
 
     async def _execute_command(self, client, command: str):
         if command == "toggle-lid":

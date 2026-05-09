@@ -14,9 +14,9 @@ Both devices expose the same logical features, but via entirely different mechan
 |---|---|---|---|---|
 | `sap_number` | proc 0x82 (12-byte string) | 371 | SALES_PRODUCT_SAP_NUMBER | Toilet article number — the consumer-facing product identifier |
 | `serial_number` | proc 0x82 (20-byte string) | 369 | SALES_PRODUCT_SERIAL_NUMBER | Full product serial printed on the box |
-| `production_date` | proc 0x82 (10-byte date string) | 3 | DEVICE_PRODUCTION_DATE | TimeStampUtc on Alba; currently returned as `""` — conversion not yet implemented |
+| `production_date` | proc 0x82 (10-byte date string) | 3 | DEVICE_PRODUCTION_DATE | TimeStampUtc on Alba; formatted as `YYYY-MM-DD` (UTC) |
 | `description` | proc 0x82 (40-byte string, e.g. `"AcMeraComfort"`) | 0 + 1 | DEVICE_SERIES + DEVICE_VARIANT | Derived via `get_full_name(series, variant)` → e.g. `"Aquaclean Alba"` |
-| `initial_operation_date` | proc 0x86 GetDeviceInitialOperationDate | — | — | Not available on Alba; always `""` |
+| `initial_operation_date` | proc 0x86 GetDeviceInitialOperationDate | — | — | Not available on Alba; field omitted from response |
 
 ### Additional Alba DpIds with no Mera Comfort equivalent
 
