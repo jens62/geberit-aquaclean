@@ -790,7 +790,7 @@ async def main(mode: str):
     print("Advertising as: Geberit-Alba-Mock")
 
     async def _handshake_loop():
-        nonlocal adv_registered
+        nonlocal adv, adv_registered
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         while True:
             sig_service._arendi = _AriendiServerSide()
