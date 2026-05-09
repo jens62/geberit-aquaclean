@@ -6,6 +6,45 @@ Both devices expose the same logical features, but via entirely different mechan
 
 ---
 
+## Device identification
+
+`GET /info` returns a `DeviceIdentification` struct built from different sources on each device type.
+
+| `/info` field | Mera Comfort source | Alba DpId | Name | Notes |
+|---|---|---|---|---|
+| `sap_number` | proc 0x82 (12-byte string) | 371 | SALES_PRODUCT_SAP_NUMBER | Toilet article number — the consumer-facing product identifier |
+| `serial_number` | proc 0x82 (20-byte string) | 369 | SALES_PRODUCT_SERIAL_NUMBER | Full product serial printed on the box |
+| `production_date` | proc 0x82 (10-byte date string) | 3 | DEVICE_PRODUCTION_DATE | TimeStampUtc on Alba; currently returned as `""` — conversion not yet implemented |
+| `description` | proc 0x82 (40-byte string, e.g. `"AcMeraComfort"`) | 0 + 1 | DEVICE_SERIES + DEVICE_VARIANT | Derived via `get_full_name(series, variant)` → e.g. `"Aquaclean Alba"` |
+| `initial_operation_date` | proc 0x86 GetDeviceInitialOperationDate | — | — | Not available on Alba; always `""` |
+
+### Additional Alba DpIds with no Mera Comfort equivalent
+
+| DpId | Name | kstr value | Notes |
+|---|---|---|---|
+| 4 | DEVICE_SAP_NUMBER | `828.860.00.A` | BLE board article number — also exposed via BLE DIS Model Number |
+| 2 | DEVICE_NUMBER | 93136 | BLE board serial — also exposed via BLE DIS Serial Number |
+| 313 | SALES_SAP_NUMBER | `245.832.00.1` | Product line article number |
+| 236 | UNIQUE_DEVICE_NUMBER | 34819281 | Additional unique device ID |
+| 0 | DEVICE_SERIES | 250 | `DeviceSeries.AQUACLEAN = 250` |
+| 1 | DEVICE_VARIANT | 0 | `AquacleanVariant.ALBA = 0` |
+
+### BLE DIS vs. application-layer identification
+
+The BLE Device Information Service (DIS) is readable before any application-layer connection:
+
+| DIS characteristic | kstr value | Corresponds to |
+|---|---|---|
+| Model Number (0x2A24) | `828.860.00.A` | DpId 4 DEVICE_SAP_NUMBER — BLE board article |
+| Serial Number (0x2A25) | `93136` | DpId 2 DEVICE_NUMBER — BLE board serial |
+| Firmware Revision (0x2A26) | `RS03TS89` | DpId 8 (`RS`) + DpId 9 (`TS`) combined |
+| Hardware Revision (0x2A27) | `00` | DpId 10 HW_RS_VERSION |
+| Manufacturer Name (0x2A29) | `Geberit` | — |
+
+> DIS Model Number (`828.860.00.A`) is the **BLE board** article, not the toilet product. The toilet article number (`146.350.01.x`) and human-readable name (`"Aquaclean Alba"`) are only accessible at the application layer.
+
+---
+
 ## Descaling
 
 | Mera Comfort field | Source | Alba DpId | Name | Notes |

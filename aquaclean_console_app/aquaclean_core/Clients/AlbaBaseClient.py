@@ -74,8 +74,8 @@ class AlbaBaseClient:
 
     async def get_device_identification_async(self, profile_id: int = 0) -> DeviceIdentification:
         di = await self._ble20.get_device_identification(self._inv)
-        sap    = str(di.device_sap_number) if di.device_sap_number is not None else ""
-        serial = str(di.device_number)     if di.device_number     is not None else ""
+        sap    = di.sales_product_sap_number    or ""
+        serial = di.sales_product_serial_number or ""
         if di.device_series is not None and di.device_variant is not None:
             description = get_full_name(di.device_series, di.device_variant)
         else:
