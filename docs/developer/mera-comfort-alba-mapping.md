@@ -118,3 +118,7 @@ Confirmed absent from kstr (E4:85:01:CD:6B:04, `DEVICE_SERIES` = 250):
 | 585 | DESCALING_STATUS | Error | Disabled | **Ready** | Descaling | Flushing | — | — | — |
 
 Bold = value observed on kstr at time of readall (2026-05-08, device idle, never descaled).
+
+Second observation (2026-05-09, user seated, anal shower running):
+ANAL_SHOWER_STATUS=5 (Shower), SPRAY_ARM_CLEANING_STATUS=1 (Disabled), DESCALING_STATUS=1 (Disabled).
+DESCALING_STATUS transitions from 2→1 while a shower is active — Disabled means "blocked during shower", not "never needed".
