@@ -185,6 +185,130 @@ def _print_identification(di: Ble20DeviceIdentification) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Instanced DpId reading + display (progress, versions, statistics)
+# ---------------------------------------------------------------------------
+_INSTANCED_PROGRESS = [
+    (565, "DP_ANAL_SHOWER_PROGRESS"),
+    (568, "DP_SPRAY_ARM_CLEANING_PROGRESS"),
+    (586, "DP_DESCALING_PROGRESS"),
+]
+_PROGRESS_INST_LABELS = {0: "MaxTotal", 1: "ElapsedTotal", 2: "MaxStep", 3: "ElapsedStep"}
+
+_INSTANCED_VERSIONS = [
+    (785, "DP_FUS_VERSION",            3, "Field Update Service"),
+    (786, "DP_GEBERIT_LOADER_VERSION", 2, "Geberit Loader"),
+    (787, "DP_WIRELESS_STACK_VERSION", 3, "Wireless Stack"),
+]
+_VERSION_INST_LABELS = {0: "Major", 1: "Minor", 2: "Bugfix"}
+
+_STAT_INSTANCES: dict[int, str] = {
+    2:  "UseWithFlush",
+    31: "AquacleanUsages",
+    32: "AquacleanAnalShowers",
+    33: "AquacleanLadyShowers",
+    34: "AquacleanDryings",
+    35: "AquacleanDescalings",
+    36: "AquacleanSprayArmCleanings",
+}
+_INSTANCED_STATS = [
+    (405, "DP_STATISTIC_COUNTER_SINCE_POWER_UP"),
+    (688, "DP_STATISTIC_COUNTER_SINCE_RESET"),
+    (689, "DP_STATISTIC_COUNTER_TOTAL"),
+]
+
+
+async def _read_instanced_dpids(session: "Ble20Client") -> dict:
+    """Read all DpIds that require an instance parameter."""
+
+    async def _u32i(dp_id_val: int, instance: int) -> Optional[int]:
+        try:
+            raw = await session.read(dp_id_val, instance)
+            if not raw:
+                return None
+            return struct.unpack_from('<I', raw)[0] if len(raw) >= 4 else raw[0]
+        except Exception:
+            return None
+
+    result: dict = {}
+
+    for dp_id_val, name in _INSTANCED_PROGRESS:
+        instances = {i: await _u32i(dp_id_val, i) for i in range(4)}
+        max_t = instances.get(0)
+        ela   = instances.get(1)
+        pct   = round(ela / max_t * 100, 1) if max_t else None
+        result[name] = {"dp_id": dp_id_val, "instances": instances, "pct": pct}
+
+    for dp_id_val, name, n_inst, _ in _INSTANCED_VERSIONS:
+        instances = {i: await _u32i(dp_id_val, i) for i in range(n_inst)}
+        parts = [instances.get(i) for i in range(n_inst)]
+        assembled = ".".join(str(p or 0) for p in parts) if any(p is not None for p in parts) else None
+        result[name] = {"dp_id": dp_id_val, "instances": instances, "assembled": assembled}
+
+    for dp_id_val, name in _INSTANCED_STATS:
+        result[name] = {
+            "dp_id": dp_id_val,
+            "instances": {inst: await _u32i(dp_id_val, inst) for inst in _STAT_INSTANCES},
+        }
+
+    return result
+
+
+def _print_instanced_dpids(data: dict) -> None:
+    print("\n── Instanced DpIds " + "─" * 60)
+
+    # Progress
+    print("\n  Progress indicators:")
+    print(f"  {'DpId':>6}  {'Name':<36}  inst  {'Label':<14}  Value")
+    print("  " + "─" * 75)
+    for dp_id_val, name in _INSTANCED_PROGRESS:
+        entry = data.get(name, {})
+        instances = entry.get("instances", {})
+        pct = entry.get("pct")
+        for i in range(4):
+            val = instances.get(i)
+            label = _PROGRESS_INST_LABELS.get(i, "")
+            val_s = str(val) if val is not None else "—"
+            id_col  = f"{dp_id_val:>6}" if i == 0 else f"{'':>6}"
+            name_col = name if i == 0 else ""
+            print(f"  {id_col}  {name_col:<36}  {i:>4}  {label:<14}  {val_s}")
+        pct_s = f"{pct:.1f}%" if pct is not None else "—"
+        print(f"  {'':>6}  {'':36}  {'→':>4}  {'progress':<14}  {pct_s}")
+        print()
+
+    # Versions
+    print("  Version strings:")
+    print(f"  {'DpId':>6}  {'Name':<28}  {'Label':<10}  {'Description':<22}  Assembled")
+    print("  " + "─" * 75)
+    for dp_id_val, name, n_inst, desc in _INSTANCED_VERSIONS:
+        entry = data.get(name, {})
+        instances = entry.get("instances", {})
+        assembled = entry.get("assembled", "—")
+        for i in range(n_inst):
+            val = instances.get(i)
+            label = _VERSION_INST_LABELS.get(i, "")
+            val_s = str(val) if val is not None else "—"
+            id_col   = f"{dp_id_val:>6}" if i == 0 else f"{'':>6}"
+            name_col = name if i == 0 else ""
+            asm_col  = assembled if i == 0 else ""
+            print(f"  {id_col}  {name_col:<28}  inst {i}={val_s:<5}  {label:<22}  {asm_col}")
+        print()
+
+    # Statistics — single comparison table
+    print("  Statistics counters:")
+    pu  = data.get("DP_STATISTIC_COUNTER_SINCE_POWER_UP", {}).get("instances", {})
+    rs  = data.get("DP_STATISTIC_COUNTER_SINCE_RESET",    {}).get("instances", {})
+    tot = data.get("DP_STATISTIC_COUNTER_TOTAL",          {}).get("instances", {})
+    print(f"\n    {'Counter (instance)':<36}  {'PowerUp':>9}  {'SinceReset':>11}  {'Total':>8}")
+    print("    " + "─" * 70)
+    for inst, label in _STAT_INSTANCES.items():
+        row_label = f"{label} ({inst})"
+        pu_v  = str(pu.get(inst,  "—"))
+        rs_v  = str(rs.get(inst,  "—"))
+        tot_v = str(tot.get(inst, "—"))
+        print(f"    {row_label:<36}  {pu_v:>9}  {rs_v:>11}  {tot_v:>8}")
+
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 def _load_config(config_path: Optional[str] = None):
@@ -332,6 +456,10 @@ async def run(args):
 
             print("─" * 110)
             print(f"  {ok_count} read OK  |  {err_count} errors  |  {len(candidates)} probed")
+
+            print("\nReading instanced DpIds...", flush=True)
+            instanced = await _read_instanced_dpids(session)
+            _print_instanced_dpids(instanced)
 
         # ── Optional: write one DpId ─────────────────────────────────────────
         write_dp_id    = None
