@@ -584,7 +584,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             "date_time_at_last_descale": None,
             "unposted_shower_cycles": None,
             "soc_versions": None,
-            "firmware_version": None,
+            "firmware_version": (client.firmware_versions or {}).get("main"),
             "filter_days_remaining": None,
             "filter_last_reset": None,
             "filter_reset_count": None,
@@ -631,6 +631,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             "alba_dry_run_mode":  misc.get("dry_run_mode"),
             "alba_product_registration_level_raw": misc.get("product_registration_level_raw"),
             "alba_product_registration_level":     misc.get("product_registration_level"),
+            # Firmware / hardware versions (diagnostic)
+            "alba_fw_rs_version": misc.get("fw_rs_version"),
+            "alba_fw_ts_version": misc.get("fw_ts_version"),
+            "alba_hw_rs_version": misc.get("hw_rs_version"),
+            "alba_mcu_version":   misc.get("mcu_version"),
+            # Pairing secret (diagnostic, not exposed as a sensor entity)
+            "alba_pairing_secret_hex": misc.get("pairing_secret_hex"),
         }
 
     # ------------------------------------------------------------------

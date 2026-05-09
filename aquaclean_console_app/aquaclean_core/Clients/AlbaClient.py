@@ -61,6 +61,10 @@ class AlbaClient(IAquaCleanClient):
         """Run DataPointInventory — mandatory first step in Ble20 protocol."""
         self._inventory = await self._ble20.inventory()
         self.base_client._inv = self._inventory
+        try:
+            self.firmware_versions = await self.base_client.get_firmware_version_list_async()
+        except Exception:
+            self.firmware_versions = None
 
     async def connect(self, device_id: str) -> None:
         """Full connect: BLE + Arendi handshake + inventory + identification fetch."""

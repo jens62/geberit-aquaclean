@@ -490,10 +490,10 @@ class _AriendiServerSide:
         while True:
             try:
                 ft, ctrl, payload = await asyncio.wait_for(
-                    self._rx_queue.get(), timeout=15.0
+                    self._rx_queue.get(), timeout=2.0
                 )
             except asyncio.TimeoutError:
-                print("[MockServer] no more frames after 15 s — exiting frame loop")
+                print("[MockServer] no more frames after 2 s — exiting frame loop")
                 return
 
             if ft != 'I':

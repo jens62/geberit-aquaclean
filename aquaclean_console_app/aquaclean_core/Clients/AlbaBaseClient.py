@@ -118,7 +118,15 @@ class AlbaBaseClient:
         return None
 
     async def get_firmware_version_list_async(self, payload=None):
-        return None
+        """Read firmware version from Ble20 DpIds DP_FW_RS_VERSION and DP_FW_TS_VERSION."""
+        try:
+            raw_rs = await self._ble20.read(int(DpId.DP_FW_RS_VERSION))
+            raw_ts = await self._ble20.read(int(DpId.DP_FW_TS_VERSION))
+            rs = struct.unpack_from('<I', raw_rs)[0] if len(raw_rs) >= 4 else (raw_rs[0] if raw_rs else 0)
+            ts = struct.unpack_from('<I', raw_ts)[0] if len(raw_ts) >= 4 else (raw_ts[0] if raw_ts else 0)
+            return {"main": f"RS{rs}.0 TS{ts}", "components": {}}
+        except Exception:
+            return None
 
     async def get_stored_profile_settings_async(self) -> dict:
         ps = {}
@@ -231,6 +239,17 @@ class AlbaBaseClient:
         prod_reg_raw = await _u32(DpId.DP_PRODUCT_REGISTRATION_LEVEL)
         result["product_registration_level_raw"] = prod_reg_raw
         result["product_registration_level"]     = _PRODUCT_REGISTRATION_LABELS.get(prod_reg_raw, str(prod_reg_raw)) if prod_reg_raw is not None else None
+        # Firmware / hardware versions
+        result["fw_rs_version"] = await _u32(DpId.DP_FW_RS_VERSION)
+        result["fw_ts_version"] = await _u32(DpId.DP_FW_TS_VERSION)
+        result["hw_rs_version"] = await _u32(DpId.DP_HW_RS_VERSION)
+        result["mcu_version"]   = await _u32(DpId.DP_MCU_VERSION)
+        # Pairing secret (diagnostic — hex-encoded bytes)
+        try:
+            raw_secret = await self._ble20.read(int(DpId.DP_PAIRING_SECRET))
+            result["pairing_secret_hex"] = raw_secret.hex() if raw_secret else None
+        except Exception:
+            result["pairing_secret_hex"] = None
         return result
 
     async def write_dp_async(self, dp_id: int, value: int) -> None:

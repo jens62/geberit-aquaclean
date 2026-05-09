@@ -140,6 +140,8 @@
 
     .info-grid dt { color: var(--muted); white-space: nowrap; }
     .info-grid dd { font-weight: 500; word-break: break-all; }
+    /* div wrappers inside a grid dl must be transparent so dt/dd stay in grid columns */
+    .info-grid .mera-only { display: contents; }
     /* ── User Profile sections ──────────────────────────────────────────── */
     .ps-sections { display:flex; flex-direction:column; gap:0.5rem; }
 
