@@ -417,6 +417,23 @@ class ESPHomeAPIClient:
 
         if not self._is_connected:
             logger.silly("[ESPHomeAPIClient] Already disconnected")
+            # Still cancel the connection-state callback even when BLE is already down.
+            # Skipping this leaves the callback registered; the ESP32 never learns that
+            # the subscriber is gone and retains the advertisement subscription slot,
+            # causing "Only one API subscription is allowed at a time" on the next
+            # connect attempt within ~60–90 s (trap 12 variant).
+            if self._cancel_connection:
+                try:
+                    self._cancel_connection()
+                except Exception:
+                    pass
+                self._cancel_connection = None
+            if close_api and self._api is not None:
+                try:
+                    await self._api.disconnect()
+                    logger.debug("[ESPHomeAPIClient] Disconnected from ESP32 API (was already BLE-disconnected)")
+                except Exception as e:
+                    logger.debug(f"[ESPHomeAPIClient] ESP32 API disconnect: {e}")
             return
 
         ble_confirmed_disconnect = False

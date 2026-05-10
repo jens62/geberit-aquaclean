@@ -869,6 +869,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 if self._esphome_unsub_adv is not None:
                     try:
                         self._esphome_unsub_adv()
+                        # Yield to let the event loop flush the
+                        # UnsubscribeBluetoothLEAdvertisementsRequest frame to TCP before
+                        # api.disconnect() closes the connection (trap 12 — flush race).
+                        await asyncio.sleep(0.1)
                     except Exception:
                         pass
                     self._esphome_unsub_adv = None

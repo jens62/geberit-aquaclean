@@ -1159,6 +1159,26 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   - Correlates discovered common/profile setting IDs against `BLE_COMMAND_REFERENCE.md` DpIds
   - Safe defaults: skip the dangerous SetCommand codes listed above unless `--unsafe` is passed
 
+- **mock-geberit-alba.py: add version DpId instances to the store.**
+  DpIds 785–787 appear in the inventory but have no values in `_STORE_ENTRIES` for their
+  instance indices, so `_read_instanced_dpids` returns `None` for all version components.
+  Add one entry per instance per DpId:
+
+  | DpId | Name | Instance | Meaning | Suggested mock value |
+  |------|------|----------|---------|----------------------|
+  | 785 | DP_FUS_VERSION | 0 | Major | 1 |
+  | 785 | DP_FUS_VERSION | 1 | Minor | 0 |
+  | 785 | DP_FUS_VERSION | 2 | Bugfix | 0 |
+  | 786 | DP_GEBERIT_LOADER_VERSION | 0 | Major | 1 |
+  | 786 | DP_GEBERIT_LOADER_VERSION | 1 | Minor | 2 |
+  | 787 | DP_WIRELESS_STACK_VERSION | 0 | Major | 1 |
+  | 787 | DP_WIRELESS_STACK_VERSION | 1 | Minor | 14 |
+  | 787 | DP_WIRELESS_STACK_VERSION | 2 | Bugfix | 1 |
+
+  Once added, `_print_instanced_dpids` should render assembled version strings like `"1.0.0"` /
+  `"1.2"` / `"1.14.1"` — the last matching the `software_revision` field already returned by
+  BLE DIS on the kstr device (`1.14.1 1.2.0`).
+
 - **install.sh: show progress during slow pip steps.** On a Raspberry Pi, the
   `pip install --upgrade pip setuptools wheel` and `pip install --force-reinstall ...`
   steps can take several minutes with no output — users assume it has hung and cancel.
