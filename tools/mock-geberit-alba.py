@@ -550,6 +550,9 @@ class _AriendiServerSide:
             if ft == 'DISCONNECT':
                 print("[MockServer] BLE connection closed — exiting frame loop immediately")
                 return
+            if ft == 'U' and ctrl == self._u_ctrl(_HDLC_SABM_TYPE):
+                print("[MockServer] SABM received in frame loop — new client connecting, restarting session")
+                return
             if ft != 'I':
                 continue  # S-frame ACK or stray U-frame
             if not payload or payload[0] != _SEC_ENCRYPTED:
