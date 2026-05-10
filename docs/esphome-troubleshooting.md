@@ -262,9 +262,8 @@ restart of the ESP32 does **not** fix this — the cache survives reboots.
 > (with buttons like "Restart AquaClean Proxy"). That page cannot do a Clean Build.
 > You need the **ESPHome dashboard** — the application where you edit and flash YAML configs.
 >
-> - **Home Assistant users:** open the ESPHome add-on dashboard via the HA sidebar
->   (look for "ESPHome" in the left menu), or go to
->   **Settings → Add-ons → ESPHome → Open Web UI**.
+> - **Home Assistant users:** go to **Settings → Add-ons → ESPHome → Open Web UI**
+>   (German UI: **Einstellungen → Apps → ESPHome → Web-Oberfläche öffnen**).
 >   Do **not** try to open `http://[ha-ip]:6052` directly — that port is closed by default.
 > - **Standalone ESPHome:** open the dashboard where you installed ESPHome.
 
