@@ -357,7 +357,9 @@ async def run(args):
     session = Ble20Client(connector)
 
     try:
-        print("Connecting + Arendi handshake...", flush=True)
+        import datetime
+        ts = datetime.datetime.now().strftime('%H:%M:%S')
+        print(f"Connecting + Arendi handshake...  [{ts}]", flush=True)
         await connector.connect_async(device)
 
         if not connector.arendi_handshake_done:

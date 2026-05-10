@@ -415,6 +415,7 @@ class ESPHomeAPIClient:
             logger.silly("[ESPHomeAPIClient] Already disconnected")
             return
 
+        ble_confirmed_disconnect = False
         try:
             # Stop notification worker
             if self._notify_worker_task:
@@ -434,7 +435,26 @@ class ESPHomeAPIClient:
 
             # Disconnect from BLE device
             await self._api.bluetooth_device_disconnect(self._mac_int)
-            logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address}")
+
+            # Wait for the ESP32 to confirm BLE disconnect via on_bluetooth_connection_state
+            # (connected=False).  Without this wait, closing the TCP connection immediately
+            # after the disconnect request races with the ESP32's BLE teardown — the TCP
+            # close wins, the ESP32 never processes the request, and the BLE GATT session
+            # stays alive as an orphan.  Subsequent probe/bridge runs then find the device
+            # still connected (not advertising) and cannot establish a new session.
+            for _ in range(50):  # up to 5 s
+                if not self._is_connected:
+                    ble_confirmed_disconnect = True
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                logger.warning(
+                    f"[ESPHomeAPIClient] BLE disconnect not confirmed by ESP32 within 5 s "
+                    f"for {self._mac_address} — closing API anyway"
+                )
+
+            logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address} "
+                         f"(confirmed={ble_confirmed_disconnect})")
         except Exception as e:
             logger.warning(f"[ESPHomeAPIClient] Error during BLE disconnect: {e}")
         finally:
@@ -454,8 +474,10 @@ class ESPHomeAPIClient:
             else:
                 logger.debug("[ESPHomeAPIClient] Keeping ESP32 API TCP connection alive (close_api=False)")
 
-            # Invoke disconnected callback
-            if self._disconnected_callback:
+            # Invoke disconnected callback only if on_bluetooth_connection_state did not
+            # already call it (ble_confirmed_disconnect == True means that path already ran
+            # the callback).
+            if not ble_confirmed_disconnect and self._disconnected_callback:
                 try:
                     self._disconnected_callback(self)
                 except Exception as e:
