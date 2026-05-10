@@ -85,6 +85,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.ble_dis_info: dict | None = None  # BLE Device Information Service data (0x180a), read after connect
         self.is_variant_a: bool = False       # True when a non-standard Geberit GATT profile is detected
         self._arendi_security = None          # AriendiSecurity instance for Variant A (Alba)
+        self._arendi_raw_write = None         # Chunked ATT_WRITE_REQUEST sender set in _post_connect()
 
     @property
     def arendi_handshake_done(self) -> bool:
@@ -648,6 +649,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         att_bytes[off:off + chunk_size],
                         response=True,
                     )
+            self._arendi_raw_write = _raw_write
             await self._arendi_security.perform_handshake(_raw_write)
             self._arendi_security._ack_send_fn = _raw_write
             self.connection_status_changed_handlers(self, True, self.device_address, self.device_name)
@@ -725,7 +727,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.silly(f"Sending data to characteristic {self.BULK_CHAR_BULK_WRITE_0_UUID} data: {''.join(f'{b:02X}' for b in data)}")
         if self._arendi_security is not None and self._arendi_security.handshake_done:
             att_bytes = self._arendi_security.wrap_for_send(data)
-            await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, att_bytes, response=False)
+            await self._arendi_raw_write(att_bytes)
         else:
             result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
             logger.silly(f"result: {result}")
@@ -832,6 +834,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         # Reset Arendi Security state — fresh handshake required on every BLE connect.
         self._arendi_security = None
+        self._arendi_raw_write = None
 
         # Do NOT reset self._esphome_api or esphome_proxy_connected — TCP stays alive.
 
@@ -886,6 +889,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         # Reset Arendi Security state so the next connect gets a fresh handshake
         self._arendi_security = None
+        self._arendi_raw_write = None
 
         # Reset ESP32 proxy connection state
         if self.esphome_host:
