@@ -257,15 +257,24 @@ restart of the ESP32 does **not** fix this — the cache survives reboots.
 
 **Fix — reflash the ESP32 with "Clean Build":**
 
-1. Open your **ESPHome dashboard** in the browser.
-2. Find your `aquaclean-proxy` device and click **Edit**.
-3. Click the three-dot menu (⋮) in the top right corner, then choose **Clean Build Files**.
-4. Click **Install** → **Wirelessly**.
+> **The ESPHome dashboard is not the same as the ESP32's web UI.**
+> Opening `http://[esp32-ip]` in your browser shows the device's own built-in page
+> (with buttons like "Restart AquaClean Proxy"). That page cannot do a Clean Build.
+> You need the **ESPHome dashboard** — the application where you edit and flash YAML configs.
+>
+> - **Home Assistant users:** open the ESPHome add-on from the HA sidebar (or navigate to
+>   `http://[ha-ip]:6052`). This is the correct dashboard.
+> - **Standalone ESPHome:** open the dashboard where you installed ESPHome.
+
+1. Open the **ESPHome dashboard** (see above) in the browser.
+2. Find your `aquaclean-proxy` device card and click the three-dot menu (⋮) in its top right corner.
+3. Choose **Clean Build Files**.
+4. Then click **Install** → **Wirelessly**.
 
 ESPHome will erase the ESP32's flash completely and reflash from scratch. The stale cache
 is gone and the toilet connection will work normally after the reboot.
 
-> **Note:** Your WiFi credentials are part of the firmware that gets flashed, so the ESP32
+> **Note:** Your WiFi credentials are compiled into the firmware, so the ESP32
 > will reconnect to your network automatically after the clean install. You do not need to
 > re-enter any settings.
 
