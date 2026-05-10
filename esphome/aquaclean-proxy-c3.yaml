@@ -107,12 +107,8 @@ button:
   - platform: restart
     name: "Restart AquaClean Proxy"
 
-  - platform: template
+  - platform: factory_reset
     name: "Clear Bluetooth Cache"
-    on_press:
-      - lambda: |-
-          nvs_flash_erase();
-          esp_restart();
 
 # ---------------------------------------------------------------------------
 # Maintenance mode switch
