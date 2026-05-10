@@ -74,14 +74,25 @@ logger:
   baud_rate: 0
 
 # ---------------------------------------------------------------------------
-# Restart button
-# Exposed via the native API so the bridge can trigger a software reboot
-# automatically when the BLE scanner gets stuck (5 consecutive E0002 failures).
-# Also appears in the web UI (port 80) and Home Assistant for manual recovery.
+# Buttons
+# Restart — exposed via native API so the bridge can auto-reboot the ESP32
+#   when the BLE scanner gets stuck (5 consecutive E0002 failures).
+#   Also appears in the web UI (port 80) and Home Assistant for manual recovery.
+# Clear Bluetooth Cache — wipes the NVS partition (incl. NimBLE GATT cache)
+#   and reboots. Use when the HACS integration fails with "Write not permitted"
+#   (ATT error 3). A plain restart is not enough — NVS survives reboots.
+#   WiFi credentials are compiled in, so the ESP32 reconnects automatically.
 # ---------------------------------------------------------------------------
 button:
   - platform: restart
     name: "Restart AquaClean Proxy"
+
+  - platform: template
+    name: "Clear Bluetooth Cache"
+    on_press:
+      - lambda: |-
+          nvs_flash_erase();
+          esp_restart();
 
 # ---------------------------------------------------------------------------
 # Maintenance mode switch
@@ -119,16 +130,6 @@ sensor:
 
   - platform: uptime
     name: "Proxy Uptime"
-
-# ---------------------------------------------------------------------------
-# Restart button
-# Exposed via the native API so the bridge can trigger a software reboot
-# automatically when the BLE scanner gets stuck (5 consecutive E0002 failures).
-# Also appears in the web UI (port 80) and Home Assistant for manual recovery.
-# ---------------------------------------------------------------------------
-button:
-  - platform: restart
-    name: "Restart AquaClean Proxy"
 
 # ---------------------------------------------------------------------------
 # Optional: simple web interface on port 80 for status and logs
