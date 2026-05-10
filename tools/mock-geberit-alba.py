@@ -419,13 +419,16 @@ class _AriendiServerSide:
     # Handshake + encrypted data exchange
     # -----------------------------------------------------------------------
 
-    async def run(self, send_fn, app_handler=None) -> None:
+    async def run(self, send_fn, app_handler=None, send_delay_sec: float = 0.0) -> None:
         """
         Run the full server-side handshake, then loop on incoming encrypted frames.
 
-        send_fn:     async callable(att_bytes: bytes) — BLE notification sender.
-        app_handler: async callable(plaintext: bytes) -> list[bytes] — Ble20 dispatch;
-                     if None, sends back a fake Legacy GetDeviceIdentification response.
+        send_fn:        async callable(att_bytes: bytes) — BLE notification sender.
+        app_handler:    async callable(plaintext: bytes) -> list[bytes] — Ble20 dispatch;
+                        if None, sends back a fake Legacy GetDeviceIdentification response.
+        send_delay_sec: seconds to sleep between consecutive notifications (0 = no delay).
+                        Use ~0.020 when testing over an ESPHome BLE proxy to avoid
+                        congestion-induced ATT notification drops.
         """
         print("[MockServer] waiting for SABM...")
 
@@ -515,6 +518,8 @@ class _AriendiServerSide:
                 for resp in responses:
                     encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
                     await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
+                    if send_delay_sec > 0:
+                        await asyncio.sleep(send_delay_sec)
             else:
                 # Fallback: fake Legacy GetDeviceIdentification response.
                 fake_resp = bytes([
@@ -677,7 +682,7 @@ async def safe_call(obj, method_name, *args, **kwargs):
 # Main
 # ---------------------------------------------------------------------------
 
-async def main(mode: str):
+async def main(mode: str, send_delay_sec: float = 0.0):
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     adapter_wrapper = await Adapter.get_first(bus)
@@ -797,7 +802,7 @@ async def main(mode: str):
             if mode == "ble20":
                 app_handler = _Ble20AppLayer().dispatch  # fresh store per session
             try:
-                await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler)
+                await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec)
                 print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
             except asyncio.CancelledError:
                 raise
@@ -942,9 +947,18 @@ Test sequence:
              "handshake: full Arendi Security server (decryption test); "
              "ble20: Arendi Security + Ble20 application layer (Ble20Client test)",
     )
+    parser.add_argument(
+        "--send-delay",
+        type=int,
+        default=0,
+        metavar="MS",
+        help="milliseconds to sleep between consecutive BLE notifications (default: 0). "
+             "Use --send-delay 20 when testing over an ESPHome BLE proxy to prevent "
+             "ATT notification drops caused by BLE link congestion.",
+    )
     args = parser.parse_args()
 
     try:
-        asyncio.run(main(args.mode))
+        asyncio.run(main(args.mode, send_delay_sec=args.send_delay / 1000.0))
     except KeyboardInterrupt:
         print("\nInterrupted by user. Exiting.")
