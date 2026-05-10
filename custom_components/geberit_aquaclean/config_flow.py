@@ -26,6 +26,23 @@ from .const import (
 )
 
 
+# Known AquaClean Alba (Variant A / Ble20) GATT characteristic UUIDs.
+# If a non-standard GATT profile has these UUIDs but the Arendi handshake failed
+# (e.g. due to a stale NimBLE NVS cache on the ESP32), the device is still a
+# supported Alba — report "cannot_connect" so the user can retry after clearing
+# the ESP32 BT cache, rather than permanently flagging it as unsupported.
+_ALBA_WRITE_UUID  = "559eb001-2390-11e8-b467-0ed5f89f718b"
+_ALBA_NOTIFY_UUID = "559eb002-2390-11e8-b467-0ed5f89f718b"
+
+
+def _is_known_alba_profile(profile) -> bool:
+    """Return True when the GATT profile matches the known Alba Variant A UUIDs."""
+    return (
+        _ALBA_WRITE_UUID  in (profile.write_uuids  or [])
+        and _ALBA_NOTIFY_UUID in (profile.notify_uuids or [])
+    )
+
+
 def _build_schema(defaults: dict) -> vol.Schema:
     """Build the shared schema for both config and options flow, pre-filled with defaults."""
     return vol.Schema(
@@ -158,42 +175,52 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
                 else:
                     if profile is not None and not profile.is_standard and not profile.arendi_handshake_done:
-                        dis = profile.dis_info or {}
-                        _LOGGER.warning(
-                            "[AquaClean] Config flow: unsupported GATT profile — "
-                            "svc=%s write=%s notify=%s model=%s serial=%s",
-                            profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
-                            dis.get("model_number", ""), dis.get("serial_number", ""),
+                        if _is_known_alba_profile(profile):
+                            _LOGGER.warning(
+                                "[AquaClean] Config flow: known Alba GATT profile but handshake "
+                                "failed (svc=%s) — ESP32 NimBLE cache may be stale; "
+                                "press 'Clear Bluetooth Cache' on the proxy and retry",
+                                profile.svc_uuid,
+                            )
+                            errors["base"] = "cannot_connect"
+                        else:
+                            dis = profile.dis_info or {}
+                            _LOGGER.warning(
+                                "[AquaClean] Config flow: unsupported GATT profile — "
+                                "svc=%s write=%s notify=%s model=%s serial=%s",
+                                profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                                dis.get("model_number", ""), dis.get("serial_number", ""),
+                            )
+                            _placeholders = {
+                                "mac": data[CONF_DEVICE_ID],
+                                "svc_uuid": profile.svc_uuid,
+                                "write_uuids": ", ".join(profile.write_uuids) or "—",
+                                "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                                "device_model": dis.get("model_number") or "—",
+                                "device_serial": dis.get("serial_number") or "—",
+                                "version": version,
+                            }
+                            async_create_issue(
+                                self.hass,
+                                DOMAIN,
+                                f"unsupported_device_{data[CONF_DEVICE_ID].replace(':', '').lower()}",
+                                is_fixable=False,
+                                severity=IssueSeverity.WARNING,
+                                translation_key="unsupported_device",
+                                translation_placeholders=_placeholders,
+                            )
+                            return self.async_abort(
+                                reason="unsupported_device",
+                                description_placeholders=_placeholders,
+                            )
+                    if not errors:
+                        await self.async_set_unique_id(data[CONF_DEVICE_ID])
+                        self._abort_if_unique_id_configured()
+                        await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
+                        return self.async_create_entry(
+                            title=f"AquaClean {data[CONF_DEVICE_ID]}",
+                            data=data,
                         )
-                        _placeholders = {
-                            "mac": data[CONF_DEVICE_ID],
-                            "svc_uuid": profile.svc_uuid,
-                            "write_uuids": ", ".join(profile.write_uuids) or "—",
-                            "notify_uuids": ", ".join(profile.notify_uuids) or "—",
-                            "device_model": dis.get("model_number") or "—",
-                            "device_serial": dis.get("serial_number") or "—",
-                            "version": version,
-                        }
-                        async_create_issue(
-                            self.hass,
-                            DOMAIN,
-                            f"unsupported_device_{data[CONF_DEVICE_ID].replace(':', '').lower()}",
-                            is_fixable=False,
-                            severity=IssueSeverity.WARNING,
-                            translation_key="unsupported_device",
-                            translation_placeholders=_placeholders,
-                        )
-                        return self.async_abort(
-                            reason="unsupported_device",
-                            description_placeholders=_placeholders,
-                        )
-                    await self.async_set_unique_id(data[CONF_DEVICE_ID])
-                    self._abort_if_unique_id_configured()
-                    await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
-                    return self.async_create_entry(
-                        title=f"AquaClean {data[CONF_DEVICE_ID]}",
-                        data=data,
-                    )
 
         return self.async_show_form(
             step_id="user",
@@ -252,37 +279,47 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                     errors["base"] = "cannot_connect"
                 else:
                     if profile is not None and not profile.is_standard and not profile.arendi_handshake_done:
-                        dis = profile.dis_info or {}
-                        _LOGGER.warning(
-                            "[AquaClean] Options flow: unsupported GATT profile — "
-                            "svc=%s write=%s notify=%s model=%s serial=%s",
-                            profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
-                            dis.get("model_number", ""), dis.get("serial_number", ""),
-                        )
-                        _placeholders = {
-                            "mac": data[CONF_DEVICE_ID],
-                            "svc_uuid": profile.svc_uuid,
-                            "write_uuids": ", ".join(profile.write_uuids) or "—",
-                            "notify_uuids": ", ".join(profile.notify_uuids) or "—",
-                            "device_model": dis.get("model_number") or "—",
-                            "device_serial": dis.get("serial_number") or "—",
-                            "version": version,
-                        }
-                        async_create_issue(
-                            self.hass,
-                            DOMAIN,
-                            f"unsupported_device_{data[CONF_DEVICE_ID].replace(':', '').lower()}",
-                            is_fixable=False,
-                            severity=IssueSeverity.WARNING,
-                            translation_key="unsupported_device",
-                            translation_placeholders=_placeholders,
-                        )
-                        return self.async_abort(
-                            reason="unsupported_device",
-                            description_placeholders=_placeholders,
-                        )
-                    await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
-                    return self.async_create_entry(title="", data=data)
+                        if _is_known_alba_profile(profile):
+                            _LOGGER.warning(
+                                "[AquaClean] Options flow: known Alba GATT profile but handshake "
+                                "failed (svc=%s) — ESP32 NimBLE cache may be stale; "
+                                "press 'Clear Bluetooth Cache' on the proxy and retry",
+                                profile.svc_uuid,
+                            )
+                            errors["base"] = "cannot_connect"
+                        else:
+                            dis = profile.dis_info or {}
+                            _LOGGER.warning(
+                                "[AquaClean] Options flow: unsupported GATT profile — "
+                                "svc=%s write=%s notify=%s model=%s serial=%s",
+                                profile.svc_uuid, profile.write_uuids, profile.notify_uuids,
+                                dis.get("model_number", ""), dis.get("serial_number", ""),
+                            )
+                            _placeholders = {
+                                "mac": data[CONF_DEVICE_ID],
+                                "svc_uuid": profile.svc_uuid,
+                                "write_uuids": ", ".join(profile.write_uuids) or "—",
+                                "notify_uuids": ", ".join(profile.notify_uuids) or "—",
+                                "device_model": dis.get("model_number") or "—",
+                                "device_serial": dis.get("serial_number") or "—",
+                                "version": version,
+                            }
+                            async_create_issue(
+                                self.hass,
+                                DOMAIN,
+                                f"unsupported_device_{data[CONF_DEVICE_ID].replace(':', '').lower()}",
+                                is_fixable=False,
+                                severity=IssueSeverity.WARNING,
+                                translation_key="unsupported_device",
+                                translation_placeholders=_placeholders,
+                            )
+                            return self.async_abort(
+                                reason="unsupported_device",
+                                description_placeholders=_placeholders,
+                            )
+                    if not errors:
+                        await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
+                        return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
             step_id="init",
