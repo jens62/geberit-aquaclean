@@ -446,6 +446,8 @@ class _AriendiServerSide:
             if remaining <= 0:
                 raise TimeoutError(f"[MockServer] timeout waiting for U ctrl=0x{expected_ctrl:02X}")
             ft, ctrl, _ = await asyncio.wait_for(self._rx_queue.get(), timeout=remaining)
+            if ft == 'DISCONNECT':
+                raise TimeoutError("[MockServer] BLE disconnected during handshake")
             if ft == 'U' and ctrl == expected_ctrl:
                 return
 
@@ -456,6 +458,8 @@ class _AriendiServerSide:
             if remaining <= 0:
                 raise TimeoutError(f"[MockServer] timeout waiting for I type=0x{expected_type:02X}")
             ft, ctrl, payload = await asyncio.wait_for(self._rx_queue.get(), timeout=remaining)
+            if ft == 'DISCONNECT':
+                raise TimeoutError("[MockServer] BLE disconnected during handshake")
             if ft == 'I' and payload and payload[0] == expected_type:
                 return payload
 
@@ -543,6 +547,9 @@ class _AriendiServerSide:
                 print("[MockServer] no more frames after 60 s — exiting frame loop")
                 return
 
+            if ft == 'DISCONNECT':
+                print("[MockServer] BLE connection closed — exiting frame loop immediately")
+                return
             if ft != 'I':
                 continue  # S-frame ACK or stray U-frame
             if not payload or payload[0] != _SEC_ENCRYPTED:
@@ -761,6 +768,15 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         def on_device_disconnected(path, interfaces):
             if 'org.bluez.Device1' in interfaces:
                 print(f"[Mock] BLE client disconnected: {path}")
+                # Signal the running arendi session to exit immediately so advertising
+                # resumes right away — without this the frame loop waits 60 s for more
+                # frames and the mock stays "occupied" blocking the next BLE client.
+                arendi = sig_service._arendi
+                if arendi is not None:
+                    try:
+                        arendi._rx_queue.put_nowait(('DISCONNECT', 0, b''))
+                    except Exception:
+                        pass
 
         objmgr.on_interfaces_added(on_device_connected)
         objmgr.on_interfaces_removed(on_device_disconnected)
