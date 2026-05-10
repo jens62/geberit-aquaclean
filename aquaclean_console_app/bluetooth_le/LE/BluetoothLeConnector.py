@@ -129,17 +129,29 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             # Standalone bridge path: use BleakScanner directly.
             # No habluetooth interception outside of HA OS.
             device = await BleakScanner.find_device_by_address(device_id)
-            if device is None:
-                raise BleakError(f"AquaClean device with address {device_id} not found.")
-            self.device_address = device.address
-            self.device_name = device.name
-            self.rssi = getattr(device, "rssi", None)
-            logger.debug(
-                f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}"
-            )
-            self.client = BleakClient(
-                address_or_ble_device=device, disconnected_callback=self._on_disconnected
-            )
+            if device is not None:
+                self.device_address = device.address
+                self.device_name = device.name
+                self.rssi = getattr(device, "rssi", None)
+                logger.debug(
+                    f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}"
+                )
+                self.client = BleakClient(
+                    address_or_ble_device=device, disconnected_callback=self._on_disconnected
+                )
+            else:
+                # Scan returned nothing — device may not be advertising.
+                # On Linux/BlueZ, BleakClient accepts a raw MAC address and calls
+                # Device1.Connect() directly without a prior scan, as long as the
+                # device object exists in BlueZ's managed objects (previously seen).
+                logger.warning(
+                    f"BLE scan did not find {device_id} advertising — "
+                    f"attempting direct connect by MAC address"
+                )
+                self.device_address = device_id
+                self.device_name = device_id
+                self.rssi = None
+                self.client = BleakClient(device_id, disconnected_callback=self._on_disconnected)
             await self.client.connect()
 
         self.last_esphome_api_ms = None  # No ESP32 proxy
