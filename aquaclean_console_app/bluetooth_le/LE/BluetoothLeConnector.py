@@ -858,7 +858,28 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     logger.debug(f"[disconnect] stop_notify FAILED: {char.uuid}: {type(e).__name__}: {e}")
             self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
-            await self.client.disconnect()
+            if self.esphome_host:
+                # ESPHome path: BLE close first (keep TCP alive), then unsub_adv, then TCP close.
+                # unsub_adv() must be called AFTER BLE teardown (trap 7 — calling it while BLE is
+                # active causes the ESP32 to abort the BLE connection immediately) but BEFORE
+                # api.disconnect() closes TCP (otherwise the UnsubscribeBluetoothLEAdvertisementsRequest
+                # frame is never delivered, the ESP32 retains the subscription slot, and the next
+                # connect attempt within ~60–90 s gets "Only one API subscription is allowed at a time").
+                await self.client.disconnect(close_api=False)
+                if self._esphome_unsub_adv is not None:
+                    try:
+                        self._esphome_unsub_adv()
+                    except Exception:
+                        pass
+                    self._esphome_unsub_adv = None
+                if self._esphome_api is not None:
+                    try:
+                        await self._esphome_api.disconnect()
+                        logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection")
+                    except Exception as e:
+                        logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
+            else:
+                await self.client.disconnect()
             # Release the BleakClient so Python GC can close its D-Bus MessageBus.
             # bleak's internal GC cycles (MessageBus ↔ signal handlers) require the
             # cyclic collector — gc.collect() runs it immediately instead of waiting
@@ -880,9 +901,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 except Exception as e:
                     logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
 
-        # Unsubscribe from BLE advertisements now that BLE is fully torn down.
-        # Must NOT be called while BLE is active — the UnsubscribeBluetoothLEAdvertisementsRequest
-        # causes the ESP32 to disconnect any active BLE client (see CLAUDE.md trap 7).
+        # Fallback: unsubscribe from BLE advertisements if not already done above.
+        # For the ESPHome path this is normally a no-op (cleared in the if-branch above).
+        # For the local-BLE path _esphome_unsub_adv is always None.
         if self._esphome_unsub_adv is not None:
             try:
                 self._esphome_unsub_adv()
