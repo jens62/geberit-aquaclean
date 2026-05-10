@@ -49,6 +49,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     BULK_CHAR_BULK_READ_3_UUID = UUID("3334429d-90f3-4c41-a02d-5cb3a83e0000")
     CCC_UUID = UUID("00002902-0000-1000-8000-00805f9b34fb")
 
+    # Seconds to wait for a BLE advertisement from the target device.
+    # Bridge uses 10 s (circuit breaker: 3 × 10 s = 30 s before ESP32 auto-restart).
+    # Override per-instance (e.g. connector.SCAN_TIMEOUT_S = 45.0) for tools/probes
+    # where the mock's BlueZ advertisement can take 10–15 s to become visible.
+    SCAN_TIMEOUT_S: float = 10.0
+
     def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
         self.client = None
         self.read_characteristics = {}
@@ -438,7 +444,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # is allowed at a time".
         self._esphome_unsub_adv = unsub_adv
         try:
-            await asyncio.wait_for(found_event.wait(), timeout=10.0)
+            await asyncio.wait_for(found_event.wait(), timeout=self.SCAN_TIMEOUT_S)
             logger.debug(
                 f"Found BLE device {device_id}: name={device_name or 'Unknown'}, "
                 f"address_type={address_type}"

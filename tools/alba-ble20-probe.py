@@ -350,6 +350,10 @@ async def run(args):
         esphome_port=port,
         esphome_noise_psk=psk,
     )
+    if host:
+        # Mock's BlueZ advertisement can take 10–15 s to become visible to the
+        # ESP32 scanner; the bridge default (10 s) is too short for this path.
+        connector.SCAN_TIMEOUT_S = 45.0
     session = Ble20Client(connector)
 
     try:
