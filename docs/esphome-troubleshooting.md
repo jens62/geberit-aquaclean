@@ -270,7 +270,7 @@ If ESPHome is listed under **Einstellungen → Apps** (Settings → Add-ons):
 2. Find your `aquaclean-proxy` device card and click the three-dot menu (⋮) in its top right corner.
 3. Choose **Clean Build Files**, then **Install → Wirelessly**.
 
-If ESPHome is **not** listed there, install it first: click **App installieren** (Install Add-on) at the bottom of the Apps page, search for **ESPHome**, and install it. Then follow the steps above.
+If ESPHome is **not** listed there, install it first: click **App installieren** (Install Add-on) at the bottom of the Apps page, search for **ESPHome**, and install **ESPHome Device Builder** (the stable version without the "Experimentell" badge). Then follow the steps above.
 
 **Option B — ESPHome CLI (command line, any computer with the YAML files)**
 
