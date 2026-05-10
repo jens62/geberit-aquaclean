@@ -261,8 +261,16 @@ restart of the ESP32 does **not** fix this — the cache survives reboots.
 
 If your ESP32 is running a firmware flashed from this repo after this fix was added,
 a **Clear Bluetooth Cache** button appears in the device's web UI at `http://[esp32-ip]`
-alongside the existing Restart button.  Press it once — the ESP32 wipes its NVS partition
-and reboots automatically.  No computer required.
+alongside the existing Restart button:
+
+| Name | State | Actions |
+|------|-------|---------|
+| Clear Bluetooth Cache | | □ |
+| Proxy Maintenance Mode | OFF | Off ○ On |
+| Restart AquaClean Proxy | | □ |
+
+Press the □ button next to **Clear Bluetooth Cache** once — the ESP32 wipes its NVS
+partition (including the stale GATT cache) and reboots automatically. No computer required.
 
 If the button is not there yet, use Option B or C below to reflash first, then the button
 will be available for all future cache clears.
@@ -521,3 +529,36 @@ esphome run esphome/aquaclean-proxy-eth.yaml               # USB first flash (Et
 # or OTA if already running ESPHome:
 esphome run esphome/aquaclean-proxy-wifi.yaml --device 192.168.0.160
 ```
+
+---
+
+## `esphome run` fails with "Python version must be between 3.10 and 3.13"
+
+**Symptom:** The firmware compiles successfully (`[SUCCESS]`) but OTA upload fails:
+
+```
+ERROR: Python version must be between 3.10 and 3.13.
+Current Python version: 3.14.x
+Supported versions: 3.10, 3.11, 3.12, 3.13
+```
+
+**Cause:** The `esphome` Homebrew formula currently ships with Python 3.14. The OTA
+upload tool (esptool) does not yet support Python 3.14.
+
+**Fix:** Install ESPHome in a Python 3.13 virtual environment and use that instead:
+
+```bash
+python3.13 -m venv ~/venv-esphome
+~/venv-esphome/bin/pip install esphome
+~/venv-esphome/bin/esphome run local-assets/esphome/aquaclean-proxy-c3.yaml --device 192.168.0.xxx
+```
+
+Python 3.13 is available via Homebrew alongside 3.14:
+
+```bash
+brew install python@3.13   # if not already installed
+```
+
+> **Note:** the firmware binary from the previous failed build is still valid — ESPHome
+> will reuse the cached build and only re-run the OTA upload step, so the second attempt
+> is fast (a few seconds, not a full recompile).
