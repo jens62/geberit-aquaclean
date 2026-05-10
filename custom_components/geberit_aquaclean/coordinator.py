@@ -561,6 +561,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         ident = await client.base_client.get_device_identification_async(0)
         state = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
         misc  = await client.base_client.get_misc_state_async()
+        instanced = await client.base_client.get_instanced_stats_async()
         profile_settings = await client.base_client.get_stored_profile_settings_async()
 
         return {
@@ -638,6 +639,21 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             "alba_mcu_version":   misc.get("mcu_version"),
             # Pairing secret (diagnostic, not exposed as a sensor entity)
             "alba_pairing_secret_hex": misc.get("pairing_secret_hex"),
+            # Version strings (instanced DpIds 785–787)
+            "alba_fus_version":            instanced.get("fus_version"),
+            "alba_geberit_loader_version": instanced.get("geberit_loader_version"),
+            "alba_wireless_stack_version": instanced.get("wireless_stack_version"),
+            # Progress percentages (live during operation; None when not running)
+            "alba_anal_shower_progress_pct":        (instanced.get("anal_shower_progress") or {}).get("pct"),
+            "alba_descaling_progress_pct":          (instanced.get("descaling_progress") or {}).get("pct"),
+            "alba_spray_arm_cleaning_progress_pct": (instanced.get("spray_arm_cleaning_progress") or {}).get("pct"),
+            # Lifetime statistics counters (instanced DpId 689)
+            "alba_stats_total_usages":              (instanced.get("stats_total") or {}).get("aquaclean_usages"),
+            "alba_stats_total_anal_showers":        (instanced.get("stats_total") or {}).get("aquaclean_anal_showers"),
+            "alba_stats_total_lady_showers":        (instanced.get("stats_total") or {}).get("aquaclean_lady_showers"),
+            "alba_stats_total_dryings":             (instanced.get("stats_total") or {}).get("aquaclean_dryings"),
+            "alba_stats_total_descalings":          (instanced.get("stats_total") or {}).get("aquaclean_descalings"),
+            "alba_stats_total_spray_arm_cleanings": (instanced.get("stats_total") or {}).get("aquaclean_spray_arm_cleanings"),
         }
 
     # ------------------------------------------------------------------

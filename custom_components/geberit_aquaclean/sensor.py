@@ -67,6 +67,21 @@ ALBA_SENSORS: list[tuple] = [
     ("alba_active_intensity",                       "Active Spray Intensity",         None, None,                          SensorStateClass.MEASUREMENT,     "mdi:water-boiler"),
     ("alba_active_position",                        "Active Spray Position",          None, None,                          SensorStateClass.MEASUREMENT,     "mdi:arrow-left-right"),
     ("alba_active_temperature",                     "Active Water Temperature",       None, None,                          SensorStateClass.MEASUREMENT,     "mdi:thermometer-water"),
+    # Version strings from instanced DpIds 785–787
+    ("alba_fus_version",                            "FUS Version",                    None, None,                          None,                             "mdi:chip"),
+    ("alba_geberit_loader_version",                 "Geberit Loader Version",         None, None,                          None,                             "mdi:chip"),
+    ("alba_wireless_stack_version",                 "Wireless Stack Version",         None, None,                          None,                             "mdi:chip"),
+    # Progress percentages (live during operation)
+    ("alba_anal_shower_progress_pct",               "Anal Shower Progress",           "%",  None,                          SensorStateClass.MEASUREMENT,     "mdi:percent"),
+    ("alba_descaling_progress_pct",                 "Descaling Progress",             "%",  None,                          SensorStateClass.MEASUREMENT,     "mdi:percent"),
+    ("alba_spray_arm_cleaning_progress_pct",        "Spray Arm Cleaning Progress",    "%",  None,                          SensorStateClass.MEASUREMENT,     "mdi:percent"),
+    # Lifetime statistics counters from instanced DpId 689
+    ("alba_stats_total_usages",                     "Total AquaClean Uses",           None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_stats_total_anal_showers",               "Total Anal Shower Uses",         None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_stats_total_lady_showers",               "Total Lady Shower Uses",         None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_stats_total_dryings",                    "Total Dryer Uses",               None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_stats_total_descalings",                 "Total Descaling Cycles",         None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_stats_total_spray_arm_cleanings",        "Total Spray Arm Cleanings",      None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
 ]
 
 
