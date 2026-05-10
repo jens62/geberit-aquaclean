@@ -262,15 +262,13 @@ restart of the ESP32 does **not** fix this — the cache survives reboots.
 > (with buttons like "Restart AquaClean Proxy"). That page cannot do a Clean Build.
 > You need the **ESPHome dashboard** — the application where you edit and flash YAML configs.
 
-**Option A — ESPHome add-on in Home Assistant (dashboard method)**
+**Option A — ESPHome dashboard (only if your device is already configured there)**
 
-If ESPHome is listed under **Einstellungen → Apps** (Settings → Add-ons):
+This option only works if you previously added your `aquaclean-proxy` to the ESPHome dashboard. If the dashboard shows "Welcome to ESPHome — no devices yet", skip to Option B.
 
-1. Click **ESPHome → Web-Oberfläche öffnen** (Open Web UI).
+1. Open the ESPHome dashboard: **Einstellungen → Apps → ESPHome Device Builder → Web-Oberfläche öffnen** (if not installed: click **App installieren**, install **ESPHome Device Builder** — stable, no "Experimentell" badge — then click **Starten** and **Web-Oberfläche öffnen**).
 2. Find your `aquaclean-proxy` device card and click the three-dot menu (⋮) in its top right corner.
 3. Choose **Clean Build Files**, then **Install → Wirelessly**.
-
-If ESPHome is **not** listed there, install it first: click **App installieren** (Install Add-on) at the bottom of the Apps page, search for **ESPHome**, and install **ESPHome Device Builder** (the stable version without the "Experimentell" badge). After installing, click **Starten** (Start) on the add-on page, then **Web-Oberfläche öffnen** (Open Web UI) once it is running. Then follow the steps above.
 
 **Option B — ESPHome CLI (command line, any computer with the YAML files)**
 
