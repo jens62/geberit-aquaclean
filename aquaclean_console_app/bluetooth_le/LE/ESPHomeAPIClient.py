@@ -182,9 +182,11 @@ class ESPHomeAPIClient:
 
     async def _notification_worker(self):
         """Process notifications sequentially to avoid FrameCollector deadlock."""
+        logger.debug("[ESPHomeAPIClient] notification_worker: started")
         while self._is_connected:
             try:
                 callback_fn, char_wrapper, data = await self._notify_queue.get()
+                logger.debug(f"[ESPHomeAPIClient] notification_worker: dequeued handle=0x{char_wrapper.handle:04x} len={len(data)}")
                 result = callback_fn(char_wrapper, data)
                 if asyncio.iscoroutine(result):
                     await result
@@ -192,6 +194,7 @@ class ESPHomeAPIClient:
                 break
             except Exception as e:
                 logger.error(f"[ESPHomeAPIClient] Error in notification worker: {e}")
+        logger.debug("[ESPHomeAPIClient] notification_worker: exited (_is_connected=False or cancelled)")
 
     async def _fetch_services(self):
         """Fetch GATT services and build UUID↔handle mappings."""
@@ -304,6 +307,7 @@ class ESPHomeAPIClient:
                 # FrameCollector uses threading.Lock across await points, so
                 # concurrent notification tasks would deadlock.
                 char_wrapper = ESPHomeGATTCharacteristic(uuid=uuid, handle=handle, properties=0x10)
+                logger.debug(f"[ESPHomeAPIClient] on_notify: enqueuing handle=0x{handle:04x} len={len(data)}")
                 self._notify_queue.put_nowait((callback_fn, char_wrapper, data))
             else:
                 logger.warning(f"[ESPHomeAPIClient] No callback registered for handle 0x{handle:04x}")

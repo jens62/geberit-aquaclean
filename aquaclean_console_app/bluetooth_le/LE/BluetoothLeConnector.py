@@ -708,9 +708,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     async def _on_data_received(self, sender, data):
         logger.silly("BluetoothLeConnector: _on_data_received")
         logger.silly(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
+        _hs_done = self._arendi_security.handshake_done if self._arendi_security else None
+        logger.debug(f"BluetoothLeConnector: _on_data_received arendi={self._arendi_security is not None} handshake_done={_hs_done} len={len(data)}")
 
         if self._arendi_security is not None:
             decrypted_list = self._arendi_security.feed_att_bytes(bytes(data))
+            logger.debug(f"BluetoothLeConnector: _on_data_received → {len(decrypted_list)} plaintext payload(s)")
             for payload in decrypted_list:
                 await self.data_received_handlers.invoke_async(payload)
         else:

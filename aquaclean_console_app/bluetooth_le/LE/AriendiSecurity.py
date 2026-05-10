@@ -318,6 +318,7 @@ class AriendiSecurity:
         if not self.handshake_done:
             return []
         results = []
+        _q_before = self._rx_queue.qsize()
         while not self._rx_queue.empty():
             try:
                 ft, ctrl, payload = self._rx_queue.get_nowait()
@@ -331,6 +332,7 @@ class AriendiSecurity:
                     )
             except asyncio.QueueEmpty:
                 break
+        logger.debug(f"AriendiSecurity: feed_att_bytes q_drained={_q_before} → {len(results)} plaintext payloads")
         return results
 
     def _process_rx_buf(self) -> None:
