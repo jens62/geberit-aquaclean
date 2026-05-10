@@ -478,115 +478,148 @@ class _AriendiServerSide:
                         Use ~0.020 when testing over an ESPHome BLE proxy to avoid
                         congestion-induced ATT notification drops.
         """
-        print("[MockServer] waiting for SABM...")
-
-        # 1. SABM → UA
-        await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE), timeout=60.0)
-        print("[MockServer] ← SABM")
-        await send_fn(self._att_u(_HDLC_UA_TYPE))
-        print("[MockServer] → UA")
-
-        # 2. VERSION_REQ → VERSION_RESP
-        await self._await_i(_SEC_VERSION_REQ)
-        print("[MockServer] ← VERSION_REQ")
-        # 7 bytes: [type=0x01][0x00 × 5][proto_ver_minus_1=0x01] → proto v2
-        await send_fn(self._att_i(bytes([_SEC_VERSION_RESP, 0, 0, 0, 0, 0, 1])))
-        print("[MockServer] → VERSION_RESP (proto v2)")
-
-        # 3. EP_REQ → EP_RESP
-        await self._await_i(_SEC_EP_REQ)
-        print("[MockServer] ← EP_REQ")
-        nonce1 = os.urandom(16)
-        nonce2 = os.urandom(16)
-        ep_resp = bytes([_SEC_EP_RESP]) + nonce1 + nonce2 + bytes([0x01])
-        await send_fn(self._att_i(ep_resp))
-        print(f"[MockServer] → EP_RESP  nonce1={nonce1.hex()}  nonce2={nonce2.hex()}")
-
-        # 4. KE_REQ → verify client CMAC, generate server keypair, KE_RESP
-        ke = await self._await_i(_SEC_KE_REQ)
-        print("[MockServer] ← KE_REQ")
-        if len(ke) < 49:
-            raise ValueError(f"[MockServer] KE_REQ too short ({len(ke)} bytes)")
-        client_public_bytes = ke[1:33]
-        client_cmac_bytes   = ke[33:49]
-
-        auth_key = _hkdf(ikm=aquacleanBridgeId, salt=nonce1, length=16)
-        expected_cmac = _aes_cmac(auth_key, client_public_bytes)
-        if client_cmac_bytes != expected_cmac:
-            raise ValueError("[MockServer] client CMAC verification FAILED — wrong aquacleanBridgeId?")
-        print("[MockServer] client CMAC verified ✓")
-
-        server_priv        = X25519PrivateKey.generate()
-        server_public_bytes = server_priv.public_key().public_bytes_raw()
-        server_cmac        = _aes_cmac(auth_key, server_public_bytes)
-
-        client_pub_key = X25519PublicKey.from_public_bytes(client_public_bytes)
-        shared_secret  = server_priv.exchange(client_pub_key)
-        key_material   = _hkdf(ikm=shared_secret, salt=nonce1, length=32)
-
-        # key_material[0:16]  = client rx key  = server tx key  (server encrypts outgoing)
-        # key_material[16:32] = client tx key  = server rx key  (server decrypts incoming)
-        self._tx_cipher = _AesCtrState(key_material[0:16],  nonce2)
-        self._rx_cipher = _AesCtrState(key_material[16:32], nonce2)
-
-        ke_resp = bytes([_SEC_KE_RESP]) + server_public_bytes + server_cmac
-        await send_fn(self._att_i(ke_resp))
-        print(f"[MockServer] → KE_RESP  server_pub={server_public_bytes.hex()[:16]}...")
-
-        self.handshake_done = True
-        print("[MockServer] *** HANDSHAKE COMPLETE — session keys established ***")
-
-        # 5. Loop on incoming encrypted frames
-        # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
+        # Outer loop: run a full handshake + frame session; restart when a new
+        # SABM arrives mid-session (coordinator reconnects on the same BLE link).
+        # need_sabm=True  → wait for SABM before sending UA (first session).
+        # need_sabm=False → SABM already received in frame loop; go straight to UA.
+        need_sabm = True
         while True:
+            if need_sabm:
+                print("[MockServer] waiting for SABM...")
+                try:
+                    await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE), timeout=60.0)
+                except asyncio.TimeoutError:
+                    print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
+                    return
+                print("[MockServer] ← SABM")
+
+            # 1. UA
+            await send_fn(self._att_u(_HDLC_UA_TYPE))
+            print("[MockServer] → UA")
+
+            # 2. VERSION_REQ → VERSION_RESP
             try:
-                ft, ctrl, payload = await asyncio.wait_for(
-                    self._rx_queue.get(), timeout=60.0
-                )
+                await self._await_i(_SEC_VERSION_REQ)
             except asyncio.TimeoutError:
-                print("[MockServer] no more frames after 60 s — exiting frame loop")
+                print("[MockServer] handshake timeout waiting for VERSION_REQ")
                 return
+            print("[MockServer] ← VERSION_REQ")
+            await send_fn(self._att_i(bytes([_SEC_VERSION_RESP, 0, 0, 0, 0, 0, 1])))
+            print("[MockServer] → VERSION_RESP (proto v2)")
 
-            if ft == 'DISCONNECT':
-                print("[MockServer] BLE connection closed — exiting frame loop immediately")
+            # 3. EP_REQ → EP_RESP
+            try:
+                await self._await_i(_SEC_EP_REQ)
+            except asyncio.TimeoutError:
+                print("[MockServer] handshake timeout waiting for EP_REQ")
                 return
-            if ft == 'U' and ctrl == self._u_ctrl(_HDLC_SABM_TYPE):
-                print("[MockServer] SABM received in frame loop — new client connecting, restarting session")
+            print("[MockServer] ← EP_REQ")
+            nonce1 = os.urandom(16)
+            nonce2 = os.urandom(16)
+            ep_resp = bytes([_SEC_EP_RESP]) + nonce1 + nonce2 + bytes([0x01])
+            await send_fn(self._att_i(ep_resp))
+            print(f"[MockServer] → EP_RESP  nonce1={nonce1.hex()}  nonce2={nonce2.hex()}")
+
+            # 4. KE_REQ → verify client CMAC, generate server keypair, KE_RESP
+            try:
+                ke = await self._await_i(_SEC_KE_REQ)
+            except asyncio.TimeoutError:
+                print("[MockServer] handshake timeout waiting for KE_REQ")
                 return
-            if ft != 'I':
-                continue  # S-frame ACK or stray U-frame
-            if not payload or payload[0] != _SEC_ENCRYPTED:
-                sec_str = f"0x{payload[0]:02X}" if payload else "0x??"
-                print(f"[MockServer] unexpected I-frame sec_type={sec_str} — ignored")
-                continue
+            print("[MockServer] ← KE_REQ")
+            if len(ke) < 49:
+                print(f"[MockServer] KE_REQ too short ({len(ke)} bytes) — aborting")
+                return
+            client_public_bytes = ke[1:33]
+            client_cmac_bytes   = ke[33:49]
 
-            decrypted = self._rx_cipher.process(payload[1:])
-            plaintext = _inner_cobs_decode(decrypted)
-            if plaintext is None:
-                print(f"[MockServer] ← inner COBS decode failed: {decrypted.hex()}")
-                continue
-            print(f"[MockServer] ← encrypted frame DECRYPTED: {plaintext.hex()}")
+            auth_key = _hkdf(ikm=aquacleanBridgeId, salt=nonce1, length=16)
+            expected_cmac = _aes_cmac(auth_key, client_public_bytes)
+            if client_cmac_bytes != expected_cmac:
+                print("[MockServer] client CMAC verification FAILED — wrong aquacleanBridgeId?")
+                return
+            print("[MockServer] client CMAC verified ✓")
 
-            if app_handler is not None:
-                responses = await app_handler(plaintext)
-                for resp in responses:
-                    encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
+            server_priv         = X25519PrivateKey.generate()
+            server_public_bytes = server_priv.public_key().public_bytes_raw()
+            server_cmac         = _aes_cmac(auth_key, server_public_bytes)
+
+            client_pub_key = X25519PublicKey.from_public_bytes(client_public_bytes)
+            shared_secret  = server_priv.exchange(client_pub_key)
+            key_material   = _hkdf(ikm=shared_secret, salt=nonce1, length=32)
+
+            # key_material[0:16]  = client rx key  = server tx key  (server encrypts outgoing)
+            # key_material[16:32] = client tx key  = server rx key  (server decrypts incoming)
+            self._tx_cipher = _AesCtrState(key_material[0:16],  nonce2)
+            self._rx_cipher = _AesCtrState(key_material[16:32], nonce2)
+
+            ke_resp = bytes([_SEC_KE_RESP]) + server_public_bytes + server_cmac
+            await send_fn(self._att_i(ke_resp))
+            print(f"[MockServer] → KE_RESP  server_pub={server_public_bytes.hex()[:16]}...")
+
+            self.handshake_done = True
+            print("[MockServer] *** HANDSHAKE COMPLETE — session keys established ***")
+
+            # 5. Loop on incoming encrypted frames
+            # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
+            new_sabm = False
+            while True:
+                try:
+                    ft, ctrl, payload = await asyncio.wait_for(
+                        self._rx_queue.get(), timeout=60.0
+                    )
+                except asyncio.TimeoutError:
+                    print("[MockServer] no more frames after 60 s — exiting frame loop")
+                    return
+
+                if ft == 'DISCONNECT':
+                    print("[MockServer] BLE connection closed — exiting frame loop immediately")
+                    return
+                if ft == 'U' and ctrl == self._u_ctrl(_HDLC_SABM_TYPE):
+                    print("[MockServer] SABM received in frame loop — sending UA and restarting handshake")
+                    new_sabm = True
+                    break
+                if ft != 'I':
+                    continue  # S-frame ACK or stray U-frame
+                if not payload or payload[0] != _SEC_ENCRYPTED:
+                    sec_str = f"0x{payload[0]:02X}" if payload else "0x??"
+                    print(f"[MockServer] unexpected I-frame sec_type={sec_str} — ignored")
+                    continue
+
+                decrypted = self._rx_cipher.process(payload[1:])
+                plaintext = _inner_cobs_decode(decrypted)
+                if plaintext is None:
+                    print(f"[MockServer] ← inner COBS decode failed: {decrypted.hex()}")
+                    continue
+                print(f"[MockServer] ← encrypted frame DECRYPTED: {plaintext.hex()}")
+
+                if app_handler is not None:
+                    responses = await app_handler(plaintext)
+                    for resp in responses:
+                        encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
+                        await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
+                        if send_delay_sec > 0:
+                            await asyncio.sleep(send_delay_sec)
+                else:
+                    # Fallback: fake Legacy GetDeviceIdentification response.
+                    fake_resp = bytes([
+                        0x24, 0x00, 0x00,           # SINGLE frame header, counter=0
+                        0x00, 0x82, 0x00,           # ctx=0x00, proc=GetDeviceIdentification, OK
+                        0x41, 0x63, 0x41, 0x6C,     # "AcAl"
+                        0x62, 0x61, 0x00, 0x00,     # "ba\x00\x00"
+                        0x00, 0x00, 0x00, 0x00,     # padding
+                        0x00, 0x00,                 # padding (total = 20 bytes)
+                    ])
+                    encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(fake_resp))
                     await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
-                    if send_delay_sec > 0:
-                        await asyncio.sleep(send_delay_sec)
-            else:
-                # Fallback: fake Legacy GetDeviceIdentification response.
-                fake_resp = bytes([
-                    0x24, 0x00, 0x00,           # SINGLE frame header, counter=0
-                    0x00, 0x82, 0x00,           # ctx=0x00, proc=GetDeviceIdentification, OK
-                    0x41, 0x63, 0x41, 0x6C,     # "AcAl"
-                    0x62, 0x61, 0x00, 0x00,     # "ba\x00\x00"
-                    0x00, 0x00, 0x00, 0x00,     # padding
-                    0x00, 0x00,                 # padding (total = 20 bytes)
-                ])
-                encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(fake_resp))
-                await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
-                print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
+                    print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
+
+            if not new_sabm:
+                return
+            # SABM received mid-session: loop back and re-do the handshake.
+            # The coordinator is waiting for UA — we send it at the top of the loop.
+            self.handshake_done = False
+            need_sabm = False  # SABM already consumed from queue
 
 
 # ---------------------------------------------------------------------------
