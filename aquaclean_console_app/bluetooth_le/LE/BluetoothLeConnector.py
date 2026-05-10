@@ -424,18 +424,20 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         address_type = 0  # Default to PUBLIC (0) if not present in advertisement
 
         total_packets = 0
+        seen_addresses: dict[int, int] = {}  # addr_int -> packet count (for timeout diagnostics)
 
         def on_raw_advertisements(resp):
             nonlocal device_name, address_type, total_packets
             total_packets += len(resp.advertisements)
             for adv in resp.advertisements:
+                seen_addresses[adv.address] = seen_addresses.get(adv.address, 0) + 1
                 if adv.address == mac_int:
                     device_name = self._parse_local_name(bytes(adv.data))
                     address_type = getattr(adv, 'address_type', 0)
                     self.rssi = getattr(adv, 'rssi', None)
                     found_event.set()
 
-        logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
+        logger.debug(f"Scanning for BLE device {device_id} (mac_int={mac_int:#014x})")
         unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
         # Store immediately so that disconnect_ble_only() / disconnect() can unsubscribe
         # even if this coroutine is cancelled (e.g. SIGTERM during the scan window).
@@ -452,6 +454,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except asyncio.TimeoutError:
             unsub_adv()
             self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
+            # Log unique addresses seen — helps diagnose MAC format mismatches or missing advertisements
+            top = sorted(seen_addresses.items(), key=lambda x: -x[1])[:8]
+            addr_strs = ", ".join(f"{a:#014x}({c})" for a, c in top)
+            logger.warning(
+                f"BLE scan timeout: target={mac_int:#014x}, "
+                f"unique_addresses={len(seen_addresses)}, "
+                f"top_seen=[{addr_strs}]"
+            )
             hint = (
                 "scanner may be stuck or subscription slot in use"
                 if total_packets == 0
@@ -459,7 +469,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             )
             raise ESPHomeDeviceNotFoundError(
                 f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host} "
-                f"(received {total_packets} total BLE advertisement packet(s) during 10 s scan — {hint})"
+                f"(received {total_packets} total BLE advertisement packet(s) during "
+                f"{self.SCAN_TIMEOUT_S:.0f} s scan — {hint})"
             )
         # Advertisement subscription intentionally kept alive until BLE connect completes.
         # Calling unsub_adv() before bluetooth_device_connect() sends

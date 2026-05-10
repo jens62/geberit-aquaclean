@@ -547,6 +547,7 @@ class _WriteAction(argparse.Action):
 
 
 def main():
+    logging.basicConfig(format='%(levelname)s %(name)s: %(message)s')
     p = argparse.ArgumentParser(
         prog='alba-ble20-probe',
         description='Discover and interact with an Alba device via the Ble20 application protocol.',
