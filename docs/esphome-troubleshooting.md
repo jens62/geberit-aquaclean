@@ -255,22 +255,27 @@ can become outdated. The ESP32 then tries to write to the wrong internal address
 30 in the example above), which the toilet rejects with "Write not permitted". A plain
 restart of the ESP32 does **not** fix this — the cache survives reboots.
 
-**Fix — reflash the ESP32 with "Clean Build":**
+**Fix — clear the NVS cache:**
 
-> **The ESPHome dashboard is not the same as the ESP32's web UI.**
-> Opening `http://[esp32-ip]` in your browser shows the device's own built-in page
-> (with buttons like "Restart AquaClean Proxy"). That page cannot do a Clean Build.
-> You need the **ESPHome dashboard** — the application where you edit and flash YAML configs.
+**Option A — "Clear Bluetooth Cache" button in the ESP32 web UI (easiest)**
 
-**Option A — ESPHome dashboard (only if your device is already configured there)**
+If your ESP32 is running a firmware flashed from this repo after this fix was added,
+a **Clear Bluetooth Cache** button appears in the device's web UI at `http://[esp32-ip]`
+alongside the existing Restart button.  Press it once — the ESP32 wipes its NVS partition
+and reboots automatically.  No computer required.
 
-This option only works if you previously added your `aquaclean-proxy` to the ESPHome dashboard. If the dashboard shows "Welcome to ESPHome — no devices yet", skip to Option B.
+If the button is not there yet, use Option B or C below to reflash first, then the button
+will be available for all future cache clears.
+
+**Option B — ESPHome dashboard (only if your device is already configured there)**
+
+This option only works if you previously added your `aquaclean-proxy` to the ESPHome dashboard. If the dashboard shows "Welcome to ESPHome — no devices yet", skip to Option C.
 
 1. Open the ESPHome dashboard: **Einstellungen → Apps → ESPHome Device Builder → Web-Oberfläche öffnen** (if not installed: click **App installieren**, install **ESPHome Device Builder** — stable, no "Experimentell" badge — then click **Starten** and **Web-Oberfläche öffnen**).
 2. Find your `aquaclean-proxy` device card and click the three-dot menu (⋮) in its top right corner.
 3. Choose **Clean Build Files**, then **Install → Wirelessly**.
 
-**Option B — ESPHome CLI (command line, any computer with the YAML files)**
+**Option C — ESPHome CLI (command line, any computer with the YAML files)**
 
 Yes, this reflashes the ESP32 wirelessly (OTA) — that is intentional and necessary.
 The stale GATT cache lives in the ESP32's internal flash (NVS partition).
