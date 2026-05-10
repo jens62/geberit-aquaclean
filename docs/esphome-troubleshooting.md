@@ -261,16 +261,28 @@ restart of the ESP32 does **not** fix this — the cache survives reboots.
 > Opening `http://[esp32-ip]` in your browser shows the device's own built-in page
 > (with buttons like "Restart AquaClean Proxy"). That page cannot do a Clean Build.
 > You need the **ESPHome dashboard** — the application where you edit and flash YAML configs.
->
-> - **Home Assistant users:** go to **Settings → Add-ons → ESPHome → Open Web UI**
->   (German UI: **Einstellungen → Apps → ESPHome → Web-Oberfläche öffnen**).
->   Do **not** try to open `http://[ha-ip]:6052` directly — that port is closed by default.
-> - **Standalone ESPHome:** open the dashboard where you installed ESPHome.
 
-1. Open the **ESPHome dashboard** (see above) in the browser.
+**Option A — ESPHome add-on in Home Assistant (dashboard method)**
+
+If ESPHome is listed under **Einstellungen → Apps** (Settings → Add-ons):
+
+1. Click **ESPHome → Web-Oberfläche öffnen** (Open Web UI).
 2. Find your `aquaclean-proxy` device card and click the three-dot menu (⋮) in its top right corner.
-3. Choose **Clean Build Files**.
-4. Then click **Install** → **Wirelessly**.
+3. Choose **Clean Build Files**, then **Install → Wirelessly**.
+
+If ESPHome is **not** listed there, install it first: click **App installieren** (Install Add-on) at the bottom of the Apps page, search for **ESPHome**, and install it. Then follow the steps above.
+
+**Option B — ESPHome CLI (command line, any computer with the YAML files)**
+
+If you have the `geberit-aquaclean` repo checked out and ESPHome installed (`pip install esphome`):
+
+```bash
+esphome clean-build esphome/aquaclean-proxy-wifi.yaml
+esphome run esphome/aquaclean-proxy-wifi.yaml --device 192.168.0.xxx
+```
+
+Replace `aquaclean-proxy-wifi.yaml` with `aquaclean-proxy-eth.yaml` if you use the Ethernet board.
+Replace `192.168.0.xxx` with your ESP32's IP address.
 
 ESPHome will erase the ESP32's flash completely and reflash from scratch. The stale cache
 is gone and the toilet connection will work normally after the reboot.
