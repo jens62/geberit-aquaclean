@@ -468,9 +468,17 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             if self._esphome_host:
                 try:
                     async with asyncio.timeout(5.0):
-                        await connector.disconnect_ble_only()
+                        if connector.client is not None:
+                            await connector.disconnect_ble_only()
+                        else:
+                            # Scan timed out — no BLE client; disconnect_ble_only() would be a
+                            # no-op leaving the TCP open.  Close it explicitly so the ESP32 doesn't
+                            # later process a queued subscription on this connection once
+                            # api_connection_ is freed by the config-flow BLE teardown.
+                            await connector.disconnect()
+                            self._reset_esphome_connector()
                 except Exception:
-                    _LOGGER.debug("disconnect_ble_only failed; resetting persistent ESPHome connector")
+                    _LOGGER.debug("disconnect failed; resetting persistent ESPHome connector")
                     self._reset_esphome_connector()
             else:
                 try:
