@@ -364,6 +364,9 @@ class _AriendiServerSide:
         self._tx_cipher: _AesCtrState | None = None
         self._rx_cipher: _AesCtrState | None = None
         self.handshake_done = False
+        # Set to True when the frame loop exits because the BLE peer closed the link.
+        # False means the session ended by timeout (BLE link may still be alive).
+        self.disconnected_by_peer = False
 
     # -----------------------------------------------------------------------
     # Incoming ATT byte feeding — same COBS/CRC/HDLC parser as AriendiSecurity
@@ -574,6 +577,7 @@ class _AriendiServerSide:
 
                 if ft == 'DISCONNECT':
                     print("[MockServer] BLE connection closed — exiting frame loop immediately")
+                    self.disconnected_by_peer = True
                     return
                 if ft == 'U' and ctrl == self._u_ctrl(_HDLC_SABM_TYPE):
                     print("[MockServer] SABM received in frame loop — sending UA and restarting handshake")
@@ -793,16 +797,24 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         await bus.disconnect()
         return
 
+    # Track the BlueZ object path of the currently connected BLE client.
+    # Used to force-disconnect when a session ends by timeout (not by peer).
+    _connected_device_path = None
+
     if objmgr is not None:
         def on_device_connected(path, interfaces):
+            nonlocal _connected_device_path
             if 'org.bluez.Device1' in interfaces:
                 addr = interfaces['org.bluez.Device1'].get('Address')
                 if isinstance(addr, Variant):
                     addr = addr.value
+                _connected_device_path = path
                 print(f"[Mock] BLE client connected:    {addr or path}")
 
         def on_device_disconnected(path, interfaces):
+            nonlocal _connected_device_path
             if 'org.bluez.Device1' in interfaces:
+                _connected_device_path = None
                 print(f"[Mock] BLE client disconnected: {path}")
                 # Signal the running arendi session to exit immediately so advertising
                 # resumes right away — without this the frame loop waits 60 s for more
@@ -908,6 +920,33 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     print(f"[MockServer] ERROR: {msg}")
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
+
+            # If the session ended by timeout (not by the BLE peer closing the link),
+            # the BLE GATT connection is still alive on the ESP32 side.  The ESP32
+            # keeps its advertisement-subscription slot occupied until the link
+            # physically drops, which on some adapters (UTM VM + BlueZ L2CAP pending
+            # update) takes 60 s.  Force-disconnect via BlueZ D-Bus so the link drops
+            # immediately, the device resumes advertising, and the next coordinator
+            # poll can succeed without waiting the full supervision timeout.
+            arendi_just_ran = sig_service._arendi
+            if (
+                not getattr(arendi_just_ran, 'disconnected_by_peer', False)
+                and _connected_device_path is not None
+            ):
+                _path_to_disconnect = _connected_device_path
+                print(f"[Mock] BLE link still alive after session end — forcing BlueZ disconnect: {_path_to_disconnect}")
+                try:
+                    introspect = await bus.introspect('org.bluez', _path_to_disconnect)
+                    proxy = bus.get_proxy_object('org.bluez', _path_to_disconnect, introspect)
+                    dev_iface = proxy.get_interface('org.bluez.Device1')
+                    await dev_iface.call_disconnect()
+                    print("[Mock] Force-disconnect sent; waiting for BlueZ to confirm...")
+                    # Brief pause for on_device_disconnected callback to fire and
+                    # clear _connected_device_path before the next adv re-register.
+                    await asyncio.sleep(0.5)
+                except Exception as _e:
+                    print(f"[Mock] Force-disconnect failed: {_e}")
+
             # After each session BlueZ stops advertising — create a fresh Advertisement
             # object and register it. Re-using the same instance fails because its DBus
             # interface (/com/spacecheese/bluez_peripheral/advert0) is still exported

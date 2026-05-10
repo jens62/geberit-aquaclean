@@ -189,7 +189,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         )
                     await self.async_set_unique_id(data[CONF_DEVICE_ID])
                     self._abort_if_unique_id_configured()
-                    await asyncio.sleep(1.0)  # let BLE teardown propagate before coordinator first poll
+                    await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
                     return self.async_create_entry(
                         title=f"AquaClean {data[CONF_DEVICE_ID]}",
                         data=data,
@@ -281,7 +281,7 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                             reason="unsupported_device",
                             description_placeholders=_placeholders,
                         )
-                    await asyncio.sleep(1.0)  # let BLE teardown propagate before coordinator first poll
+                    await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
                     return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
