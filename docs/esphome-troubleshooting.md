@@ -272,6 +272,15 @@ This option only works if you previously added your `aquaclean-proxy` to the ESP
 
 **Option B — ESPHome CLI (command line, any computer with the YAML files)**
 
+Yes, this reflashes the ESP32 wirelessly (OTA) — that is intentional and necessary.
+The stale GATT cache lives in the ESP32's internal flash (NVS partition).
+A simple restart does **not** clear it. Only a full OTA reflash overwrites the NVS
+partition and removes the stale cache.
+
+`esphome clean-build` clears the local compiled object cache on your computer so the
+binary is rebuilt from scratch. `esphome run` then flashes that fresh binary to the
+ESP32 over WiFi.
+
 If you have the `geberit-aquaclean` repo checked out and ESPHome installed (`pip install esphome`):
 
 ```bash
@@ -282,8 +291,8 @@ esphome run esphome/aquaclean-proxy-wifi.yaml --device 192.168.0.xxx
 Replace `aquaclean-proxy-wifi.yaml` with `aquaclean-proxy-eth.yaml` if you use the Ethernet board.
 Replace `192.168.0.xxx` with your ESP32's IP address.
 
-ESPHome will erase the ESP32's flash completely and reflash from scratch. The stale cache
-is gone and the toilet connection will work normally after the reboot.
+ESPHome will reflash the ESP32 over WiFi. The stale cache is gone and the toilet
+connection will work normally after the reboot.
 
 > **Note:** Your WiFi credentials are compiled into the firmware, so the ESP32
 > will reconnect to your network automatically after the clean install. You do not need to
