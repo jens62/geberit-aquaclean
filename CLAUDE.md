@@ -1407,11 +1407,14 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     cache is now clean but the wrong write type is being used.  The two errors require
     different fixes and are easy to confuse.
 
-    **Note on `ESP_ERR_NVS_INVALID_HANDLE` after factory_reset:** if the ESP32 logs this
-    error during the factory_reset, the NVS partition is corrupted and the erase failed
-    partially.  A full reflash of the ESPHome firmware recovers it.  However, even a
-    failed factory_reset is accompanied by "Connecting v3 without cache" on the next
-    connection, which is sufficient to rule out the cache as the root cause.
+    **Note on `ESP_ERR_NVS_INVALID_HANDLE` after factory_reset:** this error is benign
+    and does NOT mean the erase failed.  The ESPHome `debug` component tries to write
+    the reboot reason ("web_server") to NVS immediately after the NVS partition has been
+    erased, using an NVS handle it opened before the erase.  That handle is now invalid
+    because the partition was wiped underneath it.  The 1–2 failed writes are the
+    reboot-reason record failing — cosmetic, unrelated to the cache erase.  The "Erasing
+    storage" line that appears before the error confirms the erase completed successfully.
+    The NimBLE GATT cache is gone; the factory_reset did its job.
 
 
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
