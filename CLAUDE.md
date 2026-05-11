@@ -1373,6 +1373,46 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     locations, treating them identically to `BleakError` — mapped to E0003, with the
     correct hint, no crash.
 
+14. **Alba via ESPHome: ATT error 3 (Write Not Permitted) on 559eb001 — wrong write type**
+
+    When connecting to an AquaClean Alba via ESPHome proxy, the Arendi handshake fails
+    immediately with ATT error 3 (Write Not Permitted) on the `559eb001` write
+    characteristic.
+
+    **Root cause:** `_raw_write` in `BluetoothLeConnector._post_connect()` hardcodes
+    `response=True`, which forces ATT_WRITE_REQUEST.  The Alba's `559eb001`
+    characteristic has the WRITE_NO_RESP property only (no WRITE_WITH_RESPONSE), so the
+    peripheral returns ATT error 0x03.  Local BlueZ / the UTM VM mock are permissive and
+    accept both write types — this masked the bug during mock testing.  ESPHome proxy
+    passes the `response` flag straight through to the BLE device with no leniency.
+
+    **Fix:** `response=False` (ATT_WRITE_COMMAND) in `_raw_write`.
+
+    **Diagnosis via ATT error code progression — NimBLE NVS cache vs. write-type mismatch:**
+
+    When an Alba connection fails with an ATT error, the error code identifies the cause:
+
+    | ATT error | Code | Cause | How to fix |
+    |-----------|------|-------|------------|
+    | Invalid Handle | 0x01 | Stale NimBLE NVS GATT cache — handle table out of sync | Press "Clear Bluetooth Cache" on ESPHome proxy; or flash `factory_reset` button |
+    | Write Not Permitted | 0x03 | Write type mismatch — `response=True` on a WRITE_NO_RESP-only char | Use `response=False` |
+
+    If the ESP32 log says **"Connecting v3 without cache"**, the NimBLE cache is
+    definitively ruled out: this message means the client requested fresh GATT discovery,
+    so no cached handles are in play.  If the write still fails after that, it is a
+    write-type mismatch, not a cache issue.
+
+    **The key diagnostic signal** is the error *changing* from 0x01 → 0x03 after a
+    factory_reset: 0x01 proves the cache was stale; 0x03 after the reset proves the
+    cache is now clean but the wrong write type is being used.  The two errors require
+    different fixes and are easy to confuse.
+
+    **Note on `ESP_ERR_NVS_INVALID_HANDLE` after factory_reset:** if the ESP32 logs this
+    error during the factory_reset, the NVS partition is corrupted and the erase failed
+    partially.  A full reflash of the ESPHome firmware recovers it.  However, even a
+    failed factory_reset is accompanied by "Connecting v3 without cache" on the next
+    connection, which is sufficient to rule out the cache as the root cause.
+
 
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
     → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
