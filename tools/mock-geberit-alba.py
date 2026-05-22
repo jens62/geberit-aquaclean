@@ -207,12 +207,12 @@ class _Ble20AppLayer:
         (565,  4,    0,  2, 0,         0,  1, b'\x00\x00\x00\x00'),          # ANAL_SHOWER_PROGRESS: 4 instances (0–3)
         (568,  4,    0,  2, 0,         0,  1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_CLEANING_PROGRESS: 4 instances
         (586,  4,    0,  2, 0,         0,  1, b'\x00\x00\x00\x00'),          # DESCALING_PROGRESS: 4 instances
-        # ── Version DpId per-instance values (FUS 1.0.0, LOADER 1.2, WIRELESS 1.14.1) ─
+        # ── Version DpId per-instance values (FUS 1.2.0, LOADER 5.6, WIRELESS 1.14.1) ─
         (785,  0,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # FUS_VERSION Major = 1
-        (785,  1,    0,  9, 0,       255,  1, struct.pack('<I', 0)),          # FUS_VERSION Minor = 0
+        (785,  1,    0,  9, 0,       255,  1, struct.pack('<I', 2)),          # FUS_VERSION Minor = 2
         (785,  2,    0,  9, 0,       255,  1, struct.pack('<I', 0)),          # FUS_VERSION Bugfix = 0
-        (786,  0,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # GEBERIT_LOADER_VERSION Major = 1
-        (786,  1,    0,  9, 0,       255,  1, struct.pack('<I', 2)),          # GEBERIT_LOADER_VERSION Minor = 2
+        (786,  0,    0,  9, 0,       255,  1, struct.pack('<I', 5)),          # GEBERIT_LOADER_VERSION Major = 5
+        (786,  1,    0,  9, 0,       255,  1, struct.pack('<I', 6)),          # GEBERIT_LOADER_VERSION Minor = 6
         (787,  0,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # WIRELESS_STACK_VERSION Major = 1
         (787,  1,    0,  9, 0,       255,  1, struct.pack('<I', 14)),         # WIRELESS_STACK_VERSION Minor = 14
         (787,  2,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # WIRELESS_STACK_VERSION Bugfix = 1
