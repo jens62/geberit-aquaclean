@@ -142,7 +142,7 @@ class AlbaBaseClient:
         dp_id = _PROFILE_SETTING_DPID.get(setting_id)
         if dp_id is None:
             raise BLEPeripheralTimeoutError(f"Profile setting ID {setting_id} not supported on Alba")
-        await self._ble20.write(int(dp_id), struct.pack('<I', value))
+        await self._ble20.write(int(dp_id), bytes([value & 0xFF]))
 
     async def get_stored_common_settings_async(self) -> dict:
         return {}
@@ -363,8 +363,13 @@ class AlbaBaseClient:
         return result
 
     async def write_dp_async(self, dp_id: int, value: int) -> None:
-        """Write a uint32 value to a DpId (little-endian)."""
-        await self._ble20.write(dp_id, struct.pack('<I', value))
+        """Write a value to a DpId.
+        Uses 4-byte little-endian uint32 for large values (e.g. Unix timestamps).
+        Uses 1-byte for enum/boolean values (0-255), which is what the device expects
+        for all control DpIds. The 4-byte path is only needed for DP_SET_RTC_TIME.
+        """
+        data = struct.pack('<I', value) if value > 0xFFFF else bytes([value & 0xFF])
+        await self._ble20.write(dp_id, data)
 
     # ── Not implemented on Alba — raise so callers fall back gracefully ───────
 
