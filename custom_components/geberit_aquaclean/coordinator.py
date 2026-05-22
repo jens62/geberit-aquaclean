@@ -96,6 +96,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_connector = None
         self._esphome_client = None
         self._unsupported_device = False
+        # DataPointInventory cache for Alba devices.  The DpId inventory is static
+        # (device hardware property) — fetched once on first poll and reused to
+        # avoid the ~12 s BLE exchange on every subsequent connect.
+        self._alba_inventory: dict = {}
 
         super().__init__(
             hass,
@@ -265,7 +269,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     else:
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
                         client = AlbaClient(connector)
-                    await client.connect_ble_only(self._device_id)
+                    await client.connect_ble_only(
+                        self._device_id,
+                        inventory=self._alba_inventory or None,
+                    )
 
                 elif self._device_type == "mera":
                     if self._esphome_host:
@@ -289,6 +296,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         if self._esphome_host:
                             self._esphome_client = client
                         await client.post_connect()  # DataPointInventory — mandatory first step
+                        self._alba_inventory = client._inventory  # cache for subsequent polls
                         _LOGGER.info("Detected AquaClean Alba (Ble20) device — using Alba protocol")
 
                     elif not connector.is_variant_a:

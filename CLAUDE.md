@@ -1417,6 +1417,40 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     The NimBLE GATT cache is gone; the factory_reset did its job.
 
 
+15. **Alba HACS: device occupied 90% of time — entities grey after first poll (habluetooth path)**
+
+    **Symptom (confirmed MuusLee 2026-05-22):** First poll succeeds (~27 s), entities briefly
+    available. Then entities cycle grey/unknown. ESP32 log shows
+    `[E4:85:01:CD:C4:1E] Connection request ignored, state: ESTABLISHED`.
+    Official Geberit app shows "another device is controlling the toilet".
+
+    **Root cause A — DataPointInventory on every poll (~12 s overhead each):**
+    In the HA-BLE path (habluetooth, no `esphome_host`), a new `BluetoothLeConnector`
+    and `AlbaClient` are created each poll. `connect_ble_only()` always calls
+    `post_connect()` which always runs `DataPointInventory` (BLE exchange fetching all
+    78 DpId definitions, ~200 ms per frame × 78 = ~15–16 s). The inventory never changes
+    between sessions — it is a property of the device hardware.
+    Total poll time: ~2 s connect + ~12 s inventory + ~14 s reads = **~27 s** out of a
+    30 s interval. Device BLE occupied 90% of the time.
+
+    **Root cause B — `Ble20Client.RECV_TIMEOUT = 15.0 s` too short for 78-frame inventory:**
+    78 frames × 200 ms ≈ 15.6 s — just over the timeout. A single slightly slow frame
+    causes `_recv()` to timeout mid-inventory → `TimeoutError` → E0003 → entities grey.
+
+    **Fix (committed 2026-05-22):**
+    1. `Ble20Client.RECV_TIMEOUT` raised from 15 s to 30 s.
+    2. `AlbaClient.post_connect(inventory=None)` — skips DataPointInventory if
+       `inventory` is passed (coordinator cache) OR if `self._inventory` is already
+       populated (persistent ESPHome client). Always runs Arendi handshake.
+    3. `coordinator.py` — `_alba_inventory: dict = {}` cached after first detection;
+       passed to `connect_ble_only(inventory=...)` on all subsequent polls.
+    **Result:** poll time drops from ~27 s to ~14 s (handshake ~2 s + reads ~12 s);
+    device free for ~16 s per 30 s interval — app and physical remote work normally.
+
+    **Note on `connect` vs `connect_ble_only`:** `connect()` (standalone bridge full
+    connect) also calls `post_connect()` and benefits from the same caching — no change
+    needed there since the standalone bridge creates one client per session.
+
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
     → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers
     (lines 103–105 check `if log_level not in ('TRACE', 'SILLY')`). The

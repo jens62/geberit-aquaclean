@@ -57,10 +57,24 @@ class AlbaClient(IAquaCleanClient):
 
         self.last_device_state_changed_event_args = None
 
-    async def post_connect(self) -> None:
-        """Run DataPointInventory — mandatory first step in Ble20 protocol."""
-        self._inventory = await self._ble20.inventory()
-        self.base_client._inv = self._inventory
+    async def post_connect(self, inventory: dict | None = None) -> None:
+        """Run DataPointInventory — mandatory first step in Ble20 protocol.
+
+        If inventory is provided and non-empty (coordinator cache), use it
+        directly — saves ~12 s per poll by skipping the BLE exchange.
+        If self._inventory is already populated (persistent ESPHome client
+        reused across polls), also skip the exchange.
+        """
+        if inventory:
+            self._inventory = inventory
+            self.base_client._inv = inventory
+            logger.debug(f"AlbaClient: reusing coordinator inventory ({len(inventory)} DpIds)")
+        elif self._inventory:
+            self.base_client._inv = self._inventory
+            logger.debug(f"AlbaClient: reusing instance inventory ({len(self._inventory)} DpIds)")
+        else:
+            self._inventory = await self._ble20.inventory()
+            self.base_client._inv = self._inventory
         try:
             self.firmware_versions = await self.base_client.get_firmware_version_list_async()
         except Exception:
@@ -79,11 +93,11 @@ class AlbaClient(IAquaCleanClient):
         await self.DeviceIdentification.invoke_async(self, di)
         await self.DeviceInitialOperationDate.invoke_async(self, "")
 
-    async def connect_ble_only(self, device_id: str) -> None:
+    async def connect_ble_only(self, device_id: str, inventory: dict | None = None) -> None:
         """BLE-only connect (used when AlbaClient is constructed directly)."""
         await self._connector.connect_async(device_id)
         if self._connector.arendi_handshake_done:
-            await self.post_connect()
+            await self.post_connect(inventory=inventory)
 
     async def disconnect(self) -> None:
         await self._connector.disconnect()

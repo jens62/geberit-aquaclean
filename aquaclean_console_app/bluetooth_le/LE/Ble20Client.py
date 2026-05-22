@@ -102,7 +102,7 @@ class Ble20Client:
       poll_state()           — read the standard bridge state DpIds
     """
 
-    RECV_TIMEOUT = 15.0
+    RECV_TIMEOUT = 30.0
 
     def __init__(self, connector):
         """
