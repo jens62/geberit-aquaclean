@@ -31,6 +31,11 @@ _CIRCUIT_OPEN_THRESHOLD = 5    # consecutive failures before opening circuit
 _CIRCUIT_OPEN_PROBE_SLEEP = 60  # extra seconds before each probe when circuit is open
 _ESP32_RESTART_SLEEP = 30       # seconds to wait after sending ESP32 restart command
 
+# Alba fast/slow poll split.
+# Fast polls (every cycle) read 13 DpIds (~4.6 s incl. connect) — BLE occupied ~15 % of 30 s.
+# Slow polls (every Nth) read all 99 DpIds (~22 s) for diagnostic/static data.
+_ALBA_SLOW_POLL_EVERY = 10
+
 
 class AquaCleanCoordinator(DataUpdateCoordinator):
     """Polls the AquaClean device on a fixed interval using an on-demand BLE connection.
@@ -100,6 +105,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # (device hardware property) — fetched once on first poll and reused to
         # avoid the ~12 s BLE exchange on every subsequent connect.
         self._alba_inventory: dict = {}
+        # Slow-poll data cache: device identification, full misc state, instanced stats,
+        # profile settings.  Refreshed every _ALBA_SLOW_POLL_EVERY polls; fast polls
+        # read only 9 live-changing DpIds and merge with this cache.
+        self._alba_slow_cache: dict = {}
+        self._alba_poll_num: int = 0
 
         super().__init__(
             hass,
@@ -573,12 +583,34 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         }
 
     async def _build_alba_result(self, client) -> dict:
-        """Phase 2 data fetch for AquaClean Alba (Ble20) devices."""
-        ident = await client.base_client.get_device_identification_async(0)
+        """Phase 2 data fetch for AquaClean Alba (Ble20) devices.
+
+        Fast polls (every cycle): poll_state (4 reads) + fast misc (9 reads) = 13 reads,
+        ~4.6 s total — BLE occupied ~15 % of 30 s interval.
+        Slow polls (every _ALBA_SLOW_POLL_EVERY cycles): full 99-DpId read, ~22 s.
+        """
+        self._alba_poll_num += 1
+        do_slow = not self._alba_slow_cache or (self._alba_poll_num % _ALBA_SLOW_POLL_EVERY == 1)
+
+        # poll_state (4 reads) — always read, it contains the live is_sitting / shower state
         state = await client.base_client.get_system_parameter_list_async([0, 1, 2, 3])
-        misc  = await client.base_client.get_misc_state_async()
-        instanced = await client.base_client.get_instanced_stats_async()
-        profile_settings = await client.base_client.get_stored_profile_settings_async()
+
+        if do_slow:
+            ident            = await client.base_client.get_device_identification_async(0)
+            misc             = await client.base_client.get_misc_state_async()
+            instanced        = await client.base_client.get_instanced_stats_async()
+            profile_settings = await client.base_client.get_stored_profile_settings_async()
+            self._alba_slow_cache = {
+                "ident": ident, "misc": misc,
+                "instanced": instanced, "profile_settings": profile_settings,
+            }
+        else:
+            ident            = self._alba_slow_cache["ident"]
+            instanced        = self._alba_slow_cache["instanced"]
+            profile_settings = self._alba_slow_cache["profile_settings"]
+            # 9 live-changing reads; merge with cached slow fields so all keys are present
+            fast_misc = await client.base_client.get_misc_state_fast_async()
+            misc = {**self._alba_slow_cache["misc"], **fast_misc}
 
         return {
             # Device identification
@@ -696,8 +728,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 client = self._make_local_client(connector)
 
             try:
-                await client.connect_ble_only(self._device_id)
+                if self._device_type == "alba":
+                    await client.connect_ble_only(self._device_id, inventory=self._alba_inventory or None)
+                else:
+                    await client.connect_ble_only(self._device_id)
                 await client.set_stored_profile_setting(setting_id, value)
+                # Profile settings changed — force a slow poll so the cache re-reads them.
+                self._alba_slow_cache = {}
             except ESPHomeConnectionError:
                 self._reset_esphome_connector()
                 raise
@@ -766,7 +803,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 client = self._make_local_client(connector)
 
             try:
-                await client.connect_ble_only(self._device_id)
+                if self._device_type == "alba":
+                    await client.connect_ble_only(self._device_id, inventory=self._alba_inventory or None)
+                else:
+                    await client.connect_ble_only(self._device_id)
                 if command == "toggle_lid":
                     await client.toggle_lid_position()
                 elif command == "toggle_anal_shower":
@@ -836,7 +876,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 client = self._make_local_client(connector)
 
             try:
-                await client.connect_ble_only(self._device_id)
+                if self._device_type == "alba":
+                    await client.connect_ble_only(self._device_id, inventory=self._alba_inventory or None)
+                else:
+                    await client.connect_ble_only(self._device_id)
                 if command == "start_stop_spray_arm_cleaning":
                     await client.start_stop_spray_arm_cleaning(value)
                 elif command == "set_active_intensity":

@@ -37,9 +37,8 @@ BUTTONS: list[tuple[str, str, str]] = [
 _SITTING_REQUIRED = {"toggle_anal_shower", "toggle_lady_shower", "toggle_dryer"}
 
 # Commands not available on AquaClean Alba — entity becomes unavailable when device_type == "alba".
+# toggle_lid and toggle_lady_shower are intentionally NOT here — AlbaClient supports both.
 _MERA_ONLY = {
-    "toggle_lid",
-    "toggle_lady_shower",
     "toggle_dryer",
     "toggle_orientation_light",
     "trigger_flush_manually",

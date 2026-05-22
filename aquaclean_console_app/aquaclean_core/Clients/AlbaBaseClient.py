@@ -218,7 +218,13 @@ class AlbaBaseClient:
         result["user_detection_status"] = await _bool(DpId.DP_USER_DETECTION_STATUS)
         # Time / uptime
         rtc_raw = await _u32(DpId.DP_RTC_TIME)
-        result["rtc_time"] = await _ts(DpId.DP_RTC_TIME) if rtc_raw else None
+        if rtc_raw and rtc_raw > 0:
+            try:
+                result["rtc_time"] = _dt.datetime.fromtimestamp(rtc_raw, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                result["rtc_time"] = str(rtc_raw)
+        else:
+            result["rtc_time"] = None
         op_total = await _u32(DpId.DP_OPERATION_TIME_TOTAL)
         op_up    = await _u32(DpId.DP_OPERATION_TIME_SINCE_POWER_UP)
         result["operation_time_total_s"]        = op_total
@@ -250,6 +256,45 @@ class AlbaBaseClient:
             result["pairing_secret_hex"] = raw_secret.hex() if raw_secret else None
         except Exception:
             result["pairing_secret_hex"] = None
+        return result
+
+    async def get_misc_state_fast_async(self) -> dict:
+        """Read only the 9 fast-changing misc DpIds (~1.8 s, 9 BLE reads).
+
+        Returns a subset of get_misc_state_async() keys.  Caller must merge
+        this result with a cached full misc dict so all expected keys are present.
+        Fields covered: active shower params, spray arm status, descaling status,
+        days until descaling, unaccounted shower cycles, user detection status.
+        """
+        async def _u32(dp_id: DpId) -> Optional[int]:
+            try:
+                raw = await self._ble20.read(int(dp_id))
+                if not raw:
+                    return None
+                return struct.unpack_from('<I', raw)[0] if len(raw) >= 4 else raw[0]
+            except Exception:
+                return None
+
+        _SPRAY_LABELS = {0: "Error", 1: "Disabled", 2: "Ready",
+                         3: "Arm Extending", 4: "Cleaning", 5: "Arm Retracting"}
+        _DESCALING_LABELS = {0: "Idle", 1: "Preparing", 2: "Waiting for descaler",
+                             3: "Running", 4: "Done"}
+        result: dict = {}
+        result["active_intensity"]   = await _u32(DpId.DP_ACTIVE_ANAL_SPRAY_INTENSITY_STATUS)
+        result["active_position"]    = await _u32(DpId.DP_ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS)
+        result["active_temperature"] = await _u32(DpId.DP_ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS)
+        osc = await _u32(DpId.DP_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS)
+        result["active_oscillation"] = None if osc is None else bool(osc)
+        sac = await _u32(DpId.DP_SPRAY_ARM_CLEANING_STATUS)
+        result["spray_arm_cleaning_status_raw"] = sac
+        result["spray_arm_cleaning_status"] = _SPRAY_LABELS.get(sac, str(sac)) if sac is not None else None
+        ds = await _u32(DpId.DP_DESCALING_STATUS)
+        result["descaling_status_raw"] = ds
+        result["descaling_status"] = _DESCALING_LABELS.get(ds, str(ds)) if ds is not None else None
+        result["days_until_next_descaling"] = await _u32(DpId.DP_DAYS_UNTIL_NEXT_DESCALING)
+        result["unaccounted_shower_cycles"] = await _u32(DpId.DP_UNACCOUNTED_SHOWER_CYCLES)
+        ud = await _u32(DpId.DP_USER_DETECTION_STATUS)
+        result["user_detection_status"] = None if ud is None else bool(ud)
         return result
 
     async def get_instanced_stats_async(self) -> dict:
