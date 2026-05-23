@@ -257,14 +257,14 @@ class Ble20Client:
 
         DpIds polled (all optional — silently skipped if device returns an error
         or the DpId is absent from this device's inventory):
-          DP_SENSOR_DISTANCE_STATUS (60)  — user present
+          DP_USER_DETECTION_STATUS  (607) — user present/sitting
           DP_START_STOP_ANAL_SHOWER (563)
           DP_ANAL_SHOWER_STATUS     (564)
           DP_LID_LIFTER_POSITION    (1008)
         """
         from .dp_ids import DpId
         _POLL_IDS = [
-            DpId.DP_SENSOR_DISTANCE_STATUS,
+            DpId.DP_USER_DETECTION_STATUS,
             DpId.DP_START_STOP_ANAL_SHOWER,
             DpId.DP_ANAL_SHOWER_STATUS,
             DpId.DP_LID_LIFTER_POSITION,
@@ -273,8 +273,8 @@ class Ble20Client:
         for dp_id in _POLL_IDS:
             try:
                 result[int(dp_id)] = await self.read(int(dp_id))
-            except Exception:
-                logger.debug(f"Ble20: poll_state DpId={dp_id} unavailable", exc_info=True)
+            except Exception as e:
+                logger.debug(f"Ble20: poll_state DpId={dp_id} unavailable: {e}")
         return result
 
     # ── Device identification ─────────────────────────────────────────────────

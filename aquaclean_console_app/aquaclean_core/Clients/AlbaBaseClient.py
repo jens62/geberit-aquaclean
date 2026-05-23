@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Ble20 DpId → SPL data_array index mapping.
 # Mirrors the index expectations in _fetch_state / _state_changed_timer_elapsed:
-#   index 0 = IsUserSitting       (DP_SENSOR_DISTANCE_STATUS = 60)
+#   index 0 = IsUserSitting       (DP_USER_DETECTION_STATUS = 607)
 #   index 1 = IsDryerRunning      (no dryer on Alba → 0)
 #   index 2 = IsLadyShowerRunning (DP_LADY_SHOWER_STATUS = 872)
 #   index 3 = IsAnalShowerRunning (DP_ANAL_SHOWER_STATUS  = 564)
@@ -38,7 +38,7 @@ _PROFILE_SETTING_DPID: dict[int, DpId] = {
 }
 
 _SPL_DPID: list[Optional[DpId]] = [
-    DpId.DP_SENSOR_DISTANCE_STATUS,   # 0
+    DpId.DP_USER_DETECTION_STATUS,    # 0  — DpId 607; readable on all known Alba devices
     None,                              # 1  dryer — no equivalent
     DpId.DP_LADY_SHOWER_STATUS,        # 2
     DpId.DP_ANAL_SHOWER_STATUS,        # 3

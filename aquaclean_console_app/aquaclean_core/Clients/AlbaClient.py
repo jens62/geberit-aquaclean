@@ -121,7 +121,7 @@ class AlbaClient(IAquaCleanClient):
             return bool(raw and raw[0] != 0)
 
         args = DeviceStateChangedEventArgs(
-            IsUserSitting      = _nonzero(DpId.DP_SENSOR_DISTANCE_STATUS),
+            IsUserSitting      = _nonzero(DpId.DP_USER_DETECTION_STATUS),
             IsAnalShowerRunning= _nonzero(DpId.DP_ANAL_SHOWER_STATUS),
             IsLadyShowerRunning= _nonzero(DpId.DP_LADY_SHOWER_STATUS),
             IsDryerRunning     = False,
