@@ -31,6 +31,7 @@ BUTTONS: list[tuple[str, str, str]] = [
     ("lid_position_offset_decrement", "Lid Position Offset Decrement", "mdi:minus-circle-outline"),
     ("reset_filter_counter",          "Reset Filter Counter",          "mdi:air-purifier"),
     ("sync_rtc",                      "Sync RTC",                      "mdi:clock-check-outline"),
+    ("restart_alba_device",           "Restart Alba Device",           "mdi:restart"),
 ]
 
 # Commands that only work while a user is seated — entity becomes unavailable otherwise.
@@ -53,7 +54,7 @@ _MERA_ONLY = {
 }
 
 # Commands only available on AquaClean Alba — entity becomes unavailable when device_type != "alba".
-_ALBA_ONLY = {"sync_rtc"}
+_ALBA_ONLY = {"sync_rtc", "restart_alba_device"}
 
 # Alba-specific commands that take a value parameter: (command, value, friendly_name, icon)
 ALBA_COMMAND_BUTTONS: list[tuple[str, int, str, str]] = [

@@ -843,6 +843,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.reset_filter_counter()
                 elif command == "sync_rtc":
                     await client.sync_rtc()
+                elif command == "restart_alba_device":
+                    await client.restart_device()
                 else:
                     _LOGGER.warning("Unknown command: %s", command)
             except ESPHomeConnectionError:
