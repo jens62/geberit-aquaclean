@@ -1,11 +1,11 @@
 {
   "domain": "geberit_aquaclean",
   "name": "Geberit AquaClean",
-  "version": "2.4.89b20",
+  "version": "2.4.89b21",
   "documentation": "https://github.com/jens62/geberit-aquaclean",
   "issue_tracker": "https://github.com/jens62/geberit-aquaclean/issues",
   "requirements": [
-    "geberit-aquaclean @ git+https://github.com/jens62/geberit-aquaclean@v2.4.89b20"
+    "geberit-aquaclean @ git+https://github.com/jens62/geberit-aquaclean@v2.4.89b21"
   ],
   "dependencies": [],
   "codeowners": ["@jens62"],
