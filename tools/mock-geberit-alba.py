@@ -976,10 +976,14 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     async def _handshake_loop():
         nonlocal _connected_device_path
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
+        _user_sitting = False
         while True:
             sig_service._arendi = _AriendiServerSide()
             if mode == "ble20":
-                app_handler = _Ble20AppLayer().dispatch  # fresh store per session
+                _ble20_app = _Ble20AppLayer()  # fresh store per session
+                if _user_sitting:
+                    _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
+                app_handler = _ble20_app.dispatch
             # Reset notify subscription state so the next BLE client can subscribe.
             # bluez_peripheral sets _notifying=True in StartNotify() and never resets
             # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
@@ -999,6 +1003,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     print(f"[MockServer] ERROR: {msg}")
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
+
+            _user_sitting = not _user_sitting
+            print(f"[Mock] Next session USER_DETECTION_STATUS → {'1 (sitting)' if _user_sitting else '0 (absent)'}")
 
             # Always force a BlueZ-side disconnect after every session so advertising
             # resumes immediately (< 100 ms) rather than waiting for the supervision
