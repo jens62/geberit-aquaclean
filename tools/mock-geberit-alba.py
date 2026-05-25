@@ -877,9 +877,12 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 print(f"[Mock] BLE client connected:    {addr or path}")
 
         def on_device_disconnected(path, interfaces):
-            nonlocal _connected_device_path
             if 'org.bluez.Device1' in interfaces:
-                _connected_device_path = None
+                # Do NOT clear _connected_device_path here.  The handshake loop
+                # always calls force-disconnect after a session and clears the path
+                # there.  Clearing it here would prevent the force-disconnect when
+                # BlueZ fires the event before the session handler runs (which is
+                # the case when the connection is terminated cleanly by the peer).
                 print(f"[Mock] BLE client disconnected: {path}")
                 # Signal the running arendi session to exit immediately so advertising
                 # resumes right away — without this the frame loop waits 60 s for more
@@ -993,19 +996,24 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
 
-            # If the session ended by the frame-loop idle timeout (5 s of silence after
-            # the last frame), the BLE GATT connection is still alive at the link layer.
-            # On the CONWISE/CSR USB adapter the BLE supervision timeout is ~30 s, so
-            # BlueZ would not resume advertising for 30 s after the session ends —
-            # exactly when the next HACS poll scan starts.  Force a BlueZ-side disconnect
-            # now so advertising resumes immediately (< 100 ms) instead of 30 s later.
+            # Always force a BlueZ-side disconnect after every session so advertising
+            # resumes immediately (< 100 ms) rather than waiting for the supervision
+            # timeout (~30 s on the CONWISE/CSR USB adapter in UTM).
+            #
+            # When the peer disconnected cleanly, BlueZ may have fired InterfacesRemoved
+            # already, in which case call_disconnect() returns NotConnected — caught and
+            # ignored.  When the CONWISE adapter missed the LL_TERMINATE_IND (L2CAP bug),
+            # the BLE link is still alive at the link layer; call_disconnect() terminates
+            # it and advertising resumes within 100 ms.
+            #
+            # _connected_device_path is intentionally NOT cleared by on_device_disconnected
+            # so it is always available here regardless of which path ended the session.
             arendi_just_ran = sig_service._arendi
-            if (
-                not getattr(arendi_just_ran, 'disconnected_by_peer', False)
-                and _connected_device_path is not None
-            ):
+            if _connected_device_path is not None:
                 _path_to_disconnect = _connected_device_path
-                print(f"[Mock] BLE link still alive after session end — forcing BlueZ disconnect: {_path_to_disconnect}")
+                _connected_device_path = None  # clear before attempt — not needed after
+                by_peer = getattr(arendi_just_ran, 'disconnected_by_peer', False)
+                print(f"[Mock] Forcing BlueZ disconnect to resume advertising{' (already disconnected by peer — call may fail)' if by_peer else ''}: {_path_to_disconnect}")
                 try:
                     introspect = await bus.introspect('org.bluez', _path_to_disconnect)
                     proxy = bus.get_proxy_object('org.bluez', _path_to_disconnect, introspect)
@@ -1014,7 +1022,10 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     print("[Mock] Force-disconnect sent; waiting for BlueZ to confirm...")
                     await asyncio.sleep(0.5)
                 except Exception as _e:
-                    print(f"[Mock] Force-disconnect failed: {_e}")
+                    if by_peer:
+                        print(f"[Mock] Force-disconnect on already-disconnected device (expected): {_e}")
+                    else:
+                        print(f"[Mock] Force-disconnect failed: {_e}")
 
             # BlueZ resumes advertising automatically after a BLE disconnect because the
             # advertisement registered at startup remains active.  Calling unregister/
