@@ -621,7 +621,14 @@ class _AriendiServerSide:
                         # the counter it expects.
                         att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
                         for _retry in range(3):
-                            await send_fn(att_frame)
+                            try:
+                                await asyncio.wait_for(send_fn(att_frame), timeout=5.0)
+                            except asyncio.TimeoutError:
+                                print(f"[MockServer] ERROR: send_fn blocked >5 s for cmd=0x{resp[0]:02X}")
+                                print("[Mock]   → BLE notify congestion — too many rapid sends (inventory) saturated the adapter.")
+                                print("[Mock]   → Session aborted to prevent 30 s freeze + cipher desync.")
+                                print("[Mock]   → Restart the ESP32 via ESPHome web UI, then reconnect.")
+                                return False
                             if send_delay_sec > 0:
                                 await asyncio.sleep(send_delay_sec)
                             try:
