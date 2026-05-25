@@ -963,7 +963,6 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     print("Advertising as: Geberit-Alba-Mock")
 
     async def _handshake_loop():
-        nonlocal adv, adv_registered
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         while True:
             sig_service._arendi = _AriendiServerSide()
@@ -1015,40 +1014,13 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 except Exception as _e:
                     print(f"[Mock] Force-disconnect failed: {_e}")
 
-            # After each session BlueZ stops advertising — create a fresh Advertisement
-            # object and register it. Re-using the same instance fails because its DBus
-            # interface (/com/spacecheese/bluez_peripheral/advert0) is still exported
-            # after unregister() — only a new object gets a clean DBus slot.
-            await safe_call(adv, "unregister", bus, adapter_wrapper)
-            await safe_call(adv, "unregister", adapter_wrapper)
-            await safe_call(adv, "unregister", bus)
-            await safe_call(adv, "unregister")
-            adv_registered = False
-            # Unexport the stale D-Bus interface left behind by unregister().
-            # unregister() tells BlueZ to stop advertising but does NOT remove the
-            # ServiceInterface export; the next Advertisement.register() tries to export
-            # at the same path (/com/spacecheese/bluez_peripheral/advert0) and fails
-            # with "An interface with this name is already exported on this bus".
-            try:
-                bus.unexport('/com/spacecheese/bluez_peripheral/advert0', adv)
-            except Exception:
-                pass
-            adv = Advertisement(
-                "Geberit-Alba-Mock",
-                [
-                    "559eb100-2390-11e8-b467-0ed5f89f718b",
-                    "0000fd48-0000-1000-8000-00805f9b34fb"
-                ],
-                appearance=0,
-                timeout=0
-            )
-            try:
-                await adv.register(bus, adapter_wrapper)
-                adv_registered = True
-                print("[Mock] Advertising resumed — ready for next client")
-            except Exception as e:
-                print(f"[Mock] Advertisement re-registration failed: {e}")
-                print("[Mock]   → Normal after a session end — mock retries in ~60 s, no action needed.")
+            # BlueZ resumes advertising automatically after a BLE disconnect because the
+            # advertisement registered at startup remains active.  Calling unregister/
+            # re-register here would race with BlueZ's own resume and cause "Already
+            # Exists" failures, leaving the mock dark for up to 60 s.  Just let BlueZ
+            # do its job.
+            await asyncio.sleep(0.3)
+            print("[Mock] Ready for next client")
 
     server_task = None
     if mode in ("handshake", "ble20"):
