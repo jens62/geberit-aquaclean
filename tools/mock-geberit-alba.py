@@ -971,6 +971,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     print("Advertising as: Geberit-Alba-Mock")
 
     async def _handshake_loop():
+        nonlocal _connected_device_path
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         while True:
             sig_service._arendi = _AriendiServerSide()
