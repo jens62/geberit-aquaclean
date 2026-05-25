@@ -1010,7 +1010,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # Only toggle when a client actually connected and completed a session.
             # Timeouts (no client within 60 s) raise an exception so _session_completed
             # stays False — the sitting state is preserved until the next real poll.
-            if _session_completed:
+            if _session_completed and _completed is not False:
                 _user_sitting = not _user_sitting
                 print(f"[Mock] Next session USER_DETECTION_STATUS → {'1 (sitting)' if _user_sitting else '0 (absent)'}")
 
