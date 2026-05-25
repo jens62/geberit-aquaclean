@@ -359,6 +359,7 @@ class _AriendiServerSide:
     def __init__(self):
         self._rx_buf  = bytearray()
         self._rx_queue: asyncio.Queue = asyncio.Queue()
+        self._srr_queue: asyncio.Queue = asyncio.Queue()
         self._tx_seq  = 0
         self._rx_ack  = 0
         self._tx_cipher: _AesCtrState | None = None
@@ -412,7 +413,8 @@ class _AriendiServerSide:
                 self._rx_queue.put_nowait(('I', ctrl, payload))
             elif (ctrl & 0x03) == 0x03:   # U-frame
                 self._rx_queue.put_nowait(('U', ctrl, payload))
-            # S-frames: discard (no state needed for this simple server)
+            elif (ctrl & 0x03) == 0x01:  # S-frame (RR/RNR) — signal flow control
+                self._srr_queue.put_nowait(ctrl)
 
     # -----------------------------------------------------------------------
     # Frame builders — mirrors of AriendiSecurity
@@ -465,6 +467,15 @@ class _AriendiServerSide:
                 raise TimeoutError("[MockServer] BLE disconnected during handshake")
             if ft == 'I' and payload and payload[0] == expected_type:
                 return payload
+
+    async def _await_s_rr(self, timeout: float = 2.0) -> None:
+        """Wait for the bridge's HDLC S-RR ACK for the last sent I-frame.
+
+        The bridge sends one S-RR per received I-frame (AriendiSecurity line ~387).
+        Waiting here before sending the next frame keeps the AES-CTR counters in
+        sync even when the ESPHome relay occasionally drops a BLE notification.
+        """
+        await asyncio.wait_for(self._srr_queue.get(), timeout=timeout)
 
     # -----------------------------------------------------------------------
     # Handshake + encrypted data exchange
@@ -604,6 +615,14 @@ class _AriendiServerSide:
                         await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
                         if send_delay_sec > 0:
                             await asyncio.sleep(send_delay_sec)
+                        # Wait for bridge S-RR ACK before sending the next frame.
+                        # Without this, a single dropped notification in the ESPHome relay
+                        # path permanently desyncs the AES-CTR counters on both sides,
+                        # causing COBS decode errors on every subsequent frame.
+                        try:
+                            await self._await_s_rr(timeout=2.0)
+                        except asyncio.TimeoutError:
+                            print(f"[MockServer] WARNING: no S-RR for resp cmd=0x{resp[0]:02X} — cipher may desync")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
@@ -617,6 +636,10 @@ class _AriendiServerSide:
                     encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(fake_resp))
                     await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
                     print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
+                    try:
+                        await self._await_s_rr(timeout=2.0)
+                    except asyncio.TimeoutError:
+                        pass
 
             if not new_sabm:
                 return
@@ -956,6 +979,15 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             await safe_call(adv, "unregister", bus)
             await safe_call(adv, "unregister")
             adv_registered = False
+            # Unexport the stale D-Bus interface left behind by unregister().
+            # unregister() tells BlueZ to stop advertising but does NOT remove the
+            # ServiceInterface export; the next Advertisement.register() tries to export
+            # at the same path (/com/spacecheese/bluez_peripheral/advert0) and fails
+            # with "An interface with this name is already exported on this bus".
+            try:
+                bus.unexport('/com/spacecheese/bluez_peripheral/advert0', adv)
+            except Exception:
+                pass
             adv = Advertisement(
                 "Geberit-Alba-Mock",
                 [
