@@ -468,14 +468,29 @@ class _AriendiServerSide:
             if ft == 'I' and payload and payload[0] == expected_type:
                 return payload
 
-    async def _await_s_rr(self, timeout: float = 2.0) -> None:
+    async def _await_s_rr(self, expected_nr: int, timeout: float = 2.0) -> None:
         """Wait for the bridge's HDLC S-RR ACK for the last sent I-frame.
 
-        The bridge sends one S-RR per received I-frame (AriendiSecurity line ~387).
-        Waiting here before sending the next frame keeps the AES-CTR counters in
-        sync even when the ESPHome relay occasionally drops a BLE notification.
+        expected_nr: the N(R) value the bridge should include in its S-RR.
+            When mock sends an I-frame with N(S)=k, _att_i() advances _tx_seq to
+            k+1.  The bridge's ACK has N(R)=k+1 = _tx_seq at call time.
+            S-RRs with a different N(R) are stale (handshake leftovers or
+            pair-delivery pre-queued items) and are discarded.
+
+        Filtering by N(R) prevents stale S-RRs from being consumed as ACKs for
+        later frames.  Without this check, stale S-RRs cause mock to consider a
+        frame "delivered" before the bridge actually received it — BlueZ's
+        notification queue fills up with unconfirmed frames, and a subsequent
+        notification (e.g. DpId=16) arrives at the bridge 30 s late.
         """
-        await asyncio.wait_for(self._srr_queue.get(), timeout=timeout)
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            ctrl = await asyncio.wait_for(self._srr_queue.get(), timeout=remaining)
+            if (ctrl >> 5) & 0x07 == expected_nr:
+                return  # correct ACK — frame confirmed delivered
 
     # -----------------------------------------------------------------------
     # Handshake + encrypted data exchange
@@ -620,6 +635,8 @@ class _AriendiServerSide:
                         # the HDLC N(S) and the ciphertext so the bridge can decrypt it at
                         # the counter it expects.
                         att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
+                        # _att_i() advanced _tx_seq; expected N(R) from bridge = current _tx_seq.
+                        expected_nr = self._tx_seq
                         for _retry in range(3):
                             try:
                                 await asyncio.wait_for(send_fn(att_frame), timeout=5.0)
@@ -632,8 +649,8 @@ class _AriendiServerSide:
                             if send_delay_sec > 0:
                                 await asyncio.sleep(send_delay_sec)
                             try:
-                                await self._await_s_rr(timeout=2.0)
-                                break  # ACK received — frame delivered
+                                await self._await_s_rr(expected_nr, timeout=2.0)
+                                break  # ACK received — frame confirmed delivered
                             except asyncio.TimeoutError:
                                 if _retry < 2:
                                     print(f"[MockServer] WARNING: no S-RR for resp cmd=0x{resp[0]:02X}"
@@ -652,10 +669,12 @@ class _AriendiServerSide:
                         0x00, 0x00,                 # padding (total = 20 bytes)
                     ])
                     encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(fake_resp))
-                    await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
+                    att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
+                    expected_nr = self._tx_seq
+                    await send_fn(att_frame)
                     print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
                     try:
-                        await self._await_s_rr(timeout=2.0)
+                        await self._await_s_rr(expected_nr, timeout=2.0)
                     except asyncio.TimeoutError:
                         pass
 
