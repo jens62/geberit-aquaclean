@@ -969,6 +969,13 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             sig_service._arendi = _AriendiServerSide()
             if mode == "ble20":
                 app_handler = _Ble20AppLayer().dispatch  # fresh store per session
+            # Reset notify subscription state so the next BLE client can subscribe.
+            # bluez_peripheral sets _notifying=True in StartNotify() and never resets
+            # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
+            # second connection, StartNotify() raises "Already notifying" → BlueZ
+            # returns ATT error 0x01 to the ESP32 → "Invalid handle" → poll failure.
+            if notify_char is not None and hasattr(notify_char, '_notifying'):
+                notify_char._notifying = False
             try:
                 _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec)
                 if _completed is not False:
