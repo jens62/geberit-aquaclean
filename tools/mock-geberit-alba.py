@@ -597,10 +597,15 @@ class _AriendiServerSide:
             while True:
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
-                        self._rx_queue.get(), timeout=60.0
+                        self._rx_queue.get(), timeout=5.0
                     )
                 except asyncio.TimeoutError:
-                    print("[MockServer] no more frames after 60 s — exiting frame loop")
+                    # Client went silent — session is over.  Return WITHOUT setting
+                    # disconnected_by_peer so the caller can force a BlueZ-side
+                    # disconnect, which makes advertising resume immediately rather
+                    # than waiting ~30 s for the supervision timeout on the
+                    # CONWISE/CSR USB adapter.
+                    print("[MockServer] no frames for 5 s — ending session to resume advertising")
                     return
 
                 if ft == 'DISCONNECT':
@@ -988,13 +993,12 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
 
-            # If the session ended by timeout (not by the BLE peer closing the link),
-            # the BLE GATT connection is still alive on the ESP32 side.  The ESP32
-            # keeps its advertisement-subscription slot occupied until the link
-            # physically drops, which on some adapters (UTM VM + BlueZ L2CAP pending
-            # update) takes 60 s.  Force-disconnect via BlueZ D-Bus so the link drops
-            # immediately, the device resumes advertising, and the next coordinator
-            # poll can succeed without waiting the full supervision timeout.
+            # If the session ended by the frame-loop idle timeout (5 s of silence after
+            # the last frame), the BLE GATT connection is still alive at the link layer.
+            # On the CONWISE/CSR USB adapter the BLE supervision timeout is ~30 s, so
+            # BlueZ would not resume advertising for 30 s after the session ends —
+            # exactly when the next HACS poll scan starts.  Force a BlueZ-side disconnect
+            # now so advertising resumes immediately (< 100 ms) instead of 30 s later.
             arendi_just_ran = sig_service._arendi
             if (
                 not getattr(arendi_just_ran, 'disconnected_by_peer', False)
@@ -1008,8 +1012,6 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     dev_iface = proxy.get_interface('org.bluez.Device1')
                     await dev_iface.call_disconnect()
                     print("[Mock] Force-disconnect sent; waiting for BlueZ to confirm...")
-                    # Brief pause for on_device_disconnected callback to fire and
-                    # clear _connected_device_path before the next adv re-register.
                     await asyncio.sleep(0.5)
                 except Exception as _e:
                     print(f"[Mock] Force-disconnect failed: {_e}")
