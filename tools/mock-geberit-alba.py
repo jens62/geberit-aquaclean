@@ -503,8 +503,10 @@ class _AriendiServerSide:
                 try:
                     await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE), timeout=60.0)
                 except asyncio.TimeoutError:
-                    print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
-                    return
+                    print("[MockServer] session timed out — no client connected within 60 s")
+                    print("[Mock] If the bridge/HACS was running, the ESP32 BLE scanner may be stuck.")
+                    print("[Mock]   → Restart it via ESPHome web UI (Restart button) — no other action needed.")
+                    return False
                 print("[MockServer] ← SABM")
 
             # 1. UA
@@ -942,8 +944,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             if mode == "ble20":
                 app_handler = _Ble20AppLayer().dispatch  # fresh store per session
             try:
-                await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec)
-                print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
+                _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec)
+                if _completed is not False:
+                    print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1012,6 +1015,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 print("[Mock] Advertising resumed — ready for next client")
             except Exception as e:
                 print(f"[Mock] Advertisement re-registration failed: {e}")
+                print("[Mock]   → Normal after a session end — mock retries in ~60 s, no action needed.")
 
     server_task = None
     if mode in ("handshake", "ble20"):
