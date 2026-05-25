@@ -141,7 +141,7 @@ class _Ble20AppLayer:
         (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
         (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
         (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf; never set — equals 2000-01-01 epoch + OPERATION_TIME_TOTAL)
-        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),                     # DP_NAME
+        (16,  None,  0,  8, 0,         4,          4, b'AcAl'),                      # DP_NAME (truncated: 6-byte "AcAlba" exceeds BLE PDU on CONWISE/CSR adapters)
         (62,  None,  1, 10, 0,         4,          2, b'\x00'),                       # RESET (Command, write-only)
         (83,  None,  1, 10, 0,         1,          2, b'\x00'),                       # START_BOOTLOADER (Command, write-only)
         (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # POWER_SUPPLY_ERROR_STATUS = 0
