@@ -612,17 +612,26 @@ class _AriendiServerSide:
                     responses = await app_handler(plaintext)
                     for resp in responses:
                         encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
-                        await send_fn(self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp))
-                        if send_delay_sec > 0:
-                            await asyncio.sleep(send_delay_sec)
-                        # Wait for bridge S-RR ACK before sending the next frame.
-                        # Without this, a single dropped notification in the ESPHome relay
-                        # path permanently desyncs the AES-CTR counters on both sides,
-                        # causing COBS decode errors on every subsequent frame.
-                        try:
-                            await self._await_s_rr(timeout=2.0)
-                        except asyncio.TimeoutError:
-                            print(f"[MockServer] WARNING: no S-RR for resp cmd=0x{resp[0]:02X} — cipher may desync")
+                        # Build the ATT frame once.  _att_i() advances _tx_seq; calling it
+                        # again on retry would give a new (wrong) sequence number and a new
+                        # (wrong) AES-CTR counter.  Resending the same bytes preserves both
+                        # the HDLC N(S) and the ciphertext so the bridge can decrypt it at
+                        # the counter it expects.
+                        att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
+                        for _retry in range(3):
+                            await send_fn(att_frame)
+                            if send_delay_sec > 0:
+                                await asyncio.sleep(send_delay_sec)
+                            try:
+                                await self._await_s_rr(timeout=2.0)
+                                break  # ACK received — frame delivered
+                            except asyncio.TimeoutError:
+                                if _retry < 2:
+                                    print(f"[MockServer] WARNING: no S-RR for resp cmd=0x{resp[0]:02X}"
+                                          f", retrying ({_retry + 1}/2)…")
+                                else:
+                                    print(f"[MockServer] WARNING: no S-RR after 3 attempts"
+                                          f" for cmd=0x{resp[0]:02X} — frame lost, cipher desynced")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
