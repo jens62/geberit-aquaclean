@@ -991,6 +991,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # returns ATT error 0x01 to the ESP32 → "Invalid handle" → poll failure.
             if notify_char is not None and hasattr(notify_char, '_notifying'):
                 notify_char._notifying = False
+            _completed = None
             try:
                 _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec)
                 if _completed is not False:
@@ -1004,8 +1005,13 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 else:
                     print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
 
-            _user_sitting = not _user_sitting
-            print(f"[Mock] Next session USER_DETECTION_STATUS → {'1 (sitting)' if _user_sitting else '0 (absent)'}")
+            # Only toggle when a client actually connected and completed a session.
+            # Timeouts (no client within 60 s) and errors leave _completed=None and
+            # must NOT toggle — otherwise the sitting state set by the previous real
+            # session is cancelled before HACS can read it.
+            if _completed is not None and _completed is not False:
+                _user_sitting = not _user_sitting
+                print(f"[Mock] Next session USER_DETECTION_STATUS → {'1 (sitting)' if _user_sitting else '0 (absent)'}")
 
             # Always force a BlueZ-side disconnect after every session so advertising
             # resumes immediately (< 100 ms) rather than waiting for the supervision
