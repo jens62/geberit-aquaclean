@@ -66,6 +66,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_name_cache: str | None = None
         self._ble_name_cache: str | None = None
         self.ble_connected_at: datetime | None = None
+        self.ble_state: str = "disconnected"
+        self._ble_connected_sensor = None  # AquaCleanBleConnectedSensor; set in async_added_to_hass
         # Detected device type: "mera" | "alba" | None (unknown, detected on first poll)
         self._device_type: str | None = None
         # Performance statistics
@@ -195,6 +197,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self.last_error_code = None
         self.last_error_hint = None
 
+    def _push_ble_state(self, state: str) -> None:
+        self.ble_state = state
+        if self._ble_connected_sensor is not None:
+            self._ble_connected_sensor.async_write_ha_state()
+
     async def _async_update_data(self) -> dict:
         """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
         if self._unsupported_device:
@@ -270,6 +277,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
         try:
             # ── Phase 1: connect ──────────────────────────────────────────────
+            self._push_ble_state("connecting")
             t_connect = time.perf_counter()
             try:
                 if self._device_type == "alba":
@@ -377,6 +385,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             connect_ms = int((time.perf_counter() - t_connect) * 1000)
             self._last_connect_ms = connect_ms
             self.ble_connected_at = datetime.now(timezone.utc)
+            self._push_ble_state("connected")
 
             if connector.esphome_proxy_name:
                 self._esphome_name_cache = connector.esphome_proxy_name
@@ -483,6 +492,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             self._set_error(E7002)
             raise UpdateFailed(f"{E7002.code} — {E7002.message}: {exc}") from exc
         finally:
+            self._push_ble_state("disconnected")
             if self._esphome_host:
                 try:
                     async with asyncio.timeout(5.0):

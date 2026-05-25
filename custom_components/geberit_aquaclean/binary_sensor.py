@@ -126,6 +126,13 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_ble_connected"
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.coordinator._ble_connected_sensor = self
+
+    async def async_will_remove_from_hass(self) -> None:
+        self.coordinator._ble_connected_sensor = None
+
     @property
     def available(self) -> bool:
         return True  # always show Connected/Disconnected, never Unavailable
@@ -136,7 +143,7 @@ class AquaCleanBleConnectedSensor(AquaCleanEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        return self.coordinator.last_update_success
+        return self.coordinator.ble_state == "connected"
 
     @property
     def extra_state_attributes(self) -> dict:
