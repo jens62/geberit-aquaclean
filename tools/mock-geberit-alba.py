@@ -597,7 +597,7 @@ class _AriendiServerSide:
             while True:
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
-                        self._rx_queue.get(), timeout=5.0
+                        self._rx_queue.get(), timeout=1.0
                     )
                 except asyncio.TimeoutError:
                     # Client went silent — session is over.  Return WITHOUT setting
@@ -605,7 +605,10 @@ class _AriendiServerSide:
                     # disconnect, which makes advertising resume immediately rather
                     # than waiting ~30 s for the supervision timeout on the
                     # CONWISE/CSR USB adapter.
-                    print("[MockServer] no frames for 5 s — ending session to resume advertising")
+                    # Timeout reduced from 5 s to 1 s: inter-frame gaps during active
+                    # sessions are < 250 ms; 1 s is safe.  Earlier force-disconnect
+                    # means advertising resumes 4 s sooner relative to the next scan.
+                    print("[MockServer] no frames for 1 s — ending session to resume advertising")
                     return
 
                 if ft == 'DISCONNECT':
