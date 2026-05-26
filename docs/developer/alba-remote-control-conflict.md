@@ -55,6 +55,52 @@ but the bridge re-takes ownership within 60 seconds.
 | Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — was causing restart to fail, unrelated to deregistration |
 | Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — was wasteful, unrelated to deregistration |
 
+## Investigation Steps — Cheapest First
+
+Before resorting to hardware sniffing, two software-only tests narrow the cause:
+
+### Step 0 — Does v3.0.0 already fix the conflict?
+
+Run the HACS integration at v3.0.0 (`DP_JOIN_DEVICE` removed from the poll path).
+Let it poll for several cycles and check the physical remote.
+
+- **Remote shows no yellow mark** → the conflict is resolved. `DP_JOIN_DEVICE` was
+  the cause; removing it from the poll path fixed it. No further investigation needed.
+- **Remote still shows yellow** → `DP_JOIN_DEVICE` is not the cause. The Arendi KE
+  handshake itself is displacing the remote. Proceed to Step 1.
+
+### Step 1 — Wrong-PIN test (no hardware required)
+
+If Step 0 still shows the conflict, this test determines whether the KE handshake
+alone (without a successful JOIN) is sufficient to displace the remote.
+
+**Procedure:**
+
+1. Confirm the remote is paired and shows no exclamation mark.
+2. On a phone that has **never** connected to this toilet before (fresh install or a
+   second device), open the Geberit Home App.
+3. When prompted for the PIN, enter a **wrong** number (anything other than what is
+   printed on the toilet sticker).
+4. The app fails with a wrong-PIN error — but the Arendi KE handshake already
+   completed successfully before the PIN check.
+5. Check the remote: yellow exclamation mark or not?
+
+**Interpretation:**
+
+- **Remote shows yellow** → KE alone displaces the remote. The bridge (which does KE
+  every poll cycle) is the culprit regardless of JOIN. The PCA10059 sniff (Step 2)
+  is needed to understand the ownership mechanism and define a fix.
+- **Remote stays fine** → a successful JOIN with correct credentials is required to
+  trigger displacement. Since v3.0.0 removed JOIN from the poll path, this means the
+  conflict should already be fixed — recheck Step 0.
+
+**Note:** No BLE traffic capture is needed for this test. The answer is the visual
+state of the remote.
+
+### Step 2 — PCA10059 BLE Sniff (only if Steps 0 and 1 confirm KE is the culprit)
+
+---
+
 ## Investigation Plan — PCA10059 BLE Sniff
 
 The PCA10059 (nRF52840 dongle) flashed with Nordic sniffer firmware + Wireshark
@@ -144,6 +190,16 @@ never needs the PIN.
 
 When a device has a non-default PIN configured it is considered **Protected**. Any
 JOIN attempt without the correct PIN is rejected with `JoinErrorStatus.WrongPairingSecret`.
+
+**Every Alba in the field is Protected.** Users are required to enter the printed
+PIN when connecting the Geberit Home App for the first time. This means every
+shipped device carries a unique per-device PIN — the protocol-spec default `"8645"`
+is not used in production devices.
+
+**The PIN is required on first connect only.** Subsequent app connections do not
+prompt for it. This confirms the PIN is used exclusively in `DP_JOIN_DEVICE`
+(the initial registration step) and plays no role in the Arendi KE handshake on
+ongoing connections.
 
 ### DP_JOIN_DEVICE payload variants
 
