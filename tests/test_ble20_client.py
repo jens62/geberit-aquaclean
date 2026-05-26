@@ -66,6 +66,7 @@ class _MockBle20Server:
     _DEFAULT_STORE = [
         # (dp_id, inst, version, datatype, min_s, max_s, behavior, init_bytes)
         (60,   None, 1, DpType.OffOn,  0, 1,   1, b'\x00'),
+        (607,  None, 1, DpType.OffOn,  0, 1,   1, b'\x00'),   # DP_USER_DETECTION_STATUS
         (563,  None, 1, DpType.OffOn,  0, 1,   2, b'\x00'),
         (564,  None, 1, DpType.Enum,   0, 5,   1, b'\x01'),   # at-rest value = 1
         (1008, None, 1, DpType.Signed, 0, 100, 1, b'\x00\x00\x00\x00'),
@@ -313,19 +314,19 @@ async def _disable_and_check(client: Ble20Client, dp_id: int) -> None:
 
 
 async def test_poll_state():
-    """poll_state() reads the four standard bridge DpIds."""
+    """poll_state() reads the standard bridge state DpIds (607 and 564)."""
     c, client, server = _make()
 
-    async def _serve_four():
-        for _ in range(4):
+    async def _serve_two():
+        for _ in range(2):
             await server.run_once()
 
     poll_task = asyncio.create_task(client.poll_state())
-    srv_task = asyncio.create_task(_serve_four())
+    srv_task = asyncio.create_task(_serve_two())
     results = await asyncio.wait_for(asyncio.gather(poll_task, srv_task), timeout=10.0)
     state = results[0]
 
-    assert 60 in state
+    assert 607 in state
     assert 564 in state
     assert state[564] == b'\x01'
     print(f"  test_poll_state: PASS (state keys: {sorted(state.keys())})")
@@ -344,8 +345,8 @@ async def test_get_device_identification():
     server._store[(8,  None)]  = {'version': 1, 'datatype': 8,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'03')}
     server._store[(9,  None)]  = {'version': 1, 'datatype': 1,  'min_s': 0, 'max_s': 0, 'behavior': 1, 'value': bytearray(b'\x59')}   # 89
 
-    # 10 reads total; server handles them all (ReadError for absent DpIds)
-    _N_READS = 10
+    # 13 reads total; server handles them all (ReadError for absent DpIds)
+    _N_READS = 13
     async def _serve():
         for _ in range(_N_READS):
             await server.run_once()
