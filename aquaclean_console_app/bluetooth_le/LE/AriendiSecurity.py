@@ -483,7 +483,11 @@ class AriendiSecurity:
             raise ValueError(f"AriendiSecurity: EP Response too short ({len(ep)} bytes)")
         nonce1 = ep[1:17]
         nonce2 = ep[17:33]
-        logger.debug(f"AriendiSecurity: ← EP Response nonce1={nonce1.hex()} nonce2={nonce2.hex()}")
+        if len(ep) >= 35:
+            keyset_mask = ep[33] | (ep[34] << 8)
+            logger.debug(f"AriendiSecurity: ← EP Response nonce1={nonce1.hex()} nonce2={nonce2.hex()} keyset_mask=0x{keyset_mask:04X}")
+        else:
+            logger.debug(f"AriendiSecurity: ← EP Response nonce1={nonce1.hex()} nonce2={nonce2.hex()} (no keyset_mask, len={len(ep)})")
 
         # 4. Compute auth_key, generate ephemeral X25519 keypair
         auth_key = _hkdf(ikm=aquacleanBridgeId, salt=nonce1, length=16)

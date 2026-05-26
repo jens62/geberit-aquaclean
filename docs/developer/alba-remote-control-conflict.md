@@ -88,6 +88,59 @@ Do the bridge and remote use different client IDs in their KE Requests? If yes,
 and the toilet stores only one authorised ID, that confirms the single-owner model
 and defines the fix space.
 
+## Keyset Analysis — Android BLE Log (kstr, 2026-05-26)
+
+The `GeberitConnectViaApp.pcapng` capture from the kstr device was COBS-decoded to
+extract the raw Arendi protocol fields.
+
+**EP Response (device → app):**
+- keyset_mask bytes 33–34 = `0x03 0x00` → **keyset_mask = 0x0003**
+- Bit 0 set = keyset 0 supported; Bit 1 set = keyset 1 supported
+- Device advertises **two keysets**: 0 and 1
+
+**KE Request (app → device):**
+- keyset_id byte (final byte before CRC) = **0x00**
+- The official Geberit Android app sends **keyset 0** (`aquacleanBridgeId`)
+- This is identical to the keyset the bridge uses
+
+**What keyset 1 is:**
+Keyset 0 is the shared app/bridge key (`aquacleanBridgeId`). Keyset 1 is almost
+certainly the physical remote control's device-specific key, established during
+physical pairing (NFC touch). The remote uses its own key as HKDF IKM; the device
+validates it against the keyset-1 slot.
+
+**PIN hypothesis — disproven at the Arendi KE layer:**
+The PIN is not used to select or derive a keyset in the Arendi KE handshake. The
+Geberit app uses keyset 0 whether or not a PIN is set on the device. PIN entry happens
+at the application layer (written via a DpId write after encryption is established),
+not in the KE handshake. Using the PIN as HKDF IKM would require implementing
+keyset 1 — and knowing the keyset-1 IKM, which is device-specific and not derivable
+from the PIN.
+
+**Open question:**
+Does the toilet track session ownership **per keyset** (keyset 0 and keyset 1 can
+coexist, owned by different clients simultaneously) or **globally** (only one active
+owner regardless of keyset)?
+
+If per-keyset: bridge (keyset 0) and remote (keyset 1) should be able to coexist, and
+the deregistration must have a different cause.
+If global: bridge's keyset-0 KE every 60 s displaces the remote's keyset-1 registration
+→ confirmed root cause. The PCA10059 sniff is the only way to distinguish these two
+models without guessing.
+
+## DP_JOIN_DEVICE — Paused Pending Remote Conflict Resolution
+
+b23 added application-layer `DP_JOIN_DEVICE` (DpId 543) to `post_connect()`.
+MuusLee confirmed JOIN completes without a PIN. However, calling JOIN on every
+60-second poll cycle is a potential aggravator: if JOIN resets the device's
+application-layer client registry, it could displace the remote's registration
+at the application layer (distinct from the Arendi KE session ownership question).
+
+The JOIN call has been **removed from `post_connect()`** for now. The `join()` method
+in `Ble20Client.py` and the `alba_pin` HACS config field are retained — once the
+remote conflict is understood, JOIN can be re-enabled with appropriate safeguards
+(e.g., one-shot on first poll, not repeated on every cycle).
+
 ## Fix Options (pending sniff confirmation)
 
 | Option | Trade-off |

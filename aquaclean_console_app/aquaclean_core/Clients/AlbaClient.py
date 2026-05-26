@@ -32,8 +32,9 @@ class AlbaClient(IAquaCleanClient):
     and the Arendi handshake must be complete before AlbaClient is instantiated.
     Call post_connect() immediately after construction to run DataPointInventory.
 
-    pin: optional 4-digit PIN printed on the toilet.  When provided, JOIN is
-    attempted during post_connect() to register the bridge as a paired client.
+    pin: optional 4-digit PIN printed on the toilet.  Stored for future use;
+    not currently used in the poll path (JOIN is paused pending investigation
+    of remote-control deregistration conflict — see docs/developer/alba-remote-control-conflict.md).
     """
 
     def __init__(self, connector, pin: str | None = None):
@@ -79,14 +80,6 @@ class AlbaClient(IAquaCleanClient):
         else:
             self._inventory = await self._ble20.inventory()
             self.base_client._inv = self._inventory
-        from aquaclean_console_app.bluetooth_le.LE.dp_ids import DpId as _DpId
-        if int(_DpId.DP_JOIN_DEVICE) in self._inventory:
-            try:
-                result = await self._ble20.join(pin=self._pin, inv=self._inventory)
-                if result != "skipped":
-                    logger.info(f"AlbaClient: JOIN result={result}")
-            except Exception as e:
-                logger.warning(f"AlbaClient: JOIN failed — {e} (continuing without join)")
         try:
             self.firmware_versions = await self.base_client.get_firmware_version_list_async()
         except Exception:
