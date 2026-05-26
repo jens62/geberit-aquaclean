@@ -215,13 +215,16 @@ class AlbaClient(IAquaCleanClient):
         await self.base_client.write_dp_async(int(DpId.DP_START_BOOTLOADER), value)
 
     async def restart_device(self) -> None:
-        await self.base_client.write_dp_async(int(DpId.DP_RESTART), 0)
+        # DP_RESTART is DataPointType.Unused (DataPointCommand) — 0 data bytes.
+        # write_dp_async always encodes ≥1 byte, which triggers InvalidLength.
+        await self.base_client._ble20.write(int(DpId.DP_RESTART), b"")
 
     async def load_profile(self) -> None:
         await self.base_client.write_dp_async(int(DpId.DP_LOAD_PROFILE), 0)
 
     async def start_user_session(self) -> None:
-        await self.base_client.write_dp_async(int(DpId.DP_START_USER_SESSION), 0)
+        # DP_START_USER_SESSION is also DataPointType.Unused — 0 data bytes.
+        await self.base_client._ble20.write(int(DpId.DP_START_USER_SESSION), b"")
     async def start_cleaning_device(self):                self._unsupported("start_cleaning_device")
     async def execute_next_cleaning_step(self):           self._unsupported("execute_next_cleaning_step")
     async def start_lid_position_calibration(self):       self._unsupported("start_lid_position_calibration")
