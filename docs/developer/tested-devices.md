@@ -10,6 +10,7 @@ This document lists every Geberit AquaClean device that has been confirmed to wo
 | Device | Serial / Prefix | GATT Profile | BLE MAC | Tested By | Notes |
 |--------|----------------|--------------|---------|-----------|-------|
 | AquaClean Mera Comfort | HB2304EU298413 | Standard (`3334429d`) | `38:AB:41:2A:0D:67` | Developer (primary device) | All features tested; BLE logs in `local-assets/Bluetooth-Logs/`. DIS: model/serial/hw = `n/a`; fw `BLD 01 1`; sw `APP 10 18` |
+| AquaClean Alba | DIS serial `115946`, SAP `828.860.00.0` | Variant A (`0000fd48` + `559eb` chars) | `E4:85:01:CD:C4:1E` | MuusLee (v3.0.0, 2026-05-26) | DIS hw rev `02`, fw `RS03TS89`, sw `1.14.1 1.2.0`. Full poll cycle working; restart button (dp_id=153) confirmed; known limitation: remote control conflict ([#21](https://github.com/jens62/geberit-aquaclean/issues/21)). |
 
 ---
 
@@ -35,14 +36,14 @@ Geberit devices expose two separate sets of identification data:
 The BLE DIS fields have different meanings across device generations and are **not reliable
 cross-device identifiers**. Confirmed from comparing Mera Comfort vs. Alba DIS reads:
 
-| DIS field | Mera Comfort (`38:AB:41:2A:0D:67`) | Alba kstr (`E4:85:01:CD:6B:04`) |
-|---|---|---|
-| `manufacturer_name` | `Geberit` | `Geberit` |
-| `model_number` | `n/a` | `828.860.00.A` |
-| `serial_number` | `n/a` | `93136` |
-| `firmware_revision` | `BLD 01 1` | `RS03TS89` |
-| `hardware_revision` | `n/a` | `00` |
-| `software_revision` | `APP 10 18` | `1.14.1 1.2.0` |
+| DIS field | Mera Comfort (`38:AB:41:2A:0D:67`) | Alba kstr (`E4:85:01:CD:6B:04`) | Alba MuusLee (`E4:85:01:CD:C4:1E`) |
+|---|---|---|---|
+| `manufacturer_name` | `Geberit` | `Geberit` | `Geberit` |
+| `model_number` | `n/a` | `828.860.00.A` | `828.860.00.0` |
+| `serial_number` | `n/a` | `93136` | `115946` |
+| `firmware_revision` | `BLD 01 1` | `RS03TS89` | `RS03TS89` |
+| `hardware_revision` | `n/a` | `00` | `02` |
+| `software_revision` | `APP 10 18` | `1.14.1 1.2.0` | `1.14.1 1.2.0` |
 
 The Mera Comfort deliberately returns `n/a` for model/serial — Geberit expects those to be read
 via proc `0x82` (GetDeviceIdentification). The Alba does populate them with internal values.
