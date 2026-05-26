@@ -182,7 +182,8 @@ class AlbaClient(IAquaCleanClient):
         await self._ble20.write(DpId.DP_START_STOP_DESCALING, bytes([0x00]))
 
     async def postpone_descaling(self):
-        await self._ble20.write(DpId.DP_DESCALING_UNLOCK_DEVICE, bytes([0x01]))
+        # DP_DESCALING_UNLOCK_DEVICE is DataPointType.Unused (version 0) — 0 data bytes.
+        await self._ble20.write(int(DpId.DP_DESCALING_UNLOCK_DEVICE), b"")
 
     # ── Alba misc commands ────────────────────────────────────────────────────
 
@@ -208,11 +209,16 @@ class AlbaClient(IAquaCleanClient):
 
     # ── Alba dangerous commands (write-only DpIds, excluded from normal UI) ──
 
-    async def reset_device(self, value: int) -> None:
-        await self.base_client.write_dp_async(int(DpId.DP_RESET), value)
+    async def reset_device(self) -> None:
+        # DP_RESET version 0 is DataPointType.Unused — 0 data bytes ("Execute").
+        # Version 1 (Enum 0-4: Settings/Statistic/Log/StatisticAndLog/All) and
+        # version 2 (Enum 0-5, adds BACnetObjects) require instance=1/2 + 1 value byte.
+        await self.base_client._ble20.write(int(DpId.DP_RESET), b"")
 
-    async def start_bootloader(self, value: int) -> None:
-        await self.base_client.write_dp_async(int(DpId.DP_START_BOOTLOADER), value)
+    async def start_bootloader(self) -> None:
+        # DP_START_BOOTLOADER version 0 is DataPointType.Unused — 0 data bytes ("Execute").
+        # Version 1 (Enum 0-1: STM bootloader / Geberit bootloader) requires instance=1 + 1 byte.
+        await self.base_client._ble20.write(int(DpId.DP_START_BOOTLOADER), b"")
 
     async def restart_device(self) -> None:
         # DP_RESTART is DataPointType.Unused (DataPointCommand) — 0 data bytes.
