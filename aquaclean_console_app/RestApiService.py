@@ -34,6 +34,10 @@ class CommonSettingUpdate(BaseModel):
     value: int
 
 
+class AlbaCommandBody(BaseModel):
+    value: int = 0
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -322,6 +326,18 @@ class RestApiService:
         async def get_common_settings():
             return await self._api_mode.get_common_settings()
 
+        # ── Alba-only endpoints ───────────────────────────────────────────────
+        @app.get("/alba/misc-state")
+        async def get_alba_misc_state():
+            return await self._api_mode.get_alba_misc_state()
+
+        @app.get("/alba/instanced-state")
+        async def get_alba_instanced_state():
+            return await self._api_mode.get_alba_instanced_state()
+
+        @app.post("/alba/command/{command}")
+        async def run_alba_command(command: str, body: AlbaCommandBody = AlbaCommandBody()):
+            return await self._api_mode.run_alba_command(command, body.value)
 
         @app.post("/connect")
         async def connect():

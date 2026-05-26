@@ -140,6 +140,8 @@
 
     .info-grid dt { color: var(--muted); white-space: nowrap; }
     .info-grid dd { font-weight: 500; word-break: break-all; }
+    /* div wrappers inside a grid dl must be transparent so dt/dd stay in grid columns */
+    .info-grid .mera-only { display: contents; }
     /* ── User Profile sections ──────────────────────────────────────────── */
     .ps-sections { display:flex; flex-direction:column; gap:0.5rem; }
 
@@ -385,6 +387,39 @@
       color: var(--muted);
       border-top: 1px solid rgba(255,255,255,0.06);
     }
+    /* Hide Mera-Comfort-only elements when an Alba is connected */
+    body.device-alba .mera-only { display: none !important; }
+    /* Hide Alba-only elements when NOT an Alba */
+    .alba-only { display: none !important; }
+    body.device-alba .alba-only { display: revert !important; }
+    /* Collapsible section toggle button */
+    .section-toggle-btn {
+      background: none; border: none; color: var(--muted);
+      font: inherit; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.1em; cursor: pointer; padding: 0;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    /* Misc-state display grid */
+    .misc-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.3rem 1rem;
+      font-size: 0.82rem;
+      margin-top: 0.6rem;
+    }
+    .misc-lbl { color: var(--muted); }
+    .misc-grid span:not(.misc-lbl):not(.misc-group-header) { font-weight: 500; }
+    .misc-group-header {
+      grid-column: 1 / -1;
+      color: var(--accent);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 0.5rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .misc-group-header:first-child { margin-top: 0; border-top: none; }
   </style>
 </head>
 <body>
@@ -431,7 +466,7 @@
         <span class="card-value" id="val-anal">—</span>
       </div>
 
-      <div class="card" id="card-lady">
+      <div class="card mera-only" id="card-lady">
         <!-- Lady wash icon -->
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" fill-rule="evenodd" d="M14.5884683 3.00672057C14.5884683 1.88957261 13.6510881 1 12.5013758 1C11.3493705 1 10.4147419 1.88957261 10.4147419 3.00672057C10.4147419 4.11196052 11.3493705 5.00814869 12.5013758 5.00814869C13.6510881 5.00814869 14.5884683 4.11196052 14.5884683 3.00672057M16.9250396 15.6248031L14.2426832 15.9908642L13.600642 21.6308516L13.5676228 21.6859813C13.5460685 21.870335 13.3828066 22 13.1869841 22L11.8226465 22C11.6309514 22 11.4704411 21.870335 11.4456766 21.6859813L10.8063871 15.9908642L8.12494789 15.6248031L10.8063871 9.49041269L10.8063871 9.46836081C10.8091387 9.44983724 10.8146419 9.41543631 10.8146419 9.37265568C10.8146419 9.28621233 10.7563996 9.19447653 10.6568832 9.14243411L10.4147419 8.99733277L10.4252898 9.0493752C10.4078629 9.0493752 10.3849329 9.04320067 10.3601684 9.04320067C10.2556074 9.04320067 10.1643459 9.11112045 10.1235304 9.19447653L8.50191779 12.8056915L8.47577754 12.8171585C8.42303844 12.9494697 8.28958559 13.0266513 8.15383974 13.0266513C8.09376303 13.0266513 8.06624698 13.0200357 7.99974985 12.9993069L7.23434503 12.6733802C7.10501959 12.6222199 7 12.4969652 7 12.3593615C7 12.3214323 7.00550321 12.2623333 7.03439506 12.2296965L9.90707079 6.05473065L9.83782206 6.10059855C10.007963 5.741153 10.3711749 5.50563898 10.7807054 5.50563898L14.2426832 5.56429697L14.2330526 5.51842907C14.6343284 5.51842907 15.0062536 5.741153 15.1681397 6.10059855L17.9426749 12.1895621L17.9701909 12.2296965C17.9889936 12.2623333 18 12.3068781 18 12.3593615C18 12.4912318 17.9206621 12.6222199 17.7959226 12.6733802L17.0502376 13.0487031L17.0016259 12.9993069C16.9635621 13.0200357 16.8938547 13.0266513 16.8626699 13.0266513C16.7195864 13.0266513 16.5907196 12.9494697 16.5375219 12.8171585L14.878304 9.24034443L14.878304 9.19447653C14.8480364 9.11112045 14.7379722 9.04320067 14.6444176 9.04320067C14.6315768 9.04320067 14.5994747 9.0493752 14.5747102 9.0493752L14.3733845 9.12302846L14.3403652 9.14243411C14.2426832 9.19447653 14.1789377 9.28621233 14.1789377 9.37265568C14.1789377 9.41543631 14.1991162 9.44983724 14.2087468 9.46836081L16.9250396 15.6248031"/>
@@ -440,7 +475,7 @@
         <span class="card-value" id="val-lady">—</span>
       </div>
 
-      <div class="card" id="card-dryer">
+      <div class="card mera-only" id="card-dryer">
         <!-- Air dryer icon -->
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" fill-rule="evenodd" d="M21 2L21 6.0219159L13.7684665 6.0219159L13.8069428 7.0772757C13.8069428 9.88349134 11.6008054 12.1468179 8.89147879 12.1468179C8.72558126 12.1468179 8.57467447 12.1334133 8.40827724 12.1241331L8.40827724 12.1241331L8.34031921 12.1839386L7.10658123 18.5016616L6.26510097 18.2108834L6.238 18.201L5.41356569 22L4.6032257 21.5928465L5.278 17.882L4.60512625 17.6375761L5.42062256 10.6558064C4.50418859 9.7216042 4 8.41568022 4 7.0772757C4 4.29426045 6.20313924 2.02938716 8.89147879 2.02938716L8.89147879 2.02938716L8.91246583 2L21 2ZM8.89147879 4.23136162C7.37991241 4.23136162 6.13468152 5.51769416 6.13468152 7.0772757C6.13468152 8.64974634 7.37991241 9.93092324 8.89147879 9.93092324C10.4275301 9.93092324 11.666265 8.64974634 11.666265 7.0772757C11.666265 5.51769416 10.4275301 4.23136162 8.89147879 4.23136162Z"/>
@@ -461,14 +496,16 @@
       <dt>Serial</dt>          <dd id="info-serial">—</dd>
       <dt>SAP Number</dt>      <dd id="info-sap">—</dd>
       <dt>Production Date</dt> <dd id="info-production">—</dd>
-      <dt>Initial Operation</dt><dd id="info-initial">—</dd>
+      <div class="mera-only"><dt>Initial Operation</dt><dd id="info-initial">—</dd></div>
       <dt>Firmware</dt>        <dd id="info-firmware">—</dd>
       <dt>Cloud firmware</dt>  <dd id="info-cloud-firmware">—</dd>
       <dt>Update available</dt><dd id="info-fw-update">—</dd>
-      <dt>Filter days left</dt>    <dd id="info-filter-days">—</dd>
-      <dt>Last filter reset</dt>   <dd id="info-filter-reset">—</dd>
-      <dt>Next filter change</dt>  <dd id="info-filter-next">—</dd>
-      <dt>Filter resets</dt>       <dd id="info-filter-count">—</dd>
+      <div class="mera-only">
+        <dt>Filter days left</dt>    <dd id="info-filter-days">—</dd>
+        <dt>Last filter reset</dt>   <dd id="info-filter-reset">—</dd>
+        <dt>Next filter change</dt>  <dd id="info-filter-next">—</dd>
+        <dt>Filter resets</dt>       <dd id="info-filter-count">—</dd>
+      </div>
     </dl>
 
     <h2>User Profile</h2>
@@ -511,7 +548,7 @@
       </div>
 
       <!-- 2. Lady Shower -->
-      <div class="ps-section">
+      <div class="ps-section mera-only">
         <div class="ps-section-title">Lady Shower</div>
         <div class="ps-row">
           <span>Water Temperature</span>
@@ -540,7 +577,7 @@
       </div>
 
       <!-- 3. Dryer -->
-      <div class="ps-section">
+      <div class="ps-section mera-only">
         <div class="ps-section-title">Dryer</div>
         <div class="ps-row">
           <span>Dryer</span>
@@ -568,7 +605,7 @@
       </div>
 
       <!-- 4. Orientation Light -->
-      <div class="ps-section">
+      <div class="ps-section mera-only">
         <div class="ps-section-title">Orientation Light</div>
         <div class="ps-row">
           <span>Activation</span>
@@ -601,7 +638,7 @@
       </div>
 
       <!-- 5. Odour Extraction -->
-      <div class="ps-section">
+      <div class="ps-section mera-only">
         <div class="ps-section-title">Odour Extraction</div>
         <div class="ps-row">
           <span>Odour Extraction</span>
@@ -620,7 +657,7 @@
       </div>
 
       <!-- 6. WC Lid -->
-      <div class="ps-section">
+      <div class="ps-section mera-only">
         <div class="ps-section-title">WC Lid</div>
         <div class="ps-row">
           <span>Sensor Sensitivity</span>
@@ -651,7 +688,7 @@
       </div>
 
       <!-- 7. Seat Heating -->
-      <div class="ps-section">
+      <div class="ps-section mera-only">
         <div class="ps-section-title">Seat Heating</div>
         <div class="ps-row">
           <span>Temperature</span>
@@ -667,7 +704,7 @@
 
     <h2>Commands</h2>
     <div class="controls">
-      <button onclick="sendPost('/command/toggle-lid', this)">
+      <button class="mera-only" onclick="sendPost('/command/toggle-lid', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" fill-rule="evenodd" d="M11.6472727 1.69018182L12.6098909 2.3744L5.453 20.4152324L22.9617455 20.4158545C23.1502545 20.4158545 23.3304727 20.4948364 23.4552727 20.6322909C23.5809455 20.7701818 23.6420364 20.9569455 23.6241455 21.1450182L23.6136727 21.2082909L23.1716364 23L22.3246545 22.7914182L22.6946909 21.2885818L1.87272727 21.2885818L1.87272727 22.8957091L1 22.8957091L1 21.1048727C1 20.7248 1.30894545 20.4158545 1.68901818 20.4158545L3.096 20.4152324L1.40669091 19.4453818C1.08901818 19.2621091 0.979054545 18.8554182 1.16145455 18.5381818L10.7165091 1.89352727C10.8077091 1.73512727 10.9608727 1.62254545 11.1362909 1.58370909C11.3121455 1.54530909 11.4980364 1.58414545 11.6472727 1.69018182ZM11.3474909 2.54763636L2.02196364 18.7925818L4.57687273 20.2592L11.5464727 2.68901818L11.3474909 2.54763636ZM22.9617455 19.0186182L22.9617455 19.8913455L6.19883636 19.8913455L6.19883636 19.0186182L22.9617455 19.0186182ZM15.2446545 5.34385455L15.7460364 7.67578182L13.5847273 8.68552727L13.2155636 7.89483636L14.2414545 7.41570909L11.9274182 6.26632727L12.3153455 5.4848L14.6293818 6.63418182L14.3911273 5.52756364L15.2446545 5.34385455ZM6.6112 1.59810909L7.0528 2.35083636L6.07665455 2.92421818L8.48843636 3.85149091L8.17556364 4.66618182L5.76378182 3.73890909L6.10501818 4.81847273L5.27243636 5.08116364L4.55418182 2.8064L6.6112 1.59810909Z"/>
@@ -681,35 +718,35 @@
         </svg>
         Toggle Anal Shower
       </button>
-      <button id="btn-toggle-lady" onclick="sendPost('/command/toggle-lady', this)" disabled title="Requires user to be sitting">
+      <button id="btn-toggle-lady" class="mera-only" onclick="sendPost('/command/toggle-lady', this)" disabled title="Requires user to be sitting">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" fill-rule="evenodd" d="M14.5884683 3.00672057C14.5884683 1.88957261 13.6510881 1 12.5013758 1C11.3493705 1 10.4147419 1.88957261 10.4147419 3.00672057C10.4147419 4.11196052 11.3493705 5.00814869 12.5013758 5.00814869C13.6510881 5.00814869 14.5884683 4.11196052 14.5884683 3.00672057M16.9250396 15.6248031L14.2426832 15.9908642L13.600642 21.6308516L13.5676228 21.6859813C13.5460685 21.870335 13.3828066 22 13.1869841 22L11.8226465 22C11.6309514 22 11.4704411 21.870335 11.4456766 21.6859813L10.8063871 15.9908642L8.12494789 15.6248031L10.8063871 9.49041269L10.8063871 9.46836081C10.8091387 9.44983724 10.8146419 9.41543631 10.8146419 9.37265568C10.8146419 9.28621233 10.7563996 9.19447653 10.6568832 9.14243411L10.4147419 8.99733277L10.4252898 9.0493752C10.4078629 9.0493752 10.3849329 9.04320067 10.3601684 9.04320067C10.2556074 9.04320067 10.1643459 9.11112045 10.1235304 9.19447653L8.50191779 12.8056915L8.47577754 12.8171585C8.42303844 12.9494697 8.28958559 13.0266513 8.15383974 13.0266513C8.09376303 13.0266513 8.06624698 13.0200357 7.99974985 12.9993069L7.23434503 12.6733802C7.10501959 12.6222199 7 12.4969652 7 12.3593615C7 12.3214323 7.00550321 12.2623333 7.03439506 12.2296965L9.90707079 6.05473065L9.83782206 6.10059855C10.007963 5.741153 10.3711749 5.50563898 10.7807054 5.50563898L14.2426832 5.56429697L14.2330526 5.51842907C14.6343284 5.51842907 15.0062536 5.741153 15.1681397 6.10059855L17.9426749 12.1895621L17.9701909 12.2296965C17.9889936 12.2623333 18 12.3068781 18 12.3593615C18 12.4912318 17.9206621 12.6222199 17.7959226 12.6733802L17.0502376 13.0487031L17.0016259 12.9993069C16.9635621 13.0200357 16.8938547 13.0266513 16.8626699 13.0266513C16.7195864 13.0266513 16.5907196 12.9494697 16.5375219 12.8171585L14.878304 9.24034443L14.878304 9.19447653C14.8480364 9.11112045 14.7379722 9.04320067 14.6444176 9.04320067C14.6315768 9.04320067 14.5994747 9.0493752 14.5747102 9.0493752L14.3733845 9.12302846L14.3403652 9.14243411C14.2426832 9.19447653 14.1789377 9.28621233 14.1789377 9.37265568C14.1789377 9.41543631 14.1991162 9.44983724 14.2087468 9.46836081L16.9250396 15.6248031"/>
         </svg>
         Toggle Lady Shower
       </button>
-      <button id="btn-toggle-dryer" onclick="sendPost('/command/toggle-dryer', this)" disabled title="Requires user to be sitting">
+      <button id="btn-toggle-dryer" class="mera-only" onclick="sendPost('/command/toggle-dryer', this)" disabled title="Requires user to be sitting">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" fill-rule="evenodd" d="M21 2L21 6.0219159L13.7684665 6.0219159L13.8069428 7.0772757C13.8069428 9.88349134 11.6008054 12.1468179 8.89147879 12.1468179C8.72558126 12.1468179 8.57467447 12.1334133 8.40827724 12.1241331L8.40827724 12.1241331L8.34031921 12.1839386L7.10658123 18.5016616L6.26510097 18.2108834L6.238 18.201L5.41356569 22L4.6032257 21.5928465L5.278 17.882L4.60512625 17.6375761L5.42062256 10.6558064C4.50418859 9.7216042 4 8.41568022 4 7.0772757C4 4.29426045 6.20313924 2.02938716 8.89147879 2.02938716L8.89147879 2.02938716L8.91246583 2L21 2ZM8.89147879 4.23136162C7.37991241 4.23136162 6.13468152 5.51769416 6.13468152 7.0772757C6.13468152 8.64974634 7.37991241 9.93092324 8.89147879 9.93092324C10.4275301 9.93092324 11.666265 8.64974634 11.666265 7.0772757C11.666265 5.51769416 10.4275301 4.23136162 8.89147879 4.23136162Z"/>
         </svg>
         Toggle Dryer
       </button>
-      <button onclick="sendPost('/command/toggle-orientation-light', this)">
+      <button class="mera-only" onclick="sendPost('/command/toggle-orientation-light', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M12 2a7 7 0 0 1 7 7c0 2.6-1.41 4.88-3.5 6.13V17a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-1.87C6.41 13.88 5 11.6 5 9a7 7 0 0 1 7-7m-2 17h4v1a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-1z"/>
         </svg>
         Toggle Orientation Light
       </button>
-      <button onclick="sendPost('/command/reset-filter-counter', this)">
+      <button class="mera-only" onclick="sendPost('/command/reset-filter-counter', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm-1-11h2v5h-2zm0 6h2v2h-2z"/>
         </svg>
         Reset Filter Counter
       </button>
-      <button onclick="sendPost('/command/trigger-flush-manually', this)">
+      <button class="mera-only" onclick="sendPost('/command/trigger-flush-manually', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M12 2c-5.33 4.55-8 8.48-8 11.8C4 17.78 7.58 22 12 22s8-4.22 8-8.2C20 10.48 17.33 6.55 12 2z"/>
@@ -744,42 +781,42 @@
         </svg>
         Postpone Descaling
       </button>
-      <button onclick="sendPost('/command/start-cleaning-device', this)">
+      <button class="mera-only" onclick="sendPost('/command/start-cleaning-device', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/>
         </svg>
         Start Cleaning
       </button>
-      <button onclick="sendPost('/command/execute-next-cleaning-step', this)">
+      <button class="mera-only" onclick="sendPost('/command/execute-next-cleaning-step', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
         </svg>
         Next Cleaning Step
       </button>
-      <button onclick="sendPost('/command/start-lid-calibration', this)">
+      <button class="mera-only" onclick="sendPost('/command/start-lid-calibration', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
         </svg>
         Start Lid Calibration
       </button>
-      <button onclick="sendPost('/command/lid-offset-increment', this)">
+      <button class="mera-only" onclick="sendPost('/command/lid-offset-increment', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
         </svg>
         Lid Offset +
       </button>
-      <button onclick="sendPost('/command/lid-offset-decrement', this)">
+      <button class="mera-only" onclick="sendPost('/command/lid-offset-decrement', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M19 13H5v-2h14v2z"/>
         </svg>
         Lid Offset −
       </button>
-      <button onclick="sendPost('/command/lid-offset-save', this)">
+      <button class="mera-only" onclick="sendPost('/command/lid-offset-save', this)">
         <span class="spinner"></span>
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="flex-shrink:0">
           <path fill="currentColor" d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3zm3-10H5V5h10v4z"/>
@@ -855,13 +892,13 @@
         <button onclick="queryGet('/data/identification',        this, clearIdentification,    onIdentification)">
           <span class="spinner"></span>Identification
         </button>
-        <button onclick="queryGet('/data/initial-operation-date',this, clearInitialOpDate,     onInitialOpDate)">
+        <button class="mera-only" onclick="queryGet('/data/initial-operation-date',this, clearInitialOpDate,     onInitialOpDate)">
           <span class="spinner"></span>Initial Op Date
         </button>
-        <button onclick="queryGet('/data/soc-versions',          this, clearSocVersions,       onSocVersions)">
+        <button class="mera-only" onclick="queryGet('/data/soc-versions',          this, clearSocVersions,       onSocVersions)">
           <span class="spinner"></span>SOC Versions
         </button>
-        <button onclick="queryGet('/data/statistics-descale',   this, clearStatisticsDescale, onStatisticsDescale)">
+        <button class="mera-only" onclick="queryGet('/data/statistics-descale',   this, clearStatisticsDescale, onStatisticsDescale)">
           <span class="spinner"></span>Descale Statistics
         </button>
         <button onclick="queryGet('/data/anal-shower-state',    this, clearAnalShowerState,   onAnalShowerState)">
@@ -870,10 +907,10 @@
         <button onclick="queryGet('/data/user-sitting-state',   this, clearUserSittingState,  onUserSittingState)">
           <span class="spinner"></span>User Sitting State
         </button>
-        <button onclick="queryGet('/data/lady-shower-state',    this, clearLadyShowerState,   onLadyShowerState)">
+        <button class="mera-only" onclick="queryGet('/data/lady-shower-state',    this, clearLadyShowerState,   onLadyShowerState)">
           <span class="spinner"></span>Lady Shower State
         </button>
-        <button onclick="queryGet('/data/dryer-state',          this, clearDryerState,        onDryerState)">
+        <button class="mera-only" onclick="queryGet('/data/dryer-state',          this, clearDryerState,        onDryerState)">
           <span class="spinner"></span>Dryer State
         </button>
       </div>
@@ -887,10 +924,10 @@
         <span style="color:var(--muted);font-size:0.8rem;margin-left:1.5rem;white-space:nowrap">Query:</span>
         <span id="queryMs" style="font-size:0.8rem;font-weight:500">—</span>
       </div>
-      <dl class="info-grid" id="socVersionsGrid" style="display:none;margin-top:0.75rem">
+      <dl class="info-grid mera-only" id="socVersionsGrid" style="display:none;margin-top:0.75rem">
         <dt>SOC Versions</dt><dd id="info-soc-versions">—</dd>
       </dl>
-      <dl class="info-grid" id="descaleStatsGrid" style="display:none;margin-top:0.75rem">
+      <dl class="info-grid mera-only" id="descaleStatsGrid" style="display:none;margin-top:0.75rem">
         <dt>Days until next descale</dt>      <dd id="ds-days-next">—</dd>
         <dt>Days until shower restricted</dt> <dd id="ds-days-restricted">—</dd>
         <dt>Cycles until confirmation</dt>    <dd id="ds-cycles-confirm">—</dd>
@@ -899,6 +936,176 @@
         <dt>Unposted shower cycles</dt>       <dd id="ds-unposted">—</dd>
       </dl>
     </div>
+
+    <!-- ── Alba-only: Misc Queries ────────────────────────────────────── -->
+    <section class="alba-only" id="albaMiscQueriesSection" style="margin-top:1.5rem">
+      <h2>
+        <button class="section-toggle-btn" onclick="toggleAlbaMiscQueries()">
+          <span id="albaMiscQueriesChevron" style="display:inline-block;transition:transform 0.2s">&#9654;</span>
+          Alba Misc Queries
+        </button>
+      </h2>
+      <div id="albaMiscQueriesPanel" style="display:none">
+        <div class="controls" style="margin-bottom:0.5rem">
+          <button onclick="queryGet('/alba/misc-state', this, clearAlbaMiscState, onAlbaMiscState)">
+            <span class="spinner"></span>Read All
+          </button>
+        </div>
+        <div class="misc-grid" id="albaMiscGrid" style="display:none">
+          <span class="misc-group-header">Active Shower</span>
+          <span class="misc-lbl">Intensity</span>      <span id="am-intensity">—</span>
+          <span class="misc-lbl">Position</span>       <span id="am-position">—</span>
+          <span class="misc-lbl">Temperature</span>    <span id="am-temperature">—</span>
+          <span class="misc-lbl">Oscillation</span>    <span id="am-oscillation">—</span>
+          <span class="misc-group-header">Spray Arm</span>
+          <span class="misc-lbl">Cleaning Status</span><span id="am-spray-arm-cleaning">—</span>
+          <span class="misc-group-header">Descaling</span>
+          <span class="misc-lbl">Status</span>                        <span id="am-desc-status">—</span>
+          <span class="misc-lbl">Days until next</span>               <span id="am-desc-days">—</span>
+          <span class="misc-lbl">Cycles total</span>                  <span id="am-desc-cycles">—</span>
+          <span class="misc-lbl">Credits until next</span>            <span id="am-desc-credits">—</span>
+          <span class="misc-lbl">Lock remaining days</span>           <span id="am-desc-lock-days">—</span>
+          <span class="misc-lbl">Relock remaining cycles</span>       <span id="am-desc-relock-cycles">—</span>
+          <span class="misc-lbl">Lock status</span>                   <span id="am-desc-lock-status">—</span>
+          <span class="misc-lbl">Unaccounted shower cycles</span>     <span id="am-desc-unaccounted">—</span>
+          <span class="misc-lbl">Last descaling</span>                <span id="am-desc-ts-last">—</span>
+          <span class="misc-lbl">Last descaling request</span>        <span id="am-desc-ts-req">—</span>
+          <span class="misc-group-header">User / Time</span>
+          <span class="misc-lbl">User detection</span>   <span id="am-user-detect">—</span>
+          <span class="misc-lbl">RTC Time</span>         <span id="am-rtc-time">—</span>
+          <span class="misc-lbl">Operation time total</span>          <span id="am-op-total">—</span>
+          <span class="misc-lbl">Operation time since boot</span>     <span id="am-op-boot">—</span>
+          <span class="misc-group-header">Errors (0 = OK)</span>
+          <span class="misc-lbl">Power supply</span>     <span id="am-err-psu">—</span>
+          <span class="misc-lbl">Water heater</span>     <span id="am-err-heater">—</span>
+          <span class="misc-lbl">Level control</span>    <span id="am-err-level">—</span>
+          <span class="misc-lbl">User detection</span>   <span id="am-err-user-det">—</span>
+          <span class="misc-lbl">Water pump</span>       <span id="am-err-pump">—</span>
+          <span class="misc-lbl">Spray arm drive</span>  <span id="am-err-spray-arm">—</span>
+          <span class="misc-lbl">Maintenance request</span><span id="am-err-maintenance">—</span>
+          <span class="misc-lbl">Descaling</span>        <span id="am-err-descaling">—</span>
+          <span class="misc-group-header">Modes</span>
+          <span class="misc-lbl">Demo mode</span>            <span id="am-demo-mode">—</span>
+          <span class="misc-lbl">Showroom mode</span>        <span id="am-showroom-mode">—</span>
+          <span class="misc-lbl">Dry run mode</span>         <span id="am-dry-run-mode">—</span>
+          <span class="misc-lbl">Registration level</span>   <span id="am-reg-level">—</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Alba-only: Misc Commands ───────────────────────────────────── -->
+    <section class="alba-only" id="albaMiscCommandsSection" style="margin-top:1rem">
+      <h2>
+        <button class="section-toggle-btn" onclick="toggleAlbaMiscCommands()">
+          <span id="albaMiscCommandsChevron" style="display:inline-block;transition:transform 0.2s">&#9654;</span>
+          Alba Misc Commands
+        </button>
+      </h2>
+      <div id="albaMiscCommandsPanel" style="display:none">
+        <div class="controls" style="flex-direction:column;align-items:flex-start;gap:0.75rem">
+
+          <!-- Spray arm cleaning toggle -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Spray Arm Cleaning:</span>
+            <button onclick="albaCmd('spray-arm-cleaning', 1, this)"><span class="spinner"></span>Start</button>
+            <button onclick="albaCmd('spray-arm-cleaning', 0, this)"><span class="spinner"></span>Stop</button>
+          </div>
+
+          <!-- Active intensity -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Intensity (0–4):</span>
+            <div class="ps-stepper" data-alba-cmd="set-active-intensity" data-min="0" data-max="4">
+              <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+              <span class="ps-step-val">0</span>
+              <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+            </div>
+          </div>
+
+          <!-- Active position -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Position (0–4):</span>
+            <div class="ps-stepper" data-alba-cmd="set-active-position" data-min="0" data-max="4">
+              <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+              <span class="ps-step-val">0</span>
+              <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+            </div>
+          </div>
+
+          <!-- Active temperature -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Temperature (0–5):</span>
+            <div class="ps-stepper" data-alba-cmd="set-active-temperature" data-min="0" data-max="5">
+              <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+              <span class="ps-step-val">0</span>
+              <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+            </div>
+          </div>
+
+          <!-- Active oscillation -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Active Oscillation:</span>
+            <label class="ios-toggle">
+              <input type="checkbox" id="alba-osc-tog" onchange="albaCmd('set-active-oscillation', this.checked?1:0, null)">
+              <span class="ios-toggle-track"></span>
+            </label>
+          </div>
+
+          <!-- Sync RTC -->
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">RTC Clock:</span>
+            <button onclick="albaCmdNoVal('sync-rtc', this)"><span class="spinner"></span>Sync to Browser Time</button>
+          </div>
+
+          <!-- Dangerous commands -->
+          <div style="margin-top:1rem;border:1px solid rgba(244,67,54,0.4);border-radius:8px;padding:0.75rem">
+            <div style="color:#f44336;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin-bottom:0.75rem">
+              ⚠ Dangerous — may cause unexpected device behaviour
+            </div>
+
+            <!-- RESTART -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Restart:</span>
+              <button style="border-color:rgba(244,67,54,0.5)" onclick="albaCmdNoVal('restart', this)"><span class="spinner"></span>Restart Device</button>
+            </div>
+
+            <!-- START_BOOTLOADER -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Start Bootloader (0–1):</span>
+              <div class="ps-stepper" data-alba-cmd="start-bootloader" data-min="0" data-max="1">
+                <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+                <span class="ps-step-val">0</span>
+                <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+              </div>
+            </div>
+
+            <!-- LOAD_PROFILE -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Load Profile:</span>
+              <button style="border-color:rgba(244,67,54,0.5)" onclick="albaCmdNoVal('load-profile', this)"><span class="spinner"></span>Load Profile</button>
+              <span style="color:var(--muted);font-size:0.75rem;font-style:italic">could silently overwrite user profile</span>
+            </div>
+
+            <!-- START_USER_SESSION -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.6rem">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Start User Session:</span>
+              <button style="border-color:rgba(244,67,54,0.5)" onclick="albaCmdNoVal('start-user-session', this)"><span class="spinner"></span>Start User Session</button>
+              <span style="color:var(--muted);font-size:0.75rem;font-style:italic">unknown effect</span>
+            </div>
+
+            <!-- RESET -->
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+              <span style="color:var(--muted);font-size:0.82rem;min-width:11rem">Reset (0–4):</span>
+              <div class="ps-stepper" data-alba-cmd="reset" data-min="0" data-max="4">
+                <button class="ps-step-btn" onclick="albaStepDec(this)">−</button>
+                <span class="ps-step-val">0</span>
+                <button class="ps-step-btn" onclick="albaStepInc(this)">+</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
 
     <section id="sysInfoSection" style="margin-top:1.5rem">
       <h2>
@@ -1078,7 +1285,13 @@
     let _pollEpoch    = null;
     let _pollInterval = null;
 
+    function applyDeviceType(t) {
+      document.body.classList.toggle('device-alba', t === 'alba');
+      document.body.classList.toggle('device-mera', t === 'mera');
+    }
+
     function onStateReceived(state) {
+      if (state.device_type != null) applyDeviceType(state.device_type);
       if (state.poll_interval !== undefined) {
         _pollInterval = state.poll_interval || null;
         const lbl = document.getElementById('pollIntervalLabel');
@@ -1790,6 +2003,138 @@
         btn.classList.remove('loading');
         setTimeout(() => btn.classList.remove('success', 'error'), 2000);
       }
+    }
+
+    // ── Alba misc sections ────────────────────────────────────────────────
+
+    function toggleAlbaMiscQueries() {
+      const panel   = document.getElementById('albaMiscQueriesPanel');
+      const chevron = document.getElementById('albaMiscQueriesChevron');
+      const open    = panel.style.display !== 'none';
+      panel.style.display     = open ? 'none' : '';
+      chevron.style.transform = open ? '' : 'rotate(90deg)';
+    }
+
+    function toggleAlbaMiscCommands() {
+      const panel   = document.getElementById('albaMiscCommandsPanel');
+      const chevron = document.getElementById('albaMiscCommandsChevron');
+      const open    = panel.style.display !== 'none';
+      panel.style.display     = open ? 'none' : '';
+      chevron.style.transform = open ? '' : 'rotate(90deg)';
+    }
+
+    function clearAlbaMiscState() {
+      document.querySelectorAll('#albaMiscGrid span[id^="am-"]').forEach(el => el.textContent = '—');
+      document.getElementById('albaMiscGrid').style.display = 'none';
+    }
+
+    function fmtBool(v) { return v === null || v === undefined ? '—' : (v ? 'Yes' : 'No'); }
+    function fmtSeconds(s) {
+      if (s == null) return '—';
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+    }
+
+    function onAlbaMiscState(d) {
+      const s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = (v == null ? '—' : v); };
+      s('am-intensity',     d.active_intensity   != null ? d.active_intensity   : '—');
+      s('am-position',      d.active_position    != null ? d.active_position    : '—');
+      s('am-temperature',   d.active_temperature != null ? d.active_temperature : '—');
+      s('am-oscillation',   fmtBool(d.active_oscillation));
+      s('am-spray-arm-cleaning', d.spray_arm_cleaning_status || '—');
+      s('am-desc-status',   d.descaling_status   || '—');
+      s('am-desc-days',     d.days_until_next_descaling != null ? d.days_until_next_descaling + ' d' : '—');
+      s('am-desc-cycles',   d.descaling_cycles   != null ? d.descaling_cycles   : '—');
+      s('am-desc-credits',  d.credits_until_next_descaling != null ? d.credits_until_next_descaling : '—');
+      s('am-desc-lock-days',   d.descaling_device_lock_remaining_days != null ? d.descaling_device_lock_remaining_days + ' d' : '—');
+      s('am-desc-relock-cycles', d.descaling_device_relock_remaining_cycles != null ? d.descaling_device_relock_remaining_cycles : '—');
+      s('am-desc-lock-status', d.descaling_device_lock_status || '—');
+      s('am-desc-unaccounted', d.unaccounted_shower_cycles != null ? d.unaccounted_shower_cycles : '—');
+      s('am-desc-ts-last',  d.timestamp_last_descaling         || '—');
+      s('am-desc-ts-req',   d.timestamp_last_descaling_request || '—');
+      s('am-user-detect',   fmtBool(d.user_detection_status));
+      s('am-rtc-time',      d.rtc_time || '—');
+      s('am-op-total',      fmtSeconds(d.operation_time_total_s));
+      s('am-op-boot',       fmtSeconds(d.operation_time_since_power_up_s));
+      s('am-err-psu',       fmtBool(d.error_power_supply));
+      s('am-err-heater',    fmtBool(d.error_water_heater));
+      s('am-err-level',     fmtBool(d.error_level_control));
+      s('am-err-user-det',  fmtBool(d.error_user_detection));
+      s('am-err-pump',      fmtBool(d.error_water_pump));
+      s('am-err-spray-arm', fmtBool(d.error_spray_arm_drive));
+      s('am-err-maintenance', fmtBool(d.error_maintenance_request));
+      s('am-err-descaling', fmtBool(d.error_descaling));
+      s('am-demo-mode',     fmtBool(d.demo_mode));
+      s('am-showroom-mode', fmtBool(d.showroom_mode));
+      s('am-dry-run-mode',  fmtBool(d.dry_run_mode));
+      s('am-reg-level',     d.product_registration_level || '—');
+      document.getElementById('albaMiscGrid').style.display = '';
+    }
+
+    async function albaCmd(command, value, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.classList.remove('success', 'error');
+      }
+      try {
+        const r = await fetch(apiBase + '/alba/command/' + command, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+        if (btn) btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        if (btn) btn.classList.add('error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        }
+      }
+    }
+
+    async function albaCmdNoVal(command, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.classList.remove('success', 'error');
+      }
+      try {
+        const r = await fetch(apiBase + '/alba/command/' + command, { method: 'POST' });
+        if (btn) btn.classList.add(r.ok ? 'success' : 'error');
+      } catch (_) {
+        if (btn) btn.classList.add('error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          setTimeout(() => btn.classList.remove('success', 'error'), 2000);
+        }
+      }
+    }
+
+    function albaStepDec(btn) {
+      const st = btn.closest('.ps-stepper');
+      const valEl = st.querySelector('.ps-step-val');
+      const cur = parseInt(valEl.textContent);
+      const min = parseInt(st.dataset.min);
+      if (isNaN(cur) || cur <= min) return;
+      const newVal = cur - 1;
+      valEl.textContent = newVal;
+      albaCmd(st.dataset.albaCmd, newVal, null);
+    }
+
+    function albaStepInc(btn) {
+      const st = btn.closest('.ps-stepper');
+      const valEl = st.querySelector('.ps-step-val');
+      const cur = parseInt(valEl.textContent);
+      const max = parseInt(st.dataset.max);
+      if (isNaN(cur) || cur >= max) return;
+      const newVal = cur + 1;
+      valEl.textContent = newVal;
+      albaCmd(st.dataset.albaCmd, newVal, null);
     }
   </script>
 </body>

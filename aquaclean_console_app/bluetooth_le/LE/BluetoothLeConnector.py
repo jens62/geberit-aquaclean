@@ -49,6 +49,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     BULK_CHAR_BULK_READ_3_UUID = UUID("3334429d-90f3-4c41-a02d-5cb3a83e0000")
     CCC_UUID = UUID("00002902-0000-1000-8000-00805f9b34fb")
 
+    # Seconds to wait for a BLE advertisement from the target device.
+    # Bridge uses 10 s (circuit breaker: 3 × 10 s = 30 s before ESP32 auto-restart).
+    # Override per-instance (e.g. connector.SCAN_TIMEOUT_S = 45.0) for tools/probes
+    # where the mock's BlueZ advertisement can take 10–15 s to become visible.
+    SCAN_TIMEOUT_S: float = 10.0
+
     def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
         self.client = None
         self.read_characteristics = {}
@@ -79,6 +85,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.ble_dis_info: dict | None = None  # BLE Device Information Service data (0x180a), read after connect
         self.is_variant_a: bool = False       # True when a non-standard Geberit GATT profile is detected
         self._arendi_security = None          # AriendiSecurity instance for Variant A (Alba)
+        self._arendi_raw_write = None         # Chunked ATT_WRITE_REQUEST sender set in _post_connect()
 
     @property
     def arendi_handshake_done(self) -> bool:
@@ -129,17 +136,29 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             # Standalone bridge path: use BleakScanner directly.
             # No habluetooth interception outside of HA OS.
             device = await BleakScanner.find_device_by_address(device_id)
-            if device is None:
-                raise BleakError(f"AquaClean device with address {device_id} not found.")
-            self.device_address = device.address
-            self.device_name = device.name
-            self.rssi = getattr(device, "rssi", None)
-            logger.debug(
-                f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}"
-            )
-            self.client = BleakClient(
-                address_or_ble_device=device, disconnected_callback=self._on_disconnected
-            )
+            if device is not None:
+                self.device_address = device.address
+                self.device_name = device.name
+                self.rssi = getattr(device, "rssi", None)
+                logger.debug(
+                    f"device.address: {device.address}, device.name: {device.name}, rssi: {self.rssi}"
+                )
+                self.client = BleakClient(
+                    address_or_ble_device=device, disconnected_callback=self._on_disconnected
+                )
+            else:
+                # Scan returned nothing — device may not be advertising.
+                # On Linux/BlueZ, BleakClient accepts a raw MAC address and calls
+                # Device1.Connect() directly without a prior scan, as long as the
+                # device object exists in BlueZ's managed objects (previously seen).
+                logger.warning(
+                    f"BLE scan did not find {device_id} advertising — "
+                    f"attempting direct connect by MAC address"
+                )
+                self.device_address = device_id
+                self.device_name = device_id
+                self.rssi = None
+                self.client = BleakClient(device_id, disconnected_callback=self._on_disconnected)
             await self.client.connect()
 
         self.last_esphome_api_ms = None  # No ESP32 proxy
@@ -406,18 +425,20 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         address_type = 0  # Default to PUBLIC (0) if not present in advertisement
 
         total_packets = 0
+        seen_addresses: dict[int, int] = {}  # addr_int -> packet count (for timeout diagnostics)
 
         def on_raw_advertisements(resp):
             nonlocal device_name, address_type, total_packets
             total_packets += len(resp.advertisements)
             for adv in resp.advertisements:
+                seen_addresses[adv.address] = seen_addresses.get(adv.address, 0) + 1
                 if adv.address == mac_int:
                     device_name = self._parse_local_name(bytes(adv.data))
                     address_type = getattr(adv, 'address_type', 0)
                     self.rssi = getattr(adv, 'rssi', None)
                     found_event.set()
 
-        logger.silly(f"Scanning for BLE device {device_id} (mac_int={mac_int})")
+        logger.debug(f"Scanning for BLE device {device_id} (mac_int={mac_int:#014x})")
         unsub_adv = api.subscribe_bluetooth_le_raw_advertisements(on_raw_advertisements)
         # Store immediately so that disconnect_ble_only() / disconnect() can unsubscribe
         # even if this coroutine is cancelled (e.g. SIGTERM during the scan window).
@@ -426,7 +447,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # is allowed at a time".
         self._esphome_unsub_adv = unsub_adv
         try:
-            await asyncio.wait_for(found_event.wait(), timeout=10.0)
+            await asyncio.wait_for(found_event.wait(), timeout=self.SCAN_TIMEOUT_S)
             logger.debug(
                 f"Found BLE device {device_id}: name={device_name or 'Unknown'}, "
                 f"address_type={address_type}"
@@ -434,6 +455,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except asyncio.TimeoutError:
             unsub_adv()
             self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
+            # Log unique addresses seen — helps diagnose MAC format mismatches or missing advertisements
+            top = sorted(seen_addresses.items(), key=lambda x: -x[1])[:8]
+            addr_strs = ", ".join(f"{a:#014x}({c})" for a, c in top)
+            logger.warning(
+                f"BLE scan timeout: target={mac_int:#014x}, "
+                f"unique_addresses={len(seen_addresses)}, "
+                f"top_seen=[{addr_strs}]"
+            )
             hint = (
                 "scanner may be stuck or subscription slot in use"
                 if total_packets == 0
@@ -441,7 +470,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             )
             raise ESPHomeDeviceNotFoundError(
                 f"AquaClean device {device_id} not found via ESPHome proxy at {self.esphome_host} "
-                f"(received {total_packets} total BLE advertisement packet(s) during 10 s scan — {hint})"
+                f"(received {total_packets} total BLE advertisement packet(s) during "
+                f"{self.SCAN_TIMEOUT_S:.0f} s scan — {hint})"
             )
         # Advertisement subscription intentionally kept alive until BLE connect completes.
         # Calling unsub_adv() before bluetooth_device_connect() sends
@@ -527,7 +557,11 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         Stores results in self.ble_dis_info as a dict with keys like
         manufacturer_name, model_number, serial_number, firmware_revision.
         Silently skips on any error (DIS absent or read_gatt_char not supported).
+        ESPHomeAPIClient does not implement read_gatt_char — DIS reads are skipped.
         """
+        if not hasattr(self.client, 'read_gatt_char'):
+            logger.debug("_read_device_information: read_gatt_char not available (ESPHome path) — skipping DIS reads")
+            return
         DIS_SVC = "0000180a-0000-1000-8000-00805f9b34fb"
         CHARS = {
             "00002a29-0000-1000-8000-00805f9b34fb": "manufacturer_name",
@@ -573,12 +607,51 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.BULK_CHAR_BULK_READ_2_UUID: self.data_received,
                 self.BULK_CHAR_BULK_READ_3_UUID: self.data_received,
             }
-            await self._list_services()
+            # Subscribe to the Variant A notify characteristic directly rather than
+            # going through _list_services() service-UUID matching.  _list_services()
+            # silently finds nothing when the UUID string format returned by
+            # ESPHomeGATTServiceCollection differs from str(self.SERVICE_UUID),
+            # leaving notifications unsubscribed and the Arendi handshake stuck.
+            notify_uuid_str = str(self.BULK_CHAR_BULK_READ_0_UUID)
+            if hasattr(self.client, 'stop_notify'):
+                try:
+                    await self.client.stop_notify(notify_uuid_str)
+                except Exception:
+                    pass
+            await self.client.start_notify(notify_uuid_str, self._on_data_received)
+            self._subscribed_characteristics.append(self.BULK_CHAR_BULK_READ_0_UUID)
+            logger.debug(f"Alba notify subscribed: {notify_uuid_str}")
+            if hasattr(self.client, '_acquire_mtu'):
+                try:
+                    await self.client._acquire_mtu()
+                except Exception as e:
+                    logger.debug(f"Alba MTU negotiation failed, using default: {e}")
+            # max_write_without_response_size is the bleak-recommended way to get the
+            # write payload limit without triggering the BlueZ mtu_size warning.
+            # ESPHomeGATTServiceCollection has no get_characteristic() — fall back to 20.
+            chunk_size = 20
+            try:
+                write_char = self.client.services.get_characteristic(self.BULK_CHAR_BULK_WRITE_0_UUID)
+                if write_char is not None:
+                    chunk_size = write_char.max_write_without_response_size
+            except AttributeError:
+                pass
+            logger.debug(f"Alba write chunk size: {chunk_size} bytes")
             async def _raw_write(att_bytes: bytes):
-                await self.client.write_gatt_char(
-                    self.BULK_CHAR_BULK_WRITE_0_UUID, att_bytes, response=False
-                )
+                # Fragment into ATT MTU-sized chunks — the device may negotiate
+                # a smaller MTU than the mock; COBS reassembles on the far end.
+                n = (len(att_bytes) + chunk_size - 1) // chunk_size
+                if n > 1:
+                    logger.debug(f"Alba write {len(att_bytes)} bytes → {n} chunks of ≤{chunk_size}")
+                for off in range(0, len(att_bytes), chunk_size):
+                    await self.client.write_gatt_char(
+                        self.BULK_CHAR_BULK_WRITE_0_UUID,
+                        att_bytes[off:off + chunk_size],
+                        response=False,
+                    )
+            self._arendi_raw_write = _raw_write
             await self._arendi_security.perform_handshake(_raw_write)
+            self._arendi_security._ack_send_fn = _raw_write
             self.connection_status_changed_handlers(self, True, self.device_address, self.device_name)
             return
         self.read_characteristics = {
@@ -601,8 +674,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         else:
             logger.silly('1. in subscribe 1: connected.')
 
+        svc_uuids = [s.uuid for s in self.client.services]
+        logger.debug(f"_list_services: looking for {self.SERVICE_UUID} in {svc_uuids}")
+        matched = False
         for service in self.client.services:
             if service.uuid == str(self.SERVICE_UUID):
+                matched = True
                 for characteristic in service.characteristics:
                     logger.silly(f"got characteristic.uuid {characteristic.uuid}")
                     if characteristic.uuid in str(self.read_characteristics):
@@ -624,14 +701,19 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                                 logger.debug(f"Preemptive stop_notify failed (expected if not notifying): {characteristic.uuid}: {type(_stop_exc).__name__}: {_stop_exc}")
                         await self.client.start_notify(characteristic, self._on_data_received)
                         self._subscribed_characteristics.append(characteristic)
+        if not matched:
+            logger.debug(f"_list_services: service {self.SERVICE_UUID} not found — no notifications subscribed")
 
 
     async def _on_data_received(self, sender, data):
         logger.silly("BluetoothLeConnector: _on_data_received")
         logger.silly(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
+        _hs_done = self._arendi_security.handshake_done if self._arendi_security else None
+        logger.debug(f"BluetoothLeConnector: _on_data_received arendi={self._arendi_security is not None} handshake_done={_hs_done} len={len(data)}")
 
         if self._arendi_security is not None:
             decrypted_list = self._arendi_security.feed_att_bytes(bytes(data))
+            logger.debug(f"BluetoothLeConnector: _on_data_received → {len(decrypted_list)} plaintext payload(s)")
             for payload in decrypted_list:
                 await self.data_received_handlers.invoke_async(payload)
         else:
@@ -648,7 +730,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         logger.silly(f"Sending data to characteristic {self.BULK_CHAR_BULK_WRITE_0_UUID} data: {''.join(f'{b:02X}' for b in data)}")
         if self._arendi_security is not None and self._arendi_security.handshake_done:
             att_bytes = self._arendi_security.wrap_for_send(data)
-            await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, att_bytes, response=False)
+            await self._arendi_raw_write(att_bytes)
         else:
             result = await self.client.write_gatt_char(self.BULK_CHAR_BULK_WRITE_0_UUID, data)
             logger.silly(f"result: {result}")
@@ -755,6 +837,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         # Reset Arendi Security state — fresh handshake required on every BLE connect.
         self._arendi_security = None
+        self._arendi_raw_write = None
 
         # Do NOT reset self._esphome_api or esphome_proxy_connected — TCP stays alive.
 
@@ -775,7 +858,32 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     logger.debug(f"[disconnect] stop_notify FAILED: {char.uuid}: {type(e).__name__}: {e}")
             self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
-            await self.client.disconnect()
+            if self.esphome_host:
+                # ESPHome path: BLE close first (keep TCP alive), then unsub_adv, then TCP close.
+                # unsub_adv() must be called AFTER BLE teardown (trap 7 — calling it while BLE is
+                # active causes the ESP32 to abort the BLE connection immediately) but BEFORE
+                # api.disconnect() closes TCP (otherwise the UnsubscribeBluetoothLEAdvertisementsRequest
+                # frame is never delivered, the ESP32 retains the subscription slot, and the next
+                # connect attempt within ~60–90 s gets "Only one API subscription is allowed at a time").
+                await self.client.disconnect(close_api=False)
+                if self._esphome_unsub_adv is not None:
+                    try:
+                        self._esphome_unsub_adv()
+                        # Yield to let the event loop flush the
+                        # UnsubscribeBluetoothLEAdvertisementsRequest frame to TCP before
+                        # api.disconnect() closes the connection (trap 12 — flush race).
+                        await asyncio.sleep(0.1)
+                    except Exception:
+                        pass
+                    self._esphome_unsub_adv = None
+                if self._esphome_api is not None:
+                    try:
+                        await self._esphome_api.disconnect()
+                        logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection")
+                    except Exception as e:
+                        logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
+            else:
+                await self.client.disconnect()
             # Release the BleakClient so Python GC can close its D-Bus MessageBus.
             # bleak's internal GC cycles (MessageBus ↔ signal handlers) require the
             # cyclic collector — gc.collect() runs it immediately instead of waiting
@@ -797,9 +905,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 except Exception as e:
                     logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
 
-        # Unsubscribe from BLE advertisements now that BLE is fully torn down.
-        # Must NOT be called while BLE is active — the UnsubscribeBluetoothLEAdvertisementsRequest
-        # causes the ESP32 to disconnect any active BLE client (see CLAUDE.md trap 7).
+        # Fallback: unsubscribe from BLE advertisements if not already done above.
+        # For the ESPHome path this is normally a no-op (cleared in the if-branch above).
+        # For the local-BLE path _esphome_unsub_adv is always None.
         if self._esphome_unsub_adv is not None:
             try:
                 self._esphome_unsub_adv()
@@ -809,6 +917,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
         # Reset Arendi Security state so the next connect gets a fresh handshake
         self._arendi_security = None
+        self._arendi_raw_write = None
 
         # Reset ESP32 proxy connection state
         if self.esphome_host:

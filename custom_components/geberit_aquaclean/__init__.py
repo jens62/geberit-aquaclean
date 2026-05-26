@@ -1,6 +1,7 @@
 """Geberit AquaClean integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 
@@ -59,6 +60,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = AquaCleanCoordinator(hass, entry)
+    # Give the ESP32 time to fully release its BLE advertisement subscription slot
+    # from the config-flow connection test before the coordinator fires its first poll.
+    # Without this, the ESP32 may still hold the slot (~100–200 ms after TCP close),
+    # causing "Only one API subscription is allowed at a time" on the first poll.
+    await asyncio.sleep(3.0)
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

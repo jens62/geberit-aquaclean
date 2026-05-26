@@ -210,7 +210,7 @@ tail -f /var/log/aquaclean/aquaclean.log
 | Device | Status | Firmware |
 |--------|--------|---------|
 | Geberit AquaClean Mera Comfort | ✅ Confirmed working | • RS28.0 TS199<br>• RS30.0 TS206 ([@Kiana321](https://github.com/Kiana321), [#12](https://github.com/jens62/geberit-aquaclean/issues/12#issuecomment-4319550984)) |
-| Geberit AquaClean Alba | 🚧 Work in progress ([#19](https://github.com/jens62/geberit-aquaclean/issues/19)) | Unknown |
+| Geberit AquaClean Alba | ✅ Supported via HACS integration (known limitation: [remote control conflict #21](https://github.com/jens62/geberit-aquaclean/issues/21)) | RS03.0 TS89 |
 
 ---
 
@@ -277,6 +277,7 @@ The web UI also has a one-click toggle button.  See [docs/modes.md](docs/modes.m
 ## References
 
 - [Geberit AquaClean Mera Comfort — Service Manual (PDF)](https://cdn.data.geberit.com/documents-a6/972.447.00.0_00-A6.pdf)
+- [Geberit AquaClean Alba — Service Manual (PDF)](https://cdn.data.geberit.com/documents/971.794.00.0_00.pdf)
 
 ---
 

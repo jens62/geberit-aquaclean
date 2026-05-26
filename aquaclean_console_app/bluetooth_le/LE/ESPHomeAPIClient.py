@@ -182,9 +182,11 @@ class ESPHomeAPIClient:
 
     async def _notification_worker(self):
         """Process notifications sequentially to avoid FrameCollector deadlock."""
+        logger.debug("[ESPHomeAPIClient] notification_worker: started")
         while self._is_connected:
             try:
                 callback_fn, char_wrapper, data = await self._notify_queue.get()
+                logger.debug(f"[ESPHomeAPIClient] notification_worker: dequeued handle=0x{char_wrapper.handle:04x} len={len(data)}")
                 result = callback_fn(char_wrapper, data)
                 if asyncio.iscoroutine(result):
                     await result
@@ -192,6 +194,7 @@ class ESPHomeAPIClient:
                 break
             except Exception as e:
                 logger.error(f"[ESPHomeAPIClient] Error in notification worker: {e}")
+        logger.debug("[ESPHomeAPIClient] notification_worker: exited (_is_connected=False or cancelled)")
 
     async def _fetch_services(self):
         """Fetch GATT services and build UUID↔handle mappings."""
@@ -304,6 +307,7 @@ class ESPHomeAPIClient:
                 # FrameCollector uses threading.Lock across await points, so
                 # concurrent notification tasks would deadlock.
                 char_wrapper = ESPHomeGATTCharacteristic(uuid=uuid, handle=handle, properties=0x10)
+                logger.debug(f"[ESPHomeAPIClient] on_notify: enqueuing handle=0x{handle:04x} len={len(data)}")
                 self._notify_queue.put_nowait((callback_fn, char_wrapper, data))
             else:
                 logger.warning(f"[ESPHomeAPIClient] No callback registered for handle 0x{handle:04x}")
@@ -413,8 +417,26 @@ class ESPHomeAPIClient:
 
         if not self._is_connected:
             logger.silly("[ESPHomeAPIClient] Already disconnected")
+            # Still cancel the connection-state callback even when BLE is already down.
+            # Skipping this leaves the callback registered; the ESP32 never learns that
+            # the subscriber is gone and retains the advertisement subscription slot,
+            # causing "Only one API subscription is allowed at a time" on the next
+            # connect attempt within ~60–90 s (trap 12 variant).
+            if self._cancel_connection:
+                try:
+                    self._cancel_connection()
+                except Exception:
+                    pass
+                self._cancel_connection = None
+            if close_api and self._api is not None:
+                try:
+                    await self._api.disconnect()
+                    logger.debug("[ESPHomeAPIClient] Disconnected from ESP32 API (was already BLE-disconnected)")
+                except Exception as e:
+                    logger.debug(f"[ESPHomeAPIClient] ESP32 API disconnect: {e}")
             return
 
+        ble_confirmed_disconnect = False
         try:
             # Stop notification worker
             if self._notify_worker_task:
@@ -434,7 +456,26 @@ class ESPHomeAPIClient:
 
             # Disconnect from BLE device
             await self._api.bluetooth_device_disconnect(self._mac_int)
-            logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address}")
+
+            # Wait for the ESP32 to confirm BLE disconnect via on_bluetooth_connection_state
+            # (connected=False).  Without this wait, closing the TCP connection immediately
+            # after the disconnect request races with the ESP32's BLE teardown — the TCP
+            # close wins, the ESP32 never processes the request, and the BLE GATT session
+            # stays alive as an orphan.  Subsequent probe/bridge runs then find the device
+            # still connected (not advertising) and cannot establish a new session.
+            for _ in range(50):  # up to 5 s
+                if not self._is_connected:
+                    ble_confirmed_disconnect = True
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                logger.warning(
+                    f"[ESPHomeAPIClient] BLE disconnect not confirmed by ESP32 within 5 s "
+                    f"for {self._mac_address} — closing API anyway"
+                )
+
+            logger.debug(f"[ESPHomeAPIClient] Disconnected from {self._mac_address} "
+                         f"(confirmed={ble_confirmed_disconnect})")
         except Exception as e:
             logger.warning(f"[ESPHomeAPIClient] Error during BLE disconnect: {e}")
         finally:
@@ -454,8 +495,10 @@ class ESPHomeAPIClient:
             else:
                 logger.debug("[ESPHomeAPIClient] Keeping ESP32 API TCP connection alive (close_api=False)")
 
-            # Invoke disconnected callback
-            if self._disconnected_callback:
+            # Invoke disconnected callback only if on_bluetooth_connection_state did not
+            # already call it (ble_confirmed_disconnect == True means that path already ran
+            # the callback).
+            if not ble_confirmed_disconnect and self._disconnected_callback:
                 try:
                     self._disconnected_callback(self)
                 except Exception as e:

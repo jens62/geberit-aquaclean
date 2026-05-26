@@ -10,6 +10,9 @@ from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity
 
+# Profile setting IDs that only exist on Mera Comfort — unavailable on Alba.
+_MERA_ONLY_PROFILE_IDS: frozenset[int] = frozenset({0, 3, 5, 7, 8, 9, 13})
+
 # (data_key, setting_id, friendly_name, min_value, max_value, icon)
 # Ranges confirmed from Profile-Settings.xlsx.
 PROFILE_NUMBERS: list[tuple] = [
@@ -24,6 +27,15 @@ PROFILE_NUMBERS: list[tuple] = [
     ("ps_dryer_spray_intensity",  13, "Dryer Spray Intensity", 0, 4, "mdi:hair-dryer"),
     ("ps_odour_extraction",     0, "Odour Extraction",      0, 1, "mdi:air-filter"),
     ("ps_oscillator_state",     1, "Oscillator State",      0, 1, "mdi:rotate-360"),
+]
+
+# (data_key, command, friendly_name, min_value, max_value, icon)
+# Live (active) setting sliders — only available on Alba; write takes effect immediately.
+ALBA_ACTIVE_NUMBERS: list[tuple] = [
+    ("alba_active_intensity",   "set_active_intensity",   "Active Spray Intensity",   0, 4, "mdi:water-boiler"),
+    ("alba_active_position",    "set_active_position",    "Active Spray Position",    0, 4, "mdi:arrow-left-right"),
+    ("alba_active_temperature", "set_active_temperature", "Active Water Temperature", 0, 5, "mdi:thermometer-water"),
+    ("alba_active_oscillation", "set_active_oscillation", "Spray Arm Oscillation",    0, 1, "mdi:rotate-360"),
 ]
 
 # (data_key, setting_id, friendly_name, min_value, max_value, icon)
@@ -53,6 +65,11 @@ async def async_setup_entry(
         AquaCleanCommonNumber(coordinator, entry, data_key, setting_id, name, min_val, max_val, icon)
         for data_key, setting_id, name, min_val, max_val, icon in COMMON_NUMBERS
     ]
+    # Alba live-setting sliders — only available when device_type == "alba"
+    entities += [
+        AlbaActiveNumber(coordinator, entry, data_key, command, name, min_val, max_val, icon)
+        for data_key, command, name, min_val, max_val, icon in ALBA_ACTIVE_NUMBERS
+    ]
     async_add_entities(entities)
 
 
@@ -81,6 +98,13 @@ class AquaCleanProfileNumber(AquaCleanEntity, NumberEntity):
         self._attr_icon = icon
         self._attr_native_min_value = float(min_value)
         self._attr_native_max_value = float(max_value)
+
+    @property
+    def available(self) -> bool:
+        if self._setting_id in _MERA_ONLY_PROFILE_IDS:
+            if (self.coordinator.data or {}).get("device_type") == "alba":
+                return False
+        return super().available
 
     @property
     def native_value(self) -> float | None:
@@ -119,10 +143,58 @@ class AquaCleanCommonNumber(AquaCleanEntity, NumberEntity):
         self._attr_native_max_value = float(max_value)
 
     @property
+    def available(self) -> bool:
+        if (self.coordinator.data or {}).get("device_type") == "alba":
+            return False
+        return super().available
+
+    @property
     def native_value(self) -> float | None:
         val = (self.coordinator.data or {}).get(self._data_key)
         return float(val) if val is not None else None
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_common_setting(self._setting_id, int(value))
+        await self.coordinator.async_request_refresh()
+
+
+class AlbaActiveNumber(AquaCleanEntity, NumberEntity):
+    """Writable live (active) setting for AquaClean Alba — takes effect during the current session."""
+
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_step = 1.0
+
+    def __init__(
+        self,
+        coordinator: AquaCleanCoordinator,
+        entry: ConfigEntry,
+        data_key: str,
+        command: str,
+        name: str,
+        min_value: float,
+        max_value: float,
+        icon: str,
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._data_key = data_key
+        self._command = command
+        self._attr_unique_id = f"{entry.entry_id}_{data_key}_active"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_min_value = float(min_value)
+        self._attr_native_max_value = float(max_value)
+
+    @property
+    def available(self) -> bool:
+        return (self.coordinator.data or {}).get("device_type") == "alba" and super().available
+
+    @property
+    def native_value(self) -> float | None:
+        val = (self.coordinator.data or {}).get(self._data_key)
+        if val is None:
+            return None
+        return float(val)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_execute_alba_command(self._command, int(value))
         await self.coordinator.async_request_refresh()

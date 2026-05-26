@@ -6,6 +6,7 @@ haggis/
 # Private protocol analysis reports — contain sensitive material, must not be published
 docs/developer/alba-protocol-analysis.md
 docs/developer/alba-ble20-protocol.md
+docs/developer/alba-bridge-integration.md
 
 # Arendi Security capture parser — contains sensitive material, must not be published
 tools/arendi-parse-capture.py

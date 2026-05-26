@@ -19,6 +19,7 @@ from aquaclean_console_app.aquaclean_core.Clients.AquaCleanClient               
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient               import BLEPeripheralTimeoutError
 from aquaclean_console_app.aquaclean_core.IAquaCleanClient                          import IAquaCleanClient
 from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory                    import AquaCleanClientFactory
+from aquaclean_console_app.aquaclean_core.Clients.AlbaClient                        import AlbaClient
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.Dtos.DeviceIdentification import DeviceIdentification
 from aquaclean_console_app.aquaclean_core.Message.MessageService                    import MessageService
 from aquaclean_console_app.aquaclean_core.IBluetoothLeConnector                     import IBluetoothLeConnector
@@ -296,6 +297,36 @@ if log_level not in ('TRACE', 'SILLY'):
 # garbled literal escape sequences in log files when aioesphomeapi logs the
 # raw protobuf payload at DEBUG level.
 _ansi_re = re.compile(r'(?:\x1b|\033)\[[0-9;]*m')
+
+async def _dispatch_to_alba_if_needed(connector, old_client):
+    """After connect_async(), swap to AlbaClient when the device is an Alba.
+
+    Returns (client, swapped):
+      swapped=True  → returned client is a fresh AlbaClient; the stale Mera
+                      Comfort frame handler was removed from connector.
+      swapped=False → returned client is old_client unchanged.
+
+    No-op (swapped=False) if old_client is already an AlbaClient — handles
+    the persistent-ESPHome path where this is called on every poll cycle.
+    """
+    if connector.is_variant_a and connector.arendi_handshake_done:
+        if isinstance(old_client, AlbaClient):
+            # Already dispatched on a previous cycle; run inventory again (fresh connect).
+            await old_client.post_connect()
+            return old_client, False
+        # Remove the stale Mera Comfort frame handler BEFORE creating AlbaClient.
+        # FrameService.process_data raises on non-20-byte frames; if it stays registered
+        # during post_connect(), it fires first on every Ble20 response frame and blocks
+        # _ble20._on_data from receiving the inventory reply → post_connect() times out.
+        try:
+            connector.data_received_handlers -= old_client.base_client.frame_service.process_data
+        except (ValueError, AttributeError):
+            pass  # handler already removed or old_client has no base_client
+        alba = AlbaClient(connector)
+        await alba.post_connect()
+        return alba, True
+    return old_client, False
+
 
 class _AnsiFilter(logging.Filter):
     def filter(self, record):
@@ -595,6 +626,7 @@ class ServiceMode:
             "common_settings": None,        # dict {id: value} from GetStoredCommonSetting (proc 0x51)
             "firmware_update": None,        # dict from FirmwareUpdateService.check_firmware_update()
             "ble_dis_info": None,           # BLE Device Information Service (0x180a) data; populated on every connect
+            "device_type": None,            # "alba" | "mera" — set after dispatch; drives web UI capability hiding
         }
         self.esphome_proxy_state = {
             "enabled": esphome_host is not None,
@@ -738,6 +770,14 @@ class ServiceMode:
                         write_uuid=str(bluetooth_connector.BULK_CHAR_BULK_WRITE_0_UUID),
                         notify_uuid=str(bluetooth_connector.BULK_CHAR_BULK_READ_0_UUID),
                     )
+                # Dispatch: if Alba (Arendi handshake done), swap to AlbaClient and re-wire events.
+                self.client, _swapped = await _dispatch_to_alba_if_needed(bluetooth_connector, self.client)
+                self.device_state["device_type"] = "alba" if _swapped else "mera"
+                if _swapped:
+                    self.client.DeviceStateChanged += self.on_device_state_changed
+                    self.client.SOCApplicationVersions += self.soc_application_versions
+                    self.client.DeviceInitialOperationDate += self.device_initial_operation_date
+                    self.client.DeviceIdentification += self.on_device_identification
                 await self._set_ble_status(
                     "connected",
                     device_name=self.client.Description,
@@ -1988,18 +2028,20 @@ class ApiMode:
             if self.service.client is None:
                 self._http_error(503, E4003)
             c = self.service.client
-            result = {
+            result = {k: v for k, v in {
                 "sap_number": c.SapNumber,
                 "serial_number": c.SerialNumber,
                 "production_date": c.ProductionDate,
                 "description": c.Description,
                 "initial_operation_date": c.InitialOperationDate,
-            }
+            }.items() if v not in (None, "")}
         else:
             if self.service.device_state.get("sap_number") is not None:
-                result = {k: self.service.device_state[k] for k in
-                          ("sap_number", "serial_number", "production_date",
-                           "description", "initial_operation_date")}
+                result = {k: v for k, v in {
+                    k: self.service.device_state[k] for k in
+                    ("sap_number", "serial_number", "production_date",
+                     "description", "initial_operation_date")
+                }.items() if v not in (None, "")}
             else:
                 result = await self._on_demand(lambda client: self._fetch_info(client))
         return result
@@ -2503,6 +2545,11 @@ class ApiMode:
                     write_uuid=str(connector.BULK_CHAR_BULK_WRITE_0_UUID),
                     notify_uuid=str(connector.BULK_CHAR_BULK_READ_0_UUID),
                 )
+            # Dispatch: Alba (Arendi handshake done) → swap to AlbaClient.
+            client, _swapped = await _dispatch_to_alba_if_needed(connector, client)
+            self.service.device_state["device_type"] = "alba" if _swapped else "mera"
+            if _swapped and use_persistent:
+                self._esphome_client = client
             await self.service._set_ble_status("connected", device_name=connector.device_name, device_address=device_id)
             if esphome_host and connector.esphome_proxy_connected:
                 await self.service._update_esphome_proxy_state(
@@ -2940,15 +2987,15 @@ class ApiMode:
         except BLEPeripheralTimeoutError:
             logger.warning("GetFilterStatus (0x59) timed out — device may be stuck for this proc; skipping, filter_status=None")
             filter_status = None
-        return {
+        return {k: v for k, v in {
             "sap_number": ident.sap_number,
             "serial_number": ident.serial_number,
             "production_date": ident.production_date,
             "description": ident.description,
-            "initial_operation_date": str(initial_op_date),
+            "initial_operation_date": str(initial_op_date) if initial_op_date else None,
             "firmware_versions": fw,
             "filter_status": filter_status,
-        }
+        }.items() if v not in (None, "")}
 
     async def _execute_command(self, client, command: str):
         if command == "toggle-lid":
@@ -2993,6 +3040,108 @@ class ApiMode:
             await client.lid_position_offset_decrement()
         else:
             self._http_error(400, E3002, f"Command '{command}' not recognized")
+
+    # ── Alba-only endpoints ───────────────────────────────────────────────────
+
+    async def get_alba_misc_state(self) -> dict:
+        """GET /alba/misc-state — reads all misc DpIds from an Alba device."""
+        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient as _AlbaClient
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            if not isinstance(self.service.client, _AlbaClient):
+                self._http_error(400, E3002, "Device is not an Alba")
+            return await self.service.client.base_client.get_misc_state_async()
+        else:
+            async def _fetch(client):
+                if not isinstance(client, _AlbaClient):
+                    raise HTTPException(status_code=400, detail="Device is not an Alba")
+                return await client.base_client.get_misc_state_async()
+            return await self._on_demand(_fetch)
+
+    async def get_alba_instanced_state(self) -> dict:
+        """GET /alba/instanced-state — reads instanced DpIds (progress, versions, statistics)."""
+        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient as _AlbaClient
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            if not isinstance(self.service.client, _AlbaClient):
+                self._http_error(400, E3002, "Device is not an Alba")
+            return await self.service.client.base_client.get_instanced_stats_async()
+        else:
+            async def _fetch(client):
+                if not isinstance(client, _AlbaClient):
+                    raise HTTPException(status_code=400, detail="Device is not an Alba")
+                return await client.base_client.get_instanced_stats_async()
+            return await self._on_demand(_fetch)
+
+    _ALBA_COMMAND_RANGES: dict = {
+        "spray-arm-cleaning":  (0, 1),
+        "set-active-intensity": (0, 4),
+        "set-active-position":  (0, 4),
+        "set-active-temperature": (0, 5),
+        "set-active-oscillation": (0, 1),
+    }
+
+    async def run_alba_command(self, command: str, value=None) -> dict:
+        """POST /alba/command/<cmd> — Alba-specific commands."""
+        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient as _AlbaClient
+
+        async def _execute(client):
+            if not isinstance(client, _AlbaClient):
+                raise HTTPException(status_code=400, detail="Device is not an Alba")
+            if command == "sync-rtc":
+                await client.sync_rtc()
+            elif command == "spray-arm-cleaning":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.start_stop_spray_arm_cleaning(value)
+            elif command == "set-active-intensity":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_intensity(value)
+            elif command == "set-active-position":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_position(value)
+            elif command == "set-active-temperature":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_temperature(value)
+            elif command == "set-active-oscillation":
+                rng = self._ALBA_COMMAND_RANGES[command]
+                if value is None or value < rng[0] or value > rng[1]:
+                    raise HTTPException(status_code=400, detail=f"value must be {rng[0]}–{rng[1]}")
+                await client.set_active_oscillation(value)
+            # ── Dangerous commands ────────────────────────────────────────────
+            elif command == "reset":
+                if value is None or value < 0 or value > 4:
+                    raise HTTPException(status_code=400, detail="value must be 0–4")
+                await client.reset_device(value)
+            elif command == "start-bootloader":
+                if value is None or value < 0 or value > 1:
+                    raise HTTPException(status_code=400, detail="value must be 0–1")
+                await client.start_bootloader(value)
+            elif command == "restart":
+                await client.restart_device()
+            elif command == "load-profile":
+                await client.load_profile()
+            elif command == "start-user-session":
+                await client.start_user_session()
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown Alba command: {command}")
+
+        if self.ble_connection == "persistent":
+            if self.service.client is None:
+                self._http_error(503, E4003)
+            await self._persistent_query(lambda client: _execute(client))
+        else:
+            await self._on_demand(_execute)
+        return {"status": "success", "command": command, "value": value}
 
 
 def get_ha_discovery_configs(topic_prefix: str) -> list:
@@ -3861,6 +4010,7 @@ async def run_cli(args):
 
         logger.info(f"Connecting to {device_id}...")
         await client.connect(device_id)
+        client, _ = await _dispatch_to_alba_if_needed(connector, client)
 
         result["device"]        = client.Description
         result["serial_number"] = client.SerialNumber

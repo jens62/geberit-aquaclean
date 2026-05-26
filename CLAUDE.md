@@ -1276,6 +1276,83 @@ and call it in `disconnect()` AFTER `await self.client.disconnect()` tears down 
     locations, treating them identically to `BleakError` — mapped to E0003, with the
     correct hint, no crash.
 
+14. **Alba via ESPHome: ATT error 3 (Write Not Permitted) on 559eb001 — wrong write type**
+
+    When connecting to an AquaClean Alba via ESPHome proxy, the Arendi handshake fails
+    immediately with ATT error 3 (Write Not Permitted) on the `559eb001` write
+    characteristic.
+
+    **Root cause:** `_raw_write` in `BluetoothLeConnector._post_connect()` hardcodes
+    `response=True`, which forces ATT_WRITE_REQUEST.  The Alba's `559eb001`
+    characteristic has the WRITE_NO_RESP property only (no WRITE_WITH_RESPONSE), so the
+    peripheral returns ATT error 0x03.  Local BlueZ / the UTM VM mock are permissive and
+    accept both write types — this masked the bug during mock testing.  ESPHome proxy
+    passes the `response` flag straight through to the BLE device with no leniency.
+
+    **Fix:** `response=False` (ATT_WRITE_COMMAND) in `_raw_write`.
+
+    **Diagnosis via ATT error code progression — NimBLE NVS cache vs. write-type mismatch:**
+
+    When an Alba connection fails with an ATT error, the error code identifies the cause:
+
+    | ATT error | Code | Cause | How to fix |
+    |-----------|------|-------|------------|
+    | Invalid Handle | 0x01 | Stale NimBLE NVS GATT cache — handle table out of sync | Press "Clear Bluetooth Cache" on ESPHome proxy; or flash `factory_reset` button |
+    | Write Not Permitted | 0x03 | Write type mismatch — `response=True` on a WRITE_NO_RESP-only char | Use `response=False` |
+
+    If the ESP32 log says **"Connecting v3 without cache"**, the NimBLE cache is
+    definitively ruled out: this message means the client requested fresh GATT discovery,
+    so no cached handles are in play.  If the write still fails after that, it is a
+    write-type mismatch, not a cache issue.
+
+    **The key diagnostic signal** is the error *changing* from 0x01 → 0x03 after a
+    factory_reset: 0x01 proves the cache was stale; 0x03 after the reset proves the
+    cache is now clean but the wrong write type is being used.  The two errors require
+    different fixes and are easy to confuse.
+
+    **Note on `ESP_ERR_NVS_INVALID_HANDLE` after factory_reset:** this error is benign
+    and does NOT mean the erase failed.  The ESPHome `debug` component tries to write
+    the reboot reason ("web_server") to NVS immediately after the NVS partition has been
+    erased, using an NVS handle it opened before the erase.  That handle is now invalid
+    because the partition was wiped underneath it.  The 1–2 failed writes are the
+    reboot-reason record failing — cosmetic, unrelated to the cache erase.  The "Erasing
+    storage" line that appears before the error confirms the erase completed successfully.
+    The NimBLE GATT cache is gone; the factory_reset did its job.
+
+
+15. **Alba HACS: device occupied 90% of time — entities grey after first poll (habluetooth path)**
+
+    **Symptom (confirmed MuusLee 2026-05-22):** First poll succeeds (~27 s), entities briefly
+    available. Then entities cycle grey/unknown. ESP32 log shows
+    `[E4:85:01:CD:C4:1E] Connection request ignored, state: ESTABLISHED`.
+    Official Geberit app shows "another device is controlling the toilet".
+
+    **Root cause A — DataPointInventory on every poll (~12 s overhead each):**
+    In the HA-BLE path (habluetooth, no `esphome_host`), a new `BluetoothLeConnector`
+    and `AlbaClient` are created each poll. `connect_ble_only()` always calls
+    `post_connect()` which always runs `DataPointInventory` (BLE exchange fetching all
+    78 DpId definitions, ~200 ms per frame × 78 = ~15–16 s). The inventory never changes
+    between sessions — it is a property of the device hardware.
+    Total poll time: ~2 s connect + ~12 s inventory + ~14 s reads = **~27 s** out of a
+    30 s interval. Device BLE occupied 90% of the time.
+
+    **Root cause B — `Ble20Client.RECV_TIMEOUT = 15.0 s` too short for 78-frame inventory:**
+    78 frames × 200 ms ≈ 15.6 s — just over the timeout. A single slightly slow frame
+    causes `_recv()` to timeout mid-inventory → `TimeoutError` → E0003 → entities grey.
+
+    **Fix (committed 2026-05-22):**
+    1. `Ble20Client.RECV_TIMEOUT` raised from 15 s to 30 s.
+    2. `AlbaClient.post_connect(inventory=None)` — skips DataPointInventory if
+       `inventory` is passed (coordinator cache) OR if `self._inventory` is already
+       populated (persistent ESPHome client). Always runs Arendi handshake.
+    3. `coordinator.py` — `_alba_inventory: dict = {}` cached after first detection;
+       passed to `connect_ble_only(inventory=...)` on all subsequent polls.
+    **Result:** poll time drops from ~27 s to ~14 s (handshake ~2 s + reads ~12 s);
+    device free for ~16 s per 30 s interval — app and physical remote work normally.
+
+    **Note on `connect` vs `connect_ble_only`:** `connect()` (standalone bridge full
+    connect) also calls `post_connect()` and benefits from the same caching — no change
+    needed there since the standalone bridge creates one client per session.
 
 11. **ANSI escape codes (\033[1;31m …) visible in log file from aioesphomeapi**
     → At `SILLY` log level, `main.py` skips suppressing the `aioesphomeapi` loggers

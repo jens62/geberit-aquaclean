@@ -30,10 +30,37 @@ BUTTONS: list[tuple[str, str, str]] = [
     ("lid_position_offset_increment", "Lid Position Offset Increment", "mdi:plus-circle-outline"),
     ("lid_position_offset_decrement", "Lid Position Offset Decrement", "mdi:minus-circle-outline"),
     ("reset_filter_counter",          "Reset Filter Counter",          "mdi:air-purifier"),
+    ("sync_rtc",                      "Sync RTC",                      "mdi:clock-check-outline"),
+    ("restart_alba_device",           "Restart Alba Device",           "mdi:restart"),
 ]
 
 # Commands that only work while a user is seated — entity becomes unavailable otherwise.
 _SITTING_REQUIRED = {"toggle_anal_shower", "toggle_lady_shower", "toggle_dryer"}
+
+# Commands not available on AquaClean Alba — entity becomes unavailable when device_type == "alba".
+_MERA_ONLY = {
+    "toggle_lid",           # DpIds 1008/1009 absent from Alba inventory — no motorized lid
+    "toggle_lady_shower",   # DpIds 868/872 absent from Alba inventory — no lady shower arm
+    "toggle_dryer",
+    "toggle_orientation_light",
+    "trigger_flush_manually",
+    "start_cleaning_device",
+    "execute_next_cleaning_step",
+    "start_lid_position_calibration",
+    "lid_position_offset_save",
+    "lid_position_offset_increment",
+    "lid_position_offset_decrement",
+    "reset_filter_counter",
+}
+
+# Commands only available on AquaClean Alba — entity becomes unavailable when device_type != "alba".
+_ALBA_ONLY = {"sync_rtc", "restart_alba_device"}
+
+# Alba-specific commands that take a value parameter: (command, value, friendly_name, icon)
+ALBA_COMMAND_BUTTONS: list[tuple[str, int, str, str]] = [
+    ("start_stop_spray_arm_cleaning", 1, "Start Spray Arm Cleaning", "mdi:spray-bottle"),
+    ("start_stop_spray_arm_cleaning", 0, "Stop Spray Arm Cleaning",  "mdi:spray-bottle-off"),
+]
 
 
 async def async_setup_entry(
@@ -45,6 +72,11 @@ async def async_setup_entry(
     entities: list = [
         AquaCleanButton(coordinator, entry, command, name, icon)
         for command, name, icon in BUTTONS
+    ]
+    # Alba-specific command buttons (require a value parameter)
+    entities += [
+        AlbaCommandButton(coordinator, entry, command, value, name, icon)
+        for command, value, name, icon in ALBA_COMMAND_BUTTONS
     ]
     if coordinator._esphome_host:
         entities.append(Esp32RestartButton(coordinator, entry))
@@ -61,14 +93,37 @@ class AquaCleanButton(AquaCleanEntity, ButtonEntity):
 
     @property
     def available(self) -> bool:
-        if self._command in _SITTING_REQUIRED:
-            data = self.coordinator.data or {}
-            if not data.get("is_user_sitting"):
-                return False
+        data = self.coordinator.data or {}
+        device_type = data.get("device_type")
+        if self._command in _MERA_ONLY and device_type == "alba":
+            return False
+        if self._command in _ALBA_ONLY and device_type != "alba":
+            return False
+        if self._command in _SITTING_REQUIRED and not data.get("is_user_sitting"):
+            return False
         return super().available
 
     async def async_press(self) -> None:
         await self.coordinator.async_execute_command(self._command)
+
+
+class AlbaCommandButton(AquaCleanEntity, ButtonEntity):
+    """Button for Alba-specific commands that require an integer value parameter."""
+
+    def __init__(self, coordinator, entry, command: str, value: int, name: str, icon: str) -> None:
+        super().__init__(coordinator, entry)
+        self._command = command
+        self._value = value
+        self._attr_unique_id = f"{entry.entry_id}_alba_{command}_{value}"
+        self._attr_name = name
+        self._attr_icon = icon
+
+    @property
+    def available(self) -> bool:
+        return (self.coordinator.data or {}).get("device_type") == "alba" and super().available
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_execute_alba_command(self._command, self._value)
 
 
 class Esp32RestartButton(AquaCleanProxyEntity, ButtonEntity):

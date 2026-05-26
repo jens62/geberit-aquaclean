@@ -378,7 +378,8 @@ registered when the action runs.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | "Cannot connect" on config form | Wrong MAC, ESP32 unreachable, or toilet off | Check MAC, verify ESP32 at `http://192.168.0.160`, ensure toilet is on |
-| "Unsupported device" abort with GATT UUIDs | Device uses a non-standard GATT profile (e.g. AquaClean Alba) — BLE connected but protocol not compatible | Follow the link in the message to open a GitHub issue with the displayed UUIDs and your device model |
+| "Unsupported device" abort with GATT UUIDs | Device connected but uses an unknown GATT profile (AquaClean Alba is now supported — this applies to other unrecognised variants) | Follow the link in the message to open a GitHub issue with the displayed UUIDs and your device model |
+| Physical remote shows yellow exclamation / red on re-pair | Bridge polling conflicts with remote pairing — known limitation on AquaClean Alba ([#21](https://github.com/jens62/geberit-aquaclean/issues/21)) | Increase poll interval; remote can be re-paired after disabling the integration temporarily |
 | New version not shown in HACS | Version was pushed as git tag only, not a GitHub Release | Click three dots → **Update information**; if still missing, a Release is missing on GitHub |
 | All entities unavailable after setup | Coordinator poll failed | Check logs for the actual error; most likely ESP32 or BLE issue |
 | `AttributeError: 'HassLogger' has no attribute 'trace'` | Outdated version (< 2.4.18) | Update to latest via HACS |

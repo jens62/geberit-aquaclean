@@ -119,6 +119,26 @@ def _cobs_decode(data: bytes) -> bytes:
     return bytes(result)
 
 
+def _inner_cobs_decode(frame: bytes) -> bytes | None:
+    """Decode an inner COBS frame: [0x00] + COBS(data + CRC16_LE) + [0x00].
+    Returns the application payload, or None on any error."""
+    if len(frame) < 4 or frame[0] != 0:
+        return None
+    end = frame.find(b'\x00', 1)
+    if end == -1 or end == 1:
+        return None
+    try:
+        decoded = _cobs_decode(bytes(frame[1:end]))
+    except ValueError:
+        return None
+    if len(decoded) < 2:
+        return None
+    crc_recv = decoded[-2] | (decoded[-1] << 8)
+    if _crc16_kermit(decoded[:-2]) != crc_recv:
+        return None
+    return decoded[:-2]
+
+
 class _AesCtrState:
     """
     AES-CTR streaming cipher matching aj.cs inner class a.
@@ -193,6 +213,8 @@ class AriendiSecurity:
         self._rx_ack = 0   # N(R) for outgoing frames = (peer N(S) + 1) mod 8
         self._rx_cipher: _AesCtrState | None = None
         self._tx_cipher: _AesCtrState | None = None
+        self._inner_cobs_buf: bytearray = bytearray()
+        self._ack_send_fn = None   # set by caller after handshake for auto-RR
         self.handshake_done = False
 
     def reset(self) -> None:
@@ -202,6 +224,8 @@ class AriendiSecurity:
         self._rx_ack = 0
         self._rx_cipher = None
         self._tx_cipher = None
+        self._inner_cobs_buf = bytearray()
+        self._ack_send_fn = None
         self.handshake_done = False
 
     # -------------------------------------------------------------------------
@@ -244,6 +268,41 @@ class AriendiSecurity:
     # Feed incoming ATT bytes (call from _on_data_received)
     # -------------------------------------------------------------------------
 
+    def _feed_inner_cobs(self, data: bytes) -> list[bytes]:
+        """Streaming inner-COBS decoder. Accumulates bytes across Security payloads.
+
+        Inner COBS stream format: ...[0x00][COBS(payload+CRC16_LE)][0x00]...
+        Multiple frames may arrive in one Security payload; a frame may split
+        across two consecutive Security payloads.
+        """
+        results = []
+        self._inner_cobs_buf.extend(data)
+        while 0 in self._inner_cobs_buf:
+            idx = self._inner_cobs_buf.index(0)
+            if idx == 0:
+                # Leading zero delimiter — discard and continue
+                del self._inner_cobs_buf[0]
+                continue
+            # [0..idx-1] is a COBS frame; byte at idx is the trailing zero delimiter
+            frame_bytes = bytes(self._inner_cobs_buf[:idx])
+            del self._inner_cobs_buf[:idx + 1]
+            try:
+                decoded = _cobs_decode(frame_bytes)
+            except ValueError as e:
+                logger.debug(f"AriendiSecurity: inner COBS decode error: {e}")
+                continue
+            if len(decoded) < 2:
+                continue
+            crc_recv = decoded[-2] | (decoded[-1] << 8)
+            if _crc16_kermit(decoded[:-2]) == crc_recv:
+                results.append(decoded[:-2])
+            else:
+                logger.debug(
+                    f"AriendiSecurity: inner COBS CRC mismatch "
+                    f"(got 0x{crc_recv:04X}, calc 0x{_crc16_kermit(decoded[:-2]):04X})"
+                )
+        return results
+
     def feed_att_bytes(self, data: bytes) -> list:
         """
         Feed raw ATT notification bytes.
@@ -259,11 +318,13 @@ class AriendiSecurity:
         if not self.handshake_done:
             return []
         results = []
+        _q_before = self._rx_queue.qsize()
         while not self._rx_queue.empty():
             try:
                 ft, ctrl, payload = self._rx_queue.get_nowait()
                 if ft == 'I' and payload and payload[0] == _SEC_ENCRYPTED:
-                    results.append(self._rx_cipher.process(payload[1:]))
+                    decrypted = self._rx_cipher.process(payload[1:])
+                    results.extend(self._feed_inner_cobs(decrypted))
                 elif ft == 'I':
                     logger.debug(
                         f"AriendiSecurity: post-handshake unexpected Security type "
@@ -271,6 +332,7 @@ class AriendiSecurity:
                     )
             except asyncio.QueueEmpty:
                 break
+        logger.debug(f"AriendiSecurity: feed_att_bytes q_drained={_q_before} → {len(results)} plaintext payloads")
         return results
 
     def _process_rx_buf(self) -> None:
@@ -322,6 +384,13 @@ class AriendiSecurity:
                 self._rx_queue.put_nowait(('I', ctrl, hdlc_payload))
                 sec_str = f"0x{hdlc_payload[0]:02X}" if hdlc_payload else "0x??"
                 logger.debug(f"AriendiSecurity: I-frame rx peer_ns={peer_ns} sec_type={sec_str}")
+                if self.handshake_done and self._ack_send_fn is not None:
+                    try:
+                        asyncio.get_running_loop().create_task(
+                            self._ack_send_fn(self._att_s_rr())
+                        )
+                    except RuntimeError:
+                        pass
             elif (ctrl & 0x03) == 0x03:  # U-frame
                 self._rx_queue.put_nowait(('U', ctrl, hdlc_payload))
                 logger.debug(f"AriendiSecurity: U-frame rx ctrl=0x{ctrl:02X}")
@@ -414,7 +483,11 @@ class AriendiSecurity:
             raise ValueError(f"AriendiSecurity: EP Response too short ({len(ep)} bytes)")
         nonce1 = ep[1:17]
         nonce2 = ep[17:33]
-        logger.debug(f"AriendiSecurity: ← EP Response nonce1={nonce1.hex()} nonce2={nonce2.hex()}")
+        if len(ep) >= 35:
+            keyset_mask = ep[33] | (ep[34] << 8)
+            logger.debug(f"AriendiSecurity: ← EP Response nonce1={nonce1.hex()} nonce2={nonce2.hex()} keyset_mask=0x{keyset_mask:04X}")
+        else:
+            logger.debug(f"AriendiSecurity: ← EP Response nonce1={nonce1.hex()} nonce2={nonce2.hex()} (no keyset_mask, len={len(ep)})")
 
         # 4. Compute auth_key, generate ephemeral X25519 keypair
         auth_key = _hkdf(ikm=aquacleanBridgeId, salt=nonce1, length=16)
@@ -462,8 +535,12 @@ class AriendiSecurity:
 
     def wrap_for_send(self, geberit_payload: bytes) -> bytes:
         """
-        Encrypt a Geberit frame payload and wrap in Security(0x20) HDLC I-frame.
+        Inner-COBS-frame, encrypt, and wrap in Security(0x20) HDLC I-frame.
         Returns raw ATT bytes ready to write to the BLE characteristic.
         """
-        ciphertext = self._tx_cipher.process(geberit_payload)
+        crc = _crc16_kermit(geberit_payload)
+        inner_frame = (b'\x00'
+                       + _cobs_encode(geberit_payload + bytes([crc & 0xFF, (crc >> 8) & 0xFF]))
+                       + b'\x00')
+        ciphertext = self._tx_cipher.process(inner_frame)
         return self._att_i(bytes([_SEC_ENCRYPTED]) + ciphertext)

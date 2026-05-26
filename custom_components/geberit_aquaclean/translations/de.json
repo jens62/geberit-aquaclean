@@ -9,7 +9,8 @@
           "esphome_host": "ESPHome-Proxy-Host (leer für lokales BLE)",
           "esphome_port": "ESPHome-Proxy-Port",
           "noise_psk": "ESPHome-Verschlüsselungsschlüssel (optional, Base64)",
-          "poll_interval": "Abfrageintervall (Sekunden)"
+          "poll_interval": "Abfrageintervall (Sekunden)",
+          "alba_pin": "AquaClean Alba PIN (optional, auf dem Gerät aufgedruckt)"
         }
       }
     },
@@ -38,7 +39,8 @@
           "esphome_host": "ESPHome-Proxy-Host (leer für lokales BLE)",
           "esphome_port": "ESPHome-Proxy-Port",
           "noise_psk": "ESPHome-Verschlüsselungsschlüssel (optional, Base64)",
-          "poll_interval": "Abfrageintervall (Sekunden)"
+          "poll_interval": "Abfrageintervall (Sekunden)",
+          "alba_pin": "AquaClean Alba PIN (optional, auf dem Gerät aufgedruckt)"
         }
       }
     },
