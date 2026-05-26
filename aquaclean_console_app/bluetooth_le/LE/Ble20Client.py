@@ -273,6 +273,123 @@ class Ble20Client:
                 logger.debug(f"Ble20: poll_state DpId={dp_id} unavailable: {e}")
         return result
 
+    # ── JOIN ─────────────────────────────────────────────────────────────────
+
+    async def join(
+        self,
+        pin: Optional[str] = None,
+        inv: Optional[dict] = None,
+        timeout: float = 15.0,
+    ) -> str:
+        """Send DP_JOIN_DEVICE and wait for the result.
+
+        Two-step flow (mirrors JoinUtil.JoinAndWaitForResult):
+          1. Write JOIN without PIN.
+             - DP_JOIN_DEVICE_PROGRESS = 3 (done)  → success, return "done"
+             - DP_JOIN_DEVICE_ERROR bit 2 (Protected) + pin given → retry
+          2. Write JOIN with PIN.
+             - DP_JOIN_DEVICE_PROGRESS = 3 (done)  → success, return "done"
+
+        DP_JOIN_DEVICE_PROGRESS enum: 0=idle 1=joining 2=disjoining 3=done 4=error
+
+        The device's series, variant, and uniqueId are read directly from the
+        device (DpId 0, 1, 236) and embedded in the JOIN payload.
+
+        Returns "done" on success, raises IOError on failure.
+        Skips silently (returns "skipped") if DP_JOIN_DEVICE is absent from inv.
+        """
+        from .dp_ids import DpId
+
+        DP_JOIN      = int(DpId.DP_JOIN_DEVICE)
+        DP_PROGRESS  = int(DpId.DP_JOIN_DEVICE_PROGRESS)
+        DP_ERROR     = int(DpId.DP_JOIN_DEVICE_ERROR)
+
+        if inv is not None and DP_JOIN not in inv:
+            logger.debug("Ble20 join: DP_JOIN_DEVICE absent from inventory — skip")
+            return "skipped"
+
+        join_version = inv[DP_JOIN]["version"] if (inv and DP_JOIN in inv) else 1
+
+        # Read toilet identifiers needed for the JOIN payload.
+        try:
+            series    = (await self.read(int(DpId.DP_DEVICE_SERIES)))[0]
+            variant   = (await self.read(int(DpId.DP_DEVICE_VARIANT)))[0]
+            unique_raw = await self.read(int(DpId.DP_UNIQUE_DEVICE_NUMBER))
+            unique_id  = struct.unpack_from('<I', unique_raw)[0] if len(unique_raw) >= 4 else 0
+        except Exception as e:
+            logger.warning(f"Ble20 join: could not read device identifiers — {e}")
+            return "skipped"
+
+        def _build(pairing_secret: Optional[str]) -> bytes:
+            if join_version == 0:
+                data = bytearray(6)
+                data[0] = series
+                data[1] = variant
+                struct.pack_into('<I', data, 2, unique_id)
+                return bytes(data)
+            size = 11 if join_version >= 2 else 10
+            data = bytearray(size)
+            data[0] = series
+            data[1] = variant
+            struct.pack_into('<I', data, 2, unique_id)
+            if pairing_secret:
+                encoded = pairing_secret.encode('utf-8')[:4]
+                data[6:6 + len(encoded)] = encoded
+            return bytes(data)
+
+        await self.enable_notification([DP_PROGRESS, DP_ERROR])
+
+        for attempt in range(2):
+            secret = None if attempt == 0 else pin
+            try:
+                await self.write(DP_JOIN, _build(secret))
+            except IOError as e:
+                logger.debug(f"Ble20 join: WriteError on attempt {attempt} — {e} (continuing)")
+
+            # Consume intermediate progress states (1=joining) until terminal value.
+            progress = 0
+            deadline = asyncio.get_event_loop().time() + timeout
+            while asyncio.get_event_loop().time() < deadline:
+                remaining = deadline - asyncio.get_event_loop().time()
+                try:
+                    raw = await self.get_notification(DP_PROGRESS, timeout=remaining)
+                    progress = raw[0] if raw else 0xFF
+                except asyncio.TimeoutError:
+                    raise IOError("JOIN timed out waiting for progress notification")
+                if progress in (3, 4):
+                    break
+
+            if progress == 3:
+                logger.info(f"Ble20 join: done (attempt={attempt}, pin={'yes' if secret else 'no'})")
+                return "done"
+
+            # progress == 4 (error) — read the error flags.
+            error_bits = 0
+            try:
+                err_raw = await self.get_notification(DP_ERROR, timeout=2.0)
+                error_bits = err_raw[0] if err_raw else 0
+            except asyncio.TimeoutError:
+                pass
+
+            logger.debug(f"Ble20 join: attempt {attempt} error=0x{error_bits:02X}")
+
+            if attempt == 0 and (error_bits & 0x02) and pin is not None:
+                logger.debug("Ble20 join: device is Protected — retrying with PIN")
+                continue
+
+            # Map remaining error bits to messages.
+            if error_bits & 0x04:
+                raise IOError("JOIN failed: wrong PIN")
+            if error_bits & 0x08:
+                raise IOError("JOIN failed: too many devices registered")
+            if error_bits & 0x10:
+                raise IOError("JOIN failed: device not supported")
+            if error_bits & 0x02 and pin is None:
+                raise IOError("JOIN failed: device is Protected but no PIN configured")
+            raise IOError(f"JOIN failed: error=0x{error_bits:02X}")
+
+        raise IOError("JOIN: exhausted retries")
+
     # ── Device identification ─────────────────────────────────────────────────
 
     async def get_device_identification(

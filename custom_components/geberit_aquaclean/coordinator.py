@@ -20,6 +20,7 @@ from .const import (
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
     CONF_POLL_INTERVAL,
+    CONF_ALBA_PIN,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
 )
@@ -62,6 +63,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_host: str | None = conf.get(CONF_ESPHOME_HOST) or None
         self._esphome_port: int = conf.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
         self._noise_psk: str | None = conf.get(CONF_NOISE_PSK) or None
+        self._alba_pin: str | None = conf.get(CONF_ALBA_PIN) or None
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None
         self._ble_name_cache: str | None = None
@@ -150,7 +152,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             return self._esphome_client
         if self._device_type == "alba":
             from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-            self._esphome_client = AlbaClient(connector)
+            self._esphome_client = AlbaClient(connector, pin=self._alba_pin)
             _LOGGER.debug("Created persistent AlbaClient for ESPHome connector")
         else:
             from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
@@ -162,7 +164,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         """Create a fresh local BLE client of the appropriate type."""
         if self._device_type == "alba":
             from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-            return AlbaClient(connector)
+            return AlbaClient(connector, pin=self._alba_pin)
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
         return AquaCleanClientFactory(connector).create_client()
 
@@ -286,7 +288,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         client = self._ensure_esphome_client(connector)
                     else:
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-                        client = AlbaClient(connector)
+                        client = AlbaClient(connector, pin=self._alba_pin)
                     await client.connect_ble_only(
                         self._device_id,
                         inventory=self._alba_inventory or None,
@@ -310,7 +312,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         # AquaClean Alba (Ble20 protocol)
                         self._device_type = "alba"
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-                        client = AlbaClient(connector)
+                        client = AlbaClient(connector, pin=self._alba_pin)
                         if self._esphome_host:
                             self._esphome_client = client
                         await client.post_connect()  # DataPointInventory — mandatory first step
