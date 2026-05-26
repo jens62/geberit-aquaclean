@@ -128,6 +128,66 @@ If global: bridge's keyset-0 KE every 60 s displaces the remote's keyset-1 regis
 → confirmed root cause. The PCA10059 sniff is the only way to distinguish these two
 models without guessing.
 
+## PIN Mechanism — DP_PAIRING_SECRET and DP_JOIN_DEVICE
+
+### What the PIN is
+
+The 4-digit PIN printed on the toilet sticker is `DP_PAIRING_SECRET` (DpId 12).
+It is a 4-byte string stored on the device with a default value of `"8645"`.
+Its purpose, as described in the Geberit protocol: *"Control number for pairing
+without local action."*
+
+"Local action" means physically pressing a button on the toilet or touching NFC.
+The PIN allows an app or bridge to register as a paired client **without** physical
+presence. The physical remote control pairs via NFC (= local action) and therefore
+never needs the PIN.
+
+When a device has a non-default PIN configured it is considered **Protected**. Any
+JOIN attempt without the correct PIN is rejected with `JoinErrorStatus.WrongPairingSecret`.
+
+### DP_JOIN_DEVICE payload variants
+
+`DP_JOIN_DEVICE` (DpId 543) has three instance variants:
+
+| Instance | Payload | Use case |
+|----------|---------|----------|
+| 0 | `[Series 1B][Variant 1B][UniqueID 4B]` | Join on unprotected device (no PIN required) |
+| 1 | `[Series 1B][Variant 1B][UniqueID 4B][PairingSecret 4B]` | Join on Protected device with PIN |
+| 2 | `[Series 1B][Variant 1B][UniqueID 4B][PairingSecret 4B][Zone 1B]` | Join with zone assignment |
+
+The `JoinErrorStatus` flags relevant to the bridge:
+
+| Flag | Bit | Meaning |
+|------|-----|---------|
+| `Protected` | 1 | Device has non-default PIN; retry with instance 1 |
+| `WrongPairingSecret` | 2 | PIN was provided but incorrect |
+| `TooManyDevices` | 3 | Device's client registry is full |
+
+`TooManyDevices` confirms the device maintains a **finite-size client registry**.
+The eviction policy (FIFO, LRU, or explicit remove) is unknown.
+
+### PIN is not used in Arendi KE
+
+The PIN (`DP_PAIRING_SECRET`) has no role in the Arendi security handshake.
+The KE layer uses a fixed pre-shared key (`aquacleanBridgeId`) as keyset 0,
+confirmed by the Android BLE log (keyset_id = `0x00` in every KE Request,
+regardless of whether the device has a custom PIN set). The Geberit app transmits
+the PIN at the application layer — as part of the DP_JOIN_DEVICE write payload,
+after encryption is already established — not inside the KE handshake.
+
+### How remote pairing differs from app/bridge pairing
+
+| Client | Pairing method | PIN required |
+|--------|---------------|-------------|
+| Physical remote | NFC touch (local action) | No |
+| Geberit Home App | DP_JOIN_DEVICE instance 1 | Yes (if Protected) |
+| Bridge (b23+) | DP_JOIN_DEVICE instance 0/1 | Only if Protected |
+
+The remote's NFC pairing likely writes directly to a dedicated registration slot
+on the device, separate from the DP_JOIN_DEVICE application-layer registry. Whether
+these share the same finite pool (and thus compete for slots) is unknown without
+a PCA10059 sniff of the NFC pairing exchange.
+
 ## DP_JOIN_DEVICE — Paused Pending Remote Conflict Resolution
 
 b23 added application-layer `DP_JOIN_DEVICE` (DpId 543) to `post_connect()`.
