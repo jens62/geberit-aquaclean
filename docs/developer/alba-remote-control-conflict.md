@@ -81,11 +81,13 @@ no yellow exclamation mark afterward.
 Since the Arendi KE handshake completes successfully regardless of the PIN outcome,
 this rules out KE alone as the cause.
 
-**Open question (pending MuusLee confirmation):** did the Geberit App show the PIN
-prompt immediately upon finding the device, or only after a ~15-second pause?
-If immediate, the app tried `DP_JOIN_DEVICE` right after KE and failed before doing
-any DpId reads — confirming the comparison below. If there was a long pause first,
-the app may have done DpId reads before the JOIN attempt.
+**How the PIN prompt appears (confirmed from protocol analysis):** the app attempts
+`DP_JOIN_DEVICE` instance 0 (no PIN) immediately after KE. The device responds with
+`JoinErrorStatus.Protected`. Only then does the app display the PIN prompt. No DpId
+reads occur anywhere in this path — the prompt appears within ~2 seconds of the app
+finding the device. The app flow is: KE → JOIN(no PIN) → Protected → PIN prompt →
+JOIN(wrong PIN) → WrongPairingSecret → error, with zero DpId reads. This closes the
+open question and validates the comparison table below.
 
 ### Narrowed Root Cause — DpId Read Cycle After KE
 
@@ -94,13 +96,13 @@ Combining Steps 0 and 1:
 | Scenario | KE | DpId reads | JOIN | Remote displaced? |
 |---|---|---|---|---|
 | v3.0.0 bridge (normal poll) | ✓ keyset 0 | ✓ full read cycle | ✗ removed | **Yes** |
-| Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ probably none | ✗ failed | **No** |
+| Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ none (JOIN before reads) | ✗ failed | **No** |
 
 Both scenarios completed the KE handshake with keyset 0 and did not call a
 successful JOIN. The only difference is the bridge performs a full DpId read cycle
-after KE; the wrong-PIN app almost certainly does not — on first-time setup the
-app presents the PIN prompt immediately after finding the device, meaning it
-attempts JOIN right after KE and fails before reading any DpIds.
+after KE; the wrong-PIN app does not — it attempts `DP_JOIN_DEVICE` immediately
+after KE, receives `JoinErrorStatus.Protected`, prompts for the PIN, retries with
+the wrong PIN, and fails — no DpId reads at any point.
 
 **Current best hypothesis:** the device registers the "active session owner" on the
 first successful encrypted DpId response after KE. A session that completes KE but
