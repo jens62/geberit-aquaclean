@@ -11,6 +11,22 @@ The device is designed for **one active central at a time**.  While a central is
 
 This is standard BLE peripheral behaviour, not a limitation of this software.
 
+### Why "one central at a time" — BLE spec vs. implementation
+
+This is accurate in practice but the underlying reason is **implementation-specific**, not a hard BLE specification limit — and BLE 5 does not change it.
+
+**What the spec actually says:**
+The BLE specification (4.x and 5.x) has always allowed a peripheral to hold multiple simultaneous connections to different centrals.  The spec defines `Max_Connections` as an implementation parameter, not a fixed value of 1.
+
+**Why "typically one" is still true:**
+Constrained devices (microcontrollers running NimBLE, SoftDevice, etc.) almost universally cap at one connection in their firmware — limited RAM for connection contexts, scheduling complexity, and power budget.  This is a chip/stack decision, not a BLE version constraint.
+
+**What BLE 5 actually added:**
+Extended advertising, 2 Mbps PHY, coded PHY (long range), and advertising sets.  None of these change the peripheral multi-central connection model.  BLE 5 did not introduce "multi-central peripheral" as a feature.
+
+**For the Geberit specifically:**
+The Alba device stops advertising while a central is connected (confirmed in testing), so only one central can be BLE-connected at any moment.  "App + remote coexist" does not mean they are simultaneously BLE-connected — it means both hold valid application-layer registry entries (`DP_JOIN_DEVICE`) and can each connect and use the device without displacing the other.  Their BLE connections are sequential, not simultaneous.
+
 ---
 
 ## Conflict with the Geberit Home app
