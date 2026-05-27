@@ -32,16 +32,30 @@ class AlbaClient(IAquaCleanClient):
     and the Arendi handshake must be complete before AlbaClient is instantiated.
     Call post_connect() immediately after construction to run DataPointInventory.
 
-    pin: optional 4-digit PIN printed on the toilet.  Stored for future use;
-    not currently used in the poll path (JOIN is paused pending investigation
-    of remote-control deregistration conflict — see docs/developer/alba-remote-control-conflict.md).
+    pin: optional 4-digit PIN printed on the toilet sticker.  Used in the
+    DP_JOIN_DEVICE call (once per HA restart) to register the bridge in the
+    device's client registry.  Registered clients coexist with the physical
+    remote; unregistered clients displace it.
+
+    already_joined / join_skip: coordinator-level state passed in so that a
+    fresh AlbaClient instance (created per local-BLE poll) does not re-JOIN
+    on every cycle.  The coordinator caches these flags and passes them back
+    on every new client construction.
     """
 
-    def __init__(self, connector, pin: str | None = None):
+    def __init__(
+        self,
+        connector,
+        pin: str | None = None,
+        already_joined: bool = False,
+        join_skip: bool = False,
+    ):
         self._connector = connector
         self._ble20 = Ble20Client(connector)
         self._inventory: dict = {}
         self._pin: str | None = pin
+        self._joined: bool = already_joined
+        self._join_skip: bool = join_skip
 
         self.base_client = AlbaBaseClient(connector, self._ble20)
 
@@ -61,6 +75,45 @@ class AlbaClient(IAquaCleanClient):
         self.firmware_versions = None
 
         self.last_device_state_changed_event_args = None
+
+    async def _maybe_join(self) -> None:
+        """Call DP_JOIN_DEVICE once to register the bridge in the device's client registry.
+
+        Registered clients coexist with the physical remote; unregistered clients
+        displace it.  Called at the end of post_connect(); subsequent calls are
+        no-ops (guarded by _joined / _join_skip flags).
+        """
+        if self._joined or self._join_skip:
+            return
+        try:
+            result = await self._ble20.join(pin=self._pin, inv=self._inventory)
+            if result == "done":
+                self._joined = True
+                logger.info("Alba JOIN: registered with device — remote control conflict resolved")
+            elif result == "skipped":
+                self._join_skip = True  # DP_JOIN_DEVICE absent from inventory
+        except IOError as e:
+            msg = str(e)
+            if "wrong PIN" in msg:
+                logger.error(
+                    "Alba JOIN failed: wrong PIN — check 'alba_pin' config. "
+                    "Remote conflict will persist until PIN is corrected."
+                )
+                self._join_skip = True
+            elif "too many devices" in msg:
+                logger.warning(
+                    "Alba JOIN: device registry full — remote conflict may persist "
+                    "until a slot is freed. Bridge continues polling."
+                )
+                self._join_skip = True
+            elif "Protected" in msg and "no PIN" in msg:
+                logger.warning(
+                    "Alba JOIN: device requires PIN but none configured — "
+                    "set 'alba_pin' in config to resolve remote control conflict"
+                )
+                self._join_skip = True
+            else:
+                logger.warning("Alba JOIN failed: %s — will retry next poll", e)
 
     async def post_connect(self, inventory: dict | None = None) -> None:
         """Run DataPointInventory — mandatory first step in Ble20 protocol.
@@ -84,6 +137,7 @@ class AlbaClient(IAquaCleanClient):
             self.firmware_versions = await self.base_client.get_firmware_version_list_async()
         except Exception:
             self.firmware_versions = None
+        await self._maybe_join()
 
     async def connect(self, device_id: str) -> None:
         """Full connect: BLE + Arendi handshake + inventory + identification fetch."""
