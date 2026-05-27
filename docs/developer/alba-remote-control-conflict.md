@@ -23,6 +23,11 @@ connect even in that window. The toilet is actively rejecting them, not just bus
 
 ## Root Cause Hypothesis — Arendi Session Ownership
 
+> **Updated 2026-05-27:** Testing ruled out KE alone as the trigger — see
+> "Narrowed Root Cause" under Investigation Steps. The current best hypothesis
+> is that ownership is claimed on the first successful encrypted DpId response
+> after KE, not by KE itself.
+
 The Arendi security handshake (SABM → Version → EP → KE) is both encryption setup
 and **client authentication**. The KE Request includes a CMAC authenticating the
 client using `aquacleanBridgeId` (a fixed value shared by the bridge and the
@@ -32,10 +37,10 @@ The physical remote control almost certainly uses a **device-specific ID** regis
 during physical pairing (NFC touch or dedicated pairing procedure).
 
 **The toilet likely implements a "last registered owner" model:** whichever client
-most recently completed a successful KE exchange is the authorised session owner.
-When the bridge does SABM + KE every 60 seconds, it continuously re-claims ownership.
-The remote's subsequent connection attempts present its device-specific ID, which no
-longer matches the stored owner → the toilet rejects it → red exclamation.
+most recently completed a successful encrypted data exchange is the authorised session
+owner. When the bridge reads DpIds every 60 seconds, it continuously re-claims
+ownership. The remote's subsequent connection attempts present its device-specific ID,
+which no longer matches the stored owner → the toilet rejects it → red exclamation.
 
 Yellow exclamation = the remote's firmware has been kicked out enough times that it
 flags "lost pairing" locally.
@@ -54,6 +59,8 @@ but the bridge re-takes ownership within 60 seconds.
 | BLE timing (bridge occupies device continuously) | ❌ Device free 55 s per 60 s cycle |
 | Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — was causing restart to fail, unrelated to deregistration |
 | Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — was wasteful, unrelated to deregistration |
+| `DP_JOIN_DEVICE` on every poll | ❌ Ruled out: removed in v3.0.0, conflict persists (MuusLee, 2026-05-27) |
+| Arendi KE handshake alone (keyset 0) | ❌ Ruled out: wrong-PIN test — KE completes but remote not displaced when no DpId reads follow (MuusLee, 2026-05-27) |
 
 ## Investigation Steps — Cheapest First
 
@@ -61,41 +68,52 @@ Before resorting to hardware sniffing, two software-only tests narrow the cause:
 
 ### Step 0 — Does v3.0.0 already fix the conflict?
 
-Run the HACS integration at v3.0.0 (`DP_JOIN_DEVICE` removed from the poll path).
-Let it poll for several cycles and check the physical remote.
-
-- **Remote shows no yellow mark** → the conflict is resolved. `DP_JOIN_DEVICE` was
-  the cause; removing it from the poll path fixed it. No further investigation needed.
-- **Remote still shows yellow** → `DP_JOIN_DEVICE` is not the cause. The Arendi KE
-  handshake itself is displacing the remote. Proceed to Step 1.
+**Result (MuusLee, 2026-05-27): ❌ Conflict persists.** Yellow exclamation mark still
+appears after poll cycles with v3.0.0 (tested with and without `alba_pin` configured).
+`DP_JOIN_DEVICE` is not the cause. Proceed to Step 1.
 
 ### Step 1 — Wrong-PIN test (no hardware required)
 
-If Step 0 still shows the conflict, this test determines whether the KE handshake
-alone (without a successful JOIN) is sufficient to displace the remote.
+**Result (MuusLee, 2026-05-27): ❌ Remote NOT displaced.**
+Fresh phone, wrong PIN entered → app failed with wrong-PIN error → remote showed
+no yellow exclamation mark afterward.
 
-**Procedure:**
+Since the Arendi KE handshake completes successfully regardless of the PIN outcome,
+this rules out KE alone as the cause.
 
-1. Confirm the remote is paired and shows no exclamation mark.
-2. On a phone that has **never** connected to this toilet before (fresh install or a
-   second device), open the Geberit Home App.
-3. When prompted for the PIN, enter a **wrong** number (anything other than what is
-   printed on the toilet sticker).
-4. The app fails with a wrong-PIN error — but the Arendi KE handshake already
-   completed successfully before the PIN check.
-5. Check the remote: yellow exclamation mark or not?
+**Open question (pending MuusLee confirmation):** did the Geberit App show the PIN
+prompt immediately upon finding the device, or only after a ~15-second pause?
+If immediate, the app tried `DP_JOIN_DEVICE` right after KE and failed before doing
+any DpId reads — confirming the comparison below. If there was a long pause first,
+the app may have done DpId reads before the JOIN attempt.
 
-**Interpretation:**
+### Narrowed Root Cause — DpId Read Cycle After KE
 
-- **Remote shows yellow** → KE alone displaces the remote. The bridge (which does KE
-  every poll cycle) is the culprit regardless of JOIN. The PCA10059 sniff (Step 2)
-  is needed to understand the ownership mechanism and define a fix.
-- **Remote stays fine** → a successful JOIN with correct credentials is required to
-  trigger displacement. Since v3.0.0 removed JOIN from the poll path, this means the
-  conflict should already be fixed — recheck Step 0.
+Combining Steps 0 and 1:
 
-**Note:** No BLE traffic capture is needed for this test. The answer is the visual
-state of the remote.
+| Scenario | KE | DpId reads | JOIN | Remote displaced? |
+|---|---|---|---|---|
+| v3.0.0 bridge (normal poll) | ✓ keyset 0 | ✓ full read cycle | ✗ removed | **Yes** |
+| Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ probably none | ✗ failed | **No** |
+
+Both scenarios completed the KE handshake with keyset 0 and did not call a
+successful JOIN. The only difference is the bridge performs a full DpId read cycle
+after KE; the wrong-PIN app almost certainly does not — on first-time setup the
+app presents the PIN prompt immediately after finding the device, meaning it
+attempts JOIN right after KE and fails before reading any DpIds.
+
+**Current best hypothesis:** the device registers the "active session owner" on the
+first successful encrypted DpId response after KE. A session that completes KE but
+then immediately fails at the application layer (wrong PIN) does not claim ownership.
+A session that completes KE and then reads DpIds does.
+
+This supersedes the earlier hypothesis that KE alone claims ownership.
+
+**Implication for a fix:** the bridge cannot avoid the DpId reads (that is the
+entire purpose of the poll). The only viable paths are:
+- A "yield ownership" DpId write before disconnect (unknown if one exists)
+- Per-keyset ownership tracking on the device (bridge keyset 0 and remote keyset 1
+  coexist without conflict) — the PCA10059 sniff is needed to confirm this
 
 ### Step 2 — PCA10059 BLE Sniff (only if Steps 0 and 1 confirm KE is the culprit)
 
