@@ -25,23 +25,38 @@ scan. Between polls the device is free — but the toilet actively rejects the r
 even then. The remote's `WrongPairingSecret`-style rejection is an application-layer
 decision, not a BLE-layer busy signal.
 
-## Root Cause — UNKNOWN (investigation in progress)
+## Root Cause — CONFIRMED (2026-05-27)
 
-> **Status 2026-05-27:** Root cause is not yet confirmed. The `DP_JOIN_DEVICE`
-> hypothesis (below) was invalidated by v3.0.1b1 testing. See "Investigation Steps"
-> for the current evidence base and next steps.
+The Geberit Home App sends two additional Ble20 protocol initialisation commands
+after `DataPointInventory` and before starting DpId reads:
 
-The behavioral facts are established:
+1. **`CapabilitiesCmd` (0xFD)** — "what capabilities does this device have?"
+2. **`EventStorageInventory` (0x50)** — "what events are stored?"
+
+The bridge (before v3.0.2) sent only `DataPointInventory` and then immediately
+started DpId reads. By skipping `CapabilitiesCmd` and `EventStorageInventory`,
+the bridge was identified as a non-standard (non-app) client, causing it to displace
+the physical remote.
+
+**Evidence chain:**
+- All fresh app connections: `Inventory` → `CapabilitiesCmd` → `EventStorageInventory` → DpId reads → remote **NOT** displaced
+- All bridge connections (pre-fix): `Inventory` → DpId reads — remote **DISPLACED**
+- App reconnects (cached inventory): no inventory, no capabilities, no event storage → just DpId reads → remote **NOT** displaced (device already recognised app from prior session)
+- Confirmed from decompiled vendor app source (`Ble20Product.cs`, `Initialize()` method)
+- Confirmed from kstr `GeberitConnectViaApp.pcapng`: all 4 sessions show identical 2-frame post-inventory sequence before first DpId read
+
+**Fix (v3.0.2):** `AlbaClient.post_connect()` now calls `capabilities()` then
+`event_storage_inventory()` after `DataPointInventory`, exactly mirroring the app
+sequence. The calls are skipped on reconnects where the coordinator or instance
+inventory cache is reused — matching the app's own reconnect-skip behaviour.
+
+The behavioral facts remain established:
 
 - Bridge (keyset 0, KE, DpId reads, no extra writes) → **displaces remote**
 - Wrong-PIN app (keyset 0, KE, no DpId reads, failed join attempt) → **does NOT displace**
-- Registered app (keyset 0, KE, DpId reads, something after KE) → **does NOT displace**
+- Registered app (keyset 0, KE, DpId reads, caps + event storage) → **does NOT displace**
 
-The distinguishing factor between the bridge and a successfully connected app is
-**unknown**. The leading hypothesis is `DP_START_USER_SESSION` (DpId 802): the app
-may write to this DpId as a session-open signal that the bridge does not send.
-The kstr `GeberitConnectViaApp.pcapng` capture already contains the app's full
-post-KE write sequence and is the next analysis target.
+The `DP_START_USER_SESSION` hypothesis is now ruled out.
 
 ## What Was Ruled Out
 
@@ -58,6 +73,15 @@ post-KE write sequence and is the next analysis target.
 | Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — unrelated to deregistration |
 | Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — unrelated to deregistration |
 | `DP_START_USER_SESSION (802)` | ⚠️ **Open** — bridge does NOT call this; app may call it. Needs pcapng analysis. |
+
+## Fix Options
+
+| Option | Status |
+|--------|--------|
+| `CapabilitiesCmd` + `EventStorageInventory` after inventory | ✅ **IMPLEMENTED (v3.0.2)** — root cause confirmed, fix deployed |
+| `DP_JOIN_DEVICE` once with PIN | ❌ **Invalidated** — DpId 543 absent from inventory on Alba 250 |
+| `DP_START_USER_SESSION` (DpId 802) write after KE | ❌ **Ruled out** — not observed in any app session |
+| BLE notification mode — connect once, stay connected | Deferred — root cause now fixed |
 
 ## Investigation Steps — Cheapest First
 
@@ -114,20 +138,25 @@ The actual distinguishing factor is still unknown.
 
 ### Step 3 — Analyse kstr pcapng (no new hardware required)
 
-**Status: not yet done — this is the next step.**
+**Status: DONE (2026-05-27) — root cause confirmed.**
 
-`local-assets/kstr/GeberitConnectViaApp.pcapng` contains a complete app session on
-the same firmware (`RS03TS89`, sw `1.14.1 1.2.0`). App behaviour is identical across
-hardware revisions — a new capture from MuusLee is not needed.
+`local-assets/Android-BLE-Logs/kstr/GeberitConnect4xViaApp.pcapng` (4 sessions, same
+firmware `RS03TS89 / 1.14.1 1.2.0`) was parsed with a COBS+HDLC decoder.
 
-**What to look for:** every ATT write the app sends after the Arendi KE handshake
-completes, before it begins DpId reads. Specifically:
-- Any write to DpId 802 (`DP_START_USER_SESSION`) — leading hypothesis
-- Any other DpId write or Ble20 command not present in the bridge's poll path
-- The exact Ble20 command sequence: CommandId values and payloads
+**Finding:** all 4 fresh-connection sessions show an identical 2-frame pattern between
+the last `InventoryData` frame and the first `ReadCmd` DpId read:
 
-Use the existing COBS decoder and Arendi frame parser on the pcapng to extract the
-post-KE write sequence.
+| Frame | Ciphertext size | Ble20 payload | Identity |
+|-------|----------------|---------------|----------|
+| ns=4  | 6 B (1 B plain) | `[0xFD]`     | `CapabilitiesCmd` |
+| ns=5  | 6 B (1 B plain) | `[0x50]`     | `EventStorageInventory` |
+
+Device responds to `CapabilitiesCmd` with a `CapabilitiesAck` (0xFE) + 1 B flags.
+Device responds to `EventStorageInventory` with `EventStorageInventoryCount` (0x51) +
+2 B count, then N × `EventStorageInventoryData` (0x52) frames.
+
+Reconnect sessions (where the app skips inventory due to firmware-version cache match)
+also skip both of these frames — confirming the "skip on reconnect" pattern.
 
 ---
 
@@ -281,15 +310,6 @@ The `join()` scaffolding in `Ble20Client.py` and the `alba_pin` config field rem
 place in case a different Alba firmware variant does expose `DP_JOIN_DEVICE`. But this
 is not the fix for the confirmed affected device.
 
-## Fix Options
-
-| Option | Status |
-|--------|--------|
-| `DP_JOIN_DEVICE` once with PIN | ❌ **Invalidated** — DpId 543 absent from inventory on Alba 250 |
-| **Analyse kstr pcapng for post-KE writes** | ⚠️ **Next step** — find what the app sends that the bridge doesn't |
-| `DP_START_USER_SESSION` (DpId 802) write after KE | ⚠️ Leading hypothesis — needs pcapng confirmation |
-| BLE notification mode — connect once, stay connected | Deferred — investigate root cause first |
-| Increase poll interval significantly | Reduces exposure but doesn't fix the root cause |
 
 ## Related Files
 

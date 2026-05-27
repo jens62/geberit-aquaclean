@@ -116,12 +116,17 @@ class AlbaClient(IAquaCleanClient):
                 logger.warning("Alba JOIN failed: %s — will retry next poll", e)
 
     async def post_connect(self, inventory: dict | None = None) -> None:
-        """Run DataPointInventory — mandatory first step in Ble20 protocol.
+        """Run the Ble20 session initialisation sequence.
 
-        If inventory is provided and non-empty (coordinator cache), use it
-        directly — saves ~12 s per poll by skipping the BLE exchange.
-        If self._inventory is already populated (persistent ESPHome client
-        reused across polls), also skip the exchange.
+        Fresh connection (no cached inventory):
+          1. DataPointInventory — fetches all 78 DpId definitions (~12 s)
+          2. CapabilitiesCmd    — device recognises this as a full app client
+          3. EventStorageInventory — required to prevent remote displacement
+
+        Cached inventory (coordinator cache or persistent ESPHome client):
+          Skips all three — mirrors the app's reconnect-skip behaviour where
+          the device already has the session context and no re-registration
+          is needed.
         """
         if inventory:
             self._inventory = inventory
@@ -133,6 +138,11 @@ class AlbaClient(IAquaCleanClient):
         else:
             self._inventory = await self._ble20.inventory()
             self.base_client._inv = self._inventory
+            caps = await self._ble20.capabilities()
+            try:
+                await self._ble20.event_storage_inventory(capabilities_flags=caps)
+            except Exception as e:
+                logger.warning("AlbaClient: event_storage_inventory failed: %s", e)
         try:
             self.firmware_versions = await self.base_client.get_firmware_version_list_async()
         except Exception:

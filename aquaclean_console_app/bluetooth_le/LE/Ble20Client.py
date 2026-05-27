@@ -273,6 +273,64 @@ class Ble20Client:
                 logger.debug(f"Ble20: poll_state DpId={dp_id} unavailable: {e}")
         return result
 
+    # ── Session initialisation (post-inventory) ──────────────────────────────
+
+    async def capabilities(self) -> int:
+        """Send CapabilitiesCmd (0xFD) and return the capability flags byte.
+
+        Required as part of the session initialisation sequence after
+        DataPointInventory.  The device uses this exchange to distinguish
+        a registered app client from an unregistered client.
+
+        Returns 0 on timeout (device does not support this command).
+        """
+        await self._send(bytes([CommandId.CapabilitiesCmd]))
+        try:
+            while True:
+                frame = await self._recv()
+                logger.debug(f"Ble20 ← {frame.hex()}")
+                if frame[0] == CommandId.CapabilitiesAck:
+                    flags = frame[1] if len(frame) > 1 else 0
+                    logger.debug(f"Ble20: capabilities flags=0x{flags:02X}")
+                    return flags
+                logger.debug(f"Ble20: skipping frame cmd=0x{frame[0]:02X} (awaiting CapabilitiesAck)")
+        except asyncio.TimeoutError:
+            logger.warning("Ble20: CapabilitiesCmd timed out — device may not support it")
+            return 0
+
+    async def event_storage_inventory(self, capabilities_flags: int = 0) -> None:
+        """Send EventStorageInventory (0x50) and drain all response frames.
+
+        Required as part of the session initialisation sequence after
+        capabilities().  Results are discarded — the call itself signals to the
+        device that this is a full app client session.
+
+        capabilities_flags: value returned by capabilities().  Bit 2
+        (ExtendedEventStorageRead) selects the extended request variant.
+        Gracefully handles devices with no event storage or on timeout.
+        """
+        extended = bool(capabilities_flags & 0x04)
+        payload = bytes([CommandId.EventStorageInventory, 0x01]) if extended else bytes([CommandId.EventStorageInventory])
+        await self._send(payload)
+        try:
+            remaining = 0
+            while True:
+                frame = await self._recv()
+                logger.debug(f"Ble20 ← {frame.hex()}")
+                if frame[0] == CommandId.EventStorageInventoryCount:
+                    remaining = struct.unpack_from('<H', frame, 1)[0] if len(frame) >= 3 else 0
+                    logger.debug(f"Ble20: event storage inventory count={remaining}")
+                    if remaining == 0:
+                        return
+                elif frame[0] == CommandId.EventStorageInventoryData:
+                    remaining -= 1
+                    if remaining <= 0:
+                        return
+                else:
+                    logger.debug(f"Ble20: skipping frame cmd=0x{frame[0]:02X} (draining event storage)")
+        except asyncio.TimeoutError:
+            logger.warning("Ble20: EventStorageInventory timed out — continuing anyway")
+
     # ── JOIN ─────────────────────────────────────────────────────────────────
 
     async def join(
