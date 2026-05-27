@@ -237,9 +237,12 @@ still displaces the remote.
 
 > *"Join a device to the gateway."*
 
-This is a **GeBus wired-gateway topology command** — it registers a toilet device
-into a Geberit Home hub over the wired GeBus bus network. The `GEBUS_DISTURBANCE`
-error flag in `DP_JOIN_DEVICE_ERROR` confirms the GeBus context.
+This is a **GeBus gateway topology command** — it registers a device into a Geberit
+Home hub's network. The `GEBUS_DISTURBANCE` error flag in `DP_JOIN_DEVICE_ERROR`,
+`GEBUS Station` and `Idc Address` fields in the device list, and references to
+`"Wireless joined device on GEBUS"` all confirm the GeBus context. GeBus supports
+both wired and wireless members; the physical layer is not confirmed from app source
+alone.
 
 **It has nothing to do with a BLE phone or bridge connecting directly to a toilet.**
 `Ble20Product.Initialize()` — the full Alba BLE session init — never calls `Join`,
