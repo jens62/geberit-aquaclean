@@ -45,10 +45,16 @@ the physical remote.
 - Confirmed from decompiled vendor app source (`Ble20Product.cs`, `Initialize()` method)
 - Confirmed from kstr `GeberitConnectViaApp.pcapng`: all 4 sessions show identical 2-frame post-inventory sequence before first DpId read
 
-**Fix (v3.0.2):** `AlbaClient.post_connect()` now calls `capabilities()` then
-`event_storage_inventory()` after `DataPointInventory`, exactly mirroring the app
-sequence. The calls are skipped on reconnects where the coordinator or instance
-inventory cache is reused — matching the app's own reconnect-skip behaviour.
+**Fix (v3.0.3):** `AlbaClient.post_connect()` now calls `capabilities()` then
+`event_storage_inventory()` on **every** fresh BLE connection, regardless of
+whether the DataPointInventory is taken from cache. Only the slow 12-second
+DataPointInventory download is skipped when a cached inventory is available.
+
+v3.0.2 sent the two commands only when running a fresh DataPointInventory (first
+poll). Subsequent polls reused the coordinator inventory cache and skipped both
+commands — the device saw a fresh BLE connection with only DpId reads and treated
+the bridge as an unrecognised client, displacing the remote on every poll after
+the first. Confirmed from MuusLee's v3.0.2 HA log (2026-05-27).
 
 The behavioral facts remain established:
 
@@ -78,7 +84,7 @@ The `DP_START_USER_SESSION` hypothesis is now ruled out.
 
 | Option | Status |
 |--------|--------|
-| `CapabilitiesCmd` + `EventStorageInventory` after inventory | ✅ **IMPLEMENTED (v3.0.2)** — root cause confirmed, fix deployed |
+| `CapabilitiesCmd` + `EventStorageInventory` on every fresh BLE connection | ✅ **IMPLEMENTED (v3.0.3)** — root cause confirmed, fix deployed |
 | `DP_JOIN_DEVICE` once with PIN | ❌ **Invalidated** — DpId 543 absent from inventory on Alba 250 |
 | `DP_START_USER_SESSION` (DpId 802) write after KE | ❌ **Ruled out** — not observed in any app session |
 | BLE notification mode — connect once, stay connected | Deferred — root cause now fixed |

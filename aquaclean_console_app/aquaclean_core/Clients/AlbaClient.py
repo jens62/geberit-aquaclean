@@ -118,15 +118,17 @@ class AlbaClient(IAquaCleanClient):
     async def post_connect(self, inventory: dict | None = None) -> None:
         """Run the Ble20 session initialisation sequence.
 
-        Fresh connection (no cached inventory):
-          1. DataPointInventory — fetches all 78 DpId definitions (~12 s)
-          2. CapabilitiesCmd    — device recognises this as a full app client
-          3. EventStorageInventory — required to prevent remote displacement
+        Every fresh BLE connection (cached inventory or not):
+          1. DataPointInventory — skipped when inventory is already cached
+          2. CapabilitiesCmd    — always sent; device uses this to recognise
+                                  the client as a full app-compatible peer
+          3. EventStorageInventory — always sent; required on every fresh
+                                     connection to prevent remote displacement
 
-        Cached inventory (coordinator cache or persistent ESPHome client):
-          Skips all three — mirrors the app's reconnect-skip behaviour where
-          the device already has the session context and no re-registration
-          is needed.
+        The app skips steps 2+3 only when reconnecting within the same app
+        session (device retains session context). The bridge disconnects after
+        every poll, so the device treats each reconnect as a new client —
+        capabilities+event_storage must be sent every time.
         """
         if inventory:
             self._inventory = inventory
@@ -138,11 +140,11 @@ class AlbaClient(IAquaCleanClient):
         else:
             self._inventory = await self._ble20.inventory()
             self.base_client._inv = self._inventory
-            caps = await self._ble20.capabilities()
-            try:
-                await self._ble20.event_storage_inventory(capabilities_flags=caps)
-            except Exception as e:
-                logger.warning("AlbaClient: event_storage_inventory failed: %s", e)
+        caps = await self._ble20.capabilities()
+        try:
+            await self._ble20.event_storage_inventory(capabilities_flags=caps)
+        except Exception as e:
+            logger.warning("AlbaClient: event_storage_inventory failed: %s", e)
         try:
             self.firmware_versions = await self.base_client.get_firmware_version_list_async()
         except Exception:
