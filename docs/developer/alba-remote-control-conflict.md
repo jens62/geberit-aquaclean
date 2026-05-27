@@ -9,44 +9,48 @@ When the HACS integration (or standalone bridge) is polling an AquaClean Alba:
 - Re-pairing the remote **fails with a red exclamation mark** while the integration
   is running.
 - Re-pairing **succeeds** only after disabling the integration.
-- The Geberit Home App also cannot connect while the integration is running, even
-  in the ~55-second gaps between polls.
+- The Geberit Home App **cannot scan for devices** while the bridge is connected —
+  the device stops advertising while a BLE central is connected (standard BLE
+  peripheral behaviour). At ~14 s connected per 60 s cycle the scan window can be
+  missed entirely.
 
 This is **not** a timing issue. Yellow = application-layer deregistration. Red on
 re-pair = active rejection by the toilet, not a timeout.
 
 ## Why This Is Not a Simple Timing Problem
 
-With a 60-second poll interval, the bridge connects for ~5 seconds per cycle (7.7%
-occupancy). The device should be free for ~55 seconds. Yet the app and remote cannot
-connect even in that window. The toilet is actively rejecting them, not just busy.
+With a 60-second poll interval, the bridge connects for ~14 seconds per cycle (~23%
+occupancy). The device stops advertising during that window, so the app may miss its
+scan. Between polls the device is free — but the toilet actively rejects the remote
+even then. The remote's `WrongPairingSecret`-style rejection is an application-layer
+decision, not a BLE-layer busy signal.
 
-## Root Cause Hypothesis — Arendi Session Ownership
+## Root Cause — Registered vs. Unregistered Clients
 
-> **Updated 2026-05-27:** Testing ruled out KE alone as the trigger — see
-> "Narrowed Root Cause" under Investigation Steps. The current best hypothesis
-> is that ownership is claimed on the first successful encrypted DpId response
-> after KE, not by KE itself.
+> **Updated 2026-05-27 (revised):** App + remote confirmed to coexist (MuusLee).
+> The root cause is not DpId reads per se — it is the absence of a successful
+> `DP_JOIN_DEVICE` registration. See "Confirmed Root Cause" under Investigation Steps.
 
-The Arendi security handshake (SABM → Version → EP → KE) is both encryption setup
-and **client authentication**. The KE Request includes a CMAC authenticating the
-client using `aquacleanBridgeId` (a fixed value shared by the bridge and the
-official Geberit Home App).
+The device maintains a **client registry**. Clients that have successfully called
+`DP_JOIN_DEVICE` (with the correct PIN) are *registered*. Registered clients coexist:
+the Geberit Home App and the physical remote can be used simultaneously without either
+displacing the other.
 
-The physical remote control almost certainly uses a **device-specific ID** registered
-during physical pairing (NFC touch or dedicated pairing procedure).
+The bridge (v3.0.0) removed `DP_JOIN_DEVICE` from its poll path. It connects, performs
+the Arendi KE handshake, reads DpIds, and disconnects — without ever registering.
+An unregistered client that successfully reads DpIds claims the device's "unregistered
+session slot." When the remote subsequently connects, it finds its registration
+displaced by the anonymous bridge session → red exclamation on re-pair.
 
-**The toilet likely implements a "last registered owner" model:** whichever client
-most recently completed a successful encrypted data exchange is the authorised session
-owner. When the bridge reads DpIds every 60 seconds, it continuously re-claims
-ownership. The remote's subsequent connection attempts present its device-specific ID,
-which no longer matches the stored owner → the toilet rejects it → red exclamation.
+The physical remote registers via NFC touch (local action, no PIN). The Geberit Home
+App registers via `DP_JOIN_DEVICE` instance 1 (with PIN). Both are then in the
+registry and coexist. The bridge is in neither — it is the only client that reads
+DpIds without holding a registry entry.
 
-Yellow exclamation = the remote's firmware has been kicked out enough times that it
-flags "lost pairing" locally.
-
-Re-pairing via NFC or the toilet's pairing mode re-registers the remote as owner —
-but the bridge re-takes ownership within 60 seconds.
+**Fix: re-enable `DP_JOIN_DEVICE` with the user's PIN, once, on first connect.**
+The `alba_pin` HACS config field already exists for this purpose. Once registered,
+the bridge behaves like a second phone — it coexists with the remote and the app
+without displacing either.
 
 ## What Was Ruled Out
 
@@ -59,8 +63,10 @@ but the bridge re-takes ownership within 60 seconds.
 | BLE timing (bridge occupies device continuously) | ❌ Device free 55 s per 60 s cycle |
 | Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — was causing restart to fail, unrelated to deregistration |
 | Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — was wasteful, unrelated to deregistration |
-| `DP_JOIN_DEVICE` on every poll | ❌ Ruled out: removed in v3.0.0, conflict persists (MuusLee, 2026-05-27) |
+| `DP_JOIN_DEVICE` on every poll | ❌ Not the cause: removed in v3.0.0, conflict persists (MuusLee, 2026-05-27) |
 | Arendi KE handshake alone (keyset 0) | ❌ Ruled out: wrong-PIN test — KE completes but remote not displaced when no DpId reads follow (MuusLee, 2026-05-27) |
+| DpId reads alone (without JOIN) | ✅ **Confirmed cause**: bridge reads DpIds without a registry entry → displaces remote |
+| DpId reads with successful JOIN | ❌ Not the cause: Geberit app reads DpIds AND coexists with remote after successful JOIN (MuusLee, 2026-05-27) |
 
 ## Investigation Steps — Cheapest First
 
@@ -89,35 +95,35 @@ finding the device. The app flow is: KE → JOIN(no PIN) → Protected → PIN p
 JOIN(wrong PIN) → WrongPairingSecret → error, with zero DpId reads. This closes the
 open question and validates the comparison table below.
 
-### Narrowed Root Cause — DpId Read Cycle After KE
+### Step 2 — App + remote coexistence test
 
-Combining Steps 0 and 1:
+**Result (MuusLee, 2026-05-27): ❌ App does NOT displace remote.**
+MuusLee confirmed the Geberit Home App and the physical remote can be used
+simultaneously — both work normally. The app uses keyset 0 (identical to the bridge)
+and performs a full DpId read cycle after KE, yet the remote remains functional.
+
+This breaks the earlier "DpId reads are the trigger" conclusion. The bridge and the
+registered app both do DpId reads; only the bridge displaces the remote.
+
+### Confirmed Root Cause — Absence of JOIN Registration
+
+Combining all three steps:
 
 | Scenario | KE | DpId reads | JOIN | Remote displaced? |
 |---|---|---|---|---|
 | v3.0.0 bridge (normal poll) | ✓ keyset 0 | ✓ full read cycle | ✗ removed | **Yes** |
 | Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ none (JOIN before reads) | ✗ failed | **No** |
+| Geberit Home App (registered) | ✓ keyset 0 | ✓ full read cycle | ✓ succeeded | **No** |
 
-Both scenarios completed the KE handshake with keyset 0 and did not call a
-successful JOIN. The only difference is the bridge performs a full DpId read cycle
-after KE; the wrong-PIN app does not — it attempts `DP_JOIN_DEVICE` immediately
-after KE, receives `JoinErrorStatus.Protected`, prompts for the PIN, retries with
-the wrong PIN, and fails — no DpId reads at any point.
+The bridge and the registered app share the same keyset and the same DpId reads. The
+only difference: the app has a successful `DP_JOIN_DEVICE` entry in the device's client
+registry; the bridge does not.
 
-**Current best hypothesis:** the device registers the "active session owner" on the
-first successful encrypted DpId response after KE. A session that completes KE but
-then immediately fails at the application layer (wrong PIN) does not claim ownership.
-A session that completes KE and then reads DpIds does.
+**Confirmed root cause:** an unregistered client (no JOIN) that reads DpIds claims the
+device's unregistered session slot and displaces the remote. A registered client (JOIN
+succeeded) coexists with the remote regardless of DpId reads.
 
-This supersedes the earlier hypothesis that KE alone claims ownership.
-
-**Implication for a fix:** the bridge cannot avoid the DpId reads (that is the
-entire purpose of the poll). The only viable paths are:
-- A "yield ownership" DpId write before disconnect (unknown if one exists)
-- Per-keyset ownership tracking on the device (bridge keyset 0 and remote keyset 1
-  coexist without conflict) — the PCA10059 sniff is needed to confirm this
-
-### Step 2 — PCA10059 BLE Sniff (only if Steps 0 and 1 confirm KE is the culprit)
+### Step 3 — PCA10059 BLE Sniff (optional, for confirmation only)
 
 ---
 
@@ -183,16 +189,12 @@ not in the KE handshake. Using the PIN as HKDF IKM would require implementing
 keyset 1 — and knowing the keyset-1 IKM, which is device-specific and not derivable
 from the PIN.
 
-**Open question:**
-Does the toilet track session ownership **per keyset** (keyset 0 and keyset 1 can
-coexist, owned by different clients simultaneously) or **globally** (only one active
-owner regardless of keyset)?
-
-If per-keyset: bridge (keyset 0) and remote (keyset 1) should be able to coexist, and
-the deregistration must have a different cause.
-If global: bridge's keyset-0 KE every 60 s displaces the remote's keyset-1 registration
-→ confirmed root cause. The PCA10059 sniff is the only way to distinguish these two
-models without guessing.
+**Keyset ownership question — superseded:**
+The per-keyset vs. global ownership question is no longer the critical unknown. The
+app+remote coexistence test (Step 2) shows that two keyset-0 clients (app + bridge) can
+coexist once both are registered via JOIN. The displacement is caused by the absence of
+registration, not by keyset collision. A PCA10059 sniff is no longer required to unblock
+the fix.
 
 ## PIN Mechanism — DP_PAIRING_SECRET and DP_JOIN_DEVICE
 
@@ -264,30 +266,33 @@ on the device, separate from the DP_JOIN_DEVICE application-layer registry. Whet
 these share the same finite pool (and thus compete for slots) is unknown without
 a PCA10059 sniff of the NFC pairing exchange.
 
-## DP_JOIN_DEVICE — Paused Pending Remote Conflict Resolution
+## DP_JOIN_DEVICE — Fix Path
 
-b23 added application-layer `DP_JOIN_DEVICE` (DpId 543) to `post_connect()`.
-MuusLee confirmed JOIN completes without a PIN. However, calling JOIN on every
-60-second poll cycle is a potential aggravator: if JOIN resets the device's
-application-layer client registry, it could displace the remote's registration
-at the application layer (distinct from the Arendi KE session ownership question).
+The fix is to re-enable `DP_JOIN_DEVICE` with the user's PIN, **once on first connect**,
+not on every poll. Once the bridge holds a registry entry it behaves like a second
+phone — subsequent polls skip JOIN and coexist with the remote and app.
 
-The JOIN call has been **removed from `post_connect()`** for now. The `join()` method
-in `Ble20Client.py` and the `alba_pin` HACS config field are retained — once the
-remote conflict is understood, JOIN can be re-enabled with appropriate safeguards
-(e.g., one-shot on first poll, not repeated on every cycle).
+**Implementation (already scaffolded):**
+- `join()` method exists in `Ble20Client.py`
+- `alba_pin` config field exists in HACS and the standalone bridge
+- Call JOIN once in `post_connect()` guarded by a "already registered" flag
+- On `TooManyDevices` error: log a warning; the bridge cannot register but polling
+  still works (with the displacement side-effect until a slot frees up)
+- On `WrongPairingSecret`: surface a clear config error to the user
 
-## Fix Options (pending sniff confirmation)
+**Why every-poll JOIN was wrong (b23 behaviour):** calling JOIN on every 60-second
+cycle was unnecessary and potentially disruptive. A single registration persists across
+BLE disconnects. The correct pattern is one JOIN per HA restart (or per bridge process
+start), not one per poll.
 
-| Option | Trade-off |
-|--------|-----------|
-| Make bridge use the same client ID as the remote | Breaks app coexistence if toilet is single-owner per ID |
-| Configurable "polling pause" window | User can trigger re-pairing during pause; manual workaround |
-| BLE notification mode — connect once, stay connected | Bridge becomes permanent BLE owner; remote can never reconnect |
-| Increase poll interval significantly (e.g. 5+ min) | Reduces kick frequency; remote degrades more slowly but still degrades |
+## Fix Options
 
-The correct fix cannot be determined without the sniff confirming the session
-ownership mechanism.
+| Option | Status |
+|--------|--------|
+| **Re-enable `DP_JOIN_DEVICE` once with PIN** | ✅ **Leading fix** — confirmed by app+remote coexistence test |
+| Configurable "polling pause" window | Workaround only; JOIN fix makes this unnecessary |
+| BLE notification mode — connect once, stay connected | Overkill; blocks remote scanning permanently |
+| Increase poll interval significantly | Reduces exposure but doesn't fix the root cause |
 
 ## Related Files
 
