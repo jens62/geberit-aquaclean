@@ -229,86 +229,53 @@ coexistence test shows two keyset-0 clients can coexist, which rules out a hard
 keyset-0 single-owner model — but does not explain why the bridge (also keyset 0)
 still displaces the remote.
 
-## PIN Mechanism — DP_PAIRING_SECRET and DP_JOIN_DEVICE
+## PIN and DP_JOIN_DEVICE — CONFIRMED NOT RELEVANT (2026-05-27)
 
-### What the PIN is
+### DP_JOIN_DEVICE is a wired gateway command
 
-The 4-digit PIN printed on the toilet sticker is `DP_PAIRING_SECRET` (DpId 12).
-It is a 4-byte string stored on the device with a default value of `"8645"`.
-Its purpose, as described in the Geberit protocol: *"Control number for pairing
-without local action."*
+`DP_JOIN_DEVICE` (DpId 543) description from vendor source:
 
-"Local action" means physically pressing a button on the toilet or touching NFC.
-The PIN allows an app or bridge to register as a paired client **without** physical
-presence. The physical remote control pairs via NFC (= local action) and therefore
-never needs the PIN.
+> *"Join a device to the gateway."*
 
-When a device has a non-default PIN configured it is considered **Protected**. Any
-JOIN attempt without the correct PIN is rejected with `JoinErrorStatus.WrongPairingSecret`.
+This is a **GeBus wired-gateway topology command** — it registers a toilet device
+into a Geberit Home hub over the wired GeBus bus network. The `GEBUS_DISTURBANCE`
+error flag in `DP_JOIN_DEVICE_ERROR` confirms the GeBus context.
 
-**Every Alba in the field is Protected.** Users are required to enter the printed
-PIN when connecting the Geberit Home App for the first time. This means every
-shipped device carries a unique per-device PIN — the protocol-spec default `"8645"`
-is not used in production devices.
+**It has nothing to do with a BLE phone or bridge connecting directly to a toilet.**
+`Ble20Product.Initialize()` — the full Alba BLE session init — never calls `Join`,
+never reads `DP_PAIRING_SECRET`, and never references `JoinUtil`. Confirmed from
+decompiled vendor app source. The 4-session kstr pcapng confirms: no DpId 12 read,
+no JOIN write anywhere in any session.
 
-**The PIN is required on first connect only.** Subsequent app connections do not
-prompt for it. This was taken as confirmation that the PIN is used exclusively in
-`DP_JOIN_DEVICE`. With `DP_JOIN_DEVICE` invalidated as the mechanism on Alba 250,
-the PIN's role in the registration flow is now uncertain — it may be sent via a
-different DpId write, or the "Protected → PIN prompt" flow may use a different
-protocol path than assumed.
+### Mera Comfort has NO PIN
 
-### DP_JOIN_DEVICE payload variants
+The AquaClean Mera Comfort has no PIN at all — no sticker, no `DP_PAIRING_SECRET`,
+no PIN prompt in the Geberit Home App.
 
-`DP_JOIN_DEVICE` (DpId 543) has three instance variants:
+### Alba PIN (`DP_PAIRING_SECRET`, DpId 12)
 
-| Instance | Payload | Use case |
-|----------|---------|----------|
-| 0 | `[Series 1B][Variant 1B][UniqueID 4B]` | Join on unprotected device (no PIN required) |
-| 1 | `[Series 1B][Variant 1B][UniqueID 4B][PairingSecret 4B]` | Join on Protected device with PIN |
-| 2 | `[Series 1B][Variant 1B][UniqueID 4B][PairingSecret 4B][Zone 1B]` | Join with zone assignment |
+Alba has a 4-digit PIN printed on the toilet sticker, stored as `DP_PAIRING_SECRET`
+(DpId 12). The Geberit Home App prompts for it on first connect. However, this PIN
+is for the GeBus gateway joining mechanism only — it is not used in the Ble20 BLE
+wire protocol for direct app-to-toilet connections.
 
-The `JoinErrorStatus` flags relevant to the bridge:
+### `alba_pin` config field — inert, should be removed
 
-| Flag | Bit | Meaning |
-|------|-----|---------|
-| `Protected` | 1 | Device has non-default PIN; retry with instance 1 |
-| `WrongPairingSecret` | 2 | PIN was provided but incorrect |
-| `TooManyDevices` | 3 | Device's client registry is full |
+The `alba_pin` config field was based on the false assumption that `DP_JOIN_DEVICE`
+was an app authentication mechanism. It never reaches the wire on any known device.
+The `_maybe_join()` scaffolding is harmless (DpId 543 absent from inventory →
+silently skipped), but the field should be removed from the UI.
 
-`TooManyDevices` confirms the device maintains a **finite-size client registry**.
-The eviction policy (FIFO, LRU, or explicit remove) is unknown.
-
-### PIN is not used in Arendi KE
-
-The PIN (`DP_PAIRING_SECRET`) has no role in the Arendi security handshake.
-The KE layer uses a fixed pre-shared key (`aquacleanBridgeId`) as keyset 0,
-confirmed by the Android BLE log (keyset_id = `0x00` in every KE Request,
-regardless of whether the device has a custom PIN set). The Geberit app transmits
-the PIN at the application layer — as part of the DP_JOIN_DEVICE write payload,
-after encryption is already established — not inside the KE handshake.
-
-### How remote pairing differs from app/bridge pairing
-
-| Client | Pairing method | PIN required |
-|--------|---------------|-------------|
-| Physical remote | NFC touch (local action) | No |
-| Geberit Home App | Unknown — `DP_JOIN_DEVICE` not in inventory | Unknown |
-| Bridge | Nothing after KE | N/A |
-
-The app registration mechanism on Alba 250 firmware is unknown. `DP_JOIN_DEVICE` (DpId 543)
-is absent from the device inventory — the app must use a different path.
-
-## DP_JOIN_DEVICE — INVALIDATED
+## DP_JOIN_DEVICE — WRONG HYPOTHESIS (FULLY RULED OUT)
 
 > **2026-05-27:** `DP_JOIN_DEVICE` (DpId 543) is absent from the 78-DpId inventory
-> on Alba 250 (`RS03TS89` / `1.14.1 1.2.0`). The `join()` call in `Ble20Client.py`
-> detected the absence and returned "skipped" on every poll. Bridge v3.0.1b1 behaves
-> identically to v3.0.0 — the fix did nothing.
+> on Alba 250. But more fundamentally: `DP_JOIN_DEVICE` is a **wired GeBus gateway**
+> topology command ("Join a device to the gateway") — it has nothing to do with a
+> BLE app or bridge connecting directly to a toilet. The hypothesis was wrong at
+> the protocol level, not just because DpId 543 was absent.
 
-The `join()` scaffolding in `Ble20Client.py` and the `alba_pin` config field remain in
-place in case a different Alba firmware variant does expose `DP_JOIN_DEVICE`. But this
-is not the fix for the confirmed affected device.
+The `join()` scaffolding in `Ble20Client.py` and the `alba_pin` config field are
+inert. `alba_pin` should be removed from the config flow UI.
 
 
 ## Related Files
