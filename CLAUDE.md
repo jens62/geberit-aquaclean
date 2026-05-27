@@ -445,6 +445,31 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **HACS Alba: configurable DpId polling frequency.**
+
+  Currently the fast/slow poll split is hardcoded (`_ALBA_SLOW_POLL_EVERY = 10`).
+  Three options, in ascending effort:
+
+  **Option A — expose slow-poll interval as a user setting (~0.5 session, recommended first step)**
+  `_ALBA_SLOW_POLL_EVERY` is already the only knob needed for 90% of the use case.
+  One options-flow field ("refresh static data every N polls"), wire into the coordinator
+  constant. Near-zero effort, covers the main complaint (static data fetched too often).
+
+  **Option B — per-group frequency: every poll / on start / once a day (~1 session, recommended long-term)**
+  Natural groups (~5): live state, stored settings, identification, statistics, descaling.
+  - Options flow: one step, ~5 dropdowns
+  - Coordinator: route each DpId group to the right polling bucket based on config
+  - "Once a day": wall-clock tracking (not poll-count), small extra complexity
+  - Entities in "on start only" groups must not go unavailable on fast polls
+
+  **Option C — per-DpId frequency (~3 sessions, over-engineered)**
+  78 DpIds × config UI is unworkable in HA's native config flow. Would need a custom
+  Lovelace card or YAML-based override dict. Most of the effort is UI, not protocol.
+  Not recommended — the probe tool covers the development use case already.
+
+  **Recommendation:** implement Option A first (free win), then Option B if users request
+  per-group control. Skip Option C.
+
 - **Auto-generate REST API docs (Swagger UI / OpenAPI) via GitHub Actions.**
 
   FastAPI already exposes `/openapi.json` and Swagger UI at `/docs` at runtime. The goal
