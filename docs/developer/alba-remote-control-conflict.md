@@ -25,48 +25,39 @@ scan. Between polls the device is free — but the toilet actively rejects the r
 even then. The remote's `WrongPairingSecret`-style rejection is an application-layer
 decision, not a BLE-layer busy signal.
 
-## Root Cause — Registered vs. Unregistered Clients
+## Root Cause — UNKNOWN (investigation in progress)
 
-> **Updated 2026-05-27 (revised):** App + remote confirmed to coexist (MuusLee).
-> The root cause is not DpId reads per se — it is the absence of a successful
-> `DP_JOIN_DEVICE` registration. See "Confirmed Root Cause" under Investigation Steps.
+> **Status 2026-05-27:** Root cause is not yet confirmed. The `DP_JOIN_DEVICE`
+> hypothesis (below) was invalidated by v3.0.1b1 testing. See "Investigation Steps"
+> for the current evidence base and next steps.
 
-The device maintains a **client registry**. Clients that have successfully called
-`DP_JOIN_DEVICE` (with the correct PIN) are *registered*. Registered clients coexist:
-the Geberit Home App and the physical remote can be used simultaneously without either
-displacing the other.
+The behavioral facts are established:
 
-The bridge (v3.0.0) removed `DP_JOIN_DEVICE` from its poll path. It connects, performs
-the Arendi KE handshake, reads DpIds, and disconnects — without ever registering.
-An unregistered client that successfully reads DpIds claims the device's "unregistered
-session slot." When the remote subsequently connects, it finds its registration
-displaced by the anonymous bridge session → red exclamation on re-pair.
+- Bridge (keyset 0, KE, DpId reads, no extra writes) → **displaces remote**
+- Wrong-PIN app (keyset 0, KE, no DpId reads, failed join attempt) → **does NOT displace**
+- Registered app (keyset 0, KE, DpId reads, something after KE) → **does NOT displace**
 
-The physical remote registers via NFC touch (local action, no PIN). The Geberit Home
-App registers via `DP_JOIN_DEVICE` instance 1 (with PIN). Both are then in the
-registry and coexist. The bridge is in neither — it is the only client that reads
-DpIds without holding a registry entry.
-
-**Fix: re-enable `DP_JOIN_DEVICE` with the user's PIN, once, on first connect.**
-The `alba_pin` HACS config field already exists for this purpose. Once registered,
-the bridge behaves like a second phone — it coexists with the remote and the app
-without displacing either.
+The distinguishing factor between the bridge and a successfully connected app is
+**unknown**. The leading hypothesis is `DP_START_USER_SESSION` (DpId 802): the app
+may write to this DpId as a session-open signal that the bridge does not send.
+The kstr `GeberitConnectViaApp.pcapng` capture already contains the app's full
+post-KE write sequence and is the next analysis target.
 
 ## What Was Ruled Out
 
 | Candidate | Verdict |
 |-----------|---------|
-| `DP_START_USER_SESSION (802)` written by bridge | ❌ Bridge does NOT call this in the poll path |
-| `DP_END_USER_SESSION` as a release mechanism | ❌ Does not exist in the protocol |
+| BLE timing (bridge occupies device continuously) | ❌ Device free 55 s per 60 s cycle |
+| Arendi KE handshake alone (keyset 0) | ❌ Wrong-PIN test: KE completes, no DpId reads → remote NOT displaced (MuusLee, 2026-05-27) |
+| DpId reads with successful app session | ❌ Registered app reads DpIds AND coexists with remote (MuusLee, 2026-05-27) |
+| `DP_JOIN_DEVICE` as registration fix | ❌ **Invalidated (2026-05-27):** DpId 543 absent from 78-DpId inventory on Alba 250. Bridge v3.0.1b1 skipped JOIN on every poll; conflict persists unchanged. |
+| `DP_JOIN_DEVICE` on every poll (b23) | ❌ Not the cause: removed in v3.0.0, conflict persists |
 | `DP_PAIRING_MODE (356)` writable | ❌ Read-only Status field |
 | `AC_CMD_ACTIVATE_USER_SESSION (65586)` called | ❌ Not called anywhere |
-| BLE timing (bridge occupies device continuously) | ❌ Device free 55 s per 60 s cycle |
-| Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — was causing restart to fail, unrelated to deregistration |
-| Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — was wasteful, unrelated to deregistration |
-| `DP_JOIN_DEVICE` on every poll | ❌ Not the cause: removed in v3.0.0, conflict persists (MuusLee, 2026-05-27) |
-| Arendi KE handshake alone (keyset 0) | ❌ Ruled out: wrong-PIN test — KE completes but remote not displaced when no DpId reads follow (MuusLee, 2026-05-27) |
-| DpId reads alone (without JOIN) | ✅ **Confirmed cause**: bridge reads DpIds without a registry entry → displaces remote |
-| DpId reads with successful JOIN | ❌ Not the cause: Geberit app reads DpIds AND coexists with remote after successful JOIN (MuusLee, 2026-05-27) |
+| `DP_END_USER_SESSION` as a release mechanism | ❌ Does not exist in the protocol |
+| Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — unrelated to deregistration |
+| Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — unrelated to deregistration |
+| `DP_START_USER_SESSION (802)` | ⚠️ **Open** — bridge does NOT call this; app may call it. Needs pcapng analysis. |
 
 ## Investigation Steps — Cheapest First
 
@@ -105,25 +96,38 @@ and performs a full DpId read cycle after KE, yet the remote remains functional.
 This breaks the earlier "DpId reads are the trigger" conclusion. The bridge and the
 registered app both do DpId reads; only the bridge displaces the remote.
 
-### Confirmed Root Cause — Absence of JOIN Registration
+### Evidence Summary (2026-05-27)
 
-Combining all three steps:
-
-| Scenario | KE | DpId reads | JOIN | Remote displaced? |
+| Scenario | KE | DpId reads | JOIN available? | Remote displaced? |
 |---|---|---|---|---|
-| v3.0.0 bridge (normal poll) | ✓ keyset 0 | ✓ full read cycle | ✗ removed | **Yes** |
-| Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ none (JOIN before reads) | ✗ failed | **No** |
-| Geberit Home App (registered) | ✓ keyset 0 | ✓ full read cycle | ✓ succeeded | **No** |
+| v3.0.1b1 bridge | ✓ keyset 0 | ✓ full read cycle | ✗ not in inventory | **Yes** |
+| Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ none | unknown | **No** |
+| Geberit Home App (registered) | ✓ keyset 0 | ✓ full read cycle | unknown | **No** |
 
-The bridge and the registered app share the same keyset and the same DpId reads. The
-only difference: the app has a successful `DP_JOIN_DEVICE` entry in the device's client
-registry; the bridge does not.
+`DP_JOIN_DEVICE` (DpId 543) is absent from the 78-DpId inventory on Alba 250.
+The bridge's v3.0.1b1 JOIN fix silently skipped on every poll.
+Whatever the app does differently from the bridge, it is not `DP_JOIN_DEVICE`.
 
-**Confirmed root cause:** an unregistered client (no JOIN) that reads DpIds claims the
-device's unregistered session slot and displaces the remote. A registered client (JOIN
-succeeded) coexists with the remote regardless of DpId reads.
+**The "JOIN" column in the earlier version of this table was wrong** — it assumed the
+app's registration mechanism was `DP_JOIN_DEVICE`, which is not supported on this device.
+The actual distinguishing factor is still unknown.
 
-### Step 3 — PCA10059 BLE Sniff (optional, for confirmation only)
+### Step 3 — Analyse kstr pcapng (no new hardware required)
+
+**Status: not yet done — this is the next step.**
+
+`local-assets/kstr/GeberitConnectViaApp.pcapng` contains a complete app session on
+the same firmware (`RS03TS89`, sw `1.14.1 1.2.0`). App behaviour is identical across
+hardware revisions — a new capture from MuusLee is not needed.
+
+**What to look for:** every ATT write the app sends after the Arendi KE handshake
+completes, before it begins DpId reads. Specifically:
+- Any write to DpId 802 (`DP_START_USER_SESSION`) — leading hypothesis
+- Any other DpId write or Ble20 command not present in the bridge's poll path
+- The exact Ble20 command sequence: CommandId values and payloads
+
+Use the existing COBS decoder and Arendi frame parser on the pcapng to extract the
+post-KE write sequence.
 
 ---
 
@@ -189,12 +193,12 @@ not in the KE handshake. Using the PIN as HKDF IKM would require implementing
 keyset 1 — and knowing the keyset-1 IKM, which is device-specific and not derivable
 from the PIN.
 
-**Keyset ownership question — superseded:**
-The per-keyset vs. global ownership question is no longer the critical unknown. The
-app+remote coexistence test (Step 2) shows that two keyset-0 clients (app + bridge) can
-coexist once both are registered via JOIN. The displacement is caused by the absence of
-registration, not by keyset collision. A PCA10059 sniff is no longer required to unblock
-the fix.
+**Keyset ownership question — still open:**
+The per-keyset vs. global ownership question was considered resolved by the JOIN
+hypothesis. With JOIN invalidated, the keyset question is open again. The app+remote
+coexistence test shows two keyset-0 clients can coexist, which rules out a hard
+keyset-0 single-owner model — but does not explain why the bridge (also keyset 0)
+still displaces the remote.
 
 ## PIN Mechanism — DP_PAIRING_SECRET and DP_JOIN_DEVICE
 
@@ -219,9 +223,11 @@ shipped device carries a unique per-device PIN — the protocol-spec default `"8
 is not used in production devices.
 
 **The PIN is required on first connect only.** Subsequent app connections do not
-prompt for it. This confirms the PIN is used exclusively in `DP_JOIN_DEVICE`
-(the initial registration step) and plays no role in the Arendi KE handshake on
-ongoing connections.
+prompt for it. This was taken as confirmation that the PIN is used exclusively in
+`DP_JOIN_DEVICE`. With `DP_JOIN_DEVICE` invalidated as the mechanism on Alba 250,
+the PIN's role in the registration flow is now uncertain — it may be sent via a
+different DpId write, or the "Protected → PIN prompt" flow may use a different
+protocol path than assumed.
 
 ### DP_JOIN_DEVICE payload variants
 
@@ -258,40 +264,31 @@ after encryption is already established — not inside the KE handshake.
 | Client | Pairing method | PIN required |
 |--------|---------------|-------------|
 | Physical remote | NFC touch (local action) | No |
-| Geberit Home App | DP_JOIN_DEVICE instance 1 | Yes (if Protected) |
-| Bridge (b23+) | DP_JOIN_DEVICE instance 0/1 | Only if Protected |
+| Geberit Home App | Unknown — `DP_JOIN_DEVICE` not in inventory | Unknown |
+| Bridge | Nothing after KE | N/A |
 
-The remote's NFC pairing likely writes directly to a dedicated registration slot
-on the device, separate from the DP_JOIN_DEVICE application-layer registry. Whether
-these share the same finite pool (and thus compete for slots) is unknown without
-a PCA10059 sniff of the NFC pairing exchange.
+The app registration mechanism on Alba 250 firmware is unknown. `DP_JOIN_DEVICE` (DpId 543)
+is absent from the device inventory — the app must use a different path.
 
-## DP_JOIN_DEVICE — Fix Path
+## DP_JOIN_DEVICE — INVALIDATED
 
-The fix is to re-enable `DP_JOIN_DEVICE` with the user's PIN, **once on first connect**,
-not on every poll. Once the bridge holds a registry entry it behaves like a second
-phone — subsequent polls skip JOIN and coexist with the remote and app.
+> **2026-05-27:** `DP_JOIN_DEVICE` (DpId 543) is absent from the 78-DpId inventory
+> on Alba 250 (`RS03TS89` / `1.14.1 1.2.0`). The `join()` call in `Ble20Client.py`
+> detected the absence and returned "skipped" on every poll. Bridge v3.0.1b1 behaves
+> identically to v3.0.0 — the fix did nothing.
 
-**Implementation (already scaffolded):**
-- `join()` method exists in `Ble20Client.py`
-- `alba_pin` config field exists in HACS and the standalone bridge
-- Call JOIN once in `post_connect()` guarded by a "already registered" flag
-- On `TooManyDevices` error: log a warning; the bridge cannot register but polling
-  still works (with the displacement side-effect until a slot frees up)
-- On `WrongPairingSecret`: surface a clear config error to the user
-
-**Why every-poll JOIN was wrong (b23 behaviour):** calling JOIN on every 60-second
-cycle was unnecessary and potentially disruptive. A single registration persists across
-BLE disconnects. The correct pattern is one JOIN per HA restart (or per bridge process
-start), not one per poll.
+The `join()` scaffolding in `Ble20Client.py` and the `alba_pin` config field remain in
+place in case a different Alba firmware variant does expose `DP_JOIN_DEVICE`. But this
+is not the fix for the confirmed affected device.
 
 ## Fix Options
 
 | Option | Status |
 |--------|--------|
-| **Re-enable `DP_JOIN_DEVICE` once with PIN** | ✅ **Leading fix** — confirmed by app+remote coexistence test |
-| Configurable "polling pause" window | Workaround only; JOIN fix makes this unnecessary |
-| BLE notification mode — connect once, stay connected | Overkill; blocks remote scanning permanently |
+| `DP_JOIN_DEVICE` once with PIN | ❌ **Invalidated** — DpId 543 absent from inventory on Alba 250 |
+| **Analyse kstr pcapng for post-KE writes** | ⚠️ **Next step** — find what the app sends that the bridge doesn't |
+| `DP_START_USER_SESSION` (DpId 802) write after KE | ⚠️ Leading hypothesis — needs pcapng confirmation |
+| BLE notification mode — connect once, stay connected | Deferred — investigate root cause first |
 | Increase poll interval significantly | Reduces exposure but doesn't fix the root cause |
 
 ## Related Files
