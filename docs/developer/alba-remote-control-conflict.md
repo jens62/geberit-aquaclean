@@ -25,7 +25,9 @@ scan. Between polls the device is free — but the toilet actively rejects the r
 even then. The remote's `WrongPairingSecret`-style rejection is an application-layer
 decision, not a BLE-layer busy signal.
 
-## Root Cause — CONFIRMED (2026-05-27)
+## Root Cause — PARTIALLY IDENTIFIED, INCOMPLETE (2026-05-28)
+
+### What was fixed in v3.0.3 (necessary but not sufficient)
 
 The Geberit Home App sends two additional Ble20 protocol initialisation commands
 after `DataPointInventory` and before starting DpId reads:
@@ -34,21 +36,13 @@ after `DataPointInventory` and before starting DpId reads:
 2. **`EventStorageInventory` (0x50)** — "what events are stored?"
 
 The bridge (before v3.0.2) sent only `DataPointInventory` and then immediately
-started DpId reads. By skipping `CapabilitiesCmd` and `EventStorageInventory`,
-the bridge was identified as a non-standard (non-app) client, causing it to displace
-the physical remote.
+started DpId reads. v3.0.3 fixed this — caps+event_storage now sent on every poll.
+Confirmed from MuusLee's v3.0.3 log: every poll shows `→ fd`, `← fe02`, `→ 50`,
+event storage drain, then DpId reads.
 
-**Evidence chain:**
-- All fresh app connections: `Inventory` → `CapabilitiesCmd` → `EventStorageInventory` → DpId reads → remote **NOT** displaced
-- All bridge connections (pre-fix): `Inventory` → DpId reads — remote **DISPLACED**
-- App reconnects (cached inventory): no inventory, no capabilities, no event storage → just DpId reads → remote **NOT** displaced (device already recognised app from prior session)
-- Confirmed from decompiled vendor app source (`Ble20Product.cs`, `Initialize()` method)
-- Confirmed from kstr `GeberitConnectViaApp.pcapng`: all 4 sessions show identical 2-frame post-inventory sequence before first DpId read
-
-**Fix (v3.0.3):** `AlbaClient.post_connect()` now calls `capabilities()` then
-`event_storage_inventory()` on **every** fresh BLE connection, regardless of
-whether the DataPointInventory is taken from cache. Only the slow 12-second
-DataPointInventory download is skipped when a cached inventory is available.
+**However: displacement still persists in v3.0.3** (MuusLee confirmed 2026-05-28).
+After deactivating the integration the device still needs a toilet restart before
+the remote and app can reconnect — persistent state corruption.
 
 v3.0.2 sent the two commands only when running a fresh DataPointInventory (first
 poll). Subsequent polls reused the coordinator inventory cache and skipped both
@@ -56,13 +50,23 @@ commands — the device saw a fresh BLE connection with only DpId reads and trea
 the bridge as an unrecognised client, displacing the remote on every poll after
 the first. Confirmed from MuusLee's v3.0.2 HA log (2026-05-27).
 
-The behavioral facts remain established:
+### EventStorageInventory is not a "consume and clear" queue (2026-05-28)
 
-- Bridge (keyset 0, KE, DpId reads, no extra writes) → **displaces remote**
-- Wrong-PIN app (keyset 0, KE, no DpId reads, failed join attempt) → **does NOT displace**
-- Registered app (keyset 0, KE, DpId reads, caps + event storage) → **does NOT displace**
+Device returns the same 2 event frames on every poll within a session group:
+- `← 520800310010` / `← 520000700008` (stable across polls 1–3)
+- One byte increments between fresh inventory sessions (not per poll)
 
-The `DP_START_USER_SESSION` hypothesis is now ruled out.
+Events are NOT consumed by being read — the remote's event data is unaffected.
+
+### Current behavioral facts
+
+- Bridge v3.0.3 (keyset 0, KE, caps+event_storage, DpId reads) → **displaces remote**
+- Wrong-PIN app (keyset 0, KE, no DpId reads) → **does NOT displace**
+- Registered app (keyset 0, KE, caps+event_storage, DpId reads) → **does NOT displace**
+- Bridge Ble20 init sequence is now **identical** to app at Ble20 level
+
+The `DP_START_USER_SESSION` hypothesis is ruled out. The keyset_id hypothesis is
+ruled out. The remaining differentiator is unknown.
 
 ## What Was Ruled Out
 
@@ -84,10 +88,11 @@ The `DP_START_USER_SESSION` hypothesis is now ruled out.
 
 | Option | Status |
 |--------|--------|
-| `CapabilitiesCmd` + `EventStorageInventory` on every fresh BLE connection | ✅ **IMPLEMENTED (v3.0.3)** — root cause confirmed, fix deployed |
+| `CapabilitiesCmd` + `EventStorageInventory` on every fresh BLE connection | ✅ **IMPLEMENTED (v3.0.3)** — necessary but NOT sufficient; displacement persists |
 | `DP_JOIN_DEVICE` once with PIN | ❌ **Invalidated** — DpId 543 absent from inventory on Alba 250 |
 | `DP_START_USER_SESSION` (DpId 802) write after KE | ❌ **Ruled out** — not observed in any app session |
-| BLE notification mode — connect once, stay connected | Deferred — root cause now fixed |
+| keyset_id=1 in KE Request | ❌ **Ruled out (2026-05-28)** — app confirmed keyset_id=0x00; keyset 1 is the remote's key |
+| BLE notification mode — connect once, stay connected | Open — would remove the repeated-connect problem but adds complexity |
 
 ## Investigation Steps — Cheapest First
 
@@ -191,15 +196,31 @@ compared frame-by-frame against MuusLee's v3.0.2 HA DEBUG log (poll 1).
 
 1. **KE Request bytes** — the 56-byte KE Request frame is split across 3 ATT writes.
    The pcapng decode tool processes each ATT write independently and cannot reassemble
-   multi-write frames, so `ns=2` (SEC_KE_REQ) never appears in the output. Whether the
-   bridge and app embed the same client identifier in the CMAC computation is
-   **unverified**. A PCA10059 BLE sniffer with Wireshark (which reassembles ATT fragments)
-   would reveal it.
+   multi-write frames, so `ns=2` (SEC_KE_REQ) never appears in the output.
+   `keyset_id` (last byte of write 3) CAN be extracted from raw ATT write bytes and
+   was confirmed as `0x00` for the Android app (see Keyset Analysis section below).
 
 2. **Which DpIds are read** — encrypted; both sides produce identical 8B → 3B frames.
 
 **Conclusion:** the comparison gives no evidence that v3.0.3 is missing anything at the
-Ble20 command level. The only unexamined factor is the KE Request client identifier.
+Ble20 command level. keyset_id is identical (both 0x00). No remaining KE Request
+difference has been identified.
+
+### Step 5 — v3.0.3 hardware test result (2026-05-28)
+
+**Status: DONE — displacement still occurs.**
+
+MuusLee confirmed v3.0.3 result: remote shows yellow exclamation mark during
+polling. After deactivating the integration, toilet restart required before remote
+and app can reconnect. The caps+event_storage fix was necessary but not sufficient.
+
+The v3.0.4b2 pre-release adds `logger.debug` of the full KE Request hex (50 bytes)
+to `AriendiSecurity.py`. With HA debug logging enabled this will appear as:
+```
+AriendiSecurity: KE Request → 12<32B pubkey><16B cmac>00
+```
+This confirms keyset_id=0x00 in MuusLee's log and preserves the bytes for
+comparison against a future PCA10059 capture.
 
 ---
 
