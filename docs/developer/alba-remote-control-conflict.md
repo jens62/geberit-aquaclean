@@ -78,7 +78,7 @@ The `DP_START_USER_SESSION` hypothesis is now ruled out.
 | `DP_END_USER_SESSION` as a release mechanism | ❌ Does not exist in the protocol |
 | Bridge sending wrong bytes to DP_RESTART | ✅ Fixed (d88aba0) — unrelated to deregistration |
 | Bridge polling write-only DpId 563 | ✅ Fixed (d88aba0) — unrelated to deregistration |
-| `DP_START_USER_SESSION (802)` | ⚠️ **Open** — bridge does NOT call this; app may call it. Needs pcapng analysis. |
+| `DP_START_USER_SESSION (802)` | ❌ **Ruled out (2026-05-28)** — pcapng comparison shows zero WriteCmds in any app init session; all app→device frames after EventStorageInventory are ReadCmds only |
 
 ## Fix Options
 
@@ -163,6 +163,43 @@ Device responds to `EventStorageInventory` with `EventStorageInventoryCount` (0x
 
 Reconnect sessions (where the app skips inventory due to firmware-version cache match)
 also skip both of these frames — confirming the "skip on reconnect" pattern.
+
+### Step 4 — Pcapng vs bridge frame comparison (2026-05-28)
+
+**Status: DONE — no Ble20-level difference found.**
+
+`GeberitConnect4xViaApp.pcapng` decoded with `tools/android-ble-arendi-decode.py` and
+compared frame-by-frame against MuusLee's v3.0.2 HA DEBUG log (poll 1).
+
+**App session 1 — app→device sequence:**
+
+| Step | Ciphertext | Ble20 payload |
+|------|-----------|---------------|
+| DataPointInventory | ENC 7B → 2B | `[0x00, 0x00]` |
+| CapabilitiesCmd | ENC 6B → 1B | `[0xFD]` |
+| EventStorageInventory | ENC 6B → 1B | `[0x50]` |
+| ReadCmds × ~18 | ENC 8B → 3B each | `[0x10, lo, hi]` |
+
+**Findings:**
+- The app sends **no WriteCmds** (`0x20`) in its fresh-connection init session — there
+  is no "write DpId X to register" step. This rules out `DP_START_USER_SESSION` and any
+  other write-based registration mechanism.
+- No extra command exists between EventStorageInventory and the first ReadCmd.
+- The v3.0.3 bridge sequence is **identical** to the app's at the Ble20 level.
+
+**What the pcapng comparison cannot see:**
+
+1. **KE Request bytes** — the 56-byte KE Request frame is split across 3 ATT writes.
+   The pcapng decode tool processes each ATT write independently and cannot reassemble
+   multi-write frames, so `ns=2` (SEC_KE_REQ) never appears in the output. Whether the
+   bridge and app embed the same client identifier in the CMAC computation is
+   **unverified**. A PCA10059 BLE sniffer with Wireshark (which reassembles ATT fragments)
+   would reveal it.
+
+2. **Which DpIds are read** — encrypted; both sides produce identical 8B → 3B frames.
+
+**Conclusion:** the comparison gives no evidence that v3.0.3 is missing anything at the
+Ble20 command level. The only unexamined factor is the KE Request client identifier.
 
 ---
 
