@@ -496,8 +496,8 @@ class AriendiSecurity:
         client_cmac = _aes_cmac(auth_key, client_public)
 
         # 5. KE Request → KE Response
-        ke_req = bytes([_SEC_KE_REQ]) + client_public + client_cmac + bytes([0x00])
-        logger.debug("AriendiSecurity: KE Request →")
+        ke_req = bytes([_SEC_KE_REQ]) + client_public + client_cmac + bytes([0x01])
+        logger.debug(f"AriendiSecurity: KE Request → {ke_req.hex()}")
         await send_fn(self._att_i(ke_req))
         ke = await self._await_i_security(_SEC_KE_RESP, timeout=5.0)
         if len(ke) < 49:
