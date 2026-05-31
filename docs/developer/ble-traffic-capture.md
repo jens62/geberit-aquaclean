@@ -198,39 +198,56 @@ are visible in plaintext to the sniffer.
 - Wireshark installed
 - Python 3.x with `pyserial` (`pip install pyserial`)
 
-### Step 1 — Flash the sniffer firmware
+### Step 1 — Install nRF Util and the sniffer firmware
 
-**1a. Download the sniffer package**
+The sniffer firmware is flashed and managed via **nRF Util** — Nordic's standalone
+command-line tool (not to be confused with the old `pip install nrfutil` Python package,
+which is deprecated since 2022 and no longer maintained).
 
-Go to `nordicsemi.com` → Products → nRF Sniffer for Bluetooth LE → Downloads.
-Download the latest `.zip` (filename like `nRF-Sniffer-for-Bluetooth-LE-4.1.1.zip`) and unzip it.
+**1a. Download and install nRF Util**
 
-**1b. Enter bootloader mode**
+Go to `nordicsemi.com` → Products → nRF Util → Download.
+Download the binary for your platform (macOS universal, Linux x64, Windows x64).
+
+```bash
+# macOS / Linux — move to PATH and make executable
+chmod +x nrfutil
+sudo mv nrfutil /usr/local/bin/
+nrfutil --version
+```
+
+**1b. Install the ble-sniffer command module**
+
+```bash
+nrfutil install ble-sniffer
+```
+
+For exact sub-commands and firmware flash instructions, see the official docs:
+`docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/installing.html`
+
+> **Note:** that site requires JavaScript and does not render in curl/fetch tools.
+> Open it in a browser.
+
+**Alternative: nRF Connect for Desktop (GUI)**
+
+If you prefer a graphical tool:
+1. Download **nRF Connect for Desktop** from `nordicsemi.com` → Products → nRF Connect for Desktop
+2. Open it and install the **Programmer** app
+3. Enter bootloader mode on the dongle (see step 1c), select it in Programmer,
+   load the sniffer `.hex` file, and click **Write**
+
+**1c. Enter bootloader mode on the PCA10059**
 
 The dongle has one button: the small round **SW1** on the PCB face.
 
 Press and hold **SW1**, plug the dongle into USB, then release SW1.
 The LED should pulsate **red** — that confirms the bootloader is active.
 
-On macOS:
+On macOS, find the port:
 ```bash
 ls /dev/cu.usbmodem*
 # e.g. /dev/cu.usbmodem0007841235781
 ```
-
-**1c. Flash with nrfutil**
-
-```bash
-pip install nrfutil
-
-nrfutil dfu usb-serial \
-  -pkg nRF-Sniffer-for-Bluetooth-LE-4.1.1/hex/sniffer_nrf52840dongle_nrf52840_4.1.1.zip \
-  -p /dev/cu.usbmodem0007841235781
-```
-
-Replace the port with the value from step 1b. If `nrfutil` fails due to Python version
-conflicts, use **nRF Connect for Desktop** (nordicsemi.com → "Programmer" app) instead —
-it provides the same flash via a GUI.
 
 After flashing, unplug and replug the dongle. The LED stops pulsating — the dongle is
 now running the sniffer firmware.
@@ -238,13 +255,15 @@ now running the sniffer firmware.
 ### Step 2 — Install Wireshark and the extcap plugin
 
 The extcap plugin makes the dongle appear as a Wireshark capture interface.
+It ships as part of the sniffer package from nRF Util or the separate download.
 
 **macOS:**
 ```bash
 EXTCAP_DIR="$HOME/.config/wireshark/extcap"
 mkdir -p "$EXTCAP_DIR"
 
-cp nRF-Sniffer-for-Bluetooth-LE-4.1.1/extcap/nrf_sniffer_ble.py "$EXTCAP_DIR/"
+# copy nrf_sniffer_ble.py from the sniffer package location
+cp /path/to/nrf_sniffer_ble.py "$EXTCAP_DIR/"
 chmod +x "$EXTCAP_DIR/nrf_sniffer_ble.py"
 ```
 
@@ -259,7 +278,7 @@ If it does not appear: Capture → Refresh Interfaces.
 
 **Optional — nicer field names:**
 ```bash
-cp -r nRF-Sniffer-for-Bluetooth-LE-4.1.1/Profile \
+cp -r /path/to/sniffer/Profile \
   "$HOME/.config/wireshark/profiles/nRFSniffer"
 ```
 Then in Wireshark: Edit → Configuration Profiles → select nRFSniffer.
