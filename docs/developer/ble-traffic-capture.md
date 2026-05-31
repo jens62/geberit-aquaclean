@@ -247,23 +247,50 @@ The LED pulsates **red** — bootloader is active.
 nrfutil device list
 ```
 
-Look for a device with the `nordicDfu` trait — that is your dongle in bootloader mode.
-Its serial number is 12 alphanumeric characters, e.g. `A1234B5678C9`.
+Example output (macOS M1, dongle in bootloader mode):
+```
+WARNING: JLinkARM DLL not found. Devices that require J-Link will not be recognized
+correctly, and J-Link operations will not be available. Install SEGGER J-Link from
+https://www.segger.com/downloads/jlink/. Currently tested version: JLink_V9.24a.
 
-**3c. Program the firmware**
+E4E7F6146B56
+Product         Open DFU Bootloader
+Ports           /dev/tty.usbmodemE4E7F6146B561
+Traits          nordicDfu, nordicUsb, serialPorts, usb
+
+Supported devices found: 1
+```
+
+The J-Link warning is harmless — the PCA10059 dongle uses `nordicDfu`, not J-Link.
+Look for the device with `nordicDfu` in its traits. Its serial number is the 12-character
+alphanumeric string on the first line (`E4E7F6146B56` in this example).
+
+**3c. Find the firmware file**
+
+```bash
+find ~ -name "sniffer_nrf52840dongle_*.zip" 2>/dev/null
+# /Users/jens/.nrfutil/share/nrfutil-ble-sniffer/firmware/sniffer_nrf52840dongle_nrf52840_4.1.1.zip
+```
+
+**3d. Program the firmware**
 
 ```bash
 nrfutil device program \
-  --serial-number A1234B5678C9 \
-  --firmware /path/to/sniffer_nrf52840dongle_nrf52840_4.4.1.zip
+  --serial-number E4E7F6146B56 \
+  --firmware ~/.nrfutil/share/nrfutil-ble-sniffer/firmware/sniffer_nrf52840dongle_nrf52840_4.1.1.zip
 ```
 
 Replace the serial number and firmware path with the values from the previous steps.
-Use `find ~ -name "sniffer_nrf52840dongle_*.zip" 2>/dev/null` to locate the file if
-the path is unclear.
 
-After programming, unplug and replug the dongle. The LED stops pulsating — it is now
-running the sniffer firmware.
+Example output:
+```
+WARNING: JLinkARM DLL not found. [...]
+
+[00:00:02] ###### 100% [1/1 E4E7F6146B56] Programmed
+```
+
+After programming, unplug and replug the dongle (without holding SW1). The LED stops
+pulsating — it is now running the sniffer firmware.
 
 **Alternative: nRF Connect for Desktop (GUI)**
 
@@ -276,6 +303,21 @@ load the `.zip` firmware file, and click **Write**.
 ```bash
 mkdir -p ~/.local/lib/wireshark/extcap
 nrfutil ble-sniffer bootstrap
+```
+
+Example output:
+```
+Bootstrapping ble-sniffer...
+Bootstrap succeeded
+Next step
+---------
+
+Program a device with the appropriate sniffer firmware. [...]
+
+Supported devices
+-----------------
+* nRF52840 Dongle (firmware = /Users/jens/.nrfutil/share/nrfutil-ble-sniffer/firmware/sniffer_nrf52840dongle_nrf52840_4.1.1.zip)
+[...]
 ```
 
 The `mkdir` is required on macOS — `bootstrap` fails if the directory does not exist.
