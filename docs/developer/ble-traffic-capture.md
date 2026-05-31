@@ -207,9 +207,7 @@ Download the latest `.zip` (filename like `nRF-Sniffer-for-Bluetooth-LE-4.1.1.zi
 
 **1b. Enter bootloader mode**
 
-The dongle has two buttons:
-- **SW1** — larger rectangular button on the flat face
-- **SW2 (RESET)** — small round button on the side edge
+The dongle has one button: the small round **SW1** on the PCB face.
 
 Press and hold **SW1**, plug the dongle into USB, then release SW1.
 The LED should pulsate **red** — that confirms the bootloader is active.
