@@ -334,31 +334,87 @@ To find Wireshark's extcap directory manually: Help → About Wireshark → Fold
 look for **Personal Extcap path**.
 
 
-### Step 3 — Start capturing and select a device
+### Step 5 — Start capturing and select a device
 
-**3a. Make the nRF Sniffer toolbar visible**
+**5a. Make the nRF Sniffer toolbar visible**
 
 The Device dropdown only exists on the nRF Sniffer toolbar, which is hidden by default:
 View → Interface Toolbars → **nRF Sniffer for Bluetooth LE** (enable the checkmark).
 
-**3b. Start the capture**
+**5b. Start the capture**
 
 Double-click the `nRF Sniffer for Bluetooth LE` interface in the Wireshark home screen.
 A flood of BLE advertising packets will appear. The nRF Sniffer toolbar is now visible
 just below the main toolbar row.
 
-**3c. Select a device**
+The toolbar also contains a **Key** dropdown (`Legacy Passkey` by default) and a
+**Value** field. These are for decrypting BLE link-layer encrypted sessions. The
+Geberit Mera Comfort and Alba use no BLE link-layer encryption (zero SMP frames),
+so leave **Key** at any setting and leave **Value** empty — it has no effect on capture.
+
+**5c. Select a device — always lock before triggering the action**
 
 The toolbar contains a **Device** dropdown, initially set to `All advertising devices`.
 
 1. Let it run for a few seconds — nearby BLE devices populate the dropdown.
 2. Click the **Device** dropdown and select the toilet's MAC address from the list.
+   The toolbar shows the RSSI value (e.g. `-58 dBm`) once the device is found.
 3. Wireshark locks onto that device and follows its connections.
 
 The toilet's MAC can be found in the HA integration's device entry, in a previous
 btsnoop capture, or by scanning via `tools/aquaclean-connection-test.py`.
 
-### Step 4 — Captures to make (Alba remote displacement investigation)
+**Why "Following device" — not "All advertising devices":**
+
+In "All advertising devices" mode the dongle hops randomly across channels; it
+captures advertising packets from everything nearby but misses most `CONNECT_IND`
+frames. In "Following device" mode the firmware synchronises to the device's
+advertising interval, predicts which channel the next `ADV_IND` will arrive on, and
+waits there. Because the `CONNECT_IND` always arrives on the same channel as the
+preceding `ADV_IND`, a synchronised sniffer is far more likely to catch it.
+
+**Why `CONNECT_IND` matters:** the dongle uses the channel-hop parameters inside the
+`CONNECT_IND` to follow the BLE connection onto its data channels. If the `CONNECT_IND`
+is missed, the dongle has no way to decode the connection — Wireshark goes silent for the
+entire session even though the connection is active and the app is working.
+
+**5d. Lua alert plugin**
+
+A Wireshark Lua plugin plays an audio alert when the `CONNECT_IND` is caught, so you
+know exactly when the session is locked and when to tap the button in the app.
+
+| Sound | Event | What it means |
+|-------|-------|---------------|
+| **Tink** (soft) | SCAN_REQ — phone found the toilet | CONNECT_IND is ~100–300 ms away |
+| **Ping** (clear) | CONNECT_IND caught | Sniffer locked; ATT frames will decode; tap the app now |
+| Tink but no Ping | CONNECT_IND missed | Close app, wait for re-advertising, try again |
+
+Install:
+
+```bash
+mkdir -p ~/.config/wireshark/plugins
+cp tools/wireshark/mera_alert.lua ~/.config/wireshark/plugins/
+```
+
+Edit `TOILET` at the top of the file to match your device's BLE MAC address (lowercase,
+colon-separated). Then reload without restarting Wireshark:
+**Analyze → Reload Lua Plugins** (`Cmd+Shift+L`).
+
+Verify in **Tools → Lua Console**:
+```
+[mera_alert] loaded — watching 38:ab:41:2a:0d:67
+```
+
+**Capture workflow with the plugin:**
+
+1. Start capture, select device MAC in the toolbar
+2. Open the Geberit Home app — do not tap anything yet
+3. Hear **Tink** → app found the toilet, connection forming
+4. Hear **Ping** → CONNECT_IND captured; tap Toggle Lid (or any command) in the app
+5. If Tink but no Ping → sniffer missed CONNECT_IND; close app, wait for the toilet
+   to resume advertising (ADV_IND frames reappear in Wireshark), try again
+
+### Step 6 — Captures to make (Alba remote displacement investigation)
 
 #### Capture A — Official app session (baseline)
 1. Start sniffer, device = Alba MAC
@@ -371,6 +427,14 @@ btsnoop capture, or by scanning via `tools/aquaclean-connection-test.py`.
 3. Stop after 30 s. Save as `bridge-session.pcapng`
 
 #### Capture C — Remote control
+
+**Finding the remote's MAC first:**
+Before locking the sniffer to the remote, capture the toilet's advertising phase for a
+few seconds. The toilet maintains a bond with the physical remote and periodically sends
+`ADV_DIRECT_IND` frames addressed to the remote's MAC. In Wireshark, filter
+`btle.advertising_header.pdu_type == 1` (ADV_DIRECT_IND) to find the destination
+address — that is the remote's BLE MAC. Note it down before proceeding.
+
 1. Start sniffer, device = Alba MAC
 2. Press a button on the physical remote (it briefly BLE-connects to send the command)
 3. Stop. Save as `remote-session.pcapng`
@@ -392,7 +456,7 @@ Capture D is the most diagnostic: if the toilet sends something to the remote
 the EP exchange level or earlier. If it happens after the bridge's KE Response,
 the trigger is in the KE layer.
 
-### Step 5 — Analysis
+### Step 7 — Analysis
 
 #### Find the KE Request in Wireshark
 
