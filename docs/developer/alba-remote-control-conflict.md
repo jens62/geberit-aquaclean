@@ -218,12 +218,8 @@ polling. After deactivating the integration, toilet restart required before remo
 and app can reconnect. The caps+event_storage fix was necessary but not sufficient.
 
 The v3.0.4b2 pre-release adds `logger.debug` of the full KE Request hex (50 bytes)
-to `AriendiSecurity.py`. With HA debug logging enabled this will appear as:
-```
-AriendiSecurity: KE Request → 12<32B pubkey><16B cmac>00
-```
-This confirms keyset_id=0x00 in MuusLee's log and preserves the bytes for
-comparison against a future PCA10059 capture.
+to `AriendiSecurity.py`. v3.0.4b3 confirmed this logging works — see Step 7 for the
+full analysis of 17 consecutive KE exchanges.
 
 ### Step 6 — v3.0.4b1 accidental keyset_id=1 test (2026-05-28)
 
@@ -259,12 +255,55 @@ is invalid. However, this does not explain why v3.0.3 (keyset_id=0) also displac
 **Recovery required:** toilet power-cycle. Disabling the integration alone was not
 sufficient — the device needed a restart before the remote (and app) could reconnect.
 
+### Step 7 — v3.0.4b3 test results (2026-05-31)
+
+**Status: DONE — KE format confirmed from live log, new EP nonce and server pubkey findings, displacement persists.**
+
+MuusLee tested v3.0.4b3 with HA DEBUG logging. 17 consecutive successful polls,
+11:07–11:25 (18 minutes). Full hex logging of every KE exchange visible in the log.
+
+**KE Request byte layout confirmed from live log** (50 bytes, all 17 polls):
+```
+AriendiSecurity: KE Request → 12<32B client ephemeral pubkey><16B CMAC>00
+```
+- CommandId `0x12`: constant
+- Client ephemeral pubkey (bytes 1–32): **different on every poll** (correct Curve25519 DH ephemeral)
+- CMAC (bytes 33–48): changes with each new pubkey
+- keyset_id (byte 49, last byte): `0x00` throughout — confirmed
+
+This is the third independent source confirming keyset_id=0x00 (alongside kstr pcapng and
+MuusLee btsnoop). The byte layout matches the table in "What the KE Request Is" exactly.
+
+**Device server pubkey is static within power cycle:**
+All 17 KE Responses return the same server pubkey prefix:
+```
+KE Response server_pub=52d49ffc086ea0f0...
+```
+The device reuses its server-side key across all sessions within a power cycle. This is a
+useful sniffer anchor: `52d49ffc086ea0f0` is the expected start of any KE Response in a
+PCA10059 capture, regardless of which client (app, bridge, remote) is connecting.
+
+**EP nonces confirmed fixed per power cycle with successful KE completions:**
+All 17 EP Responses return identical nonces:
+```
+nonce1=3aa4598561ac316083e0b39d259a8f8d
+nonce2=2b57b8b460684e5b4c73793b0ca8f22f
+```
+Step 6 observed this only with failed KE attempts (keyset_id=1). This is now confirmed
+with 17 **successful** keyset=0 completions — nonces do not rotate on KE success.
+Nonce exhaustion is ruled out as a displacement cause.
+
+**Displacement affects both app and remote simultaneously:**
+MuusLee confirmed after v3.0.4b3 testing: both the physical remote AND the official
+Geberit Home App fail to connect. The displacement is not keyset-specific.
+
 **Updated evidence table:**
 
 | Scenario | KE | DpId reads | Remote displaced? |
 |---|---|---|---|
 | v3.0.3 bridge | ✓ keyset 0 completes | ✓ full read cycle | **Yes** |
 | v3.0.4b1 bridge | ✗ keyset 1, KE never completes | ✗ none | **Yes** |
+| v3.0.4b3 bridge | ✓ keyset 0, 17× completes | ✓ full read cycle | **Yes** |
 | Wrong-PIN app | ✓ keyset 0 completes | ✗ none | **No** |
 | Geberit Home App (registered) | ✓ keyset 0 completes | ✓ full read cycle | **No** |
 
@@ -301,6 +340,15 @@ install + tshark extraction + KE Request decode script.
 - Remote in normal (no exclamation) state → trigger bridge poll → observe
 - Key timing question: does the toilet notify the remote **before** bridge KE completes,
   or after? This locates the displacement trigger at EP level vs KE level
+
+### How to identify KE frames in the raw capture
+
+When comparing KE Requests byte-for-byte across app, bridge, and remote captures:
+
+- **Client ephemeral pubkey (bytes 1–32) will differ** between sessions — this is correct and expected (fresh per session).
+- **CMAC (bytes 33–48) will differ** accordingly.
+- **keyset_id (byte 49, last byte)** is what matters: `0x00` for app and bridge, `0x01` for remote.
+- **Device KE Response**: starts with `52d49ffc086ea0f0` — use this as an anchor to locate the KE exchange in the raw capture without decrypting anything.
 
 ### Key question the sniff will answer
 
