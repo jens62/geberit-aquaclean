@@ -2,12 +2,15 @@
 
 Recording the Bluetooth Low Energy traffic between the Geberit Home App and an AquaClean toilet is the primary method for analyzing device behavior: identifying unknown procedure codes, mapping parameter indices, and verifying protocol implementation.
 
-Two capture methods are available depending on which phone you have:
+Three capture methods are available:
 
-| Method | Platform | Output file | Analysis tool |
-|---|---|---|---|
-| Apple PacketLogger | iPhone + Mac | `.txt` (Raw Data export) | `tools/ble-decode.py` |
-| Android HCI Snoop Log | Android + Wireshark | `.pcapng` | `tools/android-ble-analyze.py` |
+| Method | Platform | What it can see | Output file | Analysis tool |
+|---|---|---|---|---|
+| Apple PacketLogger | iPhone + Mac | iPhone↔toilet only | `.txt` (Raw Data export) | `tools/ble-decode.py` |
+| Android HCI Snoop Log | Android + Wireshark | Android phone↔toilet only | `.pcapng` | `tools/android-ble-analyze.py` |
+| nRF52840 dongle sniffer | any OS + Wireshark | **any** device↔toilet, including remote and bridge | `.pcapng` | Wireshark + tshark (see below) |
+
+The nRF52840 method is the only one that can capture traffic from devices that are not a phone (physical remote, bridge on a Raspberry Pi). It is required for comparing KE Request frames across all three client types.
 
 ---
 
@@ -173,11 +176,249 @@ This is the format expected by `tools/android-ble-analyze.py`.
 
 ---
 
+## nRF52840 Dongle — Passive BLE Sniffer (any device↔toilet)
+
+This method uses a Nordic nRF52840 USB dongle (PCA10059) flashed with Nordic's
+sniffer firmware. Unlike the phone-based methods, it works passively: it captures
+BLE traffic between **any** two devices without needing access to either of them.
+
+**Use this method when you need to capture:**
+- Physical remote↔toilet (no phone involved)
+- Bridge↔toilet (bridge runs on a Raspberry Pi with no HCI log)
+- All three clients in the same session to compare frame-by-frame
+
+Alba does not use BLE link-layer encryption (zero SMP frames in all captures), so all
+ATT write payloads — including raw Arendi handshake frames (KE Request, EP Response) —
+are visible in plaintext to the sniffer.
+
+### Prerequisites
+
+- nRF52840 dongle (PCA10059) — Nordic Semiconductor, ~€10
+- macOS, Windows, or Linux
+- Wireshark installed
+- Python 3.x with `pyserial` (`pip install pyserial`)
+
+### Step 1 — Flash the sniffer firmware
+
+**1a. Download the sniffer package**
+
+Go to `nordicsemi.com` → Products → nRF Sniffer for Bluetooth LE → Downloads.
+Download the latest `.zip` (filename like `nRF-Sniffer-for-Bluetooth-LE-4.1.1.zip`) and unzip it.
+
+**1b. Enter bootloader mode**
+
+The dongle has two buttons:
+- **SW1** — larger rectangular button on the flat face
+- **SW2 (RESET)** — small round button on the side edge
+
+Press and hold **SW1**, plug the dongle into USB, then release SW1.
+The LED should pulsate **red** — that confirms the bootloader is active.
+
+On macOS:
+```bash
+ls /dev/cu.usbmodem*
+# e.g. /dev/cu.usbmodem0007841235781
+```
+
+**1c. Flash with nrfutil**
+
+```bash
+pip install nrfutil
+
+nrfutil dfu usb-serial \
+  -pkg nRF-Sniffer-for-Bluetooth-LE-4.1.1/hex/sniffer_nrf52840dongle_nrf52840_4.1.1.zip \
+  -p /dev/cu.usbmodem0007841235781
+```
+
+Replace the port with the value from step 1b. If `nrfutil` fails due to Python version
+conflicts, use **nRF Connect for Desktop** (nordicsemi.com → "Programmer" app) instead —
+it provides the same flash via a GUI.
+
+After flashing, unplug and replug the dongle. The LED stops pulsating — the dongle is
+now running the sniffer firmware.
+
+### Step 2 — Install Wireshark and the extcap plugin
+
+The extcap plugin makes the dongle appear as a Wireshark capture interface.
+
+**macOS:**
+```bash
+EXTCAP_DIR="$HOME/.config/wireshark/extcap"
+mkdir -p "$EXTCAP_DIR"
+
+cp nRF-Sniffer-for-Bluetooth-LE-4.1.1/extcap/nrf_sniffer_ble.py "$EXTCAP_DIR/"
+chmod +x "$EXTCAP_DIR/nrf_sniffer_ble.py"
+```
+
+**Windows:** copy the extcap files to `%APPDATA%\Wireshark\extcap\`.
+
+Open Wireshark. The interface list should now include:
+```
+nRF Sniffer for Bluetooth LE [nRF52840 Dongle /dev/cu.usbmodemXXX]
+```
+
+If it does not appear: Capture → Refresh Interfaces.
+
+**Optional — nicer field names:**
+```bash
+cp -r nRF-Sniffer-for-Bluetooth-LE-4.1.1/Profile \
+  "$HOME/.config/wireshark/profiles/nRFSniffer"
+```
+Then in Wireshark: Edit → Configuration Profiles → select nRFSniffer.
+
+### Step 3 — Configure for a specific device
+
+Click the gear icon next to the sniffer interface (or go to Capture → Options):
+
+- **Device** dropdown: start with `All advertising devices` for the first capture
+  to confirm you can see the toilet advertising. Once you have the MAC, set this
+  to the specific MAC for all subsequent captures — the sniffer will lock onto that
+  device and follow whichever connection forms.
+
+The toilet's MAC can be found in the HA integration's device entry, in a previous
+btsnoop capture, or by scanning via `tools/aquaclean-connection-test.py`.
+
+### Step 4 — Captures to make (Alba remote displacement investigation)
+
+#### Capture A — Official app session (baseline)
+1. Start sniffer, device = Alba MAC
+2. Open the Geberit Home app → connect to the Alba → let it complete the init sequence
+3. Stop after 30 s. Save as `app-session.pcapng`
+
+#### Capture B — Bridge session
+1. Start sniffer, device = Alba MAC
+2. Trigger a HACS poll (re-enable the integration, or wait for auto-poll)
+3. Stop after 30 s. Save as `bridge-session.pcapng`
+
+#### Capture C — Remote control
+1. Start sniffer, device = Alba MAC
+2. Press a button on the physical remote (it briefly BLE-connects to send the command)
+3. Stop. Save as `remote-session.pcapng`
+
+This is the only way to see the remote's raw KE Request — no phone-based capture can
+do this. It will confirm the remote's `keyset_id` and whether its frame structure
+differs from the app or bridge in any other field.
+
+#### Capture D — Displacement in action
+1. Start sniffer, device = Alba MAC (or `All advertising devices`)
+2. With the remote in its normal "registered" state (no yellow exclamation mark)
+3. Trigger a bridge poll
+4. Observe: does the toilet send any notification to the remote? Does the remote
+   start re-advertising after the bridge disconnects?
+5. Save as `displacement.pcapng`
+
+Capture D is the most diagnostic: if the toilet sends something to the remote
+**before** the bridge's KE Request even completes, the displacement trigger is at
+the EP exchange level or earlier. If it happens after the bridge's KE Response,
+the trigger is in the KE layer.
+
+### Step 5 — Analysis
+
+#### Find the KE Request in Wireshark
+
+Filter for ATT writes from the client to the toilet:
+```
+btatt.opcode == 0x52
+```
+(ATT_WRITE_CMD — `response=False` writes, used by current bridge versions)
+
+or
+```
+btatt.opcode == 0x12
+```
+(ATT_WRITE_REQ — `response=True` writes, used by some older versions and the app)
+
+Look for packets from client to server (toilet). The **KE Request** is the longest
+client→device frame in the handshake (~55 raw bytes after COBS encoding), sent
+immediately after the EP Response (nonces) frame arrives from the device.
+
+The GATT handle for Arendi writes on the Alba is `0x001e`; notifications arrive on
+`0x0020`. Filter: `btatt.handle == 0x001e`.
+
+#### Extract with tshark
+
+```bash
+tshark -r bridge-session.pcapng \
+  -Y "btatt.handle == 0x001e || btatt.handle == 0x0020" \
+  -T fields \
+  -e frame.number \
+  -e frame.time_relative \
+  -e btatt.opcode \
+  -e btatt.handle \
+  -e btatt.value \
+  2>/dev/null
+```
+
+If the handle differs from `0x001e` (different GATT enumeration on first connect),
+run without the handle filter and look for long ATT_WRITE frames.
+
+#### Decode a KE Request manually
+
+Copy the `btatt.value` hex from a KE Request frame and run:
+
+```bash
+/path/to/python - <<'EOF'
+def cobs_decode(data):
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        code = data[i]; i += 1
+        for _ in range(code - 1):
+            out.append(data[i]); i += 1
+        if code < 0xFF and i < len(data):
+            out.append(0)
+    return bytes(out)
+
+raw = bytes.fromhex("PASTE_HEX_HERE")
+frames = []
+i = 0
+while i < len(raw):
+    if raw[i] == 0:
+        try: end = raw.index(0, i + 1)
+        except ValueError: break
+        if raw[i+1:end]:
+            frames.append(cobs_decode(raw[i+1:end]))
+        i = end + 1
+    else:
+        i += 1
+
+for f in frames:
+    ctrl = f[0]
+    payload = f[1:-2]
+    ns = (ctrl >> 1) & 7; nr = (ctrl >> 5) & 7
+    print(f"ctrl=0x{ctrl:02x}  N(S)={ns} N(R)={nr}  payload={payload.hex()}")
+    if len(payload) >= 1:
+        t = payload[0]
+        print(f"  type=0x{t:02x}", end="")
+        if t == 0x12 and len(payload) == 50:
+            keyset = payload[49]
+            print(f" = KE_REQUEST")
+            print(f"  pubkey   = {payload[1:33].hex()}")
+            print(f"  cmac     = {payload[33:49].hex()}")
+            print(f"  keyset_id= 0x{keyset:02x}  ({'app/bridge key' if keyset==0 else 'remote key' if keyset==1 else 'UNKNOWN'})")
+        else:
+            print()
+EOF
+```
+
+#### Key comparisons across captures
+
+| Frame | App | Bridge | Remote | Significance |
+|-------|-----|--------|--------|--------------|
+| `keyset_id` | `0x00` (confirmed) | `0x00` (confirmed) | expected `0x01` | Confirm remote uses keyset 1 |
+| KE Request total size | 50 B payload | 50 B payload | ? | Any extra fields? |
+| Version Request payload | ? | logged | ? | Protocol version difference? |
+| EP Request payload | ? | logged | ? | Capability flag difference? |
+| Capture D: toilet→remote after bridge KE | — | — | any notification? | Displacement trigger timing |
+
+---
+
 ## What to Include When Sharing a Capture
 
 When submitting a capture file for analysis (e.g. as a GitHub issue attachment):
 
 1. **iPhone:** attach the `.txt` file from File → Export → Raw Data.
 2. **Android:** attach the `.pcapng` file saved from Wireshark.
-3. Note what action you performed and at what approximate time (used to find the relevant window in the file).
-4. Include the device MAC address and model if known.
+3. **nRF52840:** attach the `.pcapng` file saved from Wireshark. Include the Alba's MAC address so the correct connection can be identified.
+4. Note what action you performed and at what approximate time (used to find the relevant window in the file).
+5. Include the device MAC address and model if known.

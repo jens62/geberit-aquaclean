@@ -60,13 +60,16 @@ Events are NOT consumed by being read — the remote's event data is unaffected.
 
 ### Current behavioral facts
 
-- Bridge v3.0.3 (keyset 0, KE, caps+event_storage, DpId reads) → **displaces remote**
-- Wrong-PIN app (keyset 0, KE, no DpId reads) → **does NOT displace**
-- Registered app (keyset 0, KE, caps+event_storage, DpId reads) → **does NOT displace**
-- Bridge Ble20 init sequence is now **identical** to app at Ble20 level
+- Bridge v3.0.3 (keyset 0, KE completes, caps+event_storage, DpId reads) → **displaces remote**
+- Bridge v3.0.4b1 (keyset 1, KE never completes, zero DpId reads) → **displaces remote**
+- Wrong-PIN app (keyset 0, KE completes, zero DpId reads) → **does NOT displace**
+- Registered app (keyset 0, KE completes, caps+event_storage, DpId reads) → **does NOT displace**
+- Bridge Ble20 init sequence is now **identical** to app at Ble20 level (v3.0.3)
 
-The `DP_START_USER_SESSION` hypothesis is ruled out. The keyset_id hypothesis is
-ruled out. The remaining differentiator is unknown.
+The v3.0.4b1 accidental test proves displacement is not caused by caps/event_storage/DpId
+reads — it occurred with zero successful Ble20 transactions. The KE Request step itself
+(specifically using keyset_id=1) is a candidate; however v3.0.3 (keyset_id=0) also displaces.
+Root cause unknown.
 
 ## What Was Ruled Out
 
@@ -222,6 +225,49 @@ AriendiSecurity: KE Request → 12<32B pubkey><16B cmac>00
 This confirms keyset_id=0x00 in MuusLee's log and preserves the bytes for
 comparison against a future PCA10059 capture.
 
+### Step 6 — v3.0.4b1 accidental keyset_id=1 test (2026-05-28)
+
+**Status: DONE — displacement without any successful Ble20 transaction.**
+
+v3.0.4b1 contained a bug: `keyset_id=0x01` instead of `0x00` in the KE Request.
+MuusLee tested this version. Full log: `home-assistant_2026-05-28T11-28-00.621Z.log`.
+
+**What happened (7 consecutive attempts, 13:14–13:27):**
+- Each attempt: SABM → UA → Version Request/Response → EP Request/Response → KE Request
+- Device responded normally through EP Response (keyset_mask=0x0003 confirmed)
+- On each KE Request (keyset_id=0x01, invalid CMAC for that keyset): **device silent** — no KE Response
+- Bridge timed out after 5 s → E0003, disconnected
+- **Remote was displaced on the first attempt** — yellow exclamation mark appeared despite
+  zero caps/event_storage/DpId reads and no completed KE handshake
+
+**Static EP nonces — confirmed protocol property:**
+The device returned the **same** nonce pair on all 7 reconnections across 13 minutes:
+```
+nonce1=7d23517ec89958df0567aeb7f722a024 nonce2=b58fc768522fb8336c6131967548d9a0
+```
+The device does NOT regenerate nonces between BLE connections. Nonces are only
+refreshed after a valid KE completes. This is consistent with the device maintaining
+a "pending session" epoch until one client completes authentication.
+
+**What this narrows:**
+Displacement is not triggered by caps/event_storage/DpId reads. It is triggered at
+or before the KE step. The KE Request with keyset_id=1 is the most likely immediate
+cause — the device may "reserve" the keyset-1 slot on receipt of a KE Request claiming
+that keyset, blocking the physical remote (the real keyset-1 holder) even when the CMAC
+is invalid. However, this does not explain why v3.0.3 (keyset_id=0) also displaces.
+
+**Recovery required:** toilet power-cycle. Disabling the integration alone was not
+sufficient — the device needed a restart before the remote (and app) could reconnect.
+
+**Updated evidence table:**
+
+| Scenario | KE | DpId reads | Remote displaced? |
+|---|---|---|---|
+| v3.0.3 bridge | ✓ keyset 0 completes | ✓ full read cycle | **Yes** |
+| v3.0.4b1 bridge | ✗ keyset 1, KE never completes | ✗ none | **Yes** |
+| Wrong-PIN app | ✓ keyset 0 completes | ✗ none | **No** |
+| Geberit Home App (registered) | ✓ keyset 0 completes | ✓ full read cycle | **No** |
+
 ---
 
 ## Investigation Plan — PCA10059 BLE Sniff
@@ -231,35 +277,100 @@ is the right tool. Alba does not use BLE SM encryption (zero SMP frames in all
 captures), so all ATT write payloads — including the raw Arendi KE frames — are
 visible in plaintext.
 
+**Setup guide:** `docs/developer/ble-traffic-capture.md` → section
+"nRF52840 Dongle — Passive BLE Sniffer". Step-by-step flash + Wireshark plugin
+install + tshark extraction + KE Request decode script.
+
 ### Captures needed
 
-**1. Remote normal operation (no bridge)**
-- What to do: let the remote connect to the toilet, use it normally, disconnect
-- What to look for: full Arendi KE Request payload — specifically the client ID
-  embedded in the CMAC computation
+**A. Official app session (baseline)**
+- Open Geberit app → connect → complete init
+- Establishes the app's KE Request as ground truth (keyset_id=0x00 already confirmed
+  from two independent sources; sniffer gives a third independent confirmation)
 
-**2. Bridge poll cycle**
-- What to do: let the bridge do one complete poll (connect → reads → disconnect)
-- What to look for: bridge's KE Request payload — compare client ID against remote's
+**B. Bridge poll cycle**
+- Trigger one HACS poll
+- Compare bridge KE Request byte-for-byte against the app capture
 
-**3. Remote re-pair with integration running → red exclamation**
-- What to do: trigger remote re-pairing while bridge is actively polling
-- What to look for: what does the toilet send back as rejection? An explicit error
-  frame in the Arendi layer, or a BLE-level rejection?
+**C. Remote control**
+- Press a button on the physical remote (it BLE-connects momentarily)
+- **Only way to see the remote's KE Request** — confirms keyset_id=0x01 and reveals
+  whether any other byte differs from app/bridge frames
 
-**4. Remote re-pair with integration disabled → success**
-- What to do: disable integration, trigger re-pairing
-- What to look for: what succeeds in the KE exchange that failed in capture 3?
+**D. Displacement in action**
+- Remote in normal (no exclamation) state → trigger bridge poll → observe
+- Key timing question: does the toilet notify the remote **before** bridge KE completes,
+  or after? This locates the displacement trigger at EP level vs KE level
 
 ### Key question the sniff will answer
 
-Do the bridge and remote use different client IDs in their KE Requests? If yes,
-and the toilet stores only one authorised ID, that confirms the single-owner model
-and defines the fix space.
+What does the toilet send to the remote (or what does the remote see) at the moment
+of displacement? If the toilet sends an explicit Arendi-layer rejection to the remote
+during the bridge's EP or KE exchange, the mechanism is in that layer. If there is no
+BLE traffic to the remote at all (remote just silently loses its pairing state), the
+displacement is entirely device-internal with no observable BLE signal.
 
-## Keyset Analysis — Android BLE Log (kstr, 2026-05-26)
+## What the KE Request Is and Why Available Sources Don't Reveal the Root Cause
 
-The `GeberitConnectViaApp.pcapng` capture from the kstr device was COBS-decoded to
+### The Arendi handshake — five steps before any data
+
+Before any DpId read or write, the client runs a five-step handshake:
+
+```
+1. SABM / UA          — link-layer connect (like TCP SYN/ACK)
+2. Version            — negotiate protocol version
+3. EP Request/Response — device sends two random nonces + keyset_mask
+4. KE Request/Response — Diffie-Hellman key exchange, derives session keys
+5. Encrypted session  — all Ble20 frames (DpId reads etc.) AES-CTR encrypted
+```
+
+The KE Request (step 4) is a 50-byte frame:
+
+| Offset | Length | Content |
+|--------|--------|---------|
+| 0 | 1 | Type byte `0x12` |
+| 1 | 32 | Curve25519 ephemeral public key (fresh random per session) |
+| 33 | 16 | CMAC over the public key, keyed from the pre-shared secret |
+| 49 | 1 | `keyset_id` — which credential slot to authenticate against |
+
+The device verifies the CMAC, completes its half of the DH exchange, and sends a
+KE Response. Both sides then independently derive identical session keys. Everything
+from step 5 onward is encrypted.
+
+### Why `btsnoop_hci.log` cannot reveal the root cause
+
+`btsnoop_hci.log` is MuusLee's Android phone's HCI log — it captures BLE traffic
+that passes through the phone's own Bluetooth chip. It shows only what the **phone**
+sends and receives when it connects to the toilet.
+
+It cannot show:
+- What the **bridge** sends — the bridge connects directly from the HA host's BLE adapter
+- What the **remote** sends — the remote connects directly to the toilet, never through the phone
+
+To compare bridge, app, and remote KE Requests side by side, a PCA10059 sniffer
+placed between all devices and the toilet is required — not any single device's HCI log.
+
+**What the btsnoop CAN confirm:** that MuusLee's phone sends keyset_id=0x00 (see below).
+
+### Why the decompiled app source cannot reveal the root cause
+
+The decompiled source (`Security.cs`) shows the algorithm the app uses to build the
+KE Request — Curve25519 key generation, HKDF-SHA256 key derivation, AES-CMAC
+authentication. Our bridge's `AriendiSecurity.py` is a faithful Python implementation
+of the same algorithm. Reading the source confirms the app does the same thing the
+bridge does, but gives no insight into why the **device** responds differently.
+
+The displacement decision — "invalidate the remote's keyset-1 session when a
+keyset-0 client connects" — is made inside the **toilet's firmware**, which is not
+available. The app source is the sender side; the side that matters is the receiver.
+
+---
+
+## Keyset Analysis — Android BLE Log (kstr, 2026-05-26) + MuusLee btsnoop (2026-05-31)
+
+### kstr — GeberitConnect4xViaApp.pcapng
+
+The `GeberitConnect4xViaApp.pcapng` capture from the kstr device was COBS-decoded to
 extract the raw Arendi protocol fields.
 
 **EP Response (device → app):**
@@ -267,31 +378,42 @@ extract the raw Arendi protocol fields.
 - Bit 0 set = keyset 0 supported; Bit 1 set = keyset 1 supported
 - Device advertises **two keysets**: 0 and 1
 
-**KE Request (app → device):**
-- keyset_id byte (final byte before CRC) = **0x00**
-- The official Geberit Android app sends **keyset 0** (`aquacleanBridgeId`)
-- This is identical to the keyset the bridge uses
+**KE Request (app → device):** keyset_id = **0x00**
 
-**What keyset 1 is:**
-Keyset 0 is the shared app/bridge key (`aquacleanBridgeId`). Keyset 1 is almost
-certainly the physical remote control's device-specific key, established during
-physical pairing (NFC touch). The remote uses its own key as HKDF IKM; the device
-validates it against the keyset-1 slot.
+### MuusLee — btsnoop_hci.log (2026-05-31)
 
-**PIN hypothesis — disproven at the Arendi KE layer:**
-The PIN is not used to select or derive a keyset in the Arendi KE handshake. The
-Geberit app uses keyset 0 whether or not a PIN is set on the device. PIN entry happens
-at the application layer (written via a DpId write after encryption is established),
-not in the KE handshake. Using the PIN as HKDF IKM would require implementing
-keyset 1 — and knowing the keyset-1 IKM, which is device-specific and not derivable
-from the PIN.
+MuusLee's Android HCI log was decoded directly. The KE Request spans 3 ATT Write
+Command packets (frames 861–863, handle 0x001e). COBS+HDLC decode + CRC16 verification:
+
+```
+Concatenated raw  : 003344...035a0f00  (56 bytes)
+COBS-decoded      : 44 12 1cd90958...64d000  (53 bytes, CRC ✓)
+HDLC ctrl         : 0x44 → I-frame N(S)=2 N(R)=2
+KE Request payload: 50 bytes
+  type      = 0x12
+  pubkey    = 1cd90958f1b7192db385592de39e82bc674daf615c03e4c98d9acca0fafb7140
+  cmac      = 456a8958bb5bb4285f6188c5731d64d0
+  keyset_id = 0x00  ← confirmed
+```
+
+**Both MuusLee and kstr send keyset_id=0x00.** The bridge also sends keyset_id=0x00
+(confirmed from v3.0.4b1 hex logging and v3.0.4b2 code). The keyset_id is identical
+across all three clients — it is not the differentiator.
+
+### What keyset 1 is
+
+Keyset 0 is the shared app/bridge key (`aquacleanBridgeId`). Keyset 1 is the physical
+remote control's device-specific key, established during NFC pairing. The remote uses
+its own key as HKDF IKM; the device validates it against the keyset-1 slot.
+
+### PIN hypothesis — disproven
+
+The PIN is not used in the KE handshake. PIN entry happens at the application layer
+(DpId write after encryption is established), not in the KE exchange.
 
 **Keyset ownership question — still open:**
-The per-keyset vs. global ownership question was considered resolved by the JOIN
-hypothesis. With JOIN invalidated, the keyset question is open again. The app+remote
-coexistence test shows two keyset-0 clients can coexist, which rules out a hard
-keyset-0 single-owner model — but does not explain why the bridge (also keyset 0)
-still displaces the remote.
+The app+remote coexistence test rules out a hard keyset-0 single-owner model — but
+does not explain why the bridge (also keyset 0) displaces the remote when the app does not.
 
 ## PIN and DP_JOIN_DEVICE — CONFIRMED NOT RELEVANT (2026-05-27)
 
