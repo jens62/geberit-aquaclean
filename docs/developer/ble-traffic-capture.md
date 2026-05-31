@@ -203,7 +203,9 @@ are visible in plaintext to the sniffer.
 
 ### Step 1 — Install nRF Util
 
-Download the standalone binary from `nordicsemi.com` → Products → nRF Util → Download.
+Download the standalone binary from:
+**https://www.nordicsemi.com/Products/Development-tools/nRF-Util/Download#infotabs**
+
 Choose your platform (macOS universal, Linux x64, Windows x64).
 
 ```bash
