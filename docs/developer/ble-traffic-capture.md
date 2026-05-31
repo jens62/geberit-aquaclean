@@ -333,12 +333,6 @@ If it does not appear: Capture → Refresh Interfaces.
 To find Wireshark's extcap directory manually: Help → About Wireshark → Folders tab →
 look for **Personal Extcap path**.
 
-**Official documentation:**
-- Preparing hardware: `docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/requirements.html`
-- Quick guide: `docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/nrfutil-ble-sniffer.html`
-- Running the sniffer: `docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/running_sniffer.html`
-
-> That site requires JavaScript — open in a browser, not curl.
 
 ### Step 3 — Configure for a specific device
 
