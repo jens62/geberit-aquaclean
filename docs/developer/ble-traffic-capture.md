@@ -274,11 +274,12 @@ load the `.zip` firmware file, and click **Write**.
 ### Step 4 — Install the Wireshark plugin (one command)
 
 ```bash
+mkdir -p ~/.local/lib/wireshark/extcap
 nrfutil ble-sniffer bootstrap
 ```
 
-This copies the extcap shim executable to Wireshark's personal extcap directory
-automatically. No manual file copying needed.
+The `mkdir` is required on macOS — `bootstrap` fails if the directory does not exist.
+It copies the extcap shim into that directory automatically; no manual file copying needed.
 
 Open Wireshark. The interface list should include:
 ```
