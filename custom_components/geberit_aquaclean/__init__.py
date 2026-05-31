@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pathlib
 
@@ -40,6 +41,10 @@ _register_custom_log_levels()
 from .const import DOMAIN
 from .coordinator import AquaCleanCoordinator
 
+_LOGGER = logging.getLogger(__name__)
+_MANIFEST = pathlib.Path(__file__).parent / "manifest.json"
+_VERSION = json.loads(_MANIFEST.read_text())["version"]
+
 PLATFORMS = ["binary_sensor", "sensor", "button", "number"]
 
 _ICONS_JS = pathlib.Path(__file__).parent / "www" / "geberit-aquaclean-icons.js"
@@ -59,6 +64,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    _LOGGER.info("geberit_aquaclean %s", _VERSION)
     coordinator = AquaCleanCoordinator(hass, entry)
     # Give the ESP32 time to fully release its BLE advertisement subscription slot
     # from the config-flow connection test before the coordinator fires its first poll.
