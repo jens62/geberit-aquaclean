@@ -26,15 +26,19 @@
 
 local TOILET = "38:ab:41:2a:0d:67"  -- change to your device's BLE MAC (lowercase)
 
-local f_pdu = Field.new("btle.advertising_header.pdu_type")
+local f_pdu  = Field.new("btle.advertising_header.pdu_type")
+local f_addr = Field.new("btle.advertising_address")  -- raw MAC, no OUI resolution
 local tap = Listener.new("frame", "btle")
 
 function tap.packet(pinfo, tvb)
     local pdu = f_pdu()
     if not pdu then return end
 
-    local dst = tostring(pinfo.dst):lower()
-    if dst ~= TOILET then return end
+    -- pinfo.dst resolves OUI prefixes (e.g. "TexasInstrum_2a:0d:67") so never matches
+    -- the full MAC string. Use the btle.advertising_address field instead.
+    local addr = f_addr()
+    if not addr then return end
+    if tostring(addr):lower() ~= TOILET then return end
 
     if pdu.value == 3 then      -- SCAN_REQ: connection forming, ~100-300 ms warning
         os.execute("afplay /System/Library/Sounds/Tink.aiff &")
