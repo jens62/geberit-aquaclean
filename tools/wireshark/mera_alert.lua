@@ -27,7 +27,7 @@
 local TOILET = "38:ab:41:2a:0d:67"  -- change to your device's BLE MAC (lowercase)
 
 local f_pdu = Field.new("btle.advertising_header.pdu_type")
-local tap = Listener.new("btle")
+local tap = Listener.new("frame", "btle")
 
 function tap.packet(pinfo, tvb)
     local pdu = f_pdu()
