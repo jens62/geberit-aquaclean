@@ -334,14 +334,26 @@ To find Wireshark's extcap directory manually: Help → About Wireshark → Fold
 look for **Personal Extcap path**.
 
 
-### Step 3 — Configure for a specific device
+### Step 3 — Start capturing and select a device
 
-Click the gear icon next to the sniffer interface (or go to Capture → Options):
+**3a. Make the nRF Sniffer toolbar visible**
 
-- **Device** dropdown: start with `All advertising devices` for the first capture
-  to confirm you can see the toilet advertising. Once you have the MAC, set this
-  to the specific MAC for all subsequent captures — the sniffer will lock onto that
-  device and follow whichever connection forms.
+The Device dropdown only exists on the nRF Sniffer toolbar, which is hidden by default:
+View → Interface Toolbars → **nRF Sniffer for Bluetooth LE** (enable the checkmark).
+
+**3b. Start the capture**
+
+Double-click the `nRF Sniffer for Bluetooth LE` interface in the Wireshark home screen.
+A flood of BLE advertising packets will appear. The nRF Sniffer toolbar is now visible
+just below the main toolbar row.
+
+**3c. Select a device**
+
+The toolbar contains a **Device** dropdown, initially set to `All advertising devices`.
+
+1. Let it run for a few seconds — nearby BLE devices populate the dropdown.
+2. Click the **Device** dropdown and select the toilet's MAC address from the list.
+3. Wireshark locks onto that device and follows its connections.
 
 The toilet's MAC can be found in the HA integration's device entry, in a previous
 btsnoop capture, or by scanning via `tools/aquaclean-connection-test.py`.
