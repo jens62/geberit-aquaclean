@@ -195,93 +195,105 @@ are visible in plaintext to the sniffer.
 
 - nRF52840 dongle (PCA10059) — Nordic Semiconductor, ~€10
 - macOS, Windows, or Linux
-- Wireshark installed
-- Python 3.x with `pyserial` (`pip install pyserial`)
+- Wireshark **≥ 3.4.7**
 
-### Step 1 — Install nRF Util and the sniffer firmware
+> **Note on the old nrfutil Python package:** `pip install nrfutil` is deprecated
+> since 2022 and no longer maintained. Do not use it. The current tool is a standalone
+> binary with the same name, described below.
 
-The sniffer firmware is flashed and managed via **nRF Util** — Nordic's standalone
-command-line tool (not to be confused with the old `pip install nrfutil` Python package,
-which is deprecated since 2022 and no longer maintained).
+### Step 1 — Install nRF Util
 
-**1a. Download and install nRF Util**
-
-Go to `nordicsemi.com` → Products → nRF Util → Download.
-Download the binary for your platform (macOS universal, Linux x64, Windows x64).
+Download the standalone binary from `nordicsemi.com` → Products → nRF Util → Download.
+Choose your platform (macOS universal, Linux x64, Windows x64).
 
 ```bash
-# macOS / Linux — move to PATH and make executable
+# macOS / Linux
 chmod +x nrfutil
 sudo mv nrfutil /usr/local/bin/
 nrfutil --version
 ```
 
-**1b. Install the ble-sniffer command module**
+### Step 2 — Install the ble-sniffer and device modules
 
 ```bash
-nrfutil install ble-sniffer
+nrfutil install ble-sniffer   # downloads sniffer firmware files alongside the command
+nrfutil install device        # needed for flashing the dongle
 ```
 
-For exact sub-commands and firmware flash instructions, see the official docs:
-`docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/installing.html`
+After `nrfutil install ble-sniffer`, the firmware files are placed in:
+```
+<nrfutil install dir>/share/nrfutil-ble-sniffer/firmware/
+```
 
-> **Note:** that site requires JavaScript and does not render in curl/fetch tools.
-> Open it in a browser.
+The PCA10059 dongle uses a **`.zip`** firmware file (not `.hex`):
+```
+sniffer_nrf52840dongle_nrf52840_<version>.zip
+```
 
-**Alternative: nRF Connect for Desktop (GUI)**
+### Step 3 — Flash the firmware onto the dongle
 
-If you prefer a graphical tool:
-1. Download **nRF Connect for Desktop** from `nordicsemi.com` → Products → nRF Connect for Desktop
-2. Open it and install the **Programmer** app
-3. Enter bootloader mode on the dongle (see step 1c), select it in Programmer,
-   load the sniffer `.hex` file, and click **Write**
-
-**1c. Enter bootloader mode on the PCA10059**
+**3a. Enter bootloader mode**
 
 The dongle has one button: the small round **SW1** on the PCB face.
 
 Press and hold **SW1**, plug the dongle into USB, then release SW1.
-The LED should pulsate **red** — that confirms the bootloader is active.
+The LED pulsates **red** — bootloader is active.
 
-On macOS, find the port:
+**3b. Find the dongle's serial number**
+
 ```bash
-ls /dev/cu.usbmodem*
-# e.g. /dev/cu.usbmodem0007841235781
+nrfutil device list
 ```
 
-After flashing, unplug and replug the dongle. The LED stops pulsating — the dongle is
-now running the sniffer firmware.
+Look for a device with the `nordicDfu` trait — that is your dongle in bootloader mode.
+Its serial number is 12 alphanumeric characters, e.g. `A1234B5678C9`.
 
-### Step 2 — Install Wireshark and the extcap plugin
+**3c. Program the firmware**
 
-The extcap plugin makes the dongle appear as a Wireshark capture interface.
-It ships as part of the sniffer package from nRF Util or the separate download.
-
-**macOS:**
 ```bash
-EXTCAP_DIR="$HOME/.config/wireshark/extcap"
-mkdir -p "$EXTCAP_DIR"
-
-# copy nrf_sniffer_ble.py from the sniffer package location
-cp /path/to/nrf_sniffer_ble.py "$EXTCAP_DIR/"
-chmod +x "$EXTCAP_DIR/nrf_sniffer_ble.py"
+nrfutil device program \
+  --serial-number A1234B5678C9 \
+  --firmware /path/to/sniffer_nrf52840dongle_nrf52840_4.4.1.zip
 ```
 
-**Windows:** copy the extcap files to `%APPDATA%\Wireshark\extcap\`.
+Replace the serial number and firmware path with the values from the previous steps.
+Use `find ~ -name "sniffer_nrf52840dongle_*.zip" 2>/dev/null` to locate the file if
+the path is unclear.
 
-Open Wireshark. The interface list should now include:
+After programming, unplug and replug the dongle. The LED stops pulsating — it is now
+running the sniffer firmware.
+
+**Alternative: nRF Connect for Desktop (GUI)**
+
+If you prefer a graphical tool, install **nRF Connect for Desktop** from nordicsemi.com,
+open the **Programmer** app, enter bootloader mode on the dongle, select the dongle,
+load the `.zip` firmware file, and click **Write**.
+
+### Step 4 — Install the Wireshark plugin (one command)
+
+```bash
+nrfutil ble-sniffer bootstrap
+```
+
+This copies the extcap shim executable to Wireshark's personal extcap directory
+automatically. No manual file copying needed.
+
+Open Wireshark. The interface list should include:
 ```
 nRF Sniffer for Bluetooth LE [nRF52840 Dongle /dev/cu.usbmodemXXX]
 ```
 
 If it does not appear: Capture → Refresh Interfaces.
 
-**Optional — nicer field names:**
-```bash
-cp -r /path/to/sniffer/Profile \
-  "$HOME/.config/wireshark/profiles/nRFSniffer"
-```
-Then in Wireshark: Edit → Configuration Profiles → select nRFSniffer.
+To find Wireshark's extcap directory manually: Help → About Wireshark → Folders tab →
+look for **Personal Extcap path**.
+
+**Official documentation:**
+- Preparing hardware: `docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/requirements.html`
+- Quick guide: `docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/nrfutil-ble-sniffer.html`
+- Running the sniffer: `docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/running_sniffer.html`
+
+> That site requires JavaScript — open in a browser, not curl.
 
 ### Step 3 — Configure for a specific device
 
