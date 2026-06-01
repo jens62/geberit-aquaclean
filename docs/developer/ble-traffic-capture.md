@@ -334,6 +334,22 @@ To find Wireshark's extcap directory manually: Help → About Wireshark → Fold
 look for **Personal Extcap path**.
 
 
+### Physical setup — critical for reliable CONNECT_IND capture
+
+The single most important factor is **physical proximity** of the dongle to the toilet's
+Bluetooth module.
+
+> **Confirmed working setup (2026-06-01):** A 2-metre USB extension cable with the dongle
+> placed **directly on the toilet housing** at the location of the internal Bluetooth
+> component (typically behind the top/rear panel). CONNECT_IND was caught on the second
+> attempt. Previous captures from a desk 1–2 metres away failed completely.
+
+Additional checklist:
+- Plug the dongle into a **USB 2.0 port** (USB 3.0 generates 2.4 GHz RF noise that drops
+  BLE packets)
+- Use a **passive USB extension cable** if needed — active cables add latency
+- If CONNECT_IND is still missed after 2–3 attempts, move the dongle closer
+
 ### Step 5 — Start capturing and select a device
 
 **5a. Make the nRF Sniffer toolbar visible**

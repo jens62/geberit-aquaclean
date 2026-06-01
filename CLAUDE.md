@@ -445,6 +445,54 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
 ## TODO
 
+- **Add SPL params 12 and 13 to `SPL_PARAMS_MERA_COMFORT`.**
+
+  Confirmed safe from OTA BLE capture (2026-06-01, HB2304EU298413, firmware RS146.21):
+  the iPhone sends `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]` without causing the stuck-device
+  problem.  Params 12 (LidOffsetPosition) and 13 (ShowerArmOffsetPosition) are valid for
+  Mera Comfort firmware ≥ RS25.
+
+  **Implementation:**
+  - Change `SPL_PARAMS_MERA_COMFORT` in `AquaCleanClient.py` to `[0,1,2,3,4,5,6,7,12,13]`
+  - Add `lid_offset_position` and `shower_arm_offset_position` fields to
+    `DeviceStateChangedEventArgs` in `IAquaCleanClient.py`
+  - Extract `data_array[8]` and `data_array[9]` (indices 12 and 13 are positions 8 and 9
+    in the 10-param response) in `AquaCleanClient.get_state()`
+  - Map to `device_state` and broadcast via SSE (same pattern as `user_sitting`)
+  - Update `GetFilterStatus` record IDs list to also include 12 and 13 (iPhone sends the
+    same 10-element list there too)
+
+- **Add proc 0x55 to the bridge init sequence.**
+
+  Confirmed from multiple captures: iPhone sends proc 0x55 after all `GetStoredCommonSetting`
+  (0x51) reads and sends it twice per session. Payload varies: `[0x01]` in PacketLogger sessions,
+  `[0x00]` in OTA capture.  Purpose unknown but skipping it may reduce device compatibility.
+
+  **Implementation:** After the final `GetStoredCommonSetting` call in the bridge init sequence,
+  send `Proc0x55([0x01])`.  Add a `CallProc0x55Async()` stub to `AquaCleanBaseClient` — the
+  procedure code and payload are confirmed; only the bridge-side wiring is missing.
+  Use `[0x01]` (matches PacketLogger captures) until the payload semantics are understood.
+
+- **Add `OpenLid` (SetCommand code 3) to `Commands.py`.**
+
+  SetCommand code 3 is confirmed from two independent sources:
+  - Android pcapng (2026-04-22): sent before `ToggleLidPosition` in "open lid remotely" session
+  - iPhone OTA capture (2026-06-01): `SetCommand([1, 3])` sent before `SetCommand([1, 10])`
+
+  The pattern — code 3 before code 10 (ToggleLid) — suggests code 3 is a dedicated
+  **OpenLid** (not toggle).  Add `OpenLid = 3` to `Commands` enum, wire to REST/MQTT/CLI/HACS
+  following the "all interfaces" rule.
+
+- **Implement `SetActiveProfileSetting` (proc 0x08) — wire format confirmed.**
+
+  Confirmed from OTA capture (2026-06-01): format is `[arg_count=3, setting_id, value]`.
+  Examples seen in active shower session:
+  - `[3, 4, 2]` = set AnalShowerPosition to 2
+  - `[3, 2, 2]` = set AnalShowerPressure to 2
+  - `[3, 5, 3]` = set LadyShowerPosition to 3
+  Uses the same setting ID space as proc 0x53/0x54.  Applies settings live (in-session);
+  proc 0x54 persists to flash.  Wire the CallClass first, then expose via REST/MQTT.
+
 - **HACS Alba: configurable DpId polling frequency.**
 
   Currently the fast/slow poll split is hardcoded (`_ALBA_SLOW_POLL_EVERY = 10`).
@@ -1447,6 +1495,14 @@ Indices 0–7 are valid for all standard AquaClean device variants. Indices 8–
 device-variant specific — sending unsupported indices to a Mera Comfort leaves the device in
 a state where subsequent `GetFilterStatus` calls time out until a power-cycle.
 `SPL_PARAMS_MERA_COMFORT` in `AquaCleanClient.py` defines this list.
+
+**Confirmed from OTA BLE capture (2026-06-01, device HB2304EU298413, firmware RS146.21):**
+The iPhone sends `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]` — **params 12 and 13 are safe on
+Mera Comfort with firmware ≥ RS25.** The same 10-param list is sent to `GetFilterStatus`
+as well.  The bridge currently only sends 8 params; adding 12 and 13 exposes
+`LidOffsetPosition` and `ShowerArmOffsetPosition` without risk of the stuck-device
+problem (which was caused by params 8–10, not 12–13).
+
 **If other device models (AcSela, AcCama, …) are ever supported, a per-model parameter
 list will be needed — do not simply extend the Mera Comfort list.**
 
@@ -1466,8 +1522,8 @@ list will be needed — do not simply extend the Mera Comfort list.**
 | 9 | StateOrientationLight | AcSela only |
 | 10 | StateDraining | AcCama/AcCamaTestset only |
 | 11 | ConnectedSsmDevices | AcSela only |
-| 12 | LidOffsetPosition | AcMeraComfort, firmware ≥ RS25 |
-| 13 | ShowerArmOffsetPosition | — |
+| 12 | LidOffsetPosition | AcMeraComfort, firmware ≥ RS25 — **confirmed safe from OTA capture** |
+| 13 | ShowerArmOffsetPosition | AcMeraComfort — **confirmed safe from OTA capture** |
 | 14 | DryerArmOffsetPosition | — |
 | 255 | EndiannessCheck | — |
 
@@ -1478,9 +1534,10 @@ Some code comment labels are misleading. Actual semantics confirmed from toilet-
 - **Index 3** — labelled `dryerIsRunning`, actually tracks **anal shower running** (confirmed: changes when anal shower started by pressing device button)
 - Dryer state: not visible in any SPL parameter change in the captured session — may be at an index not polled by the bridge, or polled differently by the iPhone
 
-**Proc 0x55 — fixed init-sequence call (2026-04-15):**
-- Sent by iPhone once per session, at the END of the init sequence (after all GetStoredCommonSetting reads), before any user action
-- Payload: `[0x01]` (1 byte), response: `0x00`
+**Proc 0x55 — fixed init-sequence call (2026-04-15, updated 2026-06-01):**
+- Sent by iPhone at the END of the init sequence (after all GetStoredCommonSetting reads), before first user action
+- **Sent TWICE per session** (confirmed from OTA capture 2026-06-01): once at init end, once later mid-session
+- Payload: **varies** — `[0x01]` in PacketLogger sessions (Stuhlgang, Connect-Toggle-Lid); `[0x00]` in OTA capture 2026-06-01. Session-state dependent; significance of the value unknown.
 - NOT approach-triggered — present in Connect-Toggle-Lid log too (no approach in that session)
 - Purpose unknown — possibly "session ready" / "enable remote control"
 - The lid opening 17s after Proc(0x55) in the Stuhlgang log was coincidental: the device's own proximity sensor opened the lid independently; the app just happened to connect while the user was approaching

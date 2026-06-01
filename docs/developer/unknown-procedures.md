@@ -127,15 +127,15 @@ earlier in the init than previously assumed from iPhone log analysis.
 
 ---
 
-### Proc `0x08` (ctx=0x01) — `SetActiveProfileSetting` (observed in Android)
+### Proc `0x08` (ctx=0x01) — `SetActiveProfileSetting` (wire format confirmed)
 
 | Field | Value |
 |-------|-------|
 | Label | `SetActiveProfileSetting` |
 | Direction | Write |
-| Args | `[setting_id, value_lo, value_hi]` — 3 bytes, same format as proc 0x0B |
-| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-22); thomas-bingel C# repo (`tmp.txt`) |
-| Status | **Observed and partially decoded. Same setting ID space as proc 0x53/0x54.** |
+| Args | `[arg_count=3, setting_id, value]` — confirmed from iPhone OTA capture 2026-06-01 |
+| Seen in | Android pcapng (2026-04-22); thomas-bingel C# repo (`tmp.txt`); **iPhone OTA capture `working.pcapng` (2026-06-01)** |
+| Status | **Wire format confirmed from two independent sources. Ready to implement.** |
 
 **Source:** `aquaclean-core/Api/CallClasses/tmp.txt` — listed as `SetActiveProfileSetting(profileSettingId, settingValue)`.
 
@@ -158,7 +158,25 @@ selected settings mid-session. Decoded args (format: `[setting_id, value_lo, val
 
 **Confirmed:** Proc 0x08 uses the **same setting ID space** as proc 0x53/0x54 (GetStoredProfileSetting / SetStoredProfileSetting).
 
-**What distinguishes 0x08 from 0x54:** 0x08 likely applies settings live (in-session, "active"),
+**iPhone OTA examples (2026-06-01, active shower session):**
+
+| Args | Setting ID | Name | Value |
+|------|-----------|------|-------|
+| `[3, 4, 2]` | 4 | AnalShowerPosition | 2 |
+| `[3, 2, 2]` | 2 | AnalShowerPressure | 2 |
+| `[3, 5, 3]` | 5 | LadyShowerPosition | 3 |
+| `[3, 6, 0]` | 6 | WaterTemperature | 0 |
+| `[3, 3, 0]` | 3 | LadyShowerPressure | 0 |
+| `[3, 9, 1]` | 9 | DryerState | 1 |
+| `[3, 1, 1]` | 1 | OscillatorState | 1 |
+| `[3, 0, 1]` | 0 | OdourExtraction | 1 |
+| `[3, 13, 0]` | 13 | DryerSprayIntensity | 0 |
+| `[3, 8, 1]` | 8 | DryerTemperature | 1 |
+| `[3, 7, 0]` | 7 | WcSeatHeat | 0 |
+
+The `3` prefix is the argument count (always 3: count + setting_id + value).
+
+**What distinguishes 0x08 from 0x54:** 0x08 applies settings live (in-session, "active"),
 while 0x54 persists them to device flash (stored profile). This is the "active" vs "stored"
 distinction described in `tmp.txt`.
 
@@ -169,14 +187,19 @@ distinction described in `tmp.txt`.
 | Field | Value |
 |-------|-------|
 | Label | *(unnamed — decoded but purpose unknown)* |
-| Direction | Request `[0x01]` (1 byte), response `0x00` |
-| Seen in | `Connect-Toggle-Lid-shutdown-app.txt`, Stuhlgang log |
-| Calling context | Sent **once per session**, at the **end of the init sequence** — after all `GetStoredCommonSetting` (0x51) reads, before first user action |
-| Status | Purpose **unknown** — candidates: "session ready", "enable remote control" |
+| Direction | Request, response `0x00` |
+| Payload | **Varies by session:** `[0x01]` in PacketLogger captures (Stuhlgang, Connect-Toggle-Lid); `[0x00]` in OTA nRF52840 capture 2026-06-01 |
+| Seen in | `Connect-Toggle-Lid-shutdown-app.txt`, Stuhlgang log, OTA capture `working.pcapng` |
+| Calling context | Sent **twice per session** (confirmed OTA 2026-06-01): once at the end of init (after all 0x51 reads, before first user action), once again mid-session |
+| Status | Purpose **unknown** — candidates: "session ready", "enable remote control", "keep-alive token" |
 
 **What is NOT the case:**
 - NOT approach-triggered (present in `Connect-Toggle-Lid` log where no approach occurred)
 - NOT the reason the lid opened in the Stuhlgang log (that was the device's own proximity sensor)
+
+**Payload variation:** the `[0x01]` vs `[0x00]` difference between capture methods may
+reflect session context (active foreground vs background) or capture timing.  The bridge
+should send `[0x01]` (matching PacketLogger captures from normal interactive sessions).
 
 **How to investigate:** BLE-sniff a session where proc 0x55 is deliberately skipped
 (e.g. using the bridge, which does not send it). If the device still responds to
@@ -254,28 +277,28 @@ The device requires a power cycle to recover from this state.
 
 | Field | Value |
 |-------|-------|
-| Label | Unknown |
+| Label | Likely `OpenLid` |
 | Mechanism | Proc `0x09` (SetCommand), single-byte payload `0x03` |
-| Seen in | Android pcapng `open-lid-remote-zur-toilette-laufen-sitzen-aufstehen.pcapng` (2026-04-22) |
-| Status | **Not in `Commands` enum — unknown command code** |
+| Seen in | Android pcapng (2026-04-22) **and** iPhone OTA capture `working.pcapng` (2026-06-01) |
+| Status | **Confirmed from two independent sources. Not yet in `Commands` enum.** |
 
-**Observation:** In a session titled "open lid remotely, walk to toilet, sit, stand up", the Android
-app sends `SetCommand(0x03)` immediately before `SetCommand(ToggleLidPosition)`. Code 3 is a gap in
-our `Commands` enum between `ToggleDryer (2)` and `StartCleaningDevice (4)`.
+**Observation (Android, 2026-04-22):** `SetCommand(0x03)` sent immediately before
+`SetCommand(ToggleLidPosition=10)` in an "open lid remotely" session.
+
+**Observation (iPhone OTA, 2026-06-01):** `SetCommand([1, 3])` sent, followed shortly by
+`SetCommand([1, 10])` (ToggleLidPosition). Pattern is consistent across both platforms.
+
+**Interpretation:** Code 3 is a dedicated **OpenLid** command (not a toggle). The app sends
+code 3 to open the lid, then code 10 (toggle) to close it. Code 3 is a gap in the `Commands`
+enum between `ToggleDryer (2)` and `StartCleaningDevice (4)`.
 
 **Current `Commands` enum codes for reference:**
-`0=ToggleAnalShower, 1=ToggleLadyShower, 2=ToggleDryer, [3=?], 4=StartCleaningDevice,
+`0=ToggleAnalShower, 1=ToggleLadyShower, 2=ToggleDryer, [3=OpenLid?], 4=StartCleaningDevice,
 5=ExecuteNextCleaningStep, 6=PrepareDescaling, 7=ConfirmDescaling, 8=CancelDescaling,
 9=PostponeDescaling, 10=ToggleLidPosition, 20=ToggleOrientationLight, 33–36=LidCalibration,
 37=TriggerFlushManually, 47=ResetFilterCounter`
 
-**Hypothesis:** Code 3 may be a dedicated "OpenLid" command (as opposed to the toggle in code 10).
-In the capture, the app opens the lid remotely, waits ~3.5 s, then sends ToggleLidPosition — possibly
-to close it after the user sat down.
-
-**How to investigate:** Use `geberit-ble-probe.py --proc 0x09 --ctx 0x01 --args 03` and observe
-whether the device responds with a lid action. Alternatively, sniff the app while tapping "open lid"
-and "close lid" separately (if those are distinct UI buttons) and compare which SetCommand code is sent.
+**Next step:** Add `OpenLid = 3` to `Commands.py` and wire to all interfaces.
 
 ---
 

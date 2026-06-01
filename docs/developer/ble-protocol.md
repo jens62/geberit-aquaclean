@@ -128,14 +128,25 @@ Shorter payloads cause the device to return **error 0xF7** immediately.
 
 ## GetSystemParameterList (0x0D)
 
-Reads live device state. Our bridge requests 8 params; the iPhone app requests 12.
+Reads live device state.
 
-**Request payload:**
+**Bridge (current):** requests 8 params `[0,1,2,3,4,5,6,7]`.
+
+**iPhone (confirmed from OTA capture 2026-06-01, HB2304EU298413, firmware RS146.21):**
+requests 10 params: `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]`.  Params 12 (LidOffsetPosition) and
+13 (ShowerArmOffsetPosition) are confirmed safe on Mera Comfort firmware ≥ RS25.
+The same 10-param list is sent to `GetFilterStatus` in the same session.
+
+**Request payload (bridge, current):**
 ```
 [count=8][0x00][0x01][0x02][0x03][0x04][0x05][0x07][0x09][0x00][0x00][0x00][0x00]
 ```
-iPhone requests: `[0x0c][0x00][0x01][0x02][0x03][0x04][0x05][0x06][0x07][0x04][0x08][0x09][0x0A]`
-(note: index 4 appears twice in the iPhone request)
+**Request payload (iPhone, OTA-confirmed):**
+```
+[0x0d][0x0c][0x00][0x01][0x02][0x03][0x04][0x05][0x06][0x07]
+```
+(10 bytes: params 13, 12, 0, 1, 2, 3, 4, 5, 6, 7 — no padding needed as the payload length is
+declared separately in the frame header)
 
 **Response format:**
 
@@ -403,6 +414,42 @@ The C# reference reads values positionally (correct behavior) but does not docum
 that the idx bytes are **unreliable from record 2 onward** — the device always returns
 `0x00` regardless of which parameter was requested. This has been confirmed empirically
 from iPhone traffic logs. The bridge decodes positionally and documents this explicitly.
+
+---
+
+## iPhone Init Sequence — Confirmed from OTA Capture (2026-06-01)
+
+Full procedure order observed in `working.pcapng` (device HB2304EU298413, firmware RS146.21,
+captured via nRF52840 dongle placed directly on the toilet housing):
+
+| Order | Proc | Name | Args / notes |
+|-------|------|------|-------------|
+| 1 | `0x82` | GetDeviceIdentification | no args |
+| 2 | `0x05` | GetNodeList | no args — see `unknown-procedures.md` |
+| 3 | `0x81` | GetSOCApplicationVersions | no args |
+| 4 | `0x0e` | GetFirmwareVersionList | module indices `[13,12,1,3,4,5,6,7,8,9]` |
+| 5 | `0x0e` | GetFirmwareVersionList | module indices `[13,1,15]` (second call, different modules) |
+| 6 | `0x11` | GetStoredCommonSetting (batch) | setting IDs 1–15 across 4 batched calls |
+| 7 | `0x13` | (batch variant) | same IDs in a second pass |
+| 8 | `0x0b` | (unknown batch write) | `[3, n, 2]` for n=1,2,3 |
+| 9 | `0x0a` | (GetStoredCommonSetting variant?) | `[1, n]` for n=0..9 — 10 separate calls |
+| 10 | `0x51` | GetStoredCommonSetting | `[1, n]` for n=0..9 — 10 separate calls |
+| 11 | `0x0d` | GetSystemParameterList | `[13,12,0,1,2,3,4,5,6,7]` |
+| 12 | `0x59` | GetFilterStatus | `[13,12,0,1,2,3,4,5,6,7]` |
+| 13 | `0x55` | Proc0x55 (init complete?) | `[0x00]` |
+| — | `0x0d` | GetSystemParameterList | polling loop begins |
+| — | `0x53` | GetStoredProfileSetting | setting IDs 0–13, reads all profile settings |
+| — | `0x55` | Proc0x55 | second call mid-session |
+| — | `0x53` | SetStoredProfileSetting | writes back updated settings |
+| — | `0x08` | SetActiveProfileSetting | live setting changes during shower `[3, id, val]` |
+| — | `0x07` | GetNodeList query | `[1, 10]` — node 10 query |
+| — | `0x09` | SetCommand | code `3` (OpenLid), then code `10` (ToggleLid) |
+
+**Key differences from the current bridge init sequence:**
+- iPhone includes params 12 and 13 in SPL and GetFilterStatus — bridge currently omits them
+- iPhone sends proc 0x55 (bridge does not)
+- iPhone calls GetFirmwareVersionList with specific module sets (bridge does the same but with different indices)
+- iPhone calls proc 0x0a and 0x0b during init (bridge does not — purpose unclear)
 
 ---
 
