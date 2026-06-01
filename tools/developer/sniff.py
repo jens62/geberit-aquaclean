@@ -26,13 +26,10 @@ nrfutil v0.19.0 notes
   --follow-by-name     : nrfutil must receive a SCAN_RSP with the matching
                          name before registering the follow → race condition
                          cannot fire.  Used with --scan-follow-rsp.
-  --json               : DEVICE_ADDED events do NOT appear on stdout even
-                         without --skip-overhead; they only go to the log
-                         file.  Do NOT rely on --json for device monitoring.
-  --log-output stdout  : routes all log messages — including DEVICE_ADDED —
-                         to stdout.  Combined with --output-pcap-file (pcap
-                         stays in the file), stdout is pure log text that
-                         this script parses line by line.
+  --json / --log-output stdout :  DEVICE_ADDED events do NOT appear on stdout
+                         or stderr regardless of these flags — they only ever
+                         appear in ~/.nrfutil/logs/nrfutil-ble-sniffer.log.
+                         This script tails that file directly.
   --timeout 30000      : default 500 ms too short to catch the first SCAN_RSP.
 
   Wireshark extcap shim broken on macOS v0.19.0 (Nordic DevZone #127996).
@@ -67,14 +64,19 @@ _SNIFFER_BIN = {
     "Windows": os.path.expandvars(r"%LOCALAPPDATA%\nrfutil\bin\nrfutil-ble-sniffer.exe"),
 }
 
-# Mera Comfort public BLE address — used only for --mac fallback and highlighting
+_LOG_FILE = {
+    "Darwin":  os.path.expanduser("~/.nrfutil/logs/nrfutil-ble-sniffer.log"),
+    "Linux":   os.path.expanduser("~/.nrfutil/logs/nrfutil-ble-sniffer.log"),
+    "Windows": os.path.expandvars(r"%LOCALAPPDATA%\nrfutil\logs\nrfutil-ble-sniffer.log"),
+}
+
+# Mera Comfort public BLE address — used for highlighting and --mac fallback
 MERA_COMFORT_MAC      = "38:ab:41:2a:0d:67"
 MERA_COMFORT_MAC_NORM = "38:ab:41:2a:d:67"   # nrfutil strips leading zeros (0d → d)
 
 OUTPUT_DIR_DEFAULT = os.path.expanduser("~/Downloads")
 
-# Regex to extract the JSON payload from a log line:
-# [timestamp] [pid] INFO - [log] Device added: {...}
+# Matches:  ... Device added: {"address":{"address":"xx:xx","type":"..."},...}
 _DEVICE_RE = re.compile(r"Device added: ({.+})")
 
 
@@ -89,6 +91,11 @@ def sniffer_bin():
             "(Raspberry Pi / Linux ARM64 is not supported by Nordic.)"
         )
     return path
+
+
+def log_file():
+    return _LOG_FILE.get(platform.system(),
+                         os.path.expanduser("~/.nrfutil/logs/nrfutil-ble-sniffer.log"))
 
 
 def find_sniffer_port():
@@ -128,27 +135,71 @@ def is_target(addr, device_name, name):
     return addr_match or name_match
 
 
+# ── log tailer ────────────────────────────────────────────────────────────────
+
+def _tail_log(log_path, start_pos, device_name, found_event, stop_event):
+    """
+    Background thread: tail the nrfutil log file from start_pos, parse every
+    'Device added: {json}' line, print it, and set found_event when the target
+    appears.
+
+    Why log file instead of stdout/stderr:
+      DEVICE_ADDED events appear exclusively in ~/.nrfutil/logs/nrfutil-ble-sniffer.log
+      regardless of --json, --log-output stdout, or --skip-overhead.  All three
+      flags were tried and confirmed to not surface DEVICE_ADDED on stdout/stderr
+      (the Geberit device appeared in the log within 100 ms in every session but
+      the script never detected it via stdout parsing).
+    """
+    # Wait up to 2 s for nrfutil to create / start writing the log
+    deadline = time.time() + 2.0
+    while not os.path.isfile(log_path) and time.time() < deadline:
+        time.sleep(0.05)
+
+    if not os.path.isfile(log_path):
+        print(f"  WARNING: log file not found at {log_path}")
+        return
+
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            f.seek(start_pos)
+            while not stop_event.is_set():
+                line = f.readline()
+                if not line:
+                    time.sleep(0.05)
+                    continue
+                m = _DEVICE_RE.search(line)
+                if not m:
+                    continue
+                try:
+                    dev = json.loads(m.group(1))
+                except json.JSONDecodeError:
+                    continue
+
+                addr        = (dev.get("address") or {}).get("address", "")
+                name        = dev.get("name") or ""
+                rssi        = dev.get("rssi", "?")
+                is_followed = dev.get("is_followed", False)
+
+                target = is_target(addr, device_name, name)
+                marker = "  ← TARGET" if target else ""
+                label  = f" ({name})" if name else ""
+                print(f"    {addr}{label}  RSSI {rssi} dBm{marker}", flush=True)
+
+                if is_followed or target:
+                    found_event.set()
+    except Exception as e:
+        print(f"  WARNING: log tail error: {e}")
+
+
 # ── capture ───────────────────────────────────────────────────────────────────
 
 def run_capture(bin_path, port, device_name, output_file, use_mac):
-    """
-    Start the sniffer with --log-output stdout so that DEVICE_ADDED log lines
-    arrive on the subprocess stdout pipe.  Parse each line with a regex,
-    print discovered devices, and print OPEN APP NOW when the target is followed.
-
-    Why --log-output stdout:
-      --json without --skip-overhead still sends DEVICE_ADDED only to the log
-      file, not stdout.  --log-output stdout explicitly routes all log messages
-      (including DEVICE_ADDED) to stdout while --output-pcap-file keeps the
-      pcap data in a separate file.  stdout is then pure text, easy to parse.
-    """
     if use_mac:
         cmd = [
             bin_path, "sniff",
             "--port", port,
             "--follow", f"{MERA_COMFORT_MAC} public",
             "--output-pcap-file", output_file,
-            "--log-output", "stdout",
         ]
         mode = f"follow-by-MAC ({MERA_COMFORT_MAC})"
     else:
@@ -159,7 +210,6 @@ def run_capture(bin_path, port, device_name, output_file, use_mac):
             "--scan-follow-rsp",
             "--timeout", "30000",
             "--output-pcap-file", output_file,
-            "--log-output", "stdout",
         ]
         mode = f"follow-by-name ('{device_name}')"
 
@@ -167,54 +217,41 @@ def run_capture(bin_path, port, device_name, output_file, use_mac):
     print(f"  Output : {output_file}")
     print(f"  Scanning — devices found:\n")
 
+    # Record log file position before starting so we only read new entries
+    lf = log_file()
+    start_pos = os.path.getsize(lf) if os.path.isfile(lf) else 0
+
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        text=True, bufsize=1
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
+    found_event = threading.Event()
+    stop_event  = threading.Event()
+
+    tailer = threading.Thread(
+        target=_tail_log,
+        args=(lf, start_pos, device_name, found_event, stop_event),
+        daemon=True,
+    )
+    tailer.start()
+
     open_app_printed = False
-
     try:
-        for line in proc.stdout:
-            line = line.rstrip()
-
-            m = _DEVICE_RE.search(line)
-            if not m:
-                continue
-
-            try:
-                dev = json.loads(m.group(1))
-            except json.JSONDecodeError:
-                continue
-
-            addr        = (dev.get("address") or {}).get("address", "")
-            name        = dev.get("name") or ""
-            rssi        = dev.get("rssi", "?")
-            is_followed = dev.get("is_followed", False)
-
-            target = is_target(addr, device_name, name)
-            marker = "  ← TARGET" if target else ""
-            label  = f" ({name})" if name else ""
-            print(f"    {addr}{label}  RSSI {rssi} dBm{marker}")
-
-            if (is_followed or target) and not open_app_printed:
+        while proc.poll() is None:
+            if found_event.is_set() and not open_app_printed:
                 open_app_printed = True
                 print()
                 print("  ┌─────────────────────────────────────────────────────┐")
                 print("  │   OPEN THE GEBERIT HOME APP ON YOUR PHONE NOW        │")
                 print("  └─────────────────────────────────────────────────────┘")
                 print("  Ctrl-C to stop capture.\n")
-                # Drain remaining stdout so the pipe never blocks
-                threading.Thread(
-                    target=lambda: [_ for _ in proc.stdout],
-                    daemon=True
-                ).start()
-                proc.wait()
-                return True
-
+            time.sleep(0.1)
     except KeyboardInterrupt:
         pass
     finally:
+        stop_event.set()
         proc.terminate()
         try:
             proc.wait(timeout=3)
@@ -224,6 +261,7 @@ def run_capture(bin_path, port, device_name, output_file, use_mac):
     if not open_app_printed:
         print(f"\n  Stopped — '{device_name}' was not found.")
         print("  Is the toilet powered?  Not connected to another device?")
+        print(f"  Log file checked: {lf}")
     else:
         print("\n  Capture stopped.")
     return open_app_printed
@@ -244,6 +282,7 @@ def run(device_name, port, output_dir, loop, use_mac):
             print(f"nRF52840 port : {port}")
             print(f"Device name   : {device_name}")
             print(f"Output dir    : {output_dir}")
+            print(f"Log file      : {log_file()}")
             print()
 
         print(f"[Session {session}]  Make sure the toilet is powered and NOT")
