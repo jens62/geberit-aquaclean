@@ -3,306 +3,301 @@
 Geberit AquaClean — BLE ATT sniffer
 ====================================
 
-Captures the GATT session between the Geberit Home App and the toilet
-using an nRF52840 USB dongle running the Nordic BLE sniffer firmware.
+Uses the Nordic SnifferAPI (Sniffer.py / Packet.py) to follow the Mera Comfort
+and write a .pcapng file for Wireshark analysis.
 
-The script shows every BLE device the dongle discovers, highlights the
-target when it appears, and prints "OPEN APP NOW" at the exact moment the
-sniffer has locked on and is ready to follow the connection.
+The SnifferAPI's sendFollow() is the ONLY reliable way to lock the nRF52840
+firmware onto a specific device before the connection happens.  The nrfutil CLI
+(--follow / --follow-by-name) does not replicate this correctly.
 
-Platform support
-----------------
-  macOS Intel / Apple Silicon  /dev/tty.usbmodem*   nrfutil aarch64/x86_64-apple-darwin
-  Windows 10 x86_64            COMxx                nrfutil x86_64-pc-windows-msvc
-  Linux x86_64                 /dev/ttyACM*         nrfutil x86_64-unknown-linux-gnu
+Prerequisites
+-------------
+1. Download the Nordic nRF Sniffer for Bluetooth LE zip from:
+     https://www.nordicsemi.com/Products/Development-tools/nRF-Sniffer-for-Bluetooth-LE/Download
 
-  Raspberry Pi / Linux ARM64   NOT supported — no nrfutil-ble-sniffer
-                                ARM64 binary (Nordic confirmed).
+2. Extract the zip. Inside the `extcap/` directory you will find `SnifferAPI/`.
 
-nrfutil v0.19.0 behaviour
---------------------------
-  --log-output stdout  GLOBAL flag — must appear BEFORE the `sniff` subcommand.
-                       Without it, DEVICE_ADDED events go only to the log file.
-                       With it, stdout receives JSON Lines:
-                         {"type":"log","data":{"level":"INFO",
-                          "message":"Device added: {...}","timestamp":"..."}}
-                       The `message` value contains an embedded JSON payload.
+3. Place the `SnifferAPI/` folder in one of these locations (first found wins):
+     a)  Next to this script:
+           tools/developer/SnifferAPI/
+     b)  Wireshark user plugin path (macOS):
+           ~/Library/Application Support/Wireshark/extcap/SnifferAPI/
+     c)  Wireshark global plugin path (macOS):
+           /Applications/Wireshark.app/Contents/PlugIns/wireshark/extcap/SnifferAPI/
 
-  --follow-by-name     Completely broken — `name` is always null in every
-                       DEVICE_ADDED event, so nrfutil can never match it and
-                       logs "WARN: Can't send follow request call".  Never used.
-
-  --follow <MAC>       Sends a follow request to the sniffer firmware.  Known
-                       timing bug: if the follow request is sent before the
-                       device appears in nrfutil's internal list, nrfutil marks
-                       is_followed=false and discards all connection data even
-                       though the firmware may have captured it.
-                       Workaround: retry the follow immediately if is_followed=false
-                       when the target MAC is first seen — statistically the device
-                       appears within 28 ms on subsequent fast retries.
-
-  MAC normalisation    nrfutil strips leading zeros from hex octets in display:
-                       38:ab:41:2a:0d:67 → 38:ab:41:2a:d:67.  Always compare
-                       with zero-padding normalised to canonical form.
-
-  Wireshark extcap     Broken on macOS v0.19.0 (Nordic DevZone #127996).
-                       This script calls the sniff subcommand directly.
+4. Install pyserial:
+     pip install pyserial
 
 Usage
 -----
-  python3 sniff.py "Geberit AC PRO"
-  python3 sniff.py "Geberit AC PRO" --loop
-  python3 sniff.py "Geberit AC PRO" --port /dev/tty.usbmodemXXXX
-  python3 sniff.py "Geberit AC PRO" --output-dir ~/Desktop
+  python3 sniff.py                          # auto-detect port
+  python3 sniff.py --port /dev/tty.usbmodemXXXX
+  python3 sniff.py --output-dir ~/Desktop
+  python3 sniff.py --loop                   # restart after each session
+
+How it works
+------------
+1. Open the serial port to the nRF52840 dongle.
+2. Call sendFollow(TARGET_MAC) — tells the firmware to watch advertising
+   channels 37/38/39 and lock onto the CONNECT_IND from the Geberit device.
+3. Once the CONNECT_IND is captured the firmware extracts the hop increment
+   and follows the piconet across all 37 data channels automatically.
+4. All packets (advertising + connected data) are written to a .pcapng file.
+5. When the target is first seen advertising, print "OPEN APP NOW".
 """
 
-import argparse
 import glob
-import json
 import os
 import platform
-import re
-import subprocess
+import struct
 import sys
 import time
+import argparse
 from datetime import datetime
+
+# ── SnifferAPI path resolution ────────────────────────────────────────────────
+
+_API_CANDIDATES = [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "SnifferAPI"),
+    os.path.expanduser("~/Library/Application Support/Wireshark/extcap/SnifferAPI"),
+    "/Applications/Wireshark.app/Contents/PlugIns/wireshark/extcap/SnifferAPI",
+    os.path.expanduser("~/.local/lib/wireshark/extcap/SnifferAPI"),
+    os.path.expanduser("~/Downloads/SnifferAPI"),
+]
+
+def _find_api():
+    for p in _API_CANDIDATES:
+        if os.path.isfile(os.path.join(p, "Sniffer.py")):
+            return p
+    return None
+
+_api_path = _find_api()
+if _api_path is None:
+    print("ERROR: SnifferAPI not found. Install it as follows:")
+    print()
+    print("  1. Download the Nordic nRF Sniffer zip from:")
+    print("       https://www.nordicsemi.com/Products/Development-tools/nRF-Sniffer-for-Bluetooth-LE/Download")
+    print("  2. Extract it and copy the extcap/SnifferAPI/ folder next to this script:")
+    print(f"       {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'SnifferAPI')}/")
+    print("  3. pip install pyserial")
+    sys.exit(1)
+
+sys.path.insert(0, _api_path)
+import Sniffer  # noqa: E402
+import Packet   # noqa: E402
 
 # ── constants ────────────────────────────────────────────────────────────────
 
-_SNIFFER_BIN = {
-    "Darwin":  os.path.expanduser("~/.nrfutil/bin/nrfutil-ble-sniffer"),
-    "Linux":   os.path.expanduser("~/.nrfutil/bin/nrfutil-ble-sniffer"),
-    "Windows": os.path.expandvars(r"%LOCALAPPDATA%\nrfutil\bin\nrfutil-ble-sniffer.exe"),
-}
-
-# Mera Comfort public BLE address (canonical zero-padded form)
-MERA_COMFORT_MAC = "38:ab:41:2a:0d:67"
+# Mera Comfort public BLE address as byte list [MSB … LSB]
+TARGET_MAC = [0x38, 0xAB, 0x41, 0x2A, 0x0D, 0x67]
+TARGET_MAC_STR = "38:ab:41:2a:0d:67"
 
 OUTPUT_DIR_DEFAULT = os.path.expanduser("~/Downloads")
 
-# Max retries when is_followed=false before giving up on a session
-MAX_FOLLOW_RETRIES = 8
+# ── serial port detection ─────────────────────────────────────────────────────
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-def sniffer_bin():
-    path = _SNIFFER_BIN.get(platform.system())
-    if not path or not os.path.isfile(path):
-        sys.exit(
-            f"ERROR: nrfutil-ble-sniffer not found at {path}\n"
-            "Install with:  nrfutil install ble-sniffer\n"
-            "(Raspberry Pi / Linux ARM64 is not supported by Nordic.)"
-        )
-    return path
-
-
-def find_sniffer_port():
+def find_port():
     system = platform.system()
     if system == "Darwin":
         ports = glob.glob("/dev/tty.usbmodem*")
     elif system == "Linux":
         ports = glob.glob("/dev/ttyACM*")
     elif system == "Windows":
+        import re, subprocess
         try:
             out = subprocess.check_output(
                 ["powershell", "-Command",
                  "Get-PnpDevice -Class Ports -Status OK | "
                  "Select-Object -ExpandProperty FriendlyName"],
-                text=True, stderr=subprocess.DEVNULL
-            )
+                text=True, stderr=subprocess.DEVNULL)
             ports = re.findall(r"COM\d+", out)
         except Exception:
             ports = []
     else:
-        sys.exit(f"ERROR: Unsupported platform: {system}")
+        ports = []
 
     if not ports:
-        hint = "COMxx in Device Manager" if system == "Windows" else "/dev/ttyACM0 or /dev/tty.usbmodem*"
         sys.exit(
             "ERROR: nRF52840 dongle not found.\n"
-            f"  Is it plugged in?  Try --port {hint}"
+            "  Is it plugged in?  Use --port to specify manually."
         )
     if len(ports) > 1:
-        print(f"  Multiple ports: {ports} — using {ports[0]}")
+        print(f"  Multiple ports found: {ports} — using {ports[0]}")
     return ports[0]
 
+# ── minimal pcapng writer ─────────────────────────────────────────────────────
+# Link type 272 = LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR (Nordic Tap)
+# Wireshark decodes this natively when the file comes from an nRF Sniffer.
 
-def normalize_mac(mac: str) -> str:
-    """Canonical form: lowercase, each octet zero-padded to 2 chars."""
-    return ":".join(p.zfill(2).lower() for p in mac.split(":"))
+_PCAPNG_SHB = (
+    b"\x0a\x0d\x0d\x0a"   # SHB block type
+    + b"\x1c\x00\x00\x00"  # block length 28
+    + b"\x4d\x3c\x2b\x1a"  # byte-order magic
+    + b"\x01\x00"          # major version
+    + b"\x00\x00"          # minor version
+    + b"\xff\xff\xff\xff\xff\xff\xff\xff"  # section length unknown
+    + b"\x1c\x00\x00\x00"  # block length (repeated)
+)
 
+def _idb(link_type=272):
+    body = struct.pack("<HHI", link_type, 0, 0)  # link type, reserved, snap len 0=unlimited
+    length = 12 + len(body)
+    return (struct.pack("<I", 1)        # IDB block type
+            + struct.pack("<I", length)
+            + body
+            + struct.pack("<I", length))
 
-TARGET_MAC_NORM = normalize_mac(MERA_COMFORT_MAC)
-
-
-def parse_device_added(line: str):
-    """
-    Parse a JSON Lines stdout event from nrfutil --log-output stdout --json.
-
-    Expected format:
-      {"type":"log","data":{"level":"INFO",
-       "message":"Device added: {<embedded json>}","timestamp":"..."}}
-
-    Returns (addr_norm, rssi, is_followed) or None if not a DEVICE_ADDED line.
-    """
-    try:
-        obj = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-
-    if obj.get("type") != "log":
-        return None
-
-    msg = obj.get("data", {}).get("message", "")
-    if not msg.startswith("Device added: "):
-        return None
-
-    try:
-        dev = json.loads(msg[len("Device added: "):])
-    except json.JSONDecodeError:
-        return None
-
-    addr        = (dev.get("address") or {}).get("address", "")
-    rssi        = dev.get("rssi", "?")
-    is_followed = dev.get("is_followed", False)
-    return normalize_mac(addr), rssi, is_followed
+def _epb(data: bytes, ts_us: int):
+    pad = (4 - len(data) % 4) % 4
+    cap_len = len(data)
+    body = (struct.pack("<II", 0, 0)           # interface id, timestamp high
+            + struct.pack("<I", ts_us & 0xFFFFFFFF)  # timestamp low
+            + struct.pack("<II", cap_len, cap_len)   # cap len, orig len
+            + data + b"\x00" * pad)
+    length = 12 + len(body)
+    return (struct.pack("<I", 6)        # EPB block type
+            + struct.pack("<I", length)
+            + body
+            + struct.pack("<I", length))
 
 
-# ── one follow attempt ────────────────────────────────────────────────────────
+class PcapWriter:
+    def __init__(self, path):
+        self._f = open(path, "wb")
+        self._f.write(_PCAPNG_SHB)
+        self._f.write(_idb(link_type=272))
+        self._start = time.time()
+        self._count = 0
 
-def _attempt_follow(bin_path, port, output_file):
-    """
-    Start nrfutil with --follow MAC.  Stream stdout JSON Lines.
-    Print every discovered device.
+    def write(self, raw_bytes: bytes):
+        ts_us = int((time.time() - self._start) * 1_000_000)
+        self._f.write(_epb(raw_bytes, ts_us))
+        self._f.flush()
+        self._count += 1
 
-    Returns:
-      "followed"  — target found with is_followed=true  → print OPEN APP NOW
-      "retry"     — target found with is_followed=false → restart immediately
-      "stopped"   — Ctrl-C or process exited cleanly
-    """
-    cmd = [
-        bin_path,
-        "--log-output", "stdout",   # GLOBAL flag — must be BEFORE the subcommand
-        "--log-level",  "info",
-        "--json",
-        "sniff",
-        "--port",            port,
-        "--follow",          f"{MERA_COMFORT_MAC} public",
-        "--scan-follow-rsp",
-        "--output-pcap-file", output_file,
-    ]
+    def close(self):
+        self._f.close()
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        bufsize=1,
-    )
-
-    result = "stopped"
-    try:
-        for raw in proc.stdout:
-            parsed = parse_device_added(raw.strip())
-            if parsed is None:
-                continue
-
-            addr_norm, rssi, is_followed = parsed
-            is_tgt = (addr_norm == TARGET_MAC_NORM)
-            marker = "  ← TARGET" if is_tgt else ""
-            print(f"    {addr_norm}  RSSI {rssi} dBm{marker}", flush=True)
-
-            if is_tgt:
-                if is_followed:
-                    result = "followed"
-                else:
-                    result = "retry"
-                break   # stop reading; let caller decide
-
-    except KeyboardInterrupt:
-        result = "stopped"
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-    return result
+    @property
+    def count(self):
+        return self._count
 
 
 # ── capture session ───────────────────────────────────────────────────────────
 
-def run_capture(bin_path, port, output_file):
-    """
-    Retry _attempt_follow until is_followed=true or MAX_FOLLOW_RETRIES exceeded.
-    Returns True if capture started, False otherwise.
-    """
+def run_capture(port, output_file):
+    print(f"  Port   : {port}")
     print(f"  Output : {output_file}")
+    print(f"  API    : {_api_path}")
+    print()
+
+    pcap = PcapWriter(output_file)
+
+    print(f"  Initialising nRF52840 sniffer…")
+    sniffer = Sniffer.Sniffer(port)
+    sniffer.start()
+    time.sleep(1)   # let firmware initialise
+
+    print(f"  Sending follow({TARGET_MAC_STR})…")
+    sniffer.sendFollow(TARGET_MAC)
+
     print(f"  Scanning — devices found:\n")
+    open_app_printed = False
 
-    for attempt in range(1, MAX_FOLLOW_RETRIES + 1):
-        if attempt > 1:
-            print(f"\n  is_followed=false — retry {attempt}/{MAX_FOLLOW_RETRIES}…\n")
+    try:
+        while True:
+            packets = sniffer.getPackets()
+            for pkt in packets:
+                # Write every valid packet to pcap
+                try:
+                    raw = pkt.getPayload() if hasattr(pkt, "getPayload") else None
+                    if raw:
+                        pcap.write(bytes(raw))
+                except Exception:
+                    pass
 
-        result = _attempt_follow(bin_path, port, output_file)
+                if not pkt.OK:
+                    continue
 
-        if result == "stopped":
-            print("\n  Stopped.")
-            return False
+                ble = pkt.blePacket
+                if ble is None:
+                    continue
 
-        if result == "followed":
-            print()
-            print("  ┌─────────────────────────────────────────────────────┐")
-            print("  │   OPEN THE GEBERIT HOME APP ON YOUR PHONE NOW        │")
-            print("  └─────────────────────────────────────────────────────┘")
-            print("  Ctrl-C to stop capture.\n")
+                # Show advertising packets so the user sees discovered devices
+                try:
+                    addr = ble.advertisingAddress
+                    if addr:
+                        addr_str = ":".join(f"{b:02x}" for b in reversed(addr)) \
+                                   if isinstance(addr, (list, bytes, bytearray)) \
+                                   else str(addr).lower()
+                        is_tgt = (addr_str == TARGET_MAC_STR)
+                        marker = "  ← TARGET" if is_tgt else ""
+                        rssi   = getattr(pkt, "RSSI", "?")
+                        print(f"    {addr_str}  RSSI {rssi} dBm{marker}", flush=True)
 
-            # Continue capture — nrfutil is already running in _attempt_follow
-            # but we terminated it above.  Restart for the actual capture phase.
-            cmd = [
-                bin_path,
-                "--log-output", "stdout",
-                "--log-level",  "info",
-                "--json",
-                "sniff",
-                "--port",            port,
-                "--follow",          f"{MERA_COMFORT_MAC} public",
-                "--scan-follow-rsp",
-                "--output-pcap-file", output_file,
-            ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
-            try:
-                proc.wait()
-            except KeyboardInterrupt:
-                proc.terminate()
-                proc.wait(timeout=3)
-            return True
+                        if is_tgt and not open_app_printed:
+                            open_app_printed = True
+                            print()
+                            print("  ┌─────────────────────────────────────────────────────┐")
+                            print("  │   OPEN THE GEBERIT HOME APP ON YOUR PHONE NOW        │")
+                            print("  └─────────────────────────────────────────────────────┘")
+                            print("  Ctrl-C to stop.\n")
+                except Exception:
+                    pass
 
-        # result == "retry" — loop immediately
+                # Announce CONNECT_IND
+                try:
+                    pdu_type = getattr(ble, "PDUType", None)
+                    if pdu_type == 5:   # CONNECT_IND
+                        print(f"  [!!!] CONNECT_IND captured — firmware now hopping data channels")
+                except Exception:
+                    pass
 
-    print(f"\n  Could not get is_followed=true after {MAX_FOLLOW_RETRIES} attempts.")
-    print("  Is the toilet powered?  Not connected to another device?")
-    return False
+            time.sleep(0.005)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sniffer.stop()
+        pcap.close()
+
+    print(f"\n  Packets written : {pcap.count}")
+    print(f"  Saved → {output_file}")
+    return True
 
 
-# ── main loop ─────────────────────────────────────────────────────────────────
+# ── main ──────────────────────────────────────────────────────────────────────
 
-def run(port, output_dir, loop):
-    bin_path = sniffer_bin()
-    session  = 0
+def main():
+    parser = argparse.ArgumentParser(
+        description="Capture Geberit AquaClean BLE ATT traffic via SnifferAPI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "device_name", nargs="?", default="Geberit AC PRO",
+        help='BLE device name (informational only, e.g. "Geberit AC PRO")',
+    )
+    parser.add_argument("--loop",       action="store_true", help="Restart after each session")
+    parser.add_argument("--port",       help="Serial port (auto-detected if omitted)")
+    parser.add_argument("--output-dir", default=OUTPUT_DIR_DEFAULT,
+                        help=f"Output directory (default: {OUTPUT_DIR_DEFAULT})")
+    args = parser.parse_args()
 
+    port = args.port or find_port()
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    session = 0
     while True:
         session += 1
-        timestamp   = datetime.now().strftime("%Y%m%d-%H%M%S")
-        output_file = os.path.join(output_dir, f"geberit-{timestamp}.pcapng")
+        ts          = datetime.now().strftime("%Y%m%d-%H%M%S")
+        output_file = os.path.join(args.output_dir, f"geberit-{ts}.pcapng")
 
         if session == 1:
-            print(f"nRF52840 port : {port}")
-            print(f"Target MAC    : {MERA_COMFORT_MAC}")
-            print(f"Output dir    : {output_dir}")
+            print(f"SnifferAPI     : {_api_path}")
+            print(f"nRF52840 port  : {port}")
+            print(f"Target MAC     : {TARGET_MAC_STR}")
+            print(f"Output dir     : {args.output_dir}")
             print()
 
         print(f"[Session {session}]  Make sure the toilet is powered and NOT")
@@ -313,50 +308,16 @@ def run(port, output_dir, loop):
             print("\nAborted.")
             break
 
-        result = run_capture(bin_path, port, output_file)
-        if result:
-            print(f"  Saved → {output_file}")
+        run_capture(port, output_file)
 
-        if not loop:
+        if not args.loop:
             break
 
-        print("\n  Restarting for next session in 3 s (Ctrl-C to quit)…\n")
+        print("\n  Restarting in 3 s (Ctrl-C to quit)…\n")
         try:
             time.sleep(3)
         except KeyboardInterrupt:
             break
-
-
-# ── entry point ───────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Capture Geberit AquaClean BLE ATT traffic",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument(
-        "device_name",
-        help='BLE name shown in phone Bluetooth settings (informational only, '
-             'e.g. "Geberit AC PRO") — matching is by MAC address',
-    )
-    parser.add_argument(
-        "--loop", action="store_true",
-        help="Restart automatically after each session",
-    )
-    parser.add_argument(
-        "--port",
-        help="Serial port of the nRF52840 dongle (auto-detected if omitted)",
-    )
-    parser.add_argument(
-        "--output-dir", default=OUTPUT_DIR_DEFAULT,
-        help=f"Directory for .pcapng files (default: {OUTPUT_DIR_DEFAULT})",
-    )
-    args = parser.parse_args()
-
-    port = args.port or find_sniffer_port()
-    os.makedirs(args.output_dir, exist_ok=True)
-    run(port, args.output_dir, args.loop)
 
 
 if __name__ == "__main__":
