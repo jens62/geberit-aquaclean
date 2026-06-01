@@ -557,6 +557,105 @@ EOF
 
 ---
 
+### Alternative: CLI capture with `tools/developer/sniff.py` (no Wireshark required)
+
+Use this when you want a reproducible, scriptable capture without Wireshark open — or when
+the Wireshark extcap shim is broken (see known issues below).
+
+#### Platform support
+
+| Platform | nrfutil binary | Serial port | Notes |
+|---|---|---|---|
+| macOS Intel | `x86_64-apple-darwin` | `/dev/tty.usbmodem*` | Recommended |
+| macOS Apple Silicon | `aarch64-apple-darwin` | `/dev/tty.usbmodem*` | Recommended |
+| Windows 10 x86_64 | `x86_64-pc-windows-msvc` | `COMxx` | Works; find port in Device Manager |
+| Linux x86_64 | `x86_64-unknown-linux-gnu` | `/dev/ttyACM*` | Works |
+| **Raspberry Pi / Linux ARM64** | **not available** | — | **Dead end — Nordic confirmed no ARM64 binary** |
+
+Sources:
+- [nrfutil-package-index — confirms exactly 4 platform binaries](https://github.com/NordicSemiconductor/nrfutil-package-index/blob/master/nr/fu/nrfutil-ble-sniffer-aarch64-apple-darwin)
+- [nrfutil on Raspberry Pi — Nordic DevZone: ARM not supported](https://devzone.nordicsemi.com/f/nordic-q-a/106028/nrfutil-on-raspberry-pi)
+- [pc-nrfutil issue #337 — ARM-64 not installable via pip](https://github.com/NordicSemiconductor/pc-nrfutil/issues/337)
+
+#### nrfutil v0.19.0 known bugs
+
+**Bug 1 — `--follow <MAC>` timing race (no ATT data captured)**
+
+`--follow` sends the follow request to the firmware ~28 ms after scan start, before the target
+device has appeared in nrfutil's internal device list. nrfutil logs a WARN and marks
+`is_followed = false`. All connection data from the firmware is silently discarded.
+
+Evidence from log (`nrfutil-ble-sniffer.log`):
+```
+WARN No device with address 38:ab:41:2a:d:67 public found.
+     Still sending the follow request call, but no device is registered as followed.
+...
+Device added: {"address":{"address":"38:ab:41:2a:d:67"},"is_followed":false}
+```
+Note: nrfutil also strips leading zeros from MAC octets in its display (`0d` → `d`);
+this is cosmetic only — the byte value sent to the firmware is correct.
+
+Diagnostic signature in the resulting pcapng: advertising frames visible (ADV_IND from
+the toilet), a 15–60 second gap (device connected and invisible), then advertising
+resumes — but zero ATT data frames.
+
+**Bug 2 — Wireshark extcap shim broken on macOS v0.19.0**
+
+The shim passes `--extcap-interfaces` as a top-level flag, but v0.19.0 uses a subcommand
+architecture and rejects unknown top-level flags with exit code 101. The `sniff` subcommand
+called directly is not affected.
+
+Source: [Nordic DevZone #127996 — extcap shim broken on macOS v0.19.0](https://devzone.nordicsemi.com/f/nordic-q-a/127996/nrfutil-ble-sniffer-v0-19-0-wireshark-extcap-shim-broken-on-macos-shim-calls---extcap-interfaces-but-binary-rejects-it-exit-101)
+
+#### Workaround: `--follow-by-name` with `--scan-follow-rsp`
+
+The Geberit AquaClean Mera Comfort advertises its name in SCAN_RSP packets (AD type 0x09):
+**`Geberit AC PRO`**
+
+Using `--follow-by-name` forces nrfutil to receive the SCAN_RSP with the matching name
+*before* it can register the follow. This inherently prevents the 28 ms race condition —
+the follow request is only sent after the device is already in nrfutil's device list.
+
+Required flags:
+- `--follow-by-name "Geberit AC PRO"` — match by name instead of MAC
+- `--scan-follow-rsp` — actively send SCAN_REQ to fetch SCAN_RSP (name is not in ADV_IND)
+- `--timeout 30000` — default 500 ms is too short to reliably catch the first SCAN_RSP
+
+Sources:
+- [nRF Sniffer overview — Nordic Technical Documentation](https://docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/overview.html)
+- [Installing nRF Sniffer — Nordic Technical Documentation](https://docs.nordicsemi.com/bundle/nrfutil/page/nrfutil-ble-sniffer/guides/installing_nrf_sniffer.html)
+- [Real-time BLE sniffing with nrfutil and tshark — Adam Thomas blog](https://www.adam-thomas.co.uk/blog/nrfutil-bluetooth-sniffer-with-tshark/)
+- [Setting up nRF Sniffer — Nordic Developer Academy](https://academy.nordicsemi.com/courses/bluetooth-low-energy-fundamentals/lessons/lesson-6-bluetooth-le-sniffer/topic/nrf-sniffer-for-bluetooth-le/)
+- [nRF Sniffer for Bluetooth LE — nordicsemi.com product page](https://www.nordicsemi.com/Products/Development-tools/nRF-Sniffer-for-Bluetooth-LE)
+
+#### Usage
+
+```bash
+# Single session — prompts you to open the app at the right moment
+python3 tools/developer/sniff.py "Geberit AC PRO"
+
+# Loop mode — restarts automatically after each disconnect
+python3 tools/developer/sniff.py "Geberit AC PRO" --loop
+
+# Override port (if auto-detection picks the wrong one)
+python3 tools/developer/sniff.py "Geberit AC PRO" --port /dev/tty.usbmodemXXXX
+
+# Write captures to a specific directory
+python3 tools/developer/sniff.py "Geberit AC PRO" --output-dir ~/Desktop
+
+# Fallback: two-phase MAC follow (if --follow-by-name does not work)
+python3 tools/developer/sniff.py "Geberit AC PRO" --mac
+```
+
+The script workflow:
+1. **Pre-scan** (JSON mode, advertising-only): waits until the device is seen advertising.
+2. Once confirmed, starts the follow capture and prints **"OPEN THE GEBERIT HOME APP NOW"**.
+3. The app connects → `CONNECT_IND` caught → ATT frames captured to a timestamped `.pcapng`.
+
+Output files are written to `~/Downloads/geberit-YYYYMMDD-HHMMSS.pcapng` by default.
+
+---
+
 ## What to Include When Sharing a Capture
 
 When submitting a capture file for analysis (e.g. as a GitHub issue attachment):
