@@ -126,10 +126,16 @@ open question and validates the comparison table below.
 
 ### Step 2 — App + remote coexistence test
 
-**Result (MuusLee, 2026-05-27): ❌ App does NOT displace remote.**
+**Result (MuusLee, 2026-05-27): ❌ App does NOT permanently displace remote.**
 MuusLee confirmed the Geberit Home App and the physical remote can be used
-simultaneously — both work normally. The app uses keyset 0 (identical to the bridge)
-and performs a full DpId read cycle after KE, yet the remote remains functional.
+in the same session without permanent deregistration — after the app disconnects the
+remote works normally. The app uses keyset 0 (identical to the bridge) and performs a
+full DpId read cycle after KE, yet the remote is not permanently deregistered.
+
+**Refinement (2026-05-31):** the app DOES cause a temporary yellow ! on the remote
+while its BLE connection is active (standard peripheral behaviour: one central at a
+time). The remote auto-recovers ~10 s after the app closes. "Not displaced" means
+"not permanently deregistered", not "not temporarily blocked".
 
 This breaks the earlier "DpId reads are the trigger" conclusion. The bridge and the
 registered app both do DpId reads; only the bridge displaces the remote.
@@ -257,10 +263,18 @@ sufficient — the device needed a restart before the remote (and app) could rec
 
 ### Step 7 — v3.0.4b3 test results (2026-05-31)
 
-**Status: DONE — KE format confirmed from live log, new EP nonce and server pubkey findings, displacement persists.**
+**Status: DONE — two separate sessions; new behavioral distinction: temporary vs. permanent displacement.**
 
-MuusLee tested v3.0.4b3 with HA DEBUG logging. 17 consecutive successful polls,
-11:07–11:25 (18 minutes). Full hex logging of every KE exchange visible in the log.
+MuusLee ran two v3.0.4b3 sessions on 2026-05-31.
+
+**Session A (11:07–11:25):** 17 consecutive successful polls over 18 minutes.
+**Session B (16:29–16:38):** 8 successful polls over 9 minutes (first poll timed out
+on inventory at exactly 30 s = `RECV_TIMEOUT` limit; HA auto-retried, second attempt
+completed inventory in ~7 s, subsequent polls used the cache and disconnected in ~3 s).
+Both sessions confirm the same KE format and EP nonce properties (different nonces and
+server pubkey per session = toilet was restarted between them).
+
+Full hex logging of every KE exchange visible in the logs.
 
 **KE Request byte layout confirmed from live log** (50 bytes, all 17 polls):
 ```
@@ -296,6 +310,24 @@ Nonce exhaustion is ruled out as a displacement cause.
 **Displacement affects both app and remote simultaneously:**
 MuusLee confirmed after v3.0.4b3 testing: both the physical remote AND the official
 Geberit Home App fail to connect. The displacement is not keyset-specific.
+
+**New behavioral distinction — temporary vs. permanent (2026-05-31):**
+MuusLee also separately observed how the app and remote interact in normal use:
+- **App while connected**: remote shows yellow ! — temporary blocking while the BLE
+  connection is held. Remote auto-recovers ~10 s after the app closes (device
+  re-advertises, remote reconnects normally). This is standard BLE peripheral
+  behaviour: only one central at a time.
+- **HACS after polling**: remote shows yellow ! AND cannot auto-recover even after
+  HACS is deactivated and BLE is free. Toilet restart required. This is permanent
+  state damage.
+
+The earlier step-2 result ("app and remote can be used simultaneously, no displacement")
+referred to permanent deregistration only. The app does cause temporary blocking (yellow !
+while connected) — it does NOT cause permanent deregistration. HACS does.
+
+This distinction is the most important clue: whatever HACS does differently from the app,
+it leaves permanent state in the device that survives BLE disconnects. The sniffer
+comparison (step 8) is the only remaining way to observe it at the wire level.
 
 **Updated evidence table:**
 
