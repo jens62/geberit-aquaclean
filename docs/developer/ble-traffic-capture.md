@@ -357,11 +357,15 @@ Additional checklist:
 The Device dropdown only exists on the nRF Sniffer toolbar, which is hidden by default:
 View → Interface Toolbars → **nRF Sniffer for Bluetooth LE** (enable the checkmark).
 
+![Enabling the nRF Sniffer toolbar via View → Interface Toolbars](images/ble-traffic-capture/nRF52840-dongle/Wireshark%20-%20Enable%20Interface%20Toolbars%20-%20for%20nRF%20Sniffer%20for%20Bluetooth%20LE.png)
+
 **5b. Start the capture**
 
 Double-click the `nRF Sniffer for Bluetooth LE` interface in the Wireshark home screen.
 A flood of BLE advertising packets will appear. The nRF Sniffer toolbar is now visible
 just below the main toolbar row.
+
+![Wireshark start screen with nRF Sniffer for Bluetooth LE interface highlighted and ready to double-click](images/ble-traffic-capture/nRF52840-dongle/Wireshark%20-%20Capture%20-%20Refresh%20Interfaces.png)
 
 The toolbar also contains a **Key** dropdown (`Legacy Passkey` by default) and a
 **Value** field. These are for decrypting BLE link-layer encrypted sessions. The
@@ -379,6 +383,12 @@ The toolbar contains a **Device** dropdown, initially set to `All advertising de
 
 The toilet's MAC can be found in the HA integration's device entry, in a previous
 btsnoop capture, or by scanning via `tools/aquaclean-connection-test.py`.
+
+![Device dropdown showing all advertising devices — select the Geberit MAC before opening the app](images/ble-traffic-capture/nRF52840-dongle/Wireshark%20-%20nRF%20Sniffer%20for%20Bluetooth%20LE%20-%20Device%20-%20All%20advertisig%20devices.png)
+
+After selecting the Geberit MAC the toolbar switches to "Following device" mode:
+
+![Device dropdown after selecting the Geberit MAC — sniffer is now locked and following](images/ble-traffic-capture/nRF52840-dongle/Wireshark%20-%20nRF%20Sniffer%20for%20Bluetooth%20LE%20-%20Device%20-%20Follow.png)
 
 **Why "Following device" — not "All advertising devices":**
 
@@ -570,6 +580,23 @@ EOF
 | Version Request payload | ? | logged | ? | Protocol version difference? |
 | EP Request payload | ? | logged | ? | Capability flag difference? |
 | Capture D: toilet→remote after bridge KE | — | — | any notification? | Displacement trigger timing |
+
+### Successful Mera Comfort capture — reference screenshot
+
+The screenshot below shows a confirmed successful OTA capture of the Geberit AquaClean
+Mera Comfort (device HB2304EU298413, firmware RS146.21), made 2026-06-01 with the nRF52840
+dongle placed on the toilet housing via a 2 m USB extension cable.
+
+**Frame 10059 (highlighted):** ATT Handle Value Notification from the toilet (Peripheral)
+to the iPhone (Central) on handle `0x000f` — the first notification fragment of a
+GetSystemParameterList response arriving at t=88.049 s.  The surrounding frames show the
+characteristic write/notify rhythm: frames 10054 and 10056 are `Sent Write Command` to
+handle `0x0003` (the SPL request), frame 10059 is the first `Rcvd Handle Value Notification`
+on handle `0x000f` (the response).  The multi-handle notification pattern on `0x000f`,
+`0x0013`, `0x0017`, `0x001b` carries identification data and procedure responses split
+across 20-byte ATT frames.
+
+![Wireshark showing successful Mera Comfort OTA BLE capture. Frame 10059 (highlighted) is an ATT Handle Value Notification on handle 0x000f — the first response fragment from the toilet to the iPhone after a GetSystemParameterList write. The capture contains 1393 ATT frames including identification data, GetStoredCommonSetting responses, and the full polling loop.](images/ble-traffic-capture/nRF52840-dongle/Wireshark%20-%20Mera%20Comfort%20sniff%20-%20ATT.png)
 
 ---
 
