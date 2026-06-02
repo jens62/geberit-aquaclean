@@ -518,6 +518,129 @@ Capture D is the most diagnostic: if the toilet sends something to the remote
 the EP exchange level or earlier. If it happens after the bridge's KE Response,
 the trigger is in the KE layer.
 
+### Step 6b — Mera Comfort: remote vs app displacement experiment
+
+**Why Mera first:** the Mera Comfort uses the unencrypted legacy AC protocol — every ATT frame
+is visible in plaintext, with no KE exchange to decode.  Running the displacement experiment on
+the Mera gives a clean baseline: if the same pattern appears on Mera and Alba, the root cause is
+in the device firmware (not the Arendi security layer); if only Alba displaces, the Arendi
+`keyset_id` is the likely culprit.
+
+#### Find the remote's MAC first
+
+During idle (remote not actively connected), the Mera toilet periodically sends `ADV_DIRECT_IND`
+frames addressed to the remote's BLE MAC.  Capture a few seconds with the sniffer in
+**"All advertising devices"** mode and filter in Wireshark:
+
+```
+btle.advertising_header.pdu_type == 1
+```
+
+The destination address in those frames is the remote's MAC.  Note it down.
+
+#### When to start Wireshark — the golden rule
+
+**Select the device MAC in the toolbar before triggering any connection.**
+The sniffer must be synchronized to the toilet's advertising interval *in advance* — it cannot
+retroactively follow a connection whose `CONNECT_IND` it missed.  The sequence is always:
+
+1. Start capture
+2. Select Mera MAC in the Device dropdown → toolbar shows "Following device"
+3. *Then* open the app / press the remote button
+
+Never trigger a connection before step 2.
+
+#### The CONNECT_IND hopping problem
+
+BLE advertising rotates across three fixed channels (37, 38, 39) roughly every 100–300 ms.
+The phone or remote sends `CONNECT_REQ` on the *same channel* as the `ADV_IND` it just heard.
+The sniffer predicts which channel comes next and waits there — but the prediction can be wrong
+once, causing the `CONNECT_IND` to land on a different channel.
+
+**What happens on a miss:** Wireshark goes silent immediately after the connection forms — the
+`LE LL` entries stop and no ATT frames appear, even though the connection is active and the app
+is working normally.  The sniffer cannot decode data-channel packets without the `CONNECT_IND`
+parameters.
+
+**The Lua plugin tells you in real time:**
+
+| Sound | Meaning | Action |
+|-------|---------|--------|
+| **Tink** | `SCAN_REQ` seen — device found, `CONNECT_IND` imminent | Stay still |
+| **Ping** | `CONNECT_IND` caught — sniffer locked | Proceed with the action in the app / on the remote |
+| Tink, then silence | `CONNECT_IND` missed | Close app / wait for disconnect; see below |
+
+**What you can still observe even after a miss:**
+
+- `ADV_IND` packets resume once the toilet is advertising again (visible in Wireshark)
+- `ADV_DIRECT_IND` packets from the toilet to the remote's MAC — these appear during the
+  advertising phase and confirm whether the toilet is still trying to reach the remote
+- The remote's own advertising (if it re-advertises after losing its connection)
+
+These advertising-layer observations can answer the displacement question even without catching
+a single ATT frame.
+
+**Improving hit rate:**
+
+- Place the dongle **directly on the toilet housing** via a USB extension cable (confirmed
+  working at 2 m — see physical setup above).  Proximity is the single biggest factor.
+- Each attempt has roughly a 50–70 % success rate in "Following device" mode; expect 2–3 tries.
+- Do not stop and restart Wireshark between attempts — let all attempts accumulate in one file.
+  Each miss appears as a Tink with no subsequent ATT frames; each hit appears as Tink → Ping →
+  ATT frames.  The full timeline in one file is more useful for analysis than separate files.
+
+#### The four capture scenarios
+
+Run all four in a single Wireshark session if possible.  Save once at the end.
+
+**Scenario 1 — Remote baseline (remote sends a command, no app involved)**
+
+1. Sniffer running, Mera MAC selected
+2. Press a button on the physical remote
+3. Hear Tink → Ping (or retry if miss)
+4. Remote sends its command and disconnects (~1 s)
+5. Continue to Scenario 2 without stopping
+
+**Scenario 2 — App connects while remote is idle → app disconnects → does remote reconnect?**
+
+1. Open Geberit Home app on iPhone/Android
+2. Tink → Ping (or retry)
+3. Let the app complete its init sequence (~10 s)
+4. Close the app — watch for `ADV_IND` to resume in Wireshark
+5. Wait 30 s and observe: does the remote reconnect on its own?  Does the toilet send
+   `ADV_DIRECT_IND` to the remote's MAC?  Does a remote Tink → Ping appear?
+
+**Scenario 3 — App connects while remote is already connected → app disconnects**
+
+1. First trigger the remote to connect (press a button) — Tink → Ping
+2. While the remote is still connected (within ~1 s), open the app
+3. Observe: does the app get a connection?  Does the remote get a disconnect?
+4. Close the app — observe recovery
+
+**Scenario 4 — Bridge poll instead of app (the actual issue scenario)**
+
+1. Trigger a bridge poll (enable the HACS integration or use `POST /data/state`)
+2. Tink → Ping (or retry)
+3. Bridge connects, polls, disconnects
+4. Observe: does the remote reconnect cleanly afterwards?
+
+#### What to look for in the capture
+
+| Observation | Interpretation |
+|-------------|----------------|
+| `ADV_DIRECT_IND` from Mera to remote MAC after app/bridge disconnects | Toilet remembers the remote bond and is actively inviting it back — displacement is temporary |
+| No `ADV_DIRECT_IND`, remote has to initiate reconnect | Toilet does not track the remote; remote must poll |
+| Remote ATT frames look identical before and after app session | No displacement; bridge can coexist |
+| Remote gets a disconnect event mid-session when app connects | Device enforces single-client limit at firmware level — same root cause as Alba |
+
+Analyse the result with:
+
+```bash
+/Users/jens/venv/bin/python tools/nrf-ble-analyze.py displacement.pcapng --markdown --output displacement-analysis.md
+```
+
+---
+
 ### Step 7 — Automated analysis with `nrf-ble-analyze.py`
 
 `tools/nrf-ble-analyze.py` decodes nRF52840 `.pcapng` files directly.  It calls
