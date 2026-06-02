@@ -485,7 +485,85 @@ Capture D is the most diagnostic: if the toilet sends something to the remote
 the EP exchange level or earlier. If it happens after the bridge's KE Response,
 the trigger is in the KE layer.
 
-### Step 7 — Analysis
+### Step 7 — Automated analysis with `nrf-ble-analyze.py`
+
+`tools/nrf-ble-analyze.py` decodes nRF52840 `.pcapng` files directly.  It calls
+`tshark` internally to extract ATT frames, auto-detects the device type (Mera
+Comfort or Alba), and decodes the Geberit application layer.
+
+**Requires:** `tshark` installed (`brew install wireshark` on macOS, or the
+`wireshark` package on Linux — the Wireshark GUI is not required).
+
+#### Default output — compact procedure table
+
+```bash
+/Users/jens/venv/bin/python tools/nrf-ble-analyze.py capture.pcapng
+```
+
+Auto-detects the toilet MAC and device type, prints a compact table:
+
+```
+[+] Detected: 38:AB:41:2A:0D:67  type=mera  addr_field=btle.peripheral_bd_addr
+[+] 1,393 ATT frames, 1,333 matching events
+
+========================================================================
+File   : capture.pcapng  [nRF52840 pcapng, 1,393 ATT frames]
+Device : 38:AB:41:2A:0D:67  (Geberit AquaClean Mera Comfort)
+========================================================================
+
+  Time          Proc  Name                                Args
+  ------------  ----  ----------------------------------  -----------------------------------
+  t=82.8s       0x82  GetDeviceIdentification             Reading device model and SAP number
+  t=83.0s       0x05  GetNodeList                         Reading node list
+  t=83.3s       0x81  GetSOCApplicationVersions           Reading SOC firmware version (RS/TS)
+  t=83.5s       0x0e  GetFirmwareVersionList              Querying 12 firmware component IDs: [...]
+  t=83.9s       0x11  SubscribeNotif_0x11                 Subscription handshake
+  ...
+  t=88.0s       0x0d  GetSystemParameterList              Polling 12 params: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  t=88.2s       0x59  GetFilterStatus                     Checking 12 filter record IDs: [...]
+  t=89.2s       0x55  UnknownProc_0x55                    Unknown — args=(none)
+  t=93.7s       0x09  SetCommand                          **Triggering 0x03**
+  t=98.5s       0x09  SetCommand                          **Triggering ToggleLidPosition**
+```
+
+#### Annotated markdown — full session grouped by phase
+
+```bash
+/Users/jens/venv/bin/python tools/nrf-ble-analyze.py capture.pcapng \
+  --markdown --output session-analysis.md
+```
+
+Produces the same annotated markdown format as `android-ble-analyze.py` and
+`ble-decode.py`: phases (Init, Identification, Common Settings, State Poll, …)
+with request annotations and decoded responses.
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--mac AA:BB:CC:DD:EE:FF` | Filter to one device MAC (auto-detected if omitted) |
+| `--markdown` | Full annotated markdown grouped by logical phase |
+| `--output FILE` | Write markdown to FILE instead of stdout |
+| `--raw` | Print raw ATT bytes without decoding |
+
+#### Device auto-detection
+
+The tool determines Mera vs. Alba without any `--mac` flag:
+
+1. **BLE advertising local name** — Alba advertises `"AcAlba"` as a Complete Local Name
+   EIR/AD record; this is read from advertising frames before the connection.
+2. **ATT write handle** — if no local name is found (Mera Comfort uses manufacturer-specific
+   advertising only, no local name): handle `0x0003` → Mera, handle `0x001E` → Alba.
+
+#### Wireshark version compatibility
+
+`btle.slave_bd_addr` was renamed to `btle.peripheral_bd_addr` in Wireshark 4.0.
+The tool probes which name is populated in the file and uses the correct one automatically.
+No manual adjustment needed.
+
+---
+
+### Step 8 — Manual KE Request analysis (Alba only)
 
 #### Find the KE Request in Wireshark
 
