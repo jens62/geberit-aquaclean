@@ -43,7 +43,7 @@ is also wrong.
 
 | ID | Correct name | Bridge label | Device restriction |
 |----|-------------|--------------|-------------------|
-| 0 | `WaterHardness` | ~~OdourRunOn~~ ← **wrong** | all |
+| 0 | `WaterHardness` | ✅ fixed | all |
 | 1 | `OrientationLightBrightness` | Brightness | all |
 | 2 | `OrientationLightColour` | Color | all |
 | 3 | `OrientationLightMode` | Activation | all |

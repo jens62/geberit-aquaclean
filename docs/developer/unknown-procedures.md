@@ -313,7 +313,7 @@ device. Semantics of IDs 4–9 remain unknown (responses not yet decoded from pc
 
 | ID | Candidate | Range | Status |
 |----|-----------|-------|--------|
-| 0 | OdourRunOn | 0–1 | ✓ confirmed |
+| 0 | WaterHardness | 0–2 | ✓ confirmed (corrected from OdourRunOn) |
 | 1 | Brightness | 0–5 | ✓ confirmed |
 | 2 | Activation mode | 0=On / 1=Off / 2=When Approached | ✓ confirmed |
 | 3 | Color | 1=Blue / 2=Magenta / … | ✓ confirmed (partial color mapping) |

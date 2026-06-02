@@ -647,7 +647,7 @@ _PROFILE_SETTINGS_MD = {
 }
 
 _COMMON_SETTINGS_MD = {
-    0: "OdourRunOn", 1: "Brightness", 2: "Color", 3: "Activation",
+    0: "WaterHardness", 1: "Brightness", 2: "Color", 3: "Activation",
 }
 
 # Synthetic proc code for CCCD writes (not a real Geberit procedure)
