@@ -93,6 +93,7 @@ PROCEDURES = {
     (0x00, 0x86): "GetDeviceInitialOperationDate",
     (0x01, 0x05): "UnknownProc_0x05",
     (0x01, 0x07): "UnknownProc_0x07",
+    (0x01, 0x08): "SetActiveProfileSetting",
     (0x01, 0x09): "SetCommand",
     (0x01, 0x0A): "GetStoredProfileSetting",
     (0x01, 0x0B): "SetStoredProfileSetting",
@@ -142,19 +143,24 @@ PROFILE_SETTINGS = {
     8: "DryerTemperature",
     9: "DryerState",
     10: "SystemFlush",
-    13: "DryerSprayIntensity",
+    11: "SeatHeating",
+    12: "WaterHeating",
+    13: "DryerFanPower",
+    14: "LadyOscillation",
 }
 
 # Common setting ID → name (proc 0x51/0x52). id=2=COLOR, id=3=ACTIVATION (confirmed 2026-04-15).
 COMMON_SETTINGS = {
-    0: "OdourExtractionRunOn",
+    0: "WaterHardness",              # 0=Soft,1=Medium,2=Hard (corrected from OdourExtractionRunOn)
     1: "OrientationLightBrightness",
     2: "OrientationLightColor",      # 0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite
     3: "OrientationLightActivation", # 0=Off,1=On,2=WhenApproached
     4: "WcLidSensorSensitivity",
-    5: "WcLidMaxPosition",           # unconfirmed
+    5: "OdourExtractionRunOn",       # corrected from WcLidMaxPosition
     6: "WcLidOpenAutomatically",
     7: "WcLidCloseAutomatically",
+    8: "AutoFlush",
+    9: "DemoMode",
 }
 
 COMMON_SETTING_COLOR_NAMES = {
@@ -616,6 +622,10 @@ def _fmt_request(counter: int, ctx: int, proc: int, args: bytes) -> str:
     if (ctx, proc) == (0x01, 0x09) and len(args) >= 1:
         cmd_name = COMMANDS.get(args[0], f"cmd={args[0]:#04x}")
         extra = f" → {cmd_name}"
+    elif (ctx, proc) == (0x01, 0x08) and len(args) >= 1:
+        setting = PROFILE_SETTINGS.get(args[0], f"idx={args[0]}")
+        val = int.from_bytes(args[1:3], "little") if len(args) >= 3 else "?"
+        extra = f" → live-set {setting}={val}"
     elif (ctx, proc) in ((0x01, 0x0A), (0x01, 0x53)) and len(args) >= 1:
         setting = PROFILE_SETTINGS.get(args[0], f"idx={args[0]}")
         extra = f" → {setting}"
@@ -1104,6 +1114,15 @@ def _md_annotate(frame: _MdFrame, counters: dict) -> str:
         val = int.from_bytes(frame.args[1:3], "little") if len(frame.args) >= 3 else "?"
         return f"Init-unlock write: {setting_name} = {val} *(proc 0x0B)*"
 
+    if (ctx, proc) == (0x01, 0x08):
+        # SetActiveProfileSetting: [setting_id(1), value(2 bytes LE)]
+        setting_id = frame.args[0] if frame.args else -1
+        setting_name = PROFILE_SETTINGS.get(setting_id, f"setting_{setting_id}")
+        if frame.is_response:
+            return "ACK"
+        val = int.from_bytes(frame.args[1:3], "little") if len(frame.args) >= 3 else "?"
+        return f"**Live-set {setting_name} = {val}** *(active session, not stored)*"
+
     if (ctx, proc) == (0x01, 0x54):
         # payload: [profile_id, setting_id, val_lo, val_hi]
         if len(frame.args) >= 4:
@@ -1191,6 +1210,9 @@ def _md_phase(ctx: int, proc: int, args: bytes) -> str:
         return "Filter Status"
     if (ctx, proc) in ((0x01, 0x53), (0x01, 0x0A), (0x01, 0x0B)):
         return "Profile Settings"
+    if (ctx, proc) == (0x01, 0x08):
+        setting_name = PROFILE_SETTINGS.get(args[0] if args else -1, "Setting")
+        return f"User Action: Live-set {setting_name}"
     if (ctx, proc) == (0x01, 0x54):
         setting_name = PROFILE_SETTINGS.get(args[1] if len(args) > 1 else -1, "Setting")
         return f"User Action: Change {setting_name}"
