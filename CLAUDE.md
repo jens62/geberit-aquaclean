@@ -473,15 +473,16 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   procedure code and payload are confirmed; only the bridge-side wiring is missing.
   Use `[0x01]` (matches PacketLogger captures) until the payload semantics are understood.
 
-- **Add `OpenLid` (SetCommand code 3) to `Commands.py`.**
+- **Add SetCommand code 3 (`Stop`) to `Commands.py`.**
 
   SetCommand code 3 is confirmed from two independent sources:
   - Android pcapng (2026-04-22): sent before `ToggleLidPosition` in "open lid remotely" session
   - iPhone OTA capture (2026-06-01): `SetCommand([1, 3])` sent before `SetCommand([1, 10])`
 
-  The pattern — code 3 before code 10 (ToggleLid) — suggests code 3 is a dedicated
-  **OpenLid** (not toggle).  Add `OpenLid = 3` to `Commands` enum, wire to REST/MQTT/CLI/HACS
-  following the "all interfaces" rule.
+  **Correction (2026-06-02, app source analysis):** code 3 = `AC_CMD_STOP` ("Stop all"), not
+  "OpenLid" as previously assumed.  The pattern — Stop before ToggleLid — makes sense: stop any
+  running shower/dryer before toggling the lid.  Add `Stop = 3` to `Commands` enum, wire to
+  REST/MQTT/CLI/HACS following the "all interfaces" rule.
 
 - **Implement `SetActiveProfileSetting` (proc 0x08) — wire format confirmed.**
 
@@ -977,6 +978,67 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
   (which has no running `ApiMode`) would still show only `from_file` values, which
   is correct behaviour for a CLI invocation.
 
+- **Wire proc 0x07 (GetStoredProfileSetting — per-node query).**
+
+  Seen in Mera Comfort nRF52840 capture (2026-06-01) at t=93.0s with args=`0x0a` (node 10,
+  matches `GetNodeList` result).  Also in Android pcapng.  Purpose: read an individual profile
+  setting for a specific hardware node.  Wire format: `[node_id]` — 1-byte arg.  Implement as
+  a CallClass; expose via REST/CLI once semantics are confirmed.
+
+- **Wire procs 0x0A / 0x0B (GetActiveCommonSetting / SetActiveCommonSetting).**
+
+  Seen in Mera Comfort nRF52840 capture (2026-06-01): the iPhone writes 3 profile setting
+  defaults via 0x0B (AnalShowerPressure=2, OscillatorState=2, LadyShowerPressure=2), then
+  reads 10 profile settings via 0x0A before the main init sequence.  These use a separate
+  "active" storage area distinct from the stored user-preference area (0x53/0x54).  Bridge
+  currently skips these entirely — the device works without them, but the iPhone always sends
+  this sequence.  Implement as CallClasses; expose via REST/CLI once the semantics of the
+  active vs. stored distinction are confirmed.
+
+- **ProfileSetting IDs 11–14 — add to bridge.**
+
+  Confirmed from app source analysis (2026-06-02):
+
+  | ID | Name | Notes |
+  |----|------|-------|
+  | 11 | `SeatHeating` | Tuma Comfort only |
+  | 12 | `WaterHeating` | Mera Comfort, Tuma Comfort |
+  | 13 | `DryerFanPower` | 5 levels (0–4); confirmed in nRF52840 capture at t=108.3s, value=1 |
+  | 14 | `LadyOscillation` | Stored profile only |
+
+  Add to `ProfileSettings.py` enum.  Add getters to `AquaCleanClient`; expose via REST/CLI.
+
+- **CommonSetting ID label correction and IDs 4–12 — add to bridge.**
+
+  Confirmed from app source analysis (2026-06-02).  The bridge currently labels ID 0 as
+  `OdourRunOn` — **this is wrong**.  Complete mapping:
+
+  | ID | Correct name | Bridge label | Device restriction |
+  |----|-------------|--------------|-------------------|
+  | 0 | `WaterHardness` | ~~OdourRunOn~~ (wrong) | all |
+  | 1 | `OrientationLightBrightness` | Brightness | all |
+  | 2 | `OrientationLightColour` | Color | all |
+  | 3 | `OrientationLightMode` | Activation | all |
+  | 4 | `LidSensorRange` | — (unknown) | Mera Comfort |
+  | 5 | `OdourExtractionRunOn` | — (unknown) | all |
+  | 6 | `LidAutoOpen` | — (unknown) | Mera Comfort |
+  | 7 | `LidAutoClose` | — (unknown) | Mera Comfort |
+  | 8 | `AutoFlush` | — (unknown) | all |
+  | 9 | `DemoMode` | — (unknown) | all |
+  | 10 | `LightSensorSensitivity` | — (unknown) | AcSela only |
+  | 11 | `CareMode` | — (unknown) | Mera Floorstanding |
+  | 12 | `Language` | — (unknown) | all |
+
+  Fix ID 0 label in `_COMMON_SETTINGS_MD` in `android-ble-analyze.py` (and wherever else
+  it appears).  Add IDs 4–12 to bridge read sequence and expose via REST/MQTT/HACS.
+
+- **Add proc 0x06 (GetActualOutletTemperature) to bridge.**
+
+  Confirmed from app source analysis (2026-06-02).  The app reads the current water outlet
+  temperature as a live value (distinct from the stored `WaterTemperature` profile setting).
+  Not seen in any capture yet — trigger: start a shower session and sniff.  Implement as a
+  CallClass; expose as a live sensor in REST/MQTT/HACS once the response format is confirmed.
+
 - **Wire remaining Commands enum entries (all interfaces).**
   `ToggleAnalShower`, `ToggleLadyShower`, `ToggleDryer`, `ToggleLidPosition`,
   `ResetFilterCounter`, `TriggerFlushManually`, and all four descaling commands
@@ -986,12 +1048,30 @@ The CallClasses (`0x53` / `0x54`) are already migrated but not yet wired into an
 
   | Command | Code | Notes |
   |---------|------|-------|
-  | `StartCleaningDevice` | 4 | Purpose unclear — self-cleaning cycle? |
+  | `Stop` | 3 | Stop all active functions (previously mislabelled OpenLid) |
+  | `StartCleaningDevice` | 4 | Self-cleaning cycle |
   | `ExecuteNextCleaningStep` | 5 | Companion to StartCleaningDevice |
+  | `OdourExtraction` | 12 | Toggle odour extraction independently |
+  | `OdourExtractionRunOn` | 13 | Toggle odour extraction run-on |
   | `StartLidPositionCalibration` | 33 | Lid calibration |
   | `LidPositionOffsetSave` | 34 | Save calibrated offset |
   | `LidPositionOffsetIncrement` | 35 | Nudge lid offset + |
   | `LidPositionOffsetDecrement` | 36 | Nudge lid offset − |
+  | `SprayCalibration` | 39 | Spray arm calibration |
+  | `ShowerArmOffsetStart` | 46 | Start shower arm offset calibration |
+  | `ShowerArmOffsetSave` | 47 | Conflicts with `ResetFilterCounter = 47` — verify |
+  | `ShowerArmOffsetIncrement` | 48 | Nudge shower arm offset + |
+  | `ShowerArmOffsetDecrement` | 49 | Nudge shower arm offset − |
+  | `DryerArmOffsetStart` | 50 | Start dryer arm offset calibration |
+  | `DryerArmOffsetSave` | 51 | Save dryer arm offset |
+  | `DryerArmOffsetIncrement` | 52 | Nudge dryer arm offset + |
+  | `DryerArmOffsetDecrement` | 53 | Nudge dryer arm offset − |
+  | `Draining` | 54 | AcCama only |
+  | `ResetStatistics` | 78 | Reset device usage statistics |
+
+  **Note on code 47 conflict:** app source lists both `ResetFilterCounter = 47` (matches the
+  bridge's `Commands.py`) AND `ShowerArmOffsetSave = 47`.  One may be wrong — verify via BLE sniff
+  before adding `ShowerArmOffsetSave`.
 
   All follow the same pattern as ToggleDryer — zero new protocol code needed, just wiring
   on all interfaces (REST, MQTT, CLI, HA discovery, HACS button, web UI).
