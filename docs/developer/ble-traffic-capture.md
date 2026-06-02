@@ -85,6 +85,23 @@ Save the file with a descriptive name (e.g. `geberit-open-lid-2026-04-22.txt`). 
 
 > **Privacy:** while the profile is installed, the iPhone logs *all* Bluetooth activity. Delete the profile once you are done (Settings → General → VPN & Device Management → tap profile → Remove Profile).
 
+### Step 5 — Analyze with `ble-decode.py`
+
+```bash
+/Users/jens/venv/bin/python tools/ble-decode.py session.txt --markdown --output session-analysis.md
+```
+
+Produces annotated markdown grouped by logical phase (Init, Identification, Common
+Settings, State Poll, …) with request annotations and decoded responses.
+
+| Option | Description |
+|--------|-------------|
+| `--markdown` | Full annotated markdown grouped by logical phase |
+| `--output FILE` | Write markdown to FILE instead of stdout |
+| `--filter 0xNN` | Show only one procedure (e.g. `--filter 0x51`) |
+| `--from HH:MM:SS` / `--to HH:MM:SS` | Restrict to a time window |
+| `--raw` | Print raw 20-byte frames without decoding |
+
 ---
 
 ## Android — HCI Snoop Log + Wireshark
@@ -163,6 +180,22 @@ Developer Options appear under Settings → System (stock Android) or Settings �
 3. Save with a descriptive name (e.g. `geberit-open-lid-2026-04-22.pcapng`).
 
 This is the format expected by `tools/android-ble-analyze.py`.
+
+### Step 5 — Analyze with `android-ble-analyze.py`
+
+```bash
+/Users/jens/venv/bin/python tools/android-ble-analyze.py session.pcapng --markdown --output session-analysis.md
+```
+
+Also accepts the raw Android `BTSNOOP_LOG.log` file directly — no need to save as pcapng first.
+
+| Option | Description |
+|--------|-------------|
+| `--mac AA:BB:CC:DD:EE:FF` | Filter to one device MAC (default: `38:AB:41:2A:0D:67`) |
+| `--markdown` | Full annotated markdown grouped by logical phase |
+| `--output FILE` | Write markdown to FILE instead of stdout |
+| `--all-macs` | Show events for all MAC addresses |
+| `--raw` | Print raw HCI packets without decoding |
 
 ### Troubleshooting
 
