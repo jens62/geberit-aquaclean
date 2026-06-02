@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ARCHIVED — dead end. nrf-ble-analyze.py + Wireshark pcapng is the correct approach.
 """
 Geberit AquaClean — BLE ATT sniffer
 ====================================
