@@ -256,6 +256,22 @@ def _parse_evt_packet(payload: bytes) -> tuple[str, str] | None:
     return _mac(init_a), _mac(adv_a)
 
 
+def _parse_adv_address(payload: bytes) -> str | None:
+    """Return the advertising address from any ADV_IND/ADV_NONCONN_IND/ADV_SCAN_IND packet, or None."""
+    if len(payload) < 10 + 4 + 2 + 6:
+        return None
+    pdu = payload[10:]
+    aa = struct.unpack_from("<I", pdu, 0)[0]
+    if aa != _ADV_ACCESS_ADDR:
+        return None
+    pdu_type = pdu[4] & 0x0F
+    # 0=ADV_IND, 2=ADV_NONCONN_IND, 6=ADV_SCAN_IND — connectable advertisers only matter
+    if pdu_type not in (0, 2, 6):
+        return None
+    adv_a = pdu[6:12]
+    return ":".join(f"{x:02x}" for x in reversed(adv_a))
+
+
 # ---------------------------------------------------------------------------
 # Serial port detection
 # ---------------------------------------------------------------------------
@@ -400,6 +416,8 @@ def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
     print("          (Ctrl+C to stop)\n")
 
     adv_count = 0
+    toilet_adv_count = 0
+    toilet_rssi_last = None
     buf = bytearray()
     # pairs: Counter keyed by (initiator, advertiser)
     pairs: Counter = Counter()
@@ -425,9 +443,25 @@ def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
                     continue
 
                 adv_count += 1
+
+                # Track whether the toilet is advertising (proximity check)
+                if toilet_lower and len(payload) >= 4:
+                    adv_mac = _parse_adv_address(payload)
+                    if adv_mac == toilet_lower:
+                        toilet_adv_count += 1
+                        toilet_rssi_last = -payload[3]  # rssi_raw negated
+
                 if adv_count % 200 == 0:
-                    print(f"  … {adv_count} BLE packets seen, {sum(pairs.values())} CONNECT_IND hit(s) …",
-                          flush=True)
+                    if toilet_lower:
+                        toilet_status = (
+                            f"toilet seen: {toilet_adv_count}× (last {toilet_rssi_last} dBm)"
+                            if toilet_adv_count else "toilet NOT seen yet — move dongle closer"
+                        )
+                        print(f"  … {adv_count} pkts, {sum(pairs.values())} CONNECT_IND, {toilet_status}",
+                              flush=True)
+                    else:
+                        print(f"  … {adv_count} BLE packets seen, {sum(pairs.values())} CONNECT_IND hit(s) …",
+                              flush=True)
 
                 result = _parse_evt_packet(payload)
                 if not result:
