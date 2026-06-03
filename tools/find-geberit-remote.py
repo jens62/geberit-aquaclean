@@ -78,7 +78,8 @@ _SLIP_ESC_END   = 0xBD  # follows ESC, represents END byte in payload
 _SLIP_ESC_ESC   = 0xCE  # follows ESC, represents ESC byte in payload
 
 # Packet IDs (host → sniffer commands)
-_CMD_SCAN_CONT  = 0x07  # start continuous advertising-channel scan
+_CMD_FOLLOW     = 0x00  # follow a specific device (REQ_FOLLOW): payload = MAC(6, LSB-first) + addr_type(1)
+_CMD_SCAN_CONT  = 0x07  # start continuous advertising-channel scan (blind rotation)
 _CMD_PING       = 0x0D  # ping (verify connection)
 
 # Packet IDs (sniffer → host events)
@@ -372,11 +373,18 @@ def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
                 print(f"  {i:04x}  {hex_part:<48}  {asc_part}")
         return
 
-    # ---- Start continuous scan -----------------------------------------
-    # Note: the sniffer does not respond to ping until scanning has started.
-    # Send REQ_SCAN_CONT, then verify by waiting for the first EVENT_PACKET
-    # (any BLE advertisement nearby confirms the sniffer is alive).
-    send(_CMD_SCAN_CONT)
+    # ---- Start scanning ------------------------------------------------
+    # If we know the toilet MAC, send REQ_FOLLOW so the sniffer waits for
+    # that specific ADV_IND and catches the CONNECT_IND on the same channel.
+    # Without REQ_FOLLOW the sniffer rotates blindly and consistently misses it.
+    # (This is what Wireshark's nRF Sniffer extcap does under the hood.)
+    if toilet_lower:
+        mac_bytes = bytes(int(b, 16) for b in reversed(toilet_lower.split(":")))  # LSB-first
+        addr_type = 0  # public address
+        send(_CMD_FOLLOW, mac_bytes + bytes([addr_type]))
+        print(f"[sniffer] following toilet {toilet_lower} (REQ_FOLLOW) …")
+    else:
+        send(_CMD_SCAN_CONT)
     print("[sniffer] waiting for first BLE packet to confirm dongle is alive …",
           end="", flush=True)
 
