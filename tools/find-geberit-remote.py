@@ -394,12 +394,15 @@ def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
         sys.exit(1)
     print(" ok")
 
-    print(f"[sniffer] scanning …  toilet target: {toilet_lower}")
-    print("[sniffer] Press a button on the remote control now.")
+    if toilet_lower:
+        print(f"[sniffer] toilet MAC: {toilet_lower}")
+    print("[sniffer] Scanning for ALL CONNECT_IND frames — press a button on the remote now.")
     print("          (Ctrl+C to stop)\n")
 
     adv_count = 0
     buf = bytearray()
+    # pairs: Counter keyed by (initiator, advertiser)
+    pairs: Counter = Counter()
 
     try:
         while True:
@@ -423,7 +426,7 @@ def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
 
                 adv_count += 1
                 if adv_count % 200 == 0:
-                    print(f"  … {adv_count} BLE packets seen, waiting for CONNECT_IND …",
+                    print(f"  … {adv_count} BLE packets seen, {sum(pairs.values())} CONNECT_IND hit(s) …",
                           flush=True)
 
                 result = _parse_evt_packet(payload)
@@ -431,24 +434,57 @@ def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
                     continue
                 initiator, advertiser = result
 
-                if advertiser != toilet_lower:
-                    continue
-
-                counter[initiator] += 1
+                pairs[(initiator, advertiser)] += 1
                 tag = _tag(initiator)
-                print(f"\n  CONNECT_IND → toilet from {initiator.upper()}  {tag}")
+                match = "  ← YOUR TOILET" if advertiser == toilet_lower else ""
+                print(f"\n  CONNECT_IND  {initiator.upper()} → {advertiser.upper()}  {tag}{match}",
+                      flush=True)
 
     except KeyboardInterrupt:
         print("\n[stopped]")
     finally:
         ser.close()
 
-    _print_result(counter, toilet_lower)
+    _print_live_result(pairs, toilet_lower)
 
 
 # ---------------------------------------------------------------------------
 # Shared reporting
 # ---------------------------------------------------------------------------
+
+def _print_live_result(pairs: Counter, toilet_lower: str) -> None:
+    """Print summary of all CONNECT_IND pairs captured in live mode."""
+    if not pairs:
+        print("No CONNECT_IND frames were captured.")
+        print("\nTips:")
+        print("  • Press a button on the remote while the script is scanning.")
+        print("  • Try pressing multiple times — the sniffer rotates channels and")
+        print("    may miss a single press.  3–5 presses usually guarantees a hit.")
+        return
+
+    print(f"\nCaptured {sum(pairs.values())} CONNECT_IND frame(s):\n")
+    print(f"  {'Initiator (remote?)':<22}  {'Advertiser (toilet?)':<22}  {'Hits':>4}  Note")
+    print(f"  {'-'*22}  {'-'*22}  {'-'*4}  {'-'*35}")
+
+    for (initiator, advertiser), hits in pairs.most_common():
+        match = " ← YOUR TOILET" if advertiser == toilet_lower else ""
+        print(f"  {initiator:<22}  {advertiser:<22}  {hits:>4}  {_tag(initiator)}{match}")
+
+    # Best guess: TI initiator pointing at the toilet MAC (if known and matched)
+    toilet_pairs = [(i, a) for (i, a) in pairs if a == toilet_lower]
+    ti_toilet = [i for (i, _) in toilet_pairs if _oui(i) in _TI_OUIS]
+    print()
+    if ti_toilet:
+        best = max(ti_toilet, key=lambda i: pairs[(i, toilet_lower)])
+        print(f"Result:  remote = {best.upper()}")
+    elif toilet_pairs:
+        best = max(toilet_pairs, key=lambda ia: pairs[ia])[0]
+        print(f"Best guess (no TI OUI match):  remote = {best.upper()}")
+    else:
+        print("Toilet MAC not seen as advertiser in any CONNECT_IND.")
+        print("Find your toilet's MAC using 'aquaclean-connection-test.py --local-ble'")
+        print("then re-run with:  --toilet XX:XX:XX:XX:XX:XX")
+
 
 def _oui(mac: str) -> str:
     return mac[:8].lower()
@@ -614,18 +650,19 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    # Resolve toilet MAC: CLI > config.ini > built-in default
+    # Resolve toilet MAC: CLI > config.ini > empty (live mode shows all)
     toilet_mac = args.toilet
     if not toilet_mac:
         toilet_mac = _read_toilet_mac(Path(args.config))
         if toilet_mac:
             print(f"[config]  toilet MAC from config.ini: {toilet_mac}")
-    if not toilet_mac:
+    if not toilet_mac and not args.live:
+        # pcapng mode needs a MAC to filter on; default to jens's for backwards compat
         toilet_mac = "38:ab:41:2a:0d:67"
         print(f"[default] toilet MAC: {toilet_mac}")
 
     if args.live:
-        _run_live(toilet_mac, args.port, debug=args.debug)
+        _run_live(toilet_mac or "", args.port, debug=args.debug)
     else:
         _run_pcapng(args.pcapng, toilet_mac)
 
