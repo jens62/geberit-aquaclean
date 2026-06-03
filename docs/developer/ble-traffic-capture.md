@@ -215,8 +215,16 @@ This method uses a Nordic nRF52840 USB dongle (PCA10059) flashed with Nordic's
 sniffer firmware. Unlike the phone-based methods, it works passively: it captures
 BLE traffic between **any** two devices without needing access to either of them.
 
+> A BLE scanner app (e.g. Nordic nRF Scanner on Android) is like standing in a room
+> and only hearing people who are talking **to you** — it only sees devices that are
+> actively advertising, which means BLE centrals (like a physical remote control that
+> initiates connections) are completely invisible to it.
+> The nRF52840 is a **hidden microphone that hears every conversation in the room**
+> regardless of who is talking to whom.
+
 **Use this method when you need to capture:**
-- Physical remote↔toilet (no phone involved)
+- Physical remote↔toilet (no phone involved — the remote is a BLE central and never
+  appears in a scanner app)
 - Bridge↔toilet (bridge runs on a Raspberry Pi with no HCI log)
 - All three clients in the same session to compare frame-by-frame
 
