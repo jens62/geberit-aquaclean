@@ -10,7 +10,6 @@
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
           "poll_interval": "Poll Interval (seconds)",
-          "alba_pin": "AquaClean Alba PIN (optional, printed on device)"
         }
       }
     },
@@ -40,7 +39,6 @@
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
           "poll_interval": "Poll Interval (seconds)",
-          "alba_pin": "AquaClean Alba PIN (optional, printed on device)"
         }
       }
     },

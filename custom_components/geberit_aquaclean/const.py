@@ -5,7 +5,6 @@ CONF_ESPHOME_HOST = "esphome_host"
 CONF_ESPHOME_PORT = "esphome_port"
 CONF_NOISE_PSK = "noise_psk"
 CONF_POLL_INTERVAL = "poll_interval"
-CONF_ALBA_PIN = "alba_pin"
 
 DEFAULT_ESPHOME_PORT = 6053
 DEFAULT_POLL_INTERVAL = 30

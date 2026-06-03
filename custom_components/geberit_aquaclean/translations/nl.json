@@ -10,7 +10,6 @@
           "esphome_port": "ESPHome Proxy Poort",
           "noise_psk": "ESPHome Versleutelingssleutel (optioneel, base64)",
           "poll_interval": "Polling-interval (seconden)",
-          "alba_pin": "AquaClean Alba PIN (optioneel, op het apparaat gedrukt)"
         }
       }
     },
@@ -40,7 +39,6 @@
           "esphome_port": "ESPHome Proxy Poort",
           "noise_psk": "ESPHome Versleutelingssleutel (optioneel, base64)",
           "poll_interval": "Polling-interval (seconden)",
-          "alba_pin": "AquaClean Alba PIN (optioneel, op het apparaat gedrukt)"
         }
       }
     },

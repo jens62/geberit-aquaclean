@@ -21,7 +21,6 @@ from .const import (
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
     CONF_POLL_INTERVAL,
-    CONF_ALBA_PIN,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
 )
@@ -55,7 +54,6 @@ def _build_schema(defaults: dict) -> vol.Schema:
             vol.Optional(CONF_POLL_INTERVAL, default=defaults.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): vol.All(
                 int, vol.Range(min=5, max=3600)
             ),
-            vol.Optional(CONF_ALBA_PIN, default=defaults.get(CONF_ALBA_PIN) or ""): cv.string,
         }
     )
 
@@ -135,7 +133,6 @@ def _normalise(user_input: dict) -> dict:
         CONF_DEVICE_ID: user_input[CONF_DEVICE_ID].strip().upper(),
         CONF_ESPHOME_HOST: user_input.get(CONF_ESPHOME_HOST, "").strip() or None,
         CONF_NOISE_PSK: user_input.get(CONF_NOISE_PSK, "").strip() or None,
-        CONF_ALBA_PIN: user_input.get(CONF_ALBA_PIN, "").strip() or None,
     }
 
 

@@ -20,7 +20,6 @@ from .const import (
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
     CONF_POLL_INTERVAL,
-    CONF_ALBA_PIN,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
 )
@@ -63,7 +62,6 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_host: str | None = conf.get(CONF_ESPHOME_HOST) or None
         self._esphome_port: int = conf.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
         self._noise_psk: str | None = conf.get(CONF_NOISE_PSK) or None
-        self._alba_pin: str | None = conf.get(CONF_ALBA_PIN) or None
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None
         self._ble_name_cache: str | None = None
@@ -114,12 +112,6 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # read only 9 live-changing DpIds and merge with this cache.
         self._alba_slow_cache: dict = {}
         self._alba_poll_num: int = 0
-        # JOIN state — track whether DP_JOIN_DEVICE has succeeded this HA session.
-        # Passed into every new AlbaClient so fresh instances (local-BLE path) do
-        # not re-JOIN on every poll.
-        self._alba_joined: bool = False
-        self._alba_join_skip: bool = False
-
         super().__init__(
             hass,
             _LOGGER,
@@ -157,10 +149,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             return self._esphome_client
         if self._device_type == "alba":
             from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-            self._esphome_client = AlbaClient(
-                connector, pin=self._alba_pin,
-                already_joined=self._alba_joined, join_skip=self._alba_join_skip,
-            )
+            self._esphome_client = AlbaClient(connector)
             _LOGGER.debug("Created persistent AlbaClient for ESPHome connector")
         else:
             from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
@@ -172,10 +161,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         """Create a fresh local BLE client of the appropriate type."""
         if self._device_type == "alba":
             from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-            return AlbaClient(
-                connector, pin=self._alba_pin,
-                already_joined=self._alba_joined, join_skip=self._alba_join_skip,
-            )
+            return AlbaClient(connector)
         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
         return AquaCleanClientFactory(connector).create_client()
 
@@ -185,21 +171,6 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Resetting persistent ESPHome connector")
         self._esphome_connector = None
         self._esphome_client = None
-
-    def _sync_join_state(self, client) -> None:
-        """Copy JOIN flags from an AlbaClient back to coordinator-level state.
-
-        Called after connect_ble_only() / post_connect() returns so that
-        subsequent local-BLE clients (created fresh per poll) inherit the result.
-        No-op for non-Alba clients.
-        """
-        from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-        if not isinstance(client, AlbaClient):
-            return
-        if client._joined:
-            self._alba_joined = True
-        if client._join_skip:
-            self._alba_join_skip = True
 
     async def async_close(self) -> None:
         """Full disconnect of the persistent ESPHome connector on integration unload."""
@@ -314,15 +285,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         client = self._ensure_esphome_client(connector)
                     else:
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-                        client = AlbaClient(
-                            connector, pin=self._alba_pin,
-                            already_joined=self._alba_joined, join_skip=self._alba_join_skip,
-                        )
+                        client = AlbaClient(connector)
                     await client.connect_ble_only(
                         self._device_id,
                         inventory=self._alba_inventory or None,
                     )
-                    self._sync_join_state(client)
 
                 elif self._device_type == "mera":
                     if self._esphome_host:
@@ -342,15 +309,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         # AquaClean Alba (Ble20 protocol)
                         self._device_type = "alba"
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
-                        client = AlbaClient(
-                            connector, pin=self._alba_pin,
-                            already_joined=self._alba_joined, join_skip=self._alba_join_skip,
-                        )
+                        client = AlbaClient(connector)
                         if self._esphome_host:
                             self._esphome_client = client
                         await client.post_connect()  # DataPointInventory — mandatory first step
                         self._alba_inventory = client._inventory  # cache for subsequent polls
-                        self._sync_join_state(client)
                         _LOGGER.info("Detected AquaClean Alba (Ble20) device — using Alba protocol")
 
                     elif not connector.is_variant_a:
@@ -778,7 +741,6 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.connect_ble_only(self._device_id, inventory=self._alba_inventory or None)
                 else:
                     await client.connect_ble_only(self._device_id)
-                self._sync_join_state(client)
                 await client.set_stored_profile_setting(setting_id, value)
                 # Profile settings changed — force a slow poll so the cache re-reads them.
                 self._alba_slow_cache = {}
@@ -854,7 +816,6 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.connect_ble_only(self._device_id, inventory=self._alba_inventory or None)
                 else:
                     await client.connect_ble_only(self._device_id)
-                self._sync_join_state(client)
                 if command == "toggle_lid":
                     await client.toggle_lid_position()
                 elif command == "toggle_anal_shower":
@@ -930,7 +891,6 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.connect_ble_only(self._device_id, inventory=self._alba_inventory or None)
                 else:
                     await client.connect_ble_only(self._device_id)
-                self._sync_join_state(client)
                 if command == "start_stop_spray_arm_cleaning":
                     await client.start_stop_spray_arm_cleaning(value)
                 elif command == "set_active_intensity":
