@@ -182,29 +182,23 @@ distinction described in `tmp.txt`.
 
 ---
 
-### Proc `0x55` (ctx=0x01) — partially understood
+### Proc `0x55` (ctx=0x01) — **RESOLVED 2026-06-03**
 
 | Field | Value |
 |-------|-------|
-| Label | *(unnamed — decoded but purpose unknown)* |
-| Direction | Request, response `0x00` |
-| Payload | **Varies by session:** `[0x01]` in PacketLogger captures (Stuhlgang, Connect-Toggle-Lid); `[0x00]` in OTA nRF52840 capture 2026-06-01 |
-| Seen in | `Connect-Toggle-Lid-shutdown-app.txt`, Stuhlgang log, OTA capture `working.pcapng` |
-| Calling context | Sent **twice per session** (confirmed OTA 2026-06-01): once at the end of init (after all 0x51 reads, before first user action), once again mid-session |
-| Status | Purpose **unknown** — candidates: "session ready", "enable remote control", "keep-alive token" |
+| Label | `GetDeviceRegistrationLevel` |
+| Direction | Request (no args) → response = uint8 registration level |
+| Response values | 0 = "Not registered", 1 = "Registered as private device", 2 = "Registered as public device" |
+| Source | `AcDataPointDefinitionFactory.cs` — `RpcNumberGet = (byte)85`, DpId `AC_DEVICE_REGISTRATION_LEVEL`, `DpBehavior.Nvm`, Min=0, Max=2 |
+| Calling context | App reads this at the end of init to customise the UI — "referenced by the app to hide some information depending on the connected toilet device" |
+| Status | **Resolved. Bridge does NOT need to call this.** |
 
-**What is NOT the case:**
-- NOT approach-triggered (present in `Connect-Toggle-Lid` log where no approach occurred)
-- NOT the reason the lid opened in the Stuhlgang log (that was the device's own proximity sensor)
+**Payload variation explained:** the `[0x01]` vs `[0x00]` variations seen in earlier captures
+were the **response** from the device (registration level of that specific device), not the
+request payload. The request has no arguments.
 
-**Payload variation:** the `[0x01]` vs `[0x00]` difference between capture methods may
-reflect session context (active foreground vs background) or capture timing.  The bridge
-should send `[0x01]` (matching PacketLogger captures from normal interactive sessions).
-
-**How to investigate:** BLE-sniff a session where proc 0x55 is deliberately skipped
-(e.g. using the bridge, which does not send it). If the device still responds to
-commands, it is not required. If commands stop working, it is likely a "remote control
-enable" handshake.
+**Bridge implication:** no action needed. The bridge has no UI to customise based on
+registration level. Roadmap TODO "Add proc 0x55 to bridge init" was removed.
 
 ---
 

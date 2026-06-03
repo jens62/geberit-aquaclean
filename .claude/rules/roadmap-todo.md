@@ -17,15 +17,6 @@ Implementation:
 
 ---
 
-### Add proc 0x55 to the bridge init sequence
-
-iPhone sends proc 0x55 twice per session (end of init + once mid-session).
-Payload varies: `[0x01]` in PacketLogger sessions, `[0x00]` in OTA capture.
-Purpose unknown — possibly "session ready" / "enable remote control".
-
-Implementation: after final `GetStoredCommonSetting` call, send `Proc0x55([0x01])`.
-Add a `CallProc0x55Async()` stub to `AquaCleanBaseClient`.
-
 ---
 
 ### Add SetCommand code 3 (`Stop`) to `Commands.py`

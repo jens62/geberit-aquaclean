@@ -145,7 +145,8 @@ From `aquaclean-SILLY.log`:
 - `0x0D` — GetSystemParameterList (batched state poll)
 - `0x51` — GetStoredCommonSetting(id) → 2-byte int
 - `0x53` / `0x54` — GetStoredProfileSetting / SetStoredProfileSetting
-- `0x55` — Unknown init-sequence call; iPhone sends twice per session (`[0x01]` or `[0x00]`)
+- `0x55` — `GetDeviceRegistrationLevel` (RpcNumberGet=85 in AcDataPointDefinitionFactory); response = 0/1/2 ("Not registered" / "Registered as private device" / "Registered as public device"). App reads this at init to customise UI — **not used by the toilet device itself**. Bridge does NOT need to call it.
+- `0x56` — `SetDeviceRegistrationLevel` (RpcNumberSet=86); value 257 observed
 - `0x56` — SetDeviceRegistrationLevel(int) // value 257
 - `0x59` — GetFilterStatus
 - `0x81` — GetSOCApplicationVersions
