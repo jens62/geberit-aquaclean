@@ -140,16 +140,32 @@ time). The remote auto-recovers ~10 s after the app closes. "Not displaced" mean
 This breaks the earlier "DpId reads are the trigger" conclusion. The bridge and the
 registered app both do DpId reads; only the bridge displaces the remote.
 
-### Evidence Summary (2026-05-27)
+### Evidence Summary (updated 2026-06-03)
 
-| Scenario | KE | DpId reads | JOIN available? | Remote displaced? |
+| Scenario | Protocol | KE | DpId reads | Remote displaced? |
 |---|---|---|---|---|
-| v3.0.1b1 bridge | ✓ keyset 0 | ✓ full read cycle | ✗ not in inventory | **Yes** |
-| Wrong-PIN app (fresh phone) | ✓ keyset 0 | ✗ none | unknown | **No** |
-| Geberit Home App (registered) | ✓ keyset 0 | ✓ full read cycle | unknown | **No** |
+| v3.0.1b1 bridge (Alba) | Arendi / Ble20 | ✓ keyset 0 | ✓ full read cycle | **Yes** |
+| Wrong-PIN app (Alba, fresh phone) | Arendi / Ble20 | ✓ keyset 0 | ✗ none | **No** |
+| Geberit Home App (Alba, registered) | Arendi / Ble20 | ✓ keyset 0 | ✓ full read cycle | **No** |
+| Geberit Home App (Mera Comfort) | AC legacy | — | ✓ full poll cycle | **No** |
+| Bridge poll (Mera Comfort) | AC legacy | — | ✓ full poll cycle | **No** |
+
+**Mera Comfort baseline established (jens62, 2026-06-03):**
+`local-assets/Bluetooth-Logs/nRF52840/jens62/Cycle1-and-Cycle2.pcapng`
+
+The Mera Comfort shows zero displacement across two full app+remote cycles:
+- Remote (`B0:10:A0:68:5C:8B`) reconnected automatically ~9s after each app disconnect
+- App and remote polled simultaneously (parallel `[0..7]` + `[0..11]` SPL streams)
+- No `ADV_DIRECT_IND` from toilet to remote — remote reconnects proactively
+- Remote ATT behaviour identical before and after every app session
+
+**Conclusion:** displacement is **specific to the Alba's Arendi security layer**, not a
+general Geberit firmware behavior. Mera firmware is completely permissive about multiple
+clients. Whatever the Alba does to invalidate the remote's registration, it involves the
+Arendi KE / EP exchange or a post-KE session state write that has no equivalent in the
+legacy AC protocol.
 
 `DP_JOIN_DEVICE` (DpId 543) is absent from the 78-DpId inventory on Alba 250.
-The bridge's v3.0.1b1 JOIN fix silently skipped on every poll.
 Whatever the app does differently from the bridge, it is not `DP_JOIN_DEVICE`.
 
 **The "JOIN" column in the earlier version of this table was wrong** — it assumed the
@@ -215,7 +231,26 @@ compared frame-by-frame against MuusLee's v3.0.2 HA DEBUG log (poll 1).
 Ble20 command level. keyset_id is identical (both 0x00). No remaining KE Request
 difference has been identified.
 
-### Step 5 — v3.0.3 hardware test result (2026-05-28)
+### Step 5 — Mera Comfort baseline capture (jens62, 2026-06-03)
+
+**Status: DONE — no displacement on Mera Comfort.**
+
+`local-assets/Bluetooth-Logs/nRF52840/jens62/Cycle1-and-Cycle2.pcapng` was captured
+following the Cycle 1 + Cycle 2 protocol in `tackle#21.md`.
+
+Key results:
+- Remote (`B0:10:A0:68:5C:8B`) reconnected ~9 s after every app disconnect — automatic,
+  no user action required
+- Simultaneous multi-client polling confirmed: app `[0..11]` and remote/bridge `[0..7]`
+  SPL polls appear at identical timestamps
+- No `ADV_DIRECT_IND` from toilet to remote MAC — the remote initiates reconnection
+- Proc 0x08 (`SetActiveProfileSetting`) confirmed with 11 live calls during app session
+
+**Significance:** the Mera Comfort uses the unencrypted legacy AC protocol and shows
+zero displacement. This isolates the Alba problem to the **Arendi security layer**, not
+the device firmware in general.
+
+### Step 7 — v3.0.3 hardware test result (2026-05-28)
 
 **Status: DONE — displacement still occurs.**
 
@@ -227,7 +262,7 @@ The v3.0.4b2 pre-release adds `logger.debug` of the full KE Request hex (50 byte
 to `AriendiSecurity.py`. v3.0.4b3 confirmed this logging works — see Step 7 for the
 full analysis of 17 consecutive KE exchanges.
 
-### Step 6 — v3.0.4b1 accidental keyset_id=1 test (2026-05-28)
+### Step 8 — v3.0.4b1 accidental keyset_id=1 test (2026-05-28)
 
 **Status: DONE — displacement without any successful Ble20 transaction.**
 
@@ -261,7 +296,7 @@ is invalid. However, this does not explain why v3.0.3 (keyset_id=0) also displac
 **Recovery required:** toilet power-cycle. Disabling the integration alone was not
 sufficient — the device needed a restart before the remote (and app) could reconnect.
 
-### Step 7 — v3.0.4b3 test results (2026-05-31)
+### Step 9 — v3.0.4b3 test results (2026-05-31)
 
 **Status: DONE — two separate sessions; new behavioral distinction: temporary vs. permanent displacement.**
 
