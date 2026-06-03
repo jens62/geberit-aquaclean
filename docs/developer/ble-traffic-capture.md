@@ -736,6 +736,50 @@ No manual adjustment needed.
 
 ---
 
+### Step 7b — Finding the remote control's BLE MAC address
+
+The physical remote is a BLE central — it never advertises, so scanner apps and normal
+BLE scans are blind to it.  The only way to find its MAC is to capture the `CONNECT_IND`
+frame it sends when connecting to the toilet.
+
+Use `tools/find-geberit-remote.py`:
+
+```bash
+# After capturing a pcapng with Wireshark (All advertising devices mode, press remote):
+/Users/anne/venv/bin/python tools/find-geberit-remote.py capture.pcapng
+```
+
+The script finds all `CONNECT_IND` frames in the file and identifies the initiator address
+(the remote).  Texas Instruments OUI addresses are tagged as likely Geberit hardware.
+
+If the toilet's MAC is already known, pass it to get a highlighted result:
+
+```bash
+/Users/anne/venv/bin/python tools/find-geberit-remote.py capture.pcapng --toilet 38:AB:41:2A:0D:67
+```
+
+#### Confirmed MACs
+
+| Device | Toilet MAC | Remote MAC | Notes |
+|--------|-----------|------------|-------|
+| jens62 Mera Comfort | `38:AB:41:2A:0D:67` | `B0:10:A0:68:5C:8B` | Texas Instruments OUI; confirmed from `local-assets/Bluetooth-Logs/nRF52840/jens62/get-ble-address-of-geberit-remote-control.pcapng` |
+
+#### `--live` mode and its limitation
+
+`find-geberit-remote.py --live` opens the sniffer serial port directly (no Wireshark).
+It works for receiving advertising packets but **cannot capture `CONNECT_IND`**:
+
+- The sniffer requires a `REQ_FOLLOW` command to lock onto a device's advertising channel
+  and catch the `CONNECT_IND` on that same channel
+- `REQ_FOLLOW` via raw serial is incompatible with nrfutil v4.x firmware (PID `1915:522A`)
+- The extcap shim inside Wireshark handles `sendFollow()` timing correctly — that is why
+  Wireshark works and direct serial does not
+- This was investigated and confirmed as a dead end; see `tools/archive/sniff.py`
+
+**Reliable workflow:** Wireshark (extcap) → capture pcapng → `find-geberit-remote.py capture.pcapng`
+
+---
+
 ### Step 8 — Manual KE Request analysis (Alba only)
 
 #### Find the KE Request in Wireshark
