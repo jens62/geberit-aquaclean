@@ -58,6 +58,13 @@ except Exception:
 
 DEFAULT_MAC = "38:AB:41:2A:0D:67"   # Geberit AquaClean Mera Comfort
 
+# Texas Instruments OUI prefixes — Geberit physical remote uses TI BLE chips
+# (toilet OUI 38:AB:41 and remote OUI B0:10:A0 are both TI-assigned)
+_TI_OUIS = {
+    "38:ab:41", "b0:10:a0", "00:18:da", "34:b1:f7", "04:a3:16",
+    "00:17:e9", "00:24:d6", "a4:34:d9", "98:5d:ad", "d0:b5:c2",
+}
+
 # ATT opcodes we care about
 _OP_WRITE_REQ = 0x12   # ATT_WRITE_REQ  (also used for CCCD enables)
 _OP_WRITE_CMD = 0x52   # ATT_WRITE_CMD  (Geberit procedure requests)
@@ -145,6 +152,185 @@ def _ts_display(ts_str: str) -> str:
         return f"t={float(ts_str):.1f}s"
     except (ValueError, TypeError):
         return ts_str.strip()
+
+# ---------------------------------------------------------------------------
+# Connection Events — CONNECT_IND timeline + ADV_DIRECT_IND (displacement)
+# ---------------------------------------------------------------------------
+
+def _oui(mac: str) -> str:
+    return mac[:8].lower()
+
+
+def _is_ti(mac: str) -> bool:
+    return _oui(mac) in _TI_OUIS
+
+
+def _get_connection_events(tshark: str, pcapng: Path,
+                           toilet_mac: str) -> tuple:
+    """
+    Return (connect_inds, directed_advs).
+
+    connect_inds: list of {ts, initiator} — CONNECT_IND frames targeting toilet.
+    directed_advs: list of {ts, target} — ADV_DIRECT_IND frames FROM toilet
+                   (toilet actively inviting a specific device back).
+    """
+    toilet_lower = toilet_mac.lower()
+
+    # CONNECT_IND (pdu_type=5) targeting the toilet
+    rows = _run_tshark(tshark, pcapng,
+                       "btle.advertising_header.pdu_type == 0x05",
+                       ["frame.time_relative",
+                        "btle.initiator_address",
+                        "btle.advertising_address"])
+    connect_inds = []
+    for row in rows:
+        if len(row) < 3:
+            continue
+        ts_s, initiator, advertiser = row[0].strip(), row[1].strip(), row[2].strip()
+        if advertiser.lower() != toilet_lower:
+            continue
+        if not initiator:
+            continue
+        try:
+            connect_inds.append({"ts": float(ts_s), "initiator": initiator.upper()})
+        except ValueError:
+            pass
+
+    # ADV_DIRECT_IND (pdu_type=1) FROM the toilet
+    # btle.initiator_address holds TargetA (directed destination) in this PDU type
+    rows = _run_tshark(tshark, pcapng,
+                       f'btle.advertising_header.pdu_type == 0x01 '
+                       f'&& btle.advertising_address == "{toilet_lower}"',
+                       ["frame.time_relative", "btle.initiator_address"])
+    directed_advs = []
+    for row in rows:
+        if len(row) < 2:
+            continue
+        ts_s, target = row[0].strip(), row[1].strip()
+        try:
+            directed_advs.append({"ts": float(ts_s), "target": target.upper()})
+        except ValueError:
+            pass
+
+    return connect_inds, directed_advs
+
+
+def _format_connection_events(connect_inds: list, directed_advs: list,
+                               toilet_mac: str, markdown: bool = False) -> str:
+    """
+    Format CONNECT_IND + ADV_DIRECT_IND into a connection timeline with
+    displacement verdict.
+    """
+    lines: list[str] = []
+
+    if markdown:
+        lines.append("## Connection Events\n")
+    else:
+        lines.append("Connection Events")
+        lines.append("-" * 72)
+
+    if not connect_inds and not directed_advs:
+        lines.append("  No CONNECT_IND or ADV_DIRECT_IND frames found.")
+        return "\n".join(lines)
+
+    # Auto-detect remote: first TI-OUI initiator that is NOT the toilet itself
+    toilet_lower = toilet_mac.lower()
+    remote_mac: str | None = None
+    for c in connect_inds:
+        if c["initiator"].lower() != toilet_lower and _is_ti(c["initiator"]):
+            remote_mac = c["initiator"]
+            break
+
+    # Merge and sort all events chronologically
+    all_events: list[tuple] = (
+        [(c["ts"], "CONNECT_IND",    c["initiator"]) for c in connect_inds]
+      + [(d["ts"], "ADV_DIRECT_IND", d["target"])    for d in directed_advs]
+    )
+    all_events.sort()
+
+    # Print timeline
+    for ts, evt, addr in all_events:
+        if evt == "CONNECT_IND":
+            if _is_ti(addr) and addr.lower() != toilet_lower:
+                tag = "← remote (TI OUI)"
+            else:
+                tag = "← app / other"
+        else:   # ADV_DIRECT_IND
+            tag = "← toilet → directed advert"
+            if remote_mac and addr.lower() == remote_mac.lower():
+                tag += " (to remote)"
+
+        line = f"  t={ts:>8.1f}s  {evt:<16}  {addr:<22}  {tag}"
+        if markdown:
+            lines.append(f"```")
+            lines.append(line)
+            lines.append(f"```")
+            lines[-3] = f"`{line}`"
+            lines.pop(-2)
+            lines.pop(-1)
+            lines.append(f"- `t={ts:>7.1f}s`  **{evt}**  `{addr}`  {tag}")
+        else:
+            lines.append(line)
+
+    # --- Verdict ---
+    lines.append("")
+    n_remote = sum(1 for c in connect_inds
+                   if _is_ti(c["initiator"])
+                   and c["initiator"].lower() != toilet_lower)
+    n_other  = sum(1 for c in connect_inds
+                   if not (_is_ti(c["initiator"])
+                           and c["initiator"].lower() != toilet_lower))
+    n_direct = len(directed_advs)
+    n_direct_to_remote = sum(
+        1 for d in directed_advs
+        if remote_mac and d["target"].lower() == remote_mac.lower()
+    )
+
+    if remote_mac:
+        remote_line = f"Remote MAC (auto-detected): {remote_mac}"
+    else:
+        remote_line = "Remote MAC: not detected (no TI-OUI initiator found)"
+
+    # Displacement verdict
+    if n_remote > 0 and n_other > 0:
+        # Check if remote connected AFTER at least one app/other session
+        remote_ts = sorted(c["ts"] for c in connect_inds
+                           if _is_ti(c["initiator"])
+                           and c["initiator"].lower() != toilet_lower)
+        other_ts  = sorted(c["ts"] for c in connect_inds
+                           if not (_is_ti(c["initiator"])
+                                   and c["initiator"].lower() != toilet_lower))
+        last_other = max(other_ts)
+        recoveries = sum(1 for t in remote_ts if t > last_other)
+        if recoveries > 0:
+            verdict = f"✅ NO displacement — remote reconnected after app session(s)"
+        else:
+            verdict = f"⚠️  Remote did NOT reconnect after last app/other session"
+    elif n_remote > 0:
+        verdict = f"ℹ️  Only remote connections seen (no app/other session to compare)"
+    else:
+        verdict = f"⚠️  No remote (TI-OUI) connections detected"
+
+    direct_line = (
+        f"ADV_DIRECT_IND from toilet: {n_direct} frame(s)"
+        + (f", {n_direct_to_remote} addressed to remote" if remote_mac else "")
+        + (" — remote must reconnect proactively" if n_direct_to_remote == 0 and n_remote > 0 else "")
+    )
+
+    if markdown:
+        lines.append(f"**{remote_line}**  ")
+        lines.append(f"**{verdict}**  ")
+        lines.append(f"{direct_line}  ")
+        lines.append(f"CONNECT_IND totals: remote={n_remote}  other={n_other}  ")
+    else:
+        lines.append(f"  {remote_line}")
+        lines.append(f"  {verdict}")
+        lines.append(f"  {direct_line}")
+        lines.append(f"  CONNECT_IND totals: remote={n_remote}  other={n_other}")
+
+    lines.append("")
+    return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # Device auto-detection
@@ -264,7 +450,14 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     print(f"[+] {att_count:,} ATT frames, {len(events):,} matching events",
           file=sys.stderr)
 
+    connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
+    conn_events_plain = _format_connection_events(
+        connect_inds, directed_advs, mac, markdown=False)
+    conn_events_md = _format_connection_events(
+        connect_inds, directed_advs, mac, markdown=True)
+
     if args.raw:
+        print(conn_events_plain)
         for e in events:
             print(f"  {e['ts']:<12}  {e['direction']}  {e['type']:<30}  "
                   f"handle={e['att_handle']}  {e['value']}")
@@ -273,7 +466,7 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     calls = _android_ble._collect_calls(events)
 
     if args.markdown:
-        md = _android_ble.render_markdown_android(
+        md = conn_events_md + "\n" + _android_ble.render_markdown_android(
             calls, pcapng, mac, "nRF52840 pcapng", att_count)
         if args.output:
             Path(args.output).write_text(md, encoding="utf-8")
@@ -281,15 +474,18 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
         else:
             print(md)
     else:
-        _print_mera_table(calls, pcapng, mac, att_count)
+        _print_mera_table(calls, pcapng, mac, att_count, conn_events_plain)
 
 
-def _print_mera_table(calls, pcapng: Path, mac: str, att_count: int) -> None:
+def _print_mera_table(calls, pcapng: Path, mac: str, att_count: int,
+                      conn_events: str = "") -> None:
     """Compact procedure table (default non-markdown output for Mera)."""
     print(f"\n{'='*72}")
     print(f"File   : {pcapng.name}  [nRF52840 pcapng, {att_count:,} ATT frames]")
     print(f"Device : {mac}  (Geberit AquaClean Mera Comfort)")
     print(f"{'='*72}\n")
+    if conn_events:
+        print(conn_events)
 
     if not calls:
         print("  No Geberit procedures decoded.\n")
@@ -338,6 +534,11 @@ def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
     if mac:
         print(f"Alba: {mac}")
     print()
+
+    if mac:
+        connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
+        print(_format_connection_events(connect_inds, directed_advs, mac, markdown=False))
+
 
     app_parser = _arendi._FrameParser()
     dev_parser = _arendi._FrameParser()
