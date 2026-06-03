@@ -17,8 +17,6 @@ Implementation:
 
 ---
 
----
-
 ### Add SetCommand code 3 (`Stop`) to `Commands.py`
 
 Confirmed from two sources:

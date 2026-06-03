@@ -190,31 +190,43 @@ distinction described in `tmp.txt`.
 | Direction | Request (no args) → response = uint8 registration level |
 | Response values | 0 = "Not registered", 1 = "Registered as private device", 2 = "Registered as public device" |
 | Source | `AcDataPointDefinitionFactory.cs` — `RpcNumberGet = (byte)85`, DpId `AC_DEVICE_REGISTRATION_LEVEL`, `DpBehavior.Nvm`, Min=0, Max=2 |
-| Calling context | App reads this at the end of init to customise the UI — "referenced by the app to hide some information depending on the connected toilet device" |
+| Calling context | App reads this at the end of init (after all `0x51` reads) |
 | Status | **Resolved. Bridge does NOT need to call this.** |
 
-**Payload variation explained:** the `[0x01]` vs `[0x00]` variations seen in earlier captures
-were the **response** from the device (registration level of that specific device), not the
-request payload. The request has no arguments.
+The toilet stores a registration type that the Geberit Home App reads to decide what
+features to show in its UI — for example, it might hide certain settings for a "public"
+toilet in a hotel vs. a "private" one at home.  The source description says explicitly:
+*"referenced by the app to hide some information depending on the connected toilet device.
+It is not used by the toilet device itself."*
 
-**Bridge implication:** no action needed. The bridge has no UI to customise based on
-registration level. Roadmap TODO "Add proc 0x55 to bridge init" was removed.
+**Payload variation explained:** the `[0x01]` vs `[0x00]` variations seen in earlier
+captures were the **toilet's response** (its stored registration level), not the
+request payload.  The request has no arguments.
+
+**Bridge implication:** the bridge has no UI to customise based on registration level —
+it just polls state and exposes it via MQTT/REST/SSE regardless of whether the toilet is
+"private" or "public".  Calling Proc 0x55 would be pointless overhead.
+Roadmap TODO "Add proc 0x55 to bridge init" was removed.
 
 ---
 
-### Proc `0x56` (ctx=0x01) — named but purpose unclear
+### Proc `0x56` (ctx=0x01) — **RESOLVED 2026-06-03**
 
 | Field | Value |
 |-------|-------|
-| Label | `SetDeviceRegistrationLevel` (from thomas-bingel C# repo, `tmp.txt`) |
-| Direction | Write |
-| Payload | value `257` (= `0x01 0x01` little-endian) mentioned in `tmp.txt` |
+| Label | `SetDeviceRegistrationLevel` |
+| Direction | Write — payload = uint8 registration level (0/1/2) |
+| Source | `AcDataPointDefinitionFactory.cs` — `RpcNumberSet = (byte)86`, same DpId as 0x55 |
 | Seen in | C# source reference only — not yet observed in any iPhone BLE log |
-| Status | Name known, purpose **unknown** |
+| Status | **Resolved. Bridge must NOT call this.** |
 
-**How to investigate:** Sniff an iPhone session and search for proc 0x56 in the
-decoded output. Check whether it appears during device pairing/first-setup or only
-in specific scenarios.
+The corresponding write for Proc 0x55 — lets the app store a new registration type.
+The "value 257" mentioned in earlier notes was a misreading from a different context;
+the valid range is 0–2 (matching the enum in the source).
+
+**Bridge implication:** calling Proc 0x56 from the bridge would be actively wrong —
+the bridge has no business changing the toilet's registration status.  The registration
+level is cosmetic metadata for an app with a settings screen, not a protocol handshake.
 
 ---
 

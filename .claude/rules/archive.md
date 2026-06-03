@@ -7,3 +7,10 @@
 
 ## Memory snapshot 2026-06-03
 Active memory entries: 65  |  Pruned: 4  |  Snapshot taken by /compress-memory
+
+## Archived 2026-06-03 (session 2)
+
+- ~~Add proc 0x55 to bridge init sequence~~ — **RESOLVED**: Proc 0x55 = `GetDeviceRegistrationLevel`; app reads for UI customisation only; bridge does not need it. Confirmed from decompiled factory source.
+
+## Memory snapshot 2026-06-03 (session 2)
+Active memory entries: 70  |  Pruned: 0 (1 inline MEMORY.md entry updated)  |  Snapshot taken by /compress-memory
