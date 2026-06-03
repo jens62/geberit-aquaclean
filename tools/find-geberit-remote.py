@@ -273,7 +273,7 @@ def _find_sniffer_port() -> str | None:
 # Live capture mode (Option B — pyserial, no tshark)
 # ---------------------------------------------------------------------------
 
-def _run_live(toilet_mac: str, port: str | None) -> None:
+def _run_live(toilet_mac: str, port: str | None, debug: bool = False) -> None:
     try:
         import serial
         from serial.tools import list_ports as _lp
@@ -305,6 +305,11 @@ def _run_live(toilet_mac: str, port: str | None) -> None:
     except serial.SerialException as e:
         sys.exit(f"Error opening {port}: {e}")
 
+    # The nRF52840 Dongle resets when the serial port is opened (DTR line
+    # transition).  Give it time to finish booting before sending commands.
+    time.sleep(1.0)
+    ser.reset_input_buffer()
+
     toilet_lower = toilet_mac.lower()
     counter = Counter()
     cmd_counter = 0
@@ -314,10 +319,37 @@ def _run_live(toilet_mac: str, port: str | None) -> None:
         ser.write(_build_cmd(packet_id, payload, cmd_counter))
         cmd_counter += 1
 
+    # ---- Debug mode: raw hex dump ----------------------------------------
+    if debug:
+        send(_CMD_SCAN_CONT)
+        print("[debug]  sent REQ_SCAN_CONT — reading raw bytes for 5 s …")
+        print("[debug]  START=0xAB  END=0xBC  ESC=0xCD\n")
+        deadline = time.monotonic() + 5.0
+        raw_all = bytearray()
+        try:
+            while time.monotonic() < deadline:
+                chunk = ser.read(256)
+                if chunk:
+                    raw_all.extend(chunk)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            ser.close()
+        if not raw_all:
+            print("No bytes received.")
+        else:
+            print(f"Received {len(raw_all)} bytes:")
+            for i in range(0, len(raw_all), 16):
+                row = raw_all[i:i+16]
+                hex_part = " ".join(f"{b:02x}" for b in row)
+                asc_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row)
+                print(f"  {i:04x}  {hex_part:<48}  {asc_part}")
+        return
+
     # ---- Start continuous scan -----------------------------------------
     # Note: the sniffer does not respond to ping until scanning has started.
-    # Send REQ_SCAN_CONT immediately, then verify by waiting for the first
-    # EVENT_PACKET (any BLE advertisement nearby confirms the sniffer is alive).
+    # Send REQ_SCAN_CONT, then verify by waiting for the first EVENT_PACKET
+    # (any BLE advertisement nearby confirms the sniffer is alive).
     send(_CMD_SCAN_CONT)
     print("[sniffer] waiting for first BLE packet to confirm dongle is alive …",
           end="", flush=True)
@@ -539,6 +571,10 @@ def main() -> None:
         help="List available serial ports and exit (useful when auto-detect picks wrong port)",
     )
     parser.add_argument(
+        "--debug", action="store_true",
+        help="Dump raw bytes from the dongle for 5 s and exit (use when --live gets no packets)",
+    )
+    parser.add_argument(
         "--toilet", metavar="MAC",
         help="Toilet BLE MAC (default: read from config.ini → 38:AB:41:2A:0D:67)",
     )
@@ -579,7 +615,7 @@ def main() -> None:
         print(f"[default] toilet MAC: {toilet_mac}")
 
     if args.live:
-        _run_live(toilet_mac, args.port)
+        _run_live(toilet_mac, args.port, debug=args.debug)
     else:
         _run_pcapng(args.pcapng, toilet_mac)
 
