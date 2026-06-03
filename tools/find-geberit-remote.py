@@ -116,6 +116,29 @@ def _slip_encode(data: bytes) -> bytes:
     return bytes(out)
 
 
+def _extract_frames(buf: bytearray) -> tuple[list[bytes], bytearray]:
+    """
+    Pull all complete SLIP frames out of buf.
+    Returns (list_of_raw_frames, remaining_buf).
+    Each raw frame is the bytes between START and END, not yet SLIP-decoded.
+    """
+    frames = []
+    while True:
+        try:
+            start = buf.index(_SLIP_START)
+        except ValueError:
+            buf = bytearray()
+            break
+        try:
+            end = buf.index(_SLIP_END, start + 1)
+        except ValueError:
+            buf = buf[start:]   # keep incomplete frame for next read
+            break
+        frames.append(bytes(buf[start + 1: end]))
+        buf = buf[end + 1:]
+    return frames, buf
+
+
 def _slip_decode(raw: bytes) -> bytes | None:
     """Decode one SLIP frame.  Returns payload bytes, or None if framing error."""
     out = bytearray()
@@ -291,39 +314,44 @@ def _run_live(toilet_mac: str, port: str | None) -> None:
         ser.write(_build_cmd(packet_id, payload, cmd_counter))
         cmd_counter += 1
 
-    # ---- Handshake: ping -----------------------------------------------
-    print("[sniffer] pinging …", end="", flush=True)
-    send(_CMD_PING)
-    ping_ok = False
-    deadline = time.monotonic() + 3.0
+    # ---- Start continuous scan -----------------------------------------
+    # Note: the sniffer does not respond to ping until scanning has started.
+    # Send REQ_SCAN_CONT immediately, then verify by waiting for the first
+    # EVENT_PACKET (any BLE advertisement nearby confirms the sniffer is alive).
+    send(_CMD_SCAN_CONT)
+    print("[sniffer] waiting for first BLE packet to confirm dongle is alive …",
+          end="", flush=True)
+
     buf = bytearray()
+    alive = False
+    deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         chunk = ser.read(256)
         if chunk:
             buf.extend(chunk)
-            # Pull complete frames out of buf
-            while _SLIP_END in buf[1:]:   # skip leading END if any
-                end_pos = buf.index(_SLIP_END, 1)
-                raw_frame = bytes(buf[1:end_pos])  # strip START and END
-                buf = buf[end_pos + 1:]
+            frames, buf = _extract_frames(buf)
+            for raw_frame in frames:
                 frame = _slip_decode(raw_frame)
-                if frame:
-                    parsed = _parse_packet(frame)
-                    if parsed and parsed[0] == _EVT_PING:
-                        ping_ok = True
-                        break
-        if ping_ok:
+                if not frame:
+                    continue
+                parsed = _parse_packet(frame)
+                if parsed and parsed[0] == _EVT_PACKET:
+                    alive = True
+                    break
+        if alive:
             break
 
-    if not ping_ok:
-        print(" no response.")
-        print("Tip: try --port with the correct device path.")
+    if not alive:
+        print(" nothing received.")
+        print()
+        print("Troubleshooting:")
+        print(f"  • Confirm the dongle is on {port}. Try --list-ports to see all ports.")
+        print("  • Flash the nRF52840 with Nordic nRF Sniffer firmware.")
+        print("  • Try --port with a different device path.")
         ser.close()
         sys.exit(1)
     print(" ok")
 
-    # ---- Start continuous scan -----------------------------------------
-    send(_CMD_SCAN_CONT)
     print(f"[sniffer] scanning …  toilet target: {toilet_lower}")
     print("[sniffer] Press a button on the remote control now.")
     print("          (Ctrl+C to stop)\n")
@@ -338,22 +366,8 @@ def _run_live(toilet_mac: str, port: str | None) -> None:
                 continue
             buf.extend(chunk)
 
-            # Extract complete SLIP frames
-            while True:
-                # Find START byte
-                try:
-                    start = buf.index(_SLIP_START)
-                except ValueError:
-                    buf.clear()
-                    break
-                # Find END byte after START
-                try:
-                    end = buf.index(_SLIP_END, start + 1)
-                except ValueError:
-                    break  # frame not complete yet
-                raw_frame = bytes(buf[start + 1: end])
-                buf = buf[end + 1:]
-
+            raw_frames, buf = _extract_frames(buf)
+            for raw_frame in raw_frames:
                 frame = _slip_decode(raw_frame)
                 if not frame:
                     continue
@@ -521,6 +535,10 @@ def main() -> None:
         help="Serial port of the nRF52840 dongle (default: auto-detect)",
     )
     parser.add_argument(
+        "--list-ports", action="store_true",
+        help="List available serial ports and exit (useful when auto-detect picks wrong port)",
+    )
+    parser.add_argument(
         "--toilet", metavar="MAC",
         help="Toilet BLE MAC (default: read from config.ini → 38:AB:41:2A:0D:67)",
     )
@@ -529,6 +547,22 @@ def main() -> None:
         help="Path to config.ini (default: %(default)s)",
     )
     args = parser.parse_args()
+
+    if args.list_ports:
+        try:
+            from serial.tools import list_ports as _lp
+        except ImportError:
+            sys.exit("pyserial required for --list-ports.  pip install pyserial")
+        ports = list(_lp.comports())
+        if not ports:
+            print("No serial ports found.")
+        else:
+            print(f"{'Device':<25} {'VID:PID':<12} Description")
+            print("-" * 70)
+            for p in sorted(ports, key=lambda x: x.device):
+                vid_pid = f"{p.vid:04X}:{p.pid:04X}" if p.vid else "—"
+                print(f"{p.device:<25} {vid_pid:<12} {p.description or ''}")
+        return
 
     if not args.live and not args.pcapng:
         parser.print_help()
