@@ -82,7 +82,7 @@ _CMD_SCAN_CONT  = 0x07  # start continuous advertising-channel scan
 _CMD_PING       = 0x0D  # ping (verify connection)
 
 # Packet IDs (sniffer → host events)
-_EVT_PACKET     = 0x06  # BLE packet received
+_EVT_PACKET     = 0x02  # BLE advertising packet (confirmed from wire: pcapng "Packet ID: 2")
 _EVT_PING       = 0x0E  # ping response
 
 # BLE constants
@@ -169,14 +169,20 @@ def _slip_decode(raw: bytes) -> bytes | None:
 # ---------------------------------------------------------------------------
 
 def _build_cmd(packet_id: int, payload: bytes = b"", counter: int = 0) -> bytes:
-    """Build a SLIP-encoded command packet (host → sniffer)."""
-    hdr = bytes([
-        6,                          # hdr_len (always 6 for v3)
+    """Build a SLIP-encoded command packet (host → sniffer).
+
+    Wire format (confirmed from debug hex dump):
+      [0:2] remaining_len (uint16_le) — bytes after this 6-byte header
+      [2]   version = 3
+      [3:5] counter (uint16_le)
+      [5]   packet_id
+      [6:]  payload (remaining_len bytes)
+    """
+    hdr = struct.pack('<H', len(payload)) + bytes([
         3,                          # version
         counter & 0xFF,             # counter low byte
         (counter >> 8) & 0xFF,      # counter high byte
         packet_id,
-        len(payload),
     ])
     return _slip_encode(hdr + payload)
 
@@ -185,18 +191,22 @@ def _parse_packet(frame: bytes) -> tuple[int, bytes] | None:
     """
     Parse a SLIP-decoded v3 frame.
     Returns (packet_id, payload) or None on malformed input.
+
+    Wire format (confirmed from debug hex dump of nRF52840 Dongle VID 1915:522A):
+      [0:2] remaining_len (uint16_le) — payload bytes after this 6-byte header
+      [2]   version = 3
+      [3:5] counter (uint16_le)
+      [5]   packet_id
+      [6:]  payload (remaining_len bytes)
     """
     if len(frame) < 6:
         return None
-    hdr_len     = frame[0]
-    version     = frame[1]
-    packet_id   = frame[4]
-    payload_len = frame[5]
-    if version != 3 or hdr_len != 6:
+    version = frame[2]
+    if version != 3:
         return None
-    if len(frame) < 6 + payload_len:
-        return None
-    return packet_id, frame[6: 6 + payload_len]
+    packet_id    = frame[5]
+    remaining_len = struct.unpack_from('<H', frame, 0)[0]
+    return packet_id, frame[6: 6 + remaining_len]
 
 
 def _parse_evt_packet(payload: bytes) -> tuple[str, str] | None:
@@ -220,10 +230,10 @@ def _parse_evt_packet(payload: bytes) -> tuple[str, str] | None:
       [6:12] InitA (6 bytes LSB-first) — present only for CONNECT_IND
       [12:18]AdvA  (6 bytes LSB-first) — present only for CONNECT_IND
     """
-    if len(payload) < 9 + 4 + 2 + 12:   # minimum for CONNECT_IND
+    if len(payload) < 10 + 4 + 2 + 12:   # minimum for CONNECT_IND
         return None
 
-    pdu = payload[9:]
+    pdu = payload[10:]   # BLE PDU starts after the 10-byte event header
 
     # Verify advertising access address
     aa = struct.unpack_from("<I", pdu, 0)[0]
