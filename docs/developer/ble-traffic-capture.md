@@ -222,6 +222,15 @@ BLE traffic between **any** two devices without needing access to either of them
 > The nRF52840 is a **hidden microphone that hears every conversation in the room**
 > regardless of who is talking to whom.
 
+| | nRF Scanner (Android app) | nRF52840 dongle |
+|---|---|---|
+| **Role** | BLE central — actively scans and connects | Passive sniffer — listens to everything over-the-air |
+| **What it sees** | Only advertising packets (`ADV_IND`) from peripherals | Every BLE frame from every device: `ADV_IND`, `ADV_DIRECT_IND`, `CONNECT_IND`, all data channel packets |
+| **Can see BLE centrals?** | No — centrals don't advertise | Yes — sees their `CONNECT_IND` and all data frames |
+| **Can decode GATT traffic?** | Only from connections it initiates itself | Yes — any connection it catches the `CONNECT_IND` for |
+| **Needs to participate?** | Yes — it's a party in the conversation | No — completely passive, invisible to both devices |
+| **Can capture remote ↔ toilet?** | No | Yes |
+
 **Use this method when you need to capture:**
 - Physical remote↔toilet (no phone involved — the remote is a BLE central and never
   appears in a scanner app)
