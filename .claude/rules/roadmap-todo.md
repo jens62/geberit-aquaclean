@@ -17,6 +17,25 @@ Implementation:
 
 ---
 
+### Implement proc 0x0B (SetActiveCommonSetting) for orientation light control
+
+Confirmed from `AcDataPointDefinitionFactory.cs` (v2.14.1 iOS): proc 0x0B applies
+CommonSettings immediately at runtime — no power cycle needed. Supported on Mera Comfort
+(`SetIncludedDeviceTypes([AcMeraFloorstanding, AcMeraComfort])`).
+
+**SetCommand code 20 (ToggleOrientationLight) = AcSela ONLY** — do not use on Mera Comfort.
+
+Implementation:
+- Add `SetActiveCommonSettingAsync(id, value)` to `AquaCleanBaseClient`
+- Wire `orientationLight.setMode(0/1/2)` REST endpoint using proc 0x0B, ID=3
+- Wire to MQTT, HACS, CLI following the "all interfaces" rule
+- Test: `POST /config/orientation-light-mode` with `{"value": 0}` → light off immediately
+
+Wire format: proc 0x0B, args = `[setting_id, value_lo, value_hi]` (same as 0x52).
+Probe first: `python tools/active-common-settings-probe.py --write 3 0` to verify.
+
+---
+
 ### Add SetCommand code 3 (`Stop`) to `Commands.py`
 
 Confirmed from two sources:

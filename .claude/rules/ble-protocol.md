@@ -141,13 +141,12 @@ From `aquaclean-SILLY.log`:
 - `0x07` — per-node profile setting query (1-byte arg = node_id)
 - `0x08` — SetActiveProfileSetting: format `[arg_count=3, setting_id, value]` (confirmed OTA 2026-06-01)
 - `0x09` — SetCommand (toggle/trigger)
-- `0x0A` / `0x0B` — GetActiveCommonSetting / SetActiveCommonSetting
+- `0x0A` / `0x0B` — `GetActiveCommonSetting` / `SetActiveCommonSetting` — confirmed from factory (RpcNumberGet=10, RpcNumberSet=11). Same setting ID space as 0x51/0x52. **Key difference: 0x0B applies immediately, no power cycle required.** iPhone uses these at init to restore orientation light settings (colour, brightness, mode). Bridge should use 0x0B to control orientation light at runtime.
 - `0x0D` — GetSystemParameterList (batched state poll)
 - `0x51` — GetStoredCommonSetting(id) → 2-byte int
 - `0x53` / `0x54` — GetStoredProfileSetting / SetStoredProfileSetting
 - `0x55` — `GetDeviceRegistrationLevel` (RpcNumberGet=85 in AcDataPointDefinitionFactory); response = 0/1/2 ("Not registered" / "Registered as private device" / "Registered as public device"). App reads this at init to customise UI — **not used by the toilet device itself**. Bridge does NOT need to call it.
-- `0x56` — `SetDeviceRegistrationLevel` (RpcNumberSet=86); value 257 observed
-- `0x56` — SetDeviceRegistrationLevel(int) // value 257
+- `0x56` — `SetDeviceRegistrationLevel` (RpcNumberSet=86); valid range 0–2 (the "value 257" in earlier notes was a misreading)
 - `0x59` — GetFilterStatus
 - `0x81` — GetSOCApplicationVersions
 - `0x82` — GetDeviceIdentification
@@ -176,7 +175,18 @@ Not observed in any log. To find: BLE-sniff the official Geberit Home app.
 | 11 | `CareMode` | Mera Floorstanding |
 | 12 | `Language` | all |
 
-**Note:** Orientation light settings (proc 0x52) require a power-cycle (≥30s off) to take effect — writes ACK but change is deferred until restart (confirmed Geberit Support case CAS1550064K3D1Z).
+**Active vs Stored — two separate proc pairs:**
+- **Stored** (proc 0x51/0x52): writes to NVM, requires power-cycle to take effect (confirmed Geberit Support case CAS1550064K3D1Z). Bridge currently uses these.
+- **Active** (proc 0x0A/0x0B): applies immediately at runtime, no power cycle. iPhone uses 0x0B at every session init to restore orientation light settings.
+
+**To turn the orientation light off immediately:** write proc 0x0B, ID=3 (OrientationLightMode), value=0 ("Off"). Confirmed supported on Mera Comfort (factory: `SetIncludedDeviceTypes([AcMeraFloorstanding, AcMeraComfort])`).
+
+**ToggleOrientationLight (SetCommand code 20): AcSela ONLY.** Confirmed from factory `SetIncludedDeviceTypes([AcSela])`. Does NOT work on Mera Comfort.
+
+**Color values** (CommonSetting ID 2, confirmed from factory v2.14.1 + BLE log):
+`0=Blue  1=Turquoise  2=Magenta  3=Orange  4=Yellow  5=WarmWhite  6=ColdWhite`
+
+**Mode values** (CommonSetting ID 3): `0=Off  1=On  2=WhenApproached`
 
 ---
 

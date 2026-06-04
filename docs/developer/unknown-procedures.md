@@ -230,52 +230,46 @@ level is cosmetic metadata for an app with a settings screen, not a protocol han
 
 ---
 
-### Proc `0x0A` / `0x0B` — init sequence, different storage area
+### Proc `0x0A` / `0x0B` — **RESOLVED 2026-06-04**
 
 | Field | Value |
 |-------|-------|
-| `0x0A` | `GetStoredProfileSetting` (iPhone init variant) — payload `[setting_id]` 1 byte |
-| `0x0B` | `SetStoredProfileSetting` (iPhone init variant) — payload `[setting_id, val_lo, val_hi]` 3 bytes |
-| Seen in | Every iPhone session, in the init sequence immediately after Proc_0x13 |
-| Status | Observed and decoded, but the **storage area** they address is different from proc 0x53/0x54 |
+| `0x0A` | `GetActiveCommonSetting` — payload `[setting_id]` 1 byte → 2-byte LE int response |
+| `0x0B` | `SetActiveCommonSetting` — payload `[setting_id, val_lo, val_hi]` 3 bytes |
+| Source | `AcDataPointDefinitionFactory.cs` — factory method `f()`: RpcNumberGet=10 (0x0A), RpcNumberSet=11 (0x0B) |
+| Status | **RESOLVED. Same CommonSetting ID space as 0x51/0x52. Key difference: 0x0B takes effect immediately, no power cycle.** |
 
-**What is known:** These are NOT the procs to use for reading/writing user preferences.
-Proc 0x0A always returns `0` for LadyShowerPosition even when the app shows a non-zero
-value. See `memory/ble-procedure-investigation-method.md` for the full 0x0A vs 0x53 lesson.
-
-**Remaining question:** What storage area do 0x0A/0x0B address, and what are those
-values used for? They form the init handshake but the semantic meaning of the data
-is unknown.
-
-#### Proc 0x0B session-claim hypothesis (2026-04-16) — **DISPROVEN**
-
-**Observation:** BLE log analysis of 4 capture sessions (`1_Neuanmeldung nach blocking
-state 1.txt` through `4_dritte anmedlung.txt`) shows the iPhone sends exactly these
-three 0x0B writes on every connect, immediately after the 4×0x13 subscription sequence:
+**What the init writes actually are:** The 3 proc 0x0B writes at every iPhone session init
+are orientation light settings (not profile settings as previously assumed):
 
 ```
-args=020200  →  AnalShowerPressure = 2  (setting_id=2, value=2)
-args=010200  →  OscillatorState    = 2  (setting_id=1, value=2)
-args=030200  →  LadyShowerPressure = 2  (setting_id=3, value=2)
+args=020200  →  SetActiveCommonSetting(ID=2, value=2)  →  OrientationLightColour = Magenta
+args=010200  →  SetActiveCommonSetting(ID=1, value=2)  →  OrientationLightBrightness = level 2
+args=030200  →  SetActiveCommonSetting(ID=3, value=2)  →  OrientationLightMode = WhenApproached
 ```
 
-The value is always `2` for all three regardless of the user's actual shower settings.
-This is not preference restoration — the real settings arrive later via proc 0x53/0x54.
+The value `2` is the user's stored preference for all three. The iPhone restores these at
+every BLE session so the active (live) value matches the stored preference — without requiring
+a power cycle.
 
-**Hypothesis:** These writes "claim" the application session — telling the device that
-a new client has taken over — and may clear stale state left by a previous client. If
-correct, adding them to the bridge's init sequence could allow recovery from E0003
-(device visible but no response) without a power cycle.
+**Why proc 0x0A always returned 0 for LadyShowerPosition (the old 0x0A vs 0x53 lesson):**
+The "0x0A vs 0x53 lesson" in `memory/ble-procedure-investigation-method.md` was comparing
+the wrong namespace. Proc 0x0A reads COMMON settings (orientation light, lid settings, etc.).
+Proc 0x53 reads PROFILE settings (shower pressure, temperature, etc.). They are completely
+separate ID spaces. Asking proc 0x0A for a profile setting ID returns 0 because the ID
+doesn't exist in the common settings namespace.
 
-**Validation (2026-04-16, commit 0bce5a2):**
-1. Baseline confirmed (commit 4691631): 4×0x11 + 4×0x13 alone does NOT recover E0003
-2. 3×0x0B writes implemented and tested in two modes:
-   - **bleak (local BLE):** E0003 persists — GetSystemParameterList timed out (failure #1)
-   - **ESP32 proxy:** E0003 persists — GetSystemParameterList timed out (failures #1 and #2)
-3. **Result: DISPROVEN.** The 3×0x0B writes have no effect on E0003 recovery.
+**Bridge implication:** Use proc 0x0B (SetActiveCommonSetting) to control orientation light
+at runtime without power cycle:
+- Turn off: `0x0B [03, 00, 00]` (ID=3/Mode, value=0/Off)
+- Turn on:  `0x0B [03, 01, 00]` (ID=3/Mode, value=1/On)
+This is supported on Mera Comfort (confirmed from factory device type filter).
 
-**Not implemented:** Reverted after disproof. E0003 root cause remains unknown.
-The device requires a power cycle to recover from this state.
+#### Proc 0x0B session-claim hypothesis (2026-04-16) — **DISPROVEN** (the writes work, not for E0003)
+
+The 3×0x0B writes do not recover E0003 — confirmed. But they are real orientation light
+settings writes that DO apply immediately to the device. The hypothesis about session claiming
+was wrong; the writes ARE preference restoration, not a session handshake.
 
 ---
 
