@@ -521,7 +521,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
         state = await client.base_client.get_system_parameter_list_async(
-            [0, 1, 2, 3, 4, 5, 6, 7, 9]
+            [0, 1, 2, 3, 4, 5, 6, 7]  # 8/9/10 are device-variant specific — toxic on Mera Comfort
         )
         stats = await client.base_client.get_statistics_descale_async()
         soc_versions = await client.base_client.get_soc_application_versions_async()
