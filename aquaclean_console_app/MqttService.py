@@ -27,6 +27,12 @@ class MqttService:
         self.ToggleLadyShower        = myEvent.EventHandler()
         self.ToggleDryer             = myEvent.EventHandler()
         self.ToggleOrientationLight  = myEvent.EventHandler()
+        self.OrientationLightOff              = myEvent.EventHandler()
+        self.OrientationLightOn               = myEvent.EventHandler()
+        self.OrientationLightWhenApproached   = myEvent.EventHandler()
+        self.ToggleOdourExtraction            = myEvent.EventHandler()
+        self.OdourExtractionRunOn             = myEvent.EventHandler()
+        self.Stop                             = myEvent.EventHandler()
         self.TriggerFlushManually    = myEvent.EventHandler()
         self.PrepareDescaling        = myEvent.EventHandler()
         self.ConfirmDescaling        = myEvent.EventHandler()
@@ -139,6 +145,12 @@ class MqttService:
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleLadyShower")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleDryer")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleOrientationLight")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/orientationLightOff")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/orientationLightOn")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/orientationLightWhenApproached")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleOdourExtraction")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/odourExtractionRunOn")
+        self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/stop")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/triggerFlushManually")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/prepareDescaling")
         self.mqttc.subscribe(f"{self.mqttConfig['topic']}/peripheralDevice/control/confirmDescaling")
@@ -172,6 +184,18 @@ class MqttService:
             self.handle_toggle_dryer_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleOrientationLight":
             self.handle_toggle_orientation_light_message()
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/orientationLightOff":
+            self._handle_event(self.OrientationLightOff)
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/orientationLightOn":
+            self._handle_event(self.OrientationLightOn)
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/orientationLightWhenApproached":
+            self._handle_event(self.OrientationLightWhenApproached)
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/toggleOdourExtraction":
+            self._handle_event(self.ToggleOdourExtraction)
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/odourExtractionRunOn":
+            self._handle_event(self.OdourExtractionRunOn)
+        elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/stop":
+            self._handle_event(self.Stop)
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/triggerFlushManually":
             self.handle_trigger_flush_manually_message()
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/control/prepareDescaling":
@@ -217,6 +241,12 @@ class MqttService:
         elif msg.topic == f"{self.mqttConfig['topic']}/peripheralDevice/config/commonSetting":
             self.handle_set_common_setting_message(msg.payload.decode().strip())
 
+
+    def _handle_event(self, event_handler):
+        """Fire an event handler on the asyncio loop (shared pattern for all control messages)."""
+        for handler in event_handler.get_handlers():
+            future = asyncio.run_coroutine_threadsafe(handler(), self.aquaclean_loop)
+            _ = future.result()
 
     def handle_toggleLidPositionMessage(self):
         logger.trace("in handle_toggleLidPositionMessage")

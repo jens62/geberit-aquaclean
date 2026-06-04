@@ -1735,6 +1735,7 @@ class ApiMode:
         self.service.mqtt_service.ToggleLadyShower            += self._on_mqtt_toggle_lady
         self.service.mqtt_service.ToggleDryer                 += self._on_mqtt_toggle_dryer
         self.service.mqtt_service.ToggleOrientationLight      += self._on_mqtt_toggle_orientation_light
+        self.service.mqtt_service.Stop                        += self._on_mqtt_stop
         self.service.mqtt_service.OrientationLightOff         += self._on_mqtt_orientation_light_off
         self.service.mqtt_service.OrientationLightOn          += self._on_mqtt_orientation_light_on
         self.service.mqtt_service.OrientationLightWhenApproached += self._on_mqtt_orientation_light_when_approached
@@ -1922,6 +1923,12 @@ class ApiMode:
             await self.run_command("toggle-orientation-light")
         except Exception as e:
             logger.warning(f"MQTT toggle-orientation-light failed: {e}")
+
+    async def _on_mqtt_stop(self):
+        try:
+            await self.run_command("stop")
+        except Exception as e:
+            logger.warning(f"MQTT stop failed: {e}")
 
     async def _on_mqtt_orientation_light_off(self):
         try:
@@ -2962,6 +2969,8 @@ class ApiMode:
         self.service.device_state["last_error_code"]           = result.data_array[6]
         self.service.device_state["lid_offset_position"]       = result.data_array[8]  # SPL index 12, position 8
         self.service.device_state["shower_arm_offset_position"] = result.data_array[9]  # SPL index 13, position 9
+        self.service.device_state["descaling_state"]            = result.data_array[4]  # SPL index 4: 0=idle 1=preparing 2=waiting 3=running
+        self.service.device_state["descaling_duration_min"]     = result.data_array[5]  # SPL index 5: countdown minutes
         state = {
             "is_user_sitting":            self.service.device_state["is_user_sitting"],
             "is_anal_shower_running":     self.service.device_state["is_anal_shower_running"],
@@ -2970,6 +2979,8 @@ class ApiMode:
             "last_error_code":            self.service.device_state["last_error_code"],
             "lid_offset_position":        self.service.device_state["lid_offset_position"],
             "shower_arm_offset_position": self.service.device_state["shower_arm_offset_position"],
+            "descaling_state":            self.service.device_state["descaling_state"],
+            "descaling_duration_min":     self.service.device_state["descaling_duration_min"],
         }
         if _skip_profile:
             return state
@@ -3053,6 +3064,8 @@ class ApiMode:
             await client.set_orientation_light_mode(1)
         elif command == "orientation-light-when-approached":
             await client.set_orientation_light_mode(2)
+        elif command == "stop":
+            await client.stop()
         elif command == "toggle-odour-extraction":
             await client.toggle_odour_extraction()
         elif command == "odour-extraction-run-on":

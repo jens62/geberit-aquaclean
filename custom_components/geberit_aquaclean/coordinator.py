@@ -545,6 +545,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             "last_error_code": state.data_array[6],
             "lid_offset_position": state.data_array[8],        # SPL index 12, position 8
             "shower_arm_offset_position": state.data_array[9], # SPL index 13, position 9
+            "descaling_state": state.data_array[4],            # SPL index 4: 0=idle 1=preparing 2=waiting 3=running
+            "descaling_duration_min": state.data_array[5],     # SPL index 5: countdown minutes
             # Descale statistics
             "days_until_next_descale": stats.days_until_next_descale,
             "days_until_shower_restricted": stats.days_until_shower_restricted,
@@ -828,6 +830,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.toggle_dryer()
                 elif command == "toggle_orientation_light":
                     await client.toggle_orientation_light()
+                elif command == "stop":
+                    await client.stop()
                 elif command == "orientation_light_off":
                     await client.set_orientation_light_mode(0)
                 elif command == "orientation_light_on":
