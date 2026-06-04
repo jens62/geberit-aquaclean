@@ -143,6 +143,16 @@ class AquaCleanClient(IAquaCleanClient):
     async def toggle_orientation_light(self):
         await self.base_client.SetCommandAsync(Commands.ToggleOrientationLight)
 
+    async def set_orientation_light_mode(self, mode: int):
+        """Set orientation light mode immediately (no power cycle). 0=Off 1=On 2=WhenApproached."""
+        await self.base_client.set_active_common_setting_async(3, mode)
+
+    async def toggle_odour_extraction(self):
+        await self.base_client.SetCommandAsync(Commands.OdourExtraction)
+
+    async def odour_extraction_run_on(self):
+        await self.base_client.SetCommandAsync(Commands.OdourExtractionRunOn)
+
     async def reset_filter_counter(self):
         await self.base_client.SetCommandAsync(Commands.ResetFilterCounter)
 

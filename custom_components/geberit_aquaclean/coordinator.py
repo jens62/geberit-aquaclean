@@ -828,6 +828,16 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     await client.toggle_dryer()
                 elif command == "toggle_orientation_light":
                     await client.toggle_orientation_light()
+                elif command == "orientation_light_off":
+                    await client.set_orientation_light_mode(0)
+                elif command == "orientation_light_on":
+                    await client.set_orientation_light_mode(1)
+                elif command == "orientation_light_when_approached":
+                    await client.set_orientation_light_mode(2)
+                elif command == "toggle_odour_extraction":
+                    await client.toggle_odour_extraction()
+                elif command == "odour_extraction_run_on":
+                    await client.odour_extraction_run_on()
                 elif command == "trigger_flush_manually":
                     await client.trigger_flush_manually()
                 elif command == "prepare_descaling":
