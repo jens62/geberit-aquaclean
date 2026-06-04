@@ -2920,17 +2920,21 @@ class ApiMode:
         result = await client.base_client.get_system_parameter_list_async(SPL_PARAMS_MERA_COMFORT)
         # Update device_state before _on_demand's finally fires so the
         # "disconnected" SSE broadcast carries fresh values.
-        self.service.device_state["is_user_sitting"]        = result.data_array[0] != 0
-        self.service.device_state["is_anal_shower_running"] = result.data_array[3] != 0  # param 3 confirmed = anal shower
-        self.service.device_state["is_lady_shower_running"] = result.data_array[2] != 0
-        self.service.device_state["is_dryer_running"]       = result.data_array[1] != 0  # param 1, dryer state unknown
-        self.service.device_state["last_error_code"]        = result.data_array[6]
+        self.service.device_state["is_user_sitting"]           = result.data_array[0] != 0
+        self.service.device_state["is_anal_shower_running"]    = result.data_array[3] != 0  # param 3 confirmed = anal shower
+        self.service.device_state["is_lady_shower_running"]    = result.data_array[2] != 0
+        self.service.device_state["is_dryer_running"]          = result.data_array[1] != 0  # param 1, dryer state unknown
+        self.service.device_state["last_error_code"]           = result.data_array[6]
+        self.service.device_state["lid_offset_position"]       = result.data_array[8]  # SPL index 12, position 8
+        self.service.device_state["shower_arm_offset_position"] = result.data_array[9]  # SPL index 13, position 9
         state = {
-            "is_user_sitting":        self.service.device_state["is_user_sitting"],
-            "is_anal_shower_running": self.service.device_state["is_anal_shower_running"],
-            "is_lady_shower_running": self.service.device_state["is_lady_shower_running"],
-            "is_dryer_running":       self.service.device_state["is_dryer_running"],
-            "last_error_code":        self.service.device_state["last_error_code"],
+            "is_user_sitting":            self.service.device_state["is_user_sitting"],
+            "is_anal_shower_running":     self.service.device_state["is_anal_shower_running"],
+            "is_lady_shower_running":     self.service.device_state["is_lady_shower_running"],
+            "is_dryer_running":           self.service.device_state["is_dryer_running"],
+            "last_error_code":            self.service.device_state["last_error_code"],
+            "lid_offset_position":        self.service.device_state["lid_offset_position"],
+            "shower_arm_offset_position": self.service.device_state["shower_arm_offset_position"],
         }
         if _skip_profile:
             return state

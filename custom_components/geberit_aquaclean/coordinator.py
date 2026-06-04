@@ -521,7 +521,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         ident = await client.base_client.get_device_identification_async(0)
         initial_op_date = await client.base_client.get_device_initial_operation_date()
         state = await client.base_client.get_system_parameter_list_async(
-            [0, 1, 2, 3, 4, 5, 6, 7]  # 8/9/10 are device-variant specific — toxic on Mera Comfort
+            [0, 1, 2, 3, 4, 5, 6, 7, 12, 13]  # 12=LidOffset, 13=ShowerArmOffset; data_array[8],[9]
         )
         stats = await client.base_client.get_statistics_descale_async()
         soc_versions = await client.base_client.get_soc_application_versions_async()
@@ -543,6 +543,8 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             "is_lady_shower_running": state.data_array[2] != 0,
             "is_dryer_running": state.data_array[1] != 0,
             "last_error_code": state.data_array[6],
+            "lid_offset_position": state.data_array[8],        # SPL index 12, position 8
+            "shower_arm_offset_position": state.data_array[9], # SPL index 13, position 9
             # Descale statistics
             "days_until_next_descale": stats.days_until_next_descale,
             "days_until_shower_restricted": stats.days_until_shower_restricted,

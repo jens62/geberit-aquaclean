@@ -222,7 +222,29 @@ def _print_result(raw: bytes, ctx: int, proc: int):
         decoded = [p.decode('ascii', errors='replace') for p in parts]
         print(f"  Strings : {decoded}")
     # Proc-specific interpretation
-    if (ctx, proc) == (0x01, 0x51) and len(raw) >= 2:
+    if (ctx, proc) == (0x01, 0x0D) and len(raw) >= 1:
+        SPL_NAMES = {
+            0: "StateUserPresent",      1: "StateShowerAnal",
+            2: "StateShowerLady",       3: "StateDryer",
+            4: "StateDescaling",        5: "DurationDescaling",
+            6: "LastError",             7: "StateService",
+            8: "StateSprayCalibration (restricted)",
+            9: "StateOrientationLight (AcSela only)",
+            10: "StateDraining (AcCama only)",
+            11: "ConnectedSsmDevices (AcSela only)",
+            12: "LidOffsetPosition",    13: "ShowerArmOffsetPosition",
+            14: "DryerArmOffsetPosition", 255: "EndiannessCheck",
+        }
+        count = raw[0]
+        print(f"  → {count} SPL record(s):")
+        for i in range(count):
+            if len(raw) < 1 + (i + 1) * 5:
+                break
+            idx = raw[1 + i * 5]
+            val = struct.unpack_from('<I', raw, 1 + i * 5 + 1)[0]
+            name = SPL_NAMES.get(idx, f"Unknown({idx})")
+            print(f"       [{idx:3d}] {name:<42} = {val}")
+    elif (ctx, proc) == (0x01, 0x51) and len(raw) >= 2:
         val = struct.unpack_from('<H', raw)[0]
         print(f"  → GetStoredCommonSetting value = {val}")
     elif (ctx, proc) == (0x01, 0x53) and len(raw) >= 2:

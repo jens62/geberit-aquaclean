@@ -74,6 +74,8 @@ class DeviceStateChangedEventArgs(Subscriptable):
     IsAnalShowerRunning: bool = None
     IsLadyShowerRunning: bool = None
     IsDryerRunning: bool = None
+    LidOffsetPosition: int = None        # SPL index 12, data_array[8]
+    ShowerArmOffsetPosition: int = None  # SPL index 13, data_array[9]
 
     def __eq__(self, other):
         if not isinstance(other, DeviceStateChangedEventArgs):
@@ -81,9 +83,13 @@ class DeviceStateChangedEventArgs(Subscriptable):
         return (self.IsUserSitting == other.IsUserSitting and
                 self.IsAnalShowerRunning == other.IsAnalShowerRunning and
                 self.IsLadyShowerRunning == other.IsLadyShowerRunning and
-                self.IsDryerRunning == other.IsDryerRunning)
-    
+                self.IsDryerRunning == other.IsDryerRunning and
+                self.LidOffsetPosition == other.LidOffsetPosition and
+                self.ShowerArmOffsetPosition == other.ShowerArmOffsetPosition)
+
     def __str__(self):
-        return f'IsUserSitting: {self.IsUserSitting}, IsAnalShowerRunning: {self.IsAnalShowerRunning}, IsLadyShowerRunning: {self.IsLadyShowerRunning}, IsDryerRunning: {self.IsDryerRunning}'
+        return (f'IsUserSitting: {self.IsUserSitting}, IsAnalShowerRunning: {self.IsAnalShowerRunning}, '
+                f'IsLadyShowerRunning: {self.IsLadyShowerRunning}, IsDryerRunning: {self.IsDryerRunning}, '
+                f'LidOffsetPosition: {self.LidOffsetPosition}, ShowerArmOffsetPosition: {self.ShowerArmOffsetPosition}')
     
  

@@ -20,11 +20,13 @@ logger = logging.getLogger(__name__)
 #   9  = StateOrientationLight — AcSela only, not valid for Mera Comfort
 #   10 = StateDraining         — AcCama/AcCamaTestset only, not valid for Mera Comfort
 #   12 = LidOffsetPosition     — Mera Comfort only, requires firmware ≥ RS25
+#   13 = ShowerArmOffsetPosition — Mera Comfort, safe (confirmed from OTA capture 2026-06-01)
 # Sending unsupported indices leaves the device in a state where subsequent
 # GetFilterStatus (proc 0x59) calls time out until the device is power-cycled.
 # NOTE: if support for other device models (AcSela, AcCama, …) is added, a
 # per-model parameter list will be needed here — do not simply extend this list.
-SPL_PARAMS_MERA_COMFORT = [0, 1, 2, 3, 4, 5, 6, 7]
+# data_array indexing is POSITION-BASED (not SPL-index-based): data_array[8]=param12, data_array[9]=param13
+SPL_PARAMS_MERA_COMFORT = [0, 1, 2, 3, 4, 5, 6, 7, 12, 13]
 
 class AquaCleanClient(IAquaCleanClient):
     def __init__(self, bluetooth_connector):
@@ -103,6 +105,8 @@ class AquaCleanClient(IAquaCleanClient):
             IsAnalShowerRunning=result.data_array[3] != 0,  # param 3 confirmed = anal shower
             IsLadyShowerRunning=result.data_array[2] != 0,
             IsDryerRunning=result.data_array[1] != 0,  # param 1, dryer state unknown
+            LidOffsetPosition=result.data_array[8],       # SPL index 12, position 8
+            ShowerArmOffsetPosition=result.data_array[9], # SPL index 13, position 9
         )
 
         if self.last_device_state_changed_event_args is None:
