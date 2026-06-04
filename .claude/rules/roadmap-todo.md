@@ -17,7 +17,7 @@ Wire CallClass first, then expose via REST/MQTT.
 |------|------|--------|
 | `0x06` | GetActualOutletTemperature | Not yet in bridge; trigger: start shower and sniff |
 | `0x07` | Per-node profile setting query | Wire format: `[node_id]` — 1-byte arg |
-| `0x0A` / `0x0B` | GetActiveCommonSetting / SetActiveCommonSetting | Bridge skips; iPhone always sends |
+| ~~`0x0A` / `0x0B`~~ | ~~GetActiveCommonSetting / SetActiveCommonSetting~~ | **DONE** — implemented via `SetActiveCommonSettingAsync`; used for orientation light control (confirmed live 2026-06-04) |
 | `0x51` | GetStoredCommonSetting(id) → 2-byte int | High priority; bridges to CommonSetting IDs 4–12 |
 | `0x56` | SetDeviceRegistrationLevel(int) // 257 | Low priority; purpose unclear |
 
@@ -42,9 +42,9 @@ Add to `ProfileSettings.py` enum. Add getters to `AquaCleanClient`; expose via R
 
 ### Wire remaining Commands enum entries (all interfaces)
 
-Priority: `ToggleOrientationLight` (complete missing MQTT/HACS/CLI interfaces).
-All other unwired commands in `ble-protocol.md` Commands table follow the same pattern as
-ToggleDryer — zero new protocol code, just wiring on all interfaces.
+**Done in 3.0.6:** Stop (3), OdourExtraction (12), OdourExtractionRunOn (13) wired to all interfaces.
+Orientation light (Mera Comfort) done via proc 0x0B — SetCommand 20 (ToggleOrientationLight) = AcSela ONLY.
+Remaining: `ToggleOrientationLight` for AcSela — wire to MQTT/HACS/CLI when AcSela is supported.
 
 ---
 

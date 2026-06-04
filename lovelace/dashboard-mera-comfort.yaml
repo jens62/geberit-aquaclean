@@ -141,7 +141,7 @@ views:
             name: Dryer
 
       # ── Controls ──────────────────────────────────────────────────────────
-      # Stop: halts any running shower (anal/lady), dryer, and odour extraction.
+      # Stop: halts any running shower (anal/lady) and dryer.
       # It does NOT stop a moving lid — press Toggle Lid again to reverse the lid.
       # Typical pattern: Stop → Toggle Lid (confirmed from iPhone OTA capture).
       - type: grid
@@ -158,7 +158,7 @@ views:
               target:
                 entity_id: button.geberit_aquaclean_toggle_lid
           - type: button
-            name: Stop Shower/Dryer/Fan
+            name: Stop Shower/Dryer
             icon: mdi:stop-circle-outline
             tap_action:
               action: perform-action
@@ -197,7 +197,7 @@ views:
           - type: conditional
             conditions:
               - entity: binary_sensor.geberit_aquaclean_ble_connected
-                state: 'off'
+                state: "off"
             row:
               type: custom:timer-bar-card
               entity: sensor.geberit_aquaclean_next_poll
@@ -216,13 +216,13 @@ views:
           - type: conditional
             conditions:
               - entity: binary_sensor.geberit_aquaclean_ble_connected
-                state: 'on'
+                state: "on"
             row:
               type: custom:timer-bar-card
               entity: binary_sensor.geberit_aquaclean_ble_connected
-              active_state: 'off'
+              active_state: "off"
               translations:
-                'on': on request
+                "on": on request
               full_row: true
               layout: hide_name
 
@@ -268,8 +268,8 @@ views:
       # number entities render as sliders — tap the value to type, or drag.
 
       - type: entities
-        title: Shower
-        icon: mdi:shower-head
+        title: Anal Shower
+        icon: geberit:analshower
         entities:
           - entity: number.geberit_aquaclean_water_temperature
             name: Water Temperature
@@ -282,7 +282,7 @@ views:
 
       - type: entities
         title: Lady Shower
-        icon: mdi:shower-head
+        icon: geberit:ladywash
         entities:
           - entity: number.geberit_aquaclean_water_temperature
             name: Water Temperature (shared)
@@ -312,9 +312,9 @@ views:
           - type: buttons
             entities:
               - entity: button.geberit_aquaclean_orientation_light_off
-                name: Off
+                name: "Off"
               - entity: button.geberit_aquaclean_orientation_light_on
-                name: On
+                name: "On"
               - entity: button.geberit_aquaclean_orientation_light_when_approached
                 name: When Approached
           - entity: number.geberit_aquaclean_orientation_light_activation
