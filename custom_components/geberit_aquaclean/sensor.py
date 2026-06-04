@@ -42,6 +42,9 @@ SENSORS: list[tuple] = [
     ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check"),
     ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),
     ("next_poll",     "Next Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:calendar-clock"),
+    # Calibration offsets (set by user via lid/shower arm calibration procedure)
+    ("lid_offset_position",        "Lid Offset Position",        None, None, SensorStateClass.MEASUREMENT, "mdi:seat-outline"),
+    ("shower_arm_offset_position", "Spray Arm Offset Position",  None, None, SensorStateClass.MEASUREMENT, "mdi:shower-head"),
     # Signal strength
     ("ble_rssi",      "BLE Signal",     "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, "mdi:signal"),
 ]
