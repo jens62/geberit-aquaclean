@@ -179,7 +179,7 @@ Not observed in any log. To find: BLE-sniff the official Geberit Home app.
 - **Stored** (proc 0x51/0x52): writes to NVM, requires power-cycle to take effect (confirmed Geberit Support case CAS1550064K3D1Z). Bridge currently uses these.
 - **Active** (proc 0x0A/0x0B): applies immediately at runtime, no power cycle. iPhone uses 0x0B at every session init to restore orientation light settings.
 
-**To turn the orientation light off immediately:** write proc 0x0B, ID=3 (OrientationLightMode), value=0 ("Off"). Confirmed supported on Mera Comfort (factory: `SetIncludedDeviceTypes([AcMeraFloorstanding, AcMeraComfort])`).
+**To turn the orientation light off immediately:** write proc 0x0B, ID=3 (OrientationLightMode), value=0 ("Off"). **CONFIRMED LIVE 2026-06-04** on HB2304EU298413 — light turns off within ~1s. value=1=On, value=2=WhenApproached. Write response=(none). Stored setting (proc 0x51) stays unchanged.
 
 **ToggleOrientationLight (SetCommand code 20): AcSela ONLY.** Confirmed from factory `SetIncludedDeviceTypes([AcSela])`. Does NOT work on Mera Comfort.
 

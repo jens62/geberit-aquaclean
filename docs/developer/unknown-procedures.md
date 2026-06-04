@@ -259,11 +259,12 @@ Proc 0x53 reads PROFILE settings (shower pressure, temperature, etc.). They are 
 separate ID spaces. Asking proc 0x0A for a profile setting ID returns 0 because the ID
 doesn't exist in the common settings namespace.
 
-**Bridge implication:** Use proc 0x0B (SetActiveCommonSetting) to control orientation light
-at runtime without power cycle:
-- Turn off: `0x0B [03, 00, 00]` (ID=3/Mode, value=0/Off)
-- Turn on:  `0x0B [03, 01, 00]` (ID=3/Mode, value=1/On)
-This is supported on Mera Comfort (confirmed from factory device type filter).
+**Bridge implication — CONFIRMED LIVE 2026-06-04 on HB2304EU298413:**
+- `0x0B [03, 00, 00]` → orientation light turns OFF within ~1s ✅
+- `0x0B [03, 01, 00]` → orientation light turns ON permanently ✅
+- `0x0B [03, 02, 00]` → back to WhenApproached (proximity mode) ✅
+- Write response = (none) — ACK only
+- Stored setting (proc 0x51) remains unchanged — active and stored are fully independent
 
 #### Proc 0x0B session-claim hypothesis (2026-04-16) — **DISPROVEN** (the writes work, not for E0003)
 

@@ -17,22 +17,25 @@ Implementation:
 
 ---
 
-### Implement proc 0x0B (SetActiveCommonSetting) for orientation light control
+### Implement orientation light on/off control in the bridge
 
-Confirmed from `AcDataPointDefinitionFactory.cs` (v2.14.1 iOS): proc 0x0B applies
-CommonSettings immediately at runtime — no power cycle needed. Supported on Mera Comfort
-(`SetIncludedDeviceTypes([AcMeraFloorstanding, AcMeraComfort])`).
+**CONFIRMED LIVE 2026-06-04** on HB2304EU298413 — light turns on/off within ~1s.
 
-**SetCommand code 20 (ToggleOrientationLight) = AcSela ONLY** — do not use on Mera Comfort.
+Two separate device paths:
 
-Implementation:
+**Mera Comfort — proc 0x0B (SetActiveCommonSetting), ID=3:**
+- value=0=Off, value=1=On, value=2=WhenApproached
+- Wire: `[0x03, value, 0x00]` — same format as proc 0x52
 - Add `SetActiveCommonSettingAsync(id, value)` to `AquaCleanBaseClient`
-- Wire `orientationLight.setMode(0/1/2)` REST endpoint using proc 0x0B, ID=3
-- Wire to MQTT, HACS, CLI following the "all interfaces" rule
-- Test: `POST /config/orientation-light-mode` with `{"value": 0}` → light off immediately
+- SetCommand code 20 (ToggleOrientationLight) = AcSela ONLY — do NOT use
 
-Wire format: proc 0x0B, args = `[setting_id, value_lo, value_hi]` (same as 0x52).
-Probe first: `python tools/active-common-settings-probe.py --write 3 0` to verify.
+**Alba — Ble20 DpId 44 (`DP_ORIENTATION_LIGHT_MODE`):**
+- Write DpId 44 via Ble20 WriteCmd; 0=Off, 1=On, 2=Auto; also applies immediately
+- See `memory/alba-orientation-light-and-proximity.md`
+
+**Common wiring (both devices):**
+- REST: `POST /config/orientation-light-mode` body `{"value": 0|1|2}`
+- Wire to MQTT, HACS, CLI following the "all interfaces" rule
 
 ---
 
