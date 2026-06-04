@@ -89,6 +89,7 @@ log.setLevel(logging.DEBUG)
 from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
 from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import AquaCleanBaseClient
 from aquaclean_console_app.aquaclean_core.Api.Attributes.ApiCallAttribute import ApiCallAttribute
+# (AquaCleanClientFactory is NOT used — base client created directly like geberit-ble-probe.py)
 
 # ---------------------------------------------------------------------------
 # Setting metadata
@@ -134,9 +135,11 @@ class _AdHoc:
 
 
 async def _call(client: AquaCleanBaseClient, ctx: int, proc: int, args: bytes) -> Optional[bytes]:
+    call = _AdHoc(ctx, proc, args)
     try:
-        return await client.send_request(_AdHoc(ctx, proc, args))
-    except Exception as e:
+        await client.send_request(call)
+        return call.result(client.message_context.result_bytes)
+    except Exception:
         return None
 
 
@@ -181,12 +184,16 @@ async def run(args):
         print(f"  Write   : ID={args.write[0]}  value={args.write[1]}")
     print()
 
-    connector = BluetoothLeConnector(device, host, port, psk)
-    from aquaclean_console_app.aquaclean_core.Clients.AquaCleanClientFactory import AquaCleanClientFactory
-    client = AquaCleanClientFactory(connector).create_client()
+    connector = BluetoothLeConnector(
+        esphome_host=host,
+        esphome_port=port,
+        esphome_noise_psk=psk,
+    )
+    client = AquaCleanBaseClient(connector)
 
     try:
-        await client.connect()
+        await client.connect_async(device)
+        await client.subscribe_notifications_async()
 
         print(f"  {'ID':<3}  {'Name':<35}  {'Stored (0x51)':<15}  {'Active (0x0A)':<15}  Match?")
         print(f"  {'-'*3}  {'-'*35}  {'-'*15}  {'-'*15}  {'-'*6}")
@@ -237,7 +244,7 @@ async def run(args):
 
     finally:
         try:
-            await client.disconnect()
+            await client.disconnect_async()
         except Exception:
             pass
 
