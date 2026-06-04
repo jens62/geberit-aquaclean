@@ -6,7 +6,10 @@ class Commands(Enum):
     ToggleAnalShower = 0
     ToggleLadyShower = 1
     ToggleDryer = 2
-    ToggleOrientationLight = 20
+    ToggleOrientationLight = 20   # AcSela only — use SetActiveCommonSetting(3, ...) for Mera Comfort
+    Stop = 3                       # stop all active functions (confirmed from Android pcapng + iPhone OTA)
+    OdourExtraction = 12           # toggle odour extraction on/off (live, while user is sitting)
+    OdourExtractionRunOn = 13      # trigger odour extraction run-on
     TriggerFlushManually = 37
     ResetFilterCounter = 47
     PostponeDescaling = 9

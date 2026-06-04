@@ -1735,6 +1735,12 @@ class ApiMode:
         self.service.mqtt_service.ToggleLadyShower            += self._on_mqtt_toggle_lady
         self.service.mqtt_service.ToggleDryer                 += self._on_mqtt_toggle_dryer
         self.service.mqtt_service.ToggleOrientationLight      += self._on_mqtt_toggle_orientation_light
+        self.service.mqtt_service.Stop                        += self._on_mqtt_stop
+        self.service.mqtt_service.OrientationLightOff         += self._on_mqtt_orientation_light_off
+        self.service.mqtt_service.OrientationLightOn          += self._on_mqtt_orientation_light_on
+        self.service.mqtt_service.OrientationLightWhenApproached += self._on_mqtt_orientation_light_when_approached
+        self.service.mqtt_service.ToggleOdourExtraction       += self._on_mqtt_toggle_odour_extraction
+        self.service.mqtt_service.OdourExtractionRunOn        += self._on_mqtt_odour_extraction_run_on
         self.service.mqtt_service.TriggerFlushManually        += self._on_mqtt_trigger_flush_manually
         self.service.mqtt_service.PrepareDescaling            += self._on_mqtt_prepare_descaling
         self.service.mqtt_service.ConfirmDescaling            += self._on_mqtt_confirm_descaling
@@ -1917,6 +1923,42 @@ class ApiMode:
             await self.run_command("toggle-orientation-light")
         except Exception as e:
             logger.warning(f"MQTT toggle-orientation-light failed: {e}")
+
+    async def _on_mqtt_stop(self):
+        try:
+            await self.run_command("stop")
+        except Exception as e:
+            logger.warning(f"MQTT stop failed: {e}")
+
+    async def _on_mqtt_orientation_light_off(self):
+        try:
+            await self.run_command("orientation-light-off")
+        except Exception as e:
+            logger.warning(f"MQTT orientation-light-off failed: {e}")
+
+    async def _on_mqtt_orientation_light_on(self):
+        try:
+            await self.run_command("orientation-light-on")
+        except Exception as e:
+            logger.warning(f"MQTT orientation-light-on failed: {e}")
+
+    async def _on_mqtt_orientation_light_when_approached(self):
+        try:
+            await self.run_command("orientation-light-when-approached")
+        except Exception as e:
+            logger.warning(f"MQTT orientation-light-when-approached failed: {e}")
+
+    async def _on_mqtt_toggle_odour_extraction(self):
+        try:
+            await self.run_command("toggle-odour-extraction")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-odour-extraction failed: {e}")
+
+    async def _on_mqtt_odour_extraction_run_on(self):
+        try:
+            await self.run_command("odour-extraction-run-on")
+        except Exception as e:
+            logger.warning(f"MQTT odour-extraction-run-on failed: {e}")
 
     async def _on_mqtt_trigger_flush_manually(self):
         try:
@@ -2927,6 +2969,8 @@ class ApiMode:
         self.service.device_state["last_error_code"]           = result.data_array[6]
         self.service.device_state["lid_offset_position"]       = result.data_array[8]  # SPL index 12, position 8
         self.service.device_state["shower_arm_offset_position"] = result.data_array[9]  # SPL index 13, position 9
+        self.service.device_state["descaling_state"]            = result.data_array[4]  # SPL index 4: 0=idle 1=preparing 2=waiting 3=running
+        self.service.device_state["descaling_duration_min"]     = result.data_array[5]  # SPL index 5: countdown minutes
         state = {
             "is_user_sitting":            self.service.device_state["is_user_sitting"],
             "is_anal_shower_running":     self.service.device_state["is_anal_shower_running"],
@@ -2935,6 +2979,8 @@ class ApiMode:
             "last_error_code":            self.service.device_state["last_error_code"],
             "lid_offset_position":        self.service.device_state["lid_offset_position"],
             "shower_arm_offset_position": self.service.device_state["shower_arm_offset_position"],
+            "descaling_state":            self.service.device_state["descaling_state"],
+            "descaling_duration_min":     self.service.device_state["descaling_duration_min"],
         }
         if _skip_profile:
             return state
@@ -3012,6 +3058,18 @@ class ApiMode:
             await client.toggle_dryer()
         elif command == "toggle-orientation-light":
             await client.toggle_orientation_light()
+        elif command == "orientation-light-off":
+            await client.set_orientation_light_mode(0)
+        elif command == "orientation-light-on":
+            await client.set_orientation_light_mode(1)
+        elif command == "orientation-light-when-approached":
+            await client.set_orientation_light_mode(2)
+        elif command == "stop":
+            await client.stop()
+        elif command == "toggle-odour-extraction":
+            await client.toggle_odour_extraction()
+        elif command == "odour-extraction-run-on":
+            await client.odour_extraction_run_on()
         elif command == "reset-filter-counter":
             await client.reset_filter_counter()
             # Re-fetch filter status so device_state and SSE reflect the reset immediately.

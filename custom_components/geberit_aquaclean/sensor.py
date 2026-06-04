@@ -42,9 +42,12 @@ SENSORS: list[tuple] = [
     ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check"),
     ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),
     ("next_poll",     "Next Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:calendar-clock"),
+    # Descaling live state (from SPL params 4 and 5)
+    ("descaling_state",        "Descaling State",        None, None, SensorStateClass.MEASUREMENT, "geberit:descaling"),
+    ("descaling_duration_min", "Descaling Duration",     "min", SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT, "mdi:timer-outline"),
     # Calibration offsets (set by user via lid/shower arm calibration procedure)
-    ("lid_offset_position",        "Lid Offset Position",        None, None, SensorStateClass.MEASUREMENT, "mdi:seat-outline"),
-    ("shower_arm_offset_position", "Spray Arm Offset Position",  None, None, SensorStateClass.MEASUREMENT, "mdi:shower-head"),
+    ("lid_offset_position",        "Lid Offset Position",        None, None, SensorStateClass.MEASUREMENT, "geberit:adjustabletoiletseat"),
+    ("shower_arm_offset_position", "Spray Arm Offset Position",  None, None, SensorStateClass.MEASUREMENT, "geberit:showerarm-forward"),
     # Signal strength
     ("ble_rssi",      "BLE Signal",     "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, "mdi:signal"),
 ]

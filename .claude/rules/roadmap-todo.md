@@ -2,54 +2,6 @@
 
 ## Open TODOs
 
-### Add SPL params 12 and 13 to `SPL_PARAMS_MERA_COMFORT`
-
-Confirmed safe from OTA BLE capture (2026-06-01, HB2304EU298413, firmware RS146.21).
-iPhone sends `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]` — params 12 (LidOffsetPosition) and
-13 (ShowerArmOffsetPosition) are valid for Mera Comfort firmware ≥ RS25.
-
-Implementation:
-- Change `SPL_PARAMS_MERA_COMFORT` in `AquaCleanClient.py` to `[0,1,2,3,4,5,6,7,12,13]`
-- Add `lid_offset_position` and `shower_arm_offset_position` to `DeviceStateChangedEventArgs` in `IAquaCleanClient.py`
-- Extract `data_array[8]` and `data_array[9]` in `AquaCleanClient.get_state()`
-- Map to `device_state` and broadcast via SSE
-- Update `GetFilterStatus` record IDs list to include 12 and 13
-
----
-
-### Implement orientation light on/off control in the bridge
-
-**CONFIRMED LIVE 2026-06-04** on HB2304EU298413 — light turns on/off within ~1s.
-
-Two separate device paths:
-
-**Mera Comfort — proc 0x0B (SetActiveCommonSetting), ID=3:**
-- value=0=Off, value=1=On, value=2=WhenApproached
-- Wire: `[0x03, value, 0x00]` — same format as proc 0x52
-- Add `SetActiveCommonSettingAsync(id, value)` to `AquaCleanBaseClient`
-- SetCommand code 20 (ToggleOrientationLight) = AcSela ONLY — do NOT use
-
-**Alba — Ble20 DpId 44 (`DP_ORIENTATION_LIGHT_MODE`):**
-- Write DpId 44 via Ble20 WriteCmd; 0=Off, 1=On, 2=Auto; also applies immediately
-- See `memory/alba-orientation-light-and-proximity.md`
-
-**Common wiring (both devices):**
-- REST: `POST /config/orientation-light-mode` body `{"value": 0|1|2}`
-- Wire to MQTT, HACS, CLI following the "all interfaces" rule
-
----
-
-### Add SetCommand code 3 (`Stop`) to `Commands.py`
-
-Confirmed from two sources:
-- Android pcapng (2026-04-22): sent before `ToggleLidPosition`
-- iPhone OTA capture (2026-06-01): `SetCommand([1, 3])` sent before `SetCommand([1, 10])`
-
-`AC_CMD_STOP` = "Stop all". Pattern: Stop before ToggleLid makes sense (stop running shower/dryer first).
-Wire to REST/MQTT/CLI/HACS following the "all interfaces" rule.
-
----
-
 ### Implement `SetActiveProfileSetting` (proc 0x08)
 
 Wire format confirmed from OTA capture (2026-06-01): `[arg_count=3, setting_id, value]`.
@@ -71,25 +23,6 @@ Wire CallClass first, then expose via REST/MQTT.
 
 ---
 
-### Expose descaling state in device_state / SSE / MQTT
-
-`descaling_state` (SPL param 4) and `descaling_min` (SPL param 5) are polled every cycle
-but never extracted — `DeviceStateChangedEventArgs` has no fields for them.
-
-Descaling state machine (confirmed 2026-04-22):
-| descaling_state | descaling_min | Meaning |
-|----------------|---------------|---------|
-| 0 | 0 | Idle |
-| 1 | 60 | PrepareDescaling ACKed; device self-preparing (~55 s) |
-| 2 | 60 | Waiting for user to add descaler |
-| 3 | 60–0 | Chemical cycle running; countdown in minutes |
-
-Implementation (three changes):
-1. Add `DescalingState: int = None` and `DescalingMin: int = None` to `DeviceStateChangedEventArgs`
-2. Extract `data_array[4]` and `data_array[5]` in `AquaCleanClient.get_state()`
-3. Map to `device_state` in `main.py` and include in SSE broadcast
-
----
 
 ### Add CommonSetting IDs 4–12 to bridge
 

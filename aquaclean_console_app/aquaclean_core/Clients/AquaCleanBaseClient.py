@@ -29,6 +29,7 @@ from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredProfileSettin
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetStoredCommonSetting         import GetStoredCommonSetting
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.GetNodeList                    import GetNodeList
 from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetStoredCommonSetting         import SetStoredCommonSetting
+from aquaclean_console_app.aquaclean_core.Api.CallClasses.SetActiveCommonSetting         import SetActiveCommonSetting
 
 from aquaclean_console_app.aquaclean_utils                                               import utils
 
@@ -315,8 +316,14 @@ class AquaCleanBaseClient:
         return cs
 
     async def set_stored_common_setting_async(self, setting_id: int, value: int):
-        """Write a single common (device-wide) setting via proc 0x52."""
+        """Write a single common (device-wide) setting via proc 0x52 (stored, needs power cycle)."""
         api_call = SetStoredCommonSetting(setting_id, value)
+        await self.send_request(api_call)
+
+    async def set_active_common_setting_async(self, setting_id: int, value: int):
+        """Write a single active (live) common setting via proc 0x0B (applies immediately, no power cycle).
+        Confirmed on HB2304EU298413: setting_id=3 (orientation light mode) 0=Off 1=On 2=WhenApproached."""
+        api_call = SetActiveCommonSetting(setting_id, value)
         await self.send_request(api_call)
 
     async def get_statistics_descale_async(self):
