@@ -9,7 +9,7 @@
           "esphome_host": "ESPHome Proxy Host (optional)",
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
-          "poll_interval": "Poll Interval (seconds)",
+          "poll_interval": "Poll Interval (seconds)"
         }
       }
     },
@@ -38,7 +38,7 @@
           "esphome_host": "ESPHome Proxy Host (leave empty for local BLE)",
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
-          "poll_interval": "Poll Interval (seconds)",
+          "poll_interval": "Poll Interval (seconds)"
         }
       }
     },
