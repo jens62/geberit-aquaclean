@@ -1,4 +1,4 @@
-# Geberit AquaClean — Example Lovelace Dashboard
+# Geberit AquaClean Mera Comfort — Lovelace Dashboard
 #
 # How to import:
 #   Settings → Dashboards → Add Dashboard → Start with empty dashboard
@@ -7,6 +7,9 @@
 # All entity IDs assume the default device name "Geberit AquaClean".
 # If you renamed the device in Settings → Devices, adjust the slugified
 # prefix accordingly (e.g. "my_aquaclean" instead of "geberit_aquaclean").
+#
+# Prerequisites (HACS Frontend):
+#   - custom:timer-bar-card  (Poll Status progress bar)
 #
 
 title: Geberit AquaClean
@@ -19,14 +22,13 @@ views:
       # ── Language selector (optional) ──────────────────────────────────────
       # Requires an input_text.frontend_language helper in HA.
       - type: markdown
-        content: >
+        content: |
           {% set lang = states('input_text.frontend_language') %} {% if
           lang.startswith('de') %} Hallo — aktuelle Sprache: {{ lang }} {% else
           %} Hello — current language: {{ lang }} {% endif %}
 
-      # ── Connection Status ─────────────────────────────────────────────────
-      # Mirrors the webapp's two connection panels.
-      # Sensors cycle: connecting → connected → disconnected within each poll.
+      # ── BLE Connection ────────────────────────────────────────────────────
+      # Mirrors the webapp's connection panel.
       - type: entities
         title: BLE Connection
         icon: mdi:bluetooth
@@ -53,9 +55,8 @@ views:
             name: Error Hint
             icon: mdi:alert-circle-outline
 
+      # ── ESPHome Proxy ─────────────────────────────────────────────────────
       # Only shown when an ESPHome proxy is configured.
-      # Missing entity → state "unknown"; unavailable entity → state "unavailable".
-      # Both must be excluded to hide this card in direct BLE mode.
       - type: conditional
         conditions:
           - condition: state
@@ -86,26 +87,44 @@ views:
               name: Error Hint
               icon: mdi:alert-circle-outline
 
-
-      # Performance statistics — session totals, reset on HA restart.
-      # Timing/RSSI sensors are on the toilet device (geberit_aquaclean_*) since v2.4.47-pre.
-      # WiFi RSSI row is hidden automatically when no ESPHome proxy is configured.
-      # NOTE: content: | (literal block) is mandatory — content: > collapses newlines
-      #       and breaks the table rendering.
+      # ── Performance Statistics ────────────────────────────────────────────
+      # Session totals, reset on HA restart. WiFi row hidden without ESPHome proxy.
       - type: markdown
         title: Performance Statistics
         icon: mdi:chart-bar
-        content: |
+        content: >
           | Metric | Min | Avg | Max | Last |
+
           |--------|----:|----:|----:|-----:|
-          | Connect | {{ states('sensor.geberit_aquaclean_min_connect') }} ms | {{ states('sensor.geberit_aquaclean_avg_connect') }} ms | {{ states('sensor.geberit_aquaclean_max_connect') }} ms | {{ states('sensor.geberit_aquaclean_last_connect') }} ms |
-          | Poll (GATT) | {{ states('sensor.geberit_aquaclean_min_poll') }} ms | {{ states('sensor.geberit_aquaclean_avg_poll') }} ms | {{ states('sensor.geberit_aquaclean_max_poll') }} ms | {{ states('sensor.geberit_aquaclean_last_poll_ms') }} ms |
-          | BLE RSSI | {{ states('sensor.geberit_aquaclean_min_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_ble_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_ble_signal') }} dBm |
+
+          | Connect | {{ states('sensor.geberit_aquaclean_min_connect') }} ms |
+          {{ states('sensor.geberit_aquaclean_avg_connect') }} ms | {{
+          states('sensor.geberit_aquaclean_max_connect') }} ms | {{
+          states('sensor.geberit_aquaclean_last_connect') }} ms |
+
+          | Poll (GATT) | {{ states('sensor.geberit_aquaclean_min_poll') }} ms |
+          {{ states('sensor.geberit_aquaclean_avg_poll') }} ms | {{
+          states('sensor.geberit_aquaclean_max_poll') }} ms | {{
+          states('sensor.geberit_aquaclean_last_poll_ms') }} ms |
+
+          | BLE RSSI | {{ states('sensor.geberit_aquaclean_min_ble_rssi') }} dBm
+          | {{ states('sensor.geberit_aquaclean_avg_ble_rssi') }} dBm | {{
+          states('sensor.geberit_aquaclean_max_ble_rssi') }} dBm | {{
+          states('sensor.geberit_aquaclean_ble_signal') }} dBm |
+
           {%- if 'sensor.geberit_aquaclean_min_wifi_rssi' in states %}
-          | WiFi RSSI | {{ states('sensor.geberit_aquaclean_min_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_avg_wifi_rssi') }} dBm | {{ states('sensor.geberit_aquaclean_max_wifi_rssi') }} dBm | {{ states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
+
+          | WiFi RSSI | {{ states('sensor.geberit_aquaclean_min_wifi_rssi') }}
+          dBm | {{ states('sensor.geberit_aquaclean_avg_wifi_rssi') }} dBm | {{
+          states('sensor.geberit_aquaclean_max_wifi_rssi') }} dBm | {{
+          states('sensor.aquaclean_proxy_wifi_signal') }} dBm |
+
           {%- endif %}
 
-          Transport: `{{ states('sensor.geberit_aquaclean_transport') }}` &nbsp;·&nbsp; {{ states('sensor.geberit_aquaclean_poll_samples') }} samples this session
+
+          Transport: `{{ states('sensor.geberit_aquaclean_transport') }}`
+          &nbsp;·&nbsp; {{ states('sensor.geberit_aquaclean_poll_samples') }}
+          samples this session
 
       # ── Live Status ──────────────────────────────────────────────────────
       - type: entities
@@ -121,7 +140,10 @@ views:
           - entity: binary_sensor.geberit_aquaclean_dryer_running
             name: Dryer
 
-      # ── Controls ─────────────────────────────────────────────────────────
+      # ── Controls ──────────────────────────────────────────────────────────
+      # Stop: halts any running shower (anal/lady), dryer, and odour extraction.
+      # It does NOT stop a moving lid — press Toggle Lid again to reverse the lid.
+      # Typical pattern: Stop → Toggle Lid (confirmed from iPhone OTA capture).
       - type: grid
         title: Controls
         square: false
@@ -136,19 +158,32 @@ views:
               target:
                 entity_id: button.geberit_aquaclean_toggle_lid
           - type: button
+            name: Stop Shower/Dryer/Fan
+            icon: mdi:stop-circle-outline
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.geberit_aquaclean_stop
+          - type: button
             name: Reset Filter Counter
-            icon: mdi:air-purifier
+            icon: geberit:filter
             tap_action:
               action: perform-action
               perform_action: button.press
               target:
                 entity_id: button.geberit_aquaclean_reset_filter_counter
+          - type: button
+            name: Trigger Flush
+            icon: geberit:flush
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.geberit_aquaclean_trigger_flush_manually
 
       # ── Poll Status ───────────────────────────────────────────────────────
-      # sensor.next_poll has device_class: timestamp → HA shows "in X minutes"
-      #
-      # The progress bar (custom:timer-bar-card) must be installed via HACS:
-      #   HACS → Frontend → search "Timer Bar Card" → Install → reload browser
+      # Requires custom:timer-bar-card (HACS → Frontend → "Timer Bar Card").
       - type: entities
         title: Poll Status
         icon: mdi:timer-outline
@@ -159,31 +194,49 @@ views:
             name: Last Poll
           - entity: sensor.geberit_aquaclean_poll_interval
             name: Poll Interval
-          # Progress bar — drains from last poll to next poll.
-          # active_state: "on" uses the BLE binary sensor to gate visibility:
-          # bar shows when polling is healthy, disappears on connection failure.
-          - type: custom:timer-bar-card
-            entity: binary_sensor.geberit_aquaclean_ble_connected
-            invert: true
-            active_state: "on"
-            translations:
-              "on": on request
-            full_row: true
-            start_time:
-              entity: sensor.geberit_aquaclean_last_poll
-            end_time:
+          - type: conditional
+            conditions:
+              - entity: binary_sensor.geberit_aquaclean_ble_connected
+                state: 'off'
+            row:
+              type: custom:timer-bar-card
               entity: sensor.geberit_aquaclean_next_poll
-            text: Nächster Poll in {remaining}
-            bar_height: 10px
-            bar_foreground: var(--state-icon-color)
-            bar_background: transparent
-            layout: hide_name
+              guess_mode: true
+              full_row: true
+              start_time:
+                entity: sensor.geberit_aquaclean_last_poll
+              end_time:
+                entity: sensor.geberit_aquaclean_next_poll
+              text: Nächster Poll in {remaining}
+              invert: true
+              bar_height: 10px
+              bar_foreground: var(--state-icon-color)
+              bar_background: transparent
+              layout: hide_name
+          - type: conditional
+            conditions:
+              - entity: binary_sensor.geberit_aquaclean_ble_connected
+                state: 'on'
+            row:
+              type: custom:timer-bar-card
+              entity: binary_sensor.geberit_aquaclean_ble_connected
+              active_state: 'off'
+              translations:
+                'on': on request
+              full_row: true
+              layout: hide_name
 
-      # ── Descale ───────────────────────────────────────────────────────────
+      # ── Descaling ─────────────────────────────────────────────────────────
+      # descaling_state: 0=Idle 1=Preparing (~55 s) 2=Waiting for descaler 3=Running
+      # descaling_duration_min: countdown minutes (meaningful only when state=3)
       - type: entities
         title: Descale
-        icon: mdi:water-remove
+        icon: geberit:descaling
         entities:
+          - entity: sensor.geberit_aquaclean_descaling_state
+            name: Descaling State
+          - entity: sensor.geberit_aquaclean_descaling_duration
+            name: Descaling Duration
           - entity: sensor.geberit_aquaclean_days_until_next_descale
             name: Days Until Next Descale
           - entity: sensor.geberit_aquaclean_days_until_shower_restricted
@@ -200,20 +253,19 @@ views:
       # ── Ceramic Honeycomb Filter ──────────────────────────────────────────
       - type: entities
         title: Ceramic Honeycomb Filter
-        icon: mdi:air-purifier
+        icon: geberit:filter
         entities:
           - entity: sensor.geberit_aquaclean_days_until_filter_change
             name: Days Until Filter Change
-          - entity: sensor.geberit_aquaclean_last_filter_reset
-            name: Last Filter Reset
           - entity: sensor.geberit_aquaclean_next_filter_change
             name: Next Filter Change
+          - entity: sensor.geberit_aquaclean_last_filter_reset
+            name: Last Filter Reset
           - entity: sensor.geberit_aquaclean_filter_reset_count
             name: Filter Reset Count
 
       # ── User Profile Settings ─────────────────────────────────────────────
-      # Structured to mirror the web UI sections. number entities render as
-      # sliders in HA — tap the value to type a new one, or drag the slider.
+      # number entities render as sliders — tap the value to type, or drag.
 
       - type: entities
         title: Shower
@@ -241,7 +293,7 @@ views:
 
       - type: entities
         title: Dryer
-        icon: mdi:hair-dryer
+        icon: geberit:airdryer
         entities:
           - entity: number.geberit_aquaclean_dryer_state
             name: Dryer (0=Off, 1=On)
@@ -250,31 +302,50 @@ views:
           - entity: number.geberit_aquaclean_dryer_spray_intensity
             name: Spray Intensity
 
-      # Orientation Light — common (device-wide) settings
+      # ── Orientation Light ─────────────────────────────────────────────────
+      # Buttons apply immediately via proc 0x0B (confirmed live 2026-06-04).
+      # Number entities control stored settings (power cycle to persist).
       - type: entities
         title: Orientation Light
-        icon: mdi:lightbulb-outline
+        icon: geberit:light
         entities:
+          - type: buttons
+            entities:
+              - entity: button.geberit_aquaclean_orientation_light_off
+                name: Off
+              - entity: button.geberit_aquaclean_orientation_light_on
+                name: On
+              - entity: button.geberit_aquaclean_orientation_light_when_approached
+                name: When Approached
           - entity: number.geberit_aquaclean_orientation_light_activation
             name: Activation (0=Off, 1=On, 2=When Approached)
           - entity: number.geberit_aquaclean_orientation_light_brightness
             name: Brightness
           - entity: number.geberit_aquaclean_orientation_light_color
-            name: Color (0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite)
+            name: >-
+              Color
+              (0=Blue,1=Turquoise,2=Magenta,3=Orange,4=Yellow,5=WarmWhite,6=ColdWhite)
 
+      # ── Odour Extraction ──────────────────────────────────────────────────
       - type: entities
         title: Odour Extraction
-        icon: mdi:air-filter
+        icon: geberit:odourextraction
         entities:
+          - type: buttons
+            entities:
+              - entity: button.geberit_aquaclean_toggle_odour_extraction
+                name: Toggle
+              - entity: button.geberit_aquaclean_odour_extraction_run_on
+                name: Run-On
           - entity: number.geberit_aquaclean_odour_extraction
             name: Odour Extraction (0=Off, 1=On)
           - entity: number.geberit_aquaclean_odour_extraction_run_on
             name: Run-On (0=Off, 1=On)
 
-      # WC Lid — common (device-wide) settings
+      # ── WC Lid ────────────────────────────────────────────────────────────
       - type: entities
         title: WC Lid
-        icon: mdi:toilet
+        icon: geberit:adjustabletoiletseat
         entities:
           - entity: number.geberit_aquaclean_wc_lid_sensor_sensitivity
             name: Sensor Sensitivity
@@ -285,10 +356,22 @@ views:
 
       - type: entities
         title: Seat Heating
-        icon: mdi:heat-wave
+        icon: geberit:toiletseatheater
         entities:
           - entity: number.geberit_aquaclean_wc_seat_heat
             name: Temperature
+
+      # ── Calibration ───────────────────────────────────────────────────────
+      # Offsets set via lid/shower arm calibration. Non-zero = user has adjusted
+      # the default position. Read from SPL params 12 and 13.
+      - type: entities
+        title: Calibration
+        icon: mdi:tune
+        entities:
+          - entity: sensor.geberit_aquaclean_lid_offset_position
+            name: Lid Offset Position
+          - entity: sensor.geberit_aquaclean_spray_arm_offset_position
+            name: Spray Arm Offset Position
 
       # ── Device Information ────────────────────────────────────────────────
       - type: entities
