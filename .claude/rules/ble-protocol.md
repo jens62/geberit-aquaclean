@@ -112,6 +112,33 @@ permanently corrupts `GetFilterStatus` state until power-cycle. Do NOT add 8/9/1
 | 14 | DryerArmOffsetPosition | — |
 | 255 | EndiannessCheck | — |
 
+### AC_ DpId namespace — mapping to SPL indices
+
+The app uses two DpId namespaces: **`AC_`** for all AquaClean models (Mera Comfort, AcSela,
+AcCama, …) and **`DP_`** for Alba/Ble20 devices. They do not overlap.
+
+`AC_STATUS_*` DpIds map directly to SPL indices:
+`AC_STATUS_USER_PRESENT = 65596` = index 0, `AC_STATUS_ORIENTATION_LIGHT = 65605` = index 9,
+and so on (offset 65596). **`AC_` does not mean Mera Comfort** — it is the general AquaClean
+protocol namespace.
+
+**`AC_STATUS_ORIENTATION_LIGHT` (= 65605, SPL index 9):**
+- AcSela only. Index 9 always returns 0 on HB2304EU298413 — orientation light state is
+  invisible over BLE on Mera Comfort (confirmed from BLE log analysis).
+- Not in `SPL_PARAMS_MERA_COMFORT = [0,1,2,3,4,5,6,7]` — intentionally excluded.
+- **DO NOT probe index 9 on Mera Comfort** — same danger as indices 8 and 10:
+  permanently corrupts `GetFilterStatus` state until power-cycle.
+
+To probe on an **AcSela** (not Mera Comfort):
+```bash
+# GetSystemParameterList for index 9 only — AcSela only, DO NOT run on Mera Comfort
+/Users/jens/venv/bin/python tools/geberit-ble-probe.py \
+  --proc 0x0D \
+  --args 01 09 00 00 00 00 00 00 00 00 00 00 00
+```
+Args format: `count(1 byte)` + `param indices` + `zero-pad to 13 bytes total`.
+A non-zero response value = live orientation light state on AcSela.
+
 ### SPL parameter semantics — label corrections
 
 Some code comment labels are misleading:
