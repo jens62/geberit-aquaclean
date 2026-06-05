@@ -42,7 +42,7 @@ views:
             attribute: connected_at
             name: Connected Since
             icon: mdi:clock-check
-          - entity: sensor.ble_signal_quality
+          - entity: sensor.geberit_aquaclean_ble_signal
             name: BLE Signal
           - type: attribute
             entity: binary_sensor.geberit_aquaclean_ble_connected
@@ -74,7 +74,7 @@ views:
               name: Connected
             - entity: sensor.aquaclean_proxy_connection
               name: Connection
-            - entity: sensor.wifi_signal_quality
+            - entity: sensor.aquaclean_proxy_wifi_signal
               name: WiFi Signal
             - type: attribute
               entity: binary_sensor.aquaclean_proxy_connected
