@@ -92,8 +92,9 @@ capture the phone's own BLE traffic.
 ### Procedure
 
 1. Start Wireshark with the nRF52840 sniffer plugin — see `ble-traffic-capture.md`
-   for setup. Use REQ_FOLLOW in Wireshark (not direct serial — see
-   `tools/archive/sniff.py` for why direct serial is a dead end).
+   for setup. Use REQ_FOLLOW in Wireshark.
+   **Do NOT use direct serial / Python REQ_FOLLOW** — this is a confirmed dead end
+   with nrfutil v4.x firmware; `tools/archive/sniff.py` is archived for this reason.
 2. Let the remote control connect to the toilet and operate normally
    (press buttons on the remote).
 3. Save the `.pcapng` capture.
