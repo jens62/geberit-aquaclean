@@ -1,7 +1,7 @@
 # HACS Entity Reference
 
 **Auto-generated** — do not edit by hand.
-Run `tools/generate-alba-entity-docs.py` after any change to the entity lists.
+Run `tools/generate-hacs-entity-docs.py` after any change to the entity lists.
 
 Entity IDs assume the default integration name `Geberit AquaClean`.
 ESPHome proxy entities use the `aquaclean_proxy_` prefix (separate HA device).

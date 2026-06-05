@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/developer/alba-entity-reference.md — complete HACS entity reference.
+"""Generate docs/developer/hacs-entity-reference.md — complete HACS entity reference.
 
 Covers every entity registered by the geberit_aquaclean custom component:
   - List-based entities parsed directly from the source files
@@ -9,7 +9,7 @@ Covers every entity registered by the geberit_aquaclean custom component:
 Run after any change to entity lists in sensor/binary_sensor/number/button.py.
 
 Usage:
-    /Users/jens/venv/bin/python tools/generate-alba-entity-docs.py
+    /Users/jens/venv/bin/python tools/generate-hacs-entity-docs.py
 """
 
 import re
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT   = Path(__file__).resolve().parent.parent
 CUSTOM = ROOT / "custom_components" / "geberit_aquaclean"
-OUT    = ROOT / "docs" / "developer" / "alba-entity-reference.md"
+OUT    = ROOT / "docs" / "developer" / "hacs-entity-reference.md"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -278,7 +278,7 @@ def render(rows: list[dict]) -> str:
         "# HACS Entity Reference",
         "",
         "**Auto-generated** — do not edit by hand.",
-        "Run `tools/generate-alba-entity-docs.py` after any change to the entity lists.",
+        "Run `tools/generate-hacs-entity-docs.py` after any change to the entity lists.",
         "",
         "Entity IDs assume the default integration name `Geberit AquaClean`.",
         "ESPHome proxy entities use the `aquaclean_proxy_` prefix (separate HA device).",

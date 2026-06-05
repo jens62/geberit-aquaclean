@@ -54,7 +54,7 @@ SENSORS: list[tuple] = [
 
 # (data_key, friendly_name, unit, device_class, state_class, icon)
 # Sensors only available on AquaClean Alba devices.
-# Trailing "# DpId N" comments are machine-readable: run tools/generate-alba-entity-docs.py after any change.
+# Trailing "# DpId N" comments are machine-readable: run tools/generate-hacs-entity-docs.py after any change.
 ALBA_SENSORS: list[tuple] = [
     ("alba_spray_arm_cleaning_status",               "Spray Arm Cleaning Status",         None, None,                          None,                              "mdi:spray-bottle"),            # DpId 567 (enum)
     ("alba_descaling_status",                        "Descaling Status",                  None, None,                          None,                              "mdi:water-remove"),            # DpId 585 (enum)

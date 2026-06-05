@@ -23,7 +23,7 @@ BINARY_SENSORS: list[tuple] = [
 
 # (data_key, friendly_name, device_class, icon)
 # Binary sensors only available on AquaClean Alba devices.
-# Trailing "# DpId N" comments are machine-readable: run tools/generate-alba-entity-docs.py after any change.
+# Trailing "# DpId N" comments are machine-readable: run tools/generate-hacs-entity-docs.py after any change.
 ALBA_BINARY_SENSORS: list[tuple] = [
     # Error indicators — True means the fault is present
     ("alba_error_power_supply",        "Power Supply Error",    BinarySensorDeviceClass.PROBLEM, "mdi:power-plug-off"),    # DpId 93
