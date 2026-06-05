@@ -311,6 +311,46 @@ Uses Custom Button Card from HACS with custom SVG icons. See [`dashboard_button_
 4. Paste the YAML from either file
 5. Click **Save**
 
+### Signal quality template sensors
+
+The **BLE Connection** and **ESPHome Proxy** cards display human-readable signal quality
+labels such as *"Good (−62 dBm)"* via two template sensors (`sensor.ble_signal_quality`
+and `sensor.wifi_signal_quality`). These must be added to your `configuration.yaml` once.
+
+Add the following block (merge into an existing `template:` section if one already exists):
+
+```yaml
+template:
+  # Signal quality labels for the Geberit AquaClean Lovelace dashboards.
+  # Thresholds follow standard RF guidelines (separate scales for BLE and WiFi):
+  #   BLE:  Excellent > -55 dBm | Good -55…-70 | Fair -70…-80 | Weak < -80
+  #   WiFi: Excellent > -50 dBm | Good -50…-65 | Fair -65…-75 | Weak < -75
+  - sensor:
+      - name: "BLE Signal Quality"
+        icon: mdi:bluetooth
+        state: >
+          {% set v = states('sensor.geberit_aquaclean_ble_signal') | int(-999) %}
+          {% if v == -999 %}Unavailable
+          {% elif v > -55 %}Excellent ({{ v }} dBm)
+          {% elif v > -70 %}Good ({{ v }} dBm)
+          {% elif v > -80 %}Fair ({{ v }} dBm)
+          {% else %}Weak ({{ v }} dBm)
+          {% endif %}
+
+      - name: "WiFi Signal Quality"
+        icon: mdi:wifi
+        state: >
+          {% set v = states('sensor.aquaclean_proxy_wifi_signal') | float(-999) | int %}
+          {% if v == -999 %}Unavailable
+          {% elif v > -50 %}Excellent ({{ v }} dBm)
+          {% elif v > -65 %}Good ({{ v }} dBm)
+          {% elif v > -75 %}Fair ({{ v }} dBm)
+          {% else %}Weak ({{ v }} dBm)
+          {% endif %}
+```
+
+After saving, reload via **Developer Tools → YAML → Template Entities → Reload**.
+
 ## Troubleshooting
 
 ### Icons Not Displaying

@@ -11,6 +11,9 @@
 # Prerequisites (HACS Frontend):
 #   - custom:timer-bar-card  (Poll Status progress bar)
 #
+# Prerequisites (configuration.yaml):
+#   - Signal quality template sensors  →  homeassistant/SETUP_GUIDE.md § Signal quality template sensors
+#
 
 title: Geberit AquaClean Alba
 views:
@@ -40,7 +43,7 @@ views:
             attribute: connected_at
             name: Connected Since
             icon: mdi:clock-check
-          - entity: sensor.geberit_aquaclean_ble_rssi
+          - entity: sensor.ble_signal_quality
             name: BLE Signal
           - type: attribute
             entity: binary_sensor.geberit_aquaclean_ble_connected
@@ -71,7 +74,7 @@ views:
               name: Connected
             - entity: sensor.aquaclean_proxy_connection
               name: Connection
-            - entity: sensor.aquaclean_proxy_wifi_signal
+            - entity: sensor.wifi_signal_quality
               name: WiFi Signal
             - entity: sensor.aquaclean_proxy_free_heap
               name: Free Heap
