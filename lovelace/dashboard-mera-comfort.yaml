@@ -74,8 +74,10 @@ views:
               name: Connected
             - entity: sensor.aquaclean_proxy_connection
               name: Connection
-            - entity: sensor.aquaclean_proxy_wifi_signal
+            - entity: sensor.wifi_signal_quality
               name: WiFi Signal
+            - entity: sensor.aquaclean_proxy_wifi_signal
+              name: WiFi Signal (dBm)
             - type: attribute
               entity: binary_sensor.aquaclean_proxy_connected
               attribute: error_code
