@@ -42,8 +42,10 @@ views:
             attribute: connected_at
             name: Connected Since
             icon: mdi:clock-check
-          - entity: sensor.geberit_aquaclean_ble_signal
+          - entity: sensor.ble_signal_quality
             name: BLE Signal
+          - entity: sensor.geberit_aquaclean_ble_signal
+            name: BLE Signal (dBm)
           - type: attribute
             entity: binary_sensor.geberit_aquaclean_ble_connected
             attribute: error_code
