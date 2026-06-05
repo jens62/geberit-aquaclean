@@ -136,6 +136,20 @@ Use `ApiMode.get_system_info_data()` (already called by REST endpoint) to merge 
 
 ---
 
+### Entity reference doc generator for Mera Comfort (Option B)
+
+`tools/generate-alba-entity-docs.py` covers Alba entities only.
+A parallel `tools/generate-mera-entity-docs.py` should generate
+`docs/developer/mera-entity-reference.md` from the shared entity lists
+(`BINARY_SENSORS`, `PROFILE_NUMBERS`, `COMMON_NUMBERS`, `BUTTONS`) plus
+Mera-only subsets, without a DpId column (Mera Comfort uses SPL indices /
+profile setting IDs / common setting IDs — not DpIds).
+Column layout: Entity ID | Friendly Name | Protocol reference (e.g. `SPL index 0`, `ProfileSetting ID 2`, `CommonSetting ID 3`).
+See `docs/developer/alba-entity-reference.md` and `tools/generate-alba-entity-docs.py`
+for the pattern to follow.
+
+---
+
 ### Agentic BLE protocol fuzzer
 
 New script `tools/geberit-ble-fuzz.py` with modes:

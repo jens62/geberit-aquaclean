@@ -36,8 +36,8 @@ BUTTONS: list[tuple[str, str, str]] = [
     ("lid_position_offset_increment", "Lid Position Offset Increment", "mdi:plus-circle-outline"),
     ("lid_position_offset_decrement", "Lid Position Offset Decrement", "mdi:minus-circle-outline"),
     ("reset_filter_counter",          "Reset Filter Counter",          "mdi:air-purifier"),
-    ("sync_rtc",                      "Sync RTC",                      "mdi:clock-check-outline"),
-    ("restart_alba_device",           "Restart Alba Device",           "mdi:restart"),
+    ("sync_rtc",                      "Sync RTC",                      "mdi:clock-check-outline"),  # DpId 270 (write-only)
+    ("restart_alba_device",           "Restart Alba Device",           "mdi:restart"),              # DpId 153 (write-only)
 ]
 
 # Commands that only work while a user is seated — entity becomes unavailable otherwise.
@@ -69,9 +69,10 @@ _MERA_ONLY = {
 _ALBA_ONLY = {"sync_rtc", "restart_alba_device"}
 
 # Alba-specific commands that take a value parameter: (command, value, friendly_name, icon)
+# Trailing "# DpId N" comments are machine-readable: run tools/generate-alba-entity-docs.py after any change.
 ALBA_COMMAND_BUTTONS: list[tuple[str, int, str, str]] = [
-    ("start_stop_spray_arm_cleaning", 1, "Start Spray Arm Cleaning", "mdi:spray-bottle"),
-    ("start_stop_spray_arm_cleaning", 0, "Stop Spray Arm Cleaning",  "mdi:spray-bottle-off"),
+    ("start_stop_spray_arm_cleaning", 1, "Start Spray Arm Cleaning", "mdi:spray-bottle"),     # DpId 566 (write-only)
+    ("start_stop_spray_arm_cleaning", 0, "Stop Spray Arm Cleaning",  "mdi:spray-bottle-off"), # DpId 566 (write-only)
 ]
 
 

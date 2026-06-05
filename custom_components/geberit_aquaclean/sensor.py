@@ -54,40 +54,41 @@ SENSORS: list[tuple] = [
 
 # (data_key, friendly_name, unit, device_class, state_class, icon)
 # Sensors only available on AquaClean Alba devices.
+# Trailing "# DpId N" comments are machine-readable: run tools/generate-alba-entity-docs.py after any change.
 ALBA_SENSORS: list[tuple] = [
-    ("alba_spray_arm_cleaning_status",              "Spray Arm Cleaning Status",      None, None,                          None,                             "mdi:spray-bottle"),
-    ("alba_descaling_status",                       "Descaling Status",               None, None,                          None,                             "mdi:water-remove"),
-    ("alba_days_until_next_descaling",              "Days Until Next Descaling",      "d",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,     "mdi:water-remove"),
-    ("alba_descaling_cycles",                       "Descaling Cycles",               None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
-    ("alba_credits_until_next_descaling",           "Credits Until Next Descaling",   None, None,                          SensorStateClass.MEASUREMENT,     "mdi:counter"),
-    ("alba_descaling_device_lock_remaining_days",   "Descaling Lock Remaining Days",  "d",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,     "mdi:lock-clock"),
-    ("alba_descaling_device_relock_remaining_cycles","Descaling Relock Remaining Cycles", None, None,                     SensorStateClass.MEASUREMENT,     "mdi:counter"),
-    ("alba_descaling_device_lock_status",           "Descaling Device Lock",          None, None,                          None,                             "mdi:lock"),
-    ("alba_unaccounted_shower_cycles",              "Unaccounted Shower Cycles",      None, None,                          SensorStateClass.MEASUREMENT,     "mdi:counter"),
-    ("alba_timestamp_last_descaling",               "Last Descaling",                 None, None,                          None,                             "mdi:calendar-clock"),
-    ("alba_timestamp_last_descaling_request",       "Last Descaling Request",         None, None,                          None,                             "mdi:calendar-clock"),
-    ("alba_rtc_time",                               "RTC Time",                       None, None,                          None,                             "mdi:clock-outline"),
-    ("alba_operation_time_total_s",                 "Operation Time Total",           "s",  SensorDeviceClass.DURATION,    SensorStateClass.TOTAL_INCREASING, "mdi:timer"),
-    ("alba_operation_time_since_power_up_s",        "Operation Time Since Power-Up",  "s",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,     "mdi:timer-outline"),
-    ("alba_product_registration_level",             "Product Registration Level",     None, None,                          None,                             "mdi:certificate-outline"),
-    ("alba_active_intensity",                       "Active Spray Intensity",         None, None,                          SensorStateClass.MEASUREMENT,     "mdi:water-boiler"),
-    ("alba_active_position",                        "Active Spray Position",          None, None,                          SensorStateClass.MEASUREMENT,     "mdi:arrow-left-right"),
-    ("alba_active_temperature",                     "Active Water Temperature",       None, None,                          SensorStateClass.MEASUREMENT,     "mdi:thermometer-water"),
+    ("alba_spray_arm_cleaning_status",               "Spray Arm Cleaning Status",         None, None,                          None,                              "mdi:spray-bottle"),            # DpId 567 (enum)
+    ("alba_descaling_status",                        "Descaling Status",                  None, None,                          None,                              "mdi:water-remove"),            # DpId 585 (enum)
+    ("alba_days_until_next_descaling",               "Days Until Next Descaling",         "d",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,      "mdi:water-remove"),            # DpId 589
+    ("alba_descaling_cycles",                        "Descaling Cycles",                  None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 592
+    ("alba_credits_until_next_descaling",            "Credits Until Next Descaling",      None, None,                          SensorStateClass.MEASUREMENT,      "mdi:counter"),                 # DpId 781
+    ("alba_descaling_device_lock_remaining_days",    "Descaling Lock Remaining Days",     "d",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,      "mdi:lock-clock"),              # DpId 977
+    ("alba_descaling_device_relock_remaining_cycles","Descaling Relock Remaining Cycles", None, None,                          SensorStateClass.MEASUREMENT,      "mdi:counter"),                 # DpId 979
+    ("alba_descaling_device_lock_status",            "Descaling Device Lock",             None, None,                          None,                              "mdi:lock"),                    # DpId 983 (enum)
+    ("alba_unaccounted_shower_cycles",               "Unaccounted Shower Cycles",         None, None,                          SensorStateClass.MEASUREMENT,      "mdi:counter"),                 # DpId 588
+    ("alba_timestamp_last_descaling",                "Last Descaling",                    None, None,                          None,                              "mdi:calendar-clock"),          # DpId 590
+    ("alba_timestamp_last_descaling_request",        "Last Descaling Request",            None, None,                          None,                              "mdi:calendar-clock"),          # DpId 591
+    ("alba_rtc_time",                                "RTC Time",                          None, None,                          None,                              "mdi:clock-outline"),           # DpId 15
+    ("alba_operation_time_total_s",                  "Operation Time Total",              "s",  SensorDeviceClass.DURATION,    SensorStateClass.TOTAL_INCREASING,  "mdi:timer"),                   # DpId 148
+    ("alba_operation_time_since_power_up_s",         "Operation Time Since Power-Up",     "s",  SensorDeviceClass.DURATION,    SensorStateClass.MEASUREMENT,      "mdi:timer-outline"),           # DpId 149
+    ("alba_product_registration_level",              "Product Registration Level",        None, None,                          None,                              "mdi:certificate-outline"),     # DpId 796 (enum)
+    ("alba_active_intensity",                        "Active Spray Intensity",            None, None,                          SensorStateClass.MEASUREMENT,      "mdi:water-boiler"),            # r:DpId 571  w:DpId 570
+    ("alba_active_position",                         "Active Spray Position",             None, None,                          SensorStateClass.MEASUREMENT,      "mdi:arrow-left-right"),        # r:DpId 573  w:DpId 572
+    ("alba_active_temperature",                      "Active Water Temperature",          None, None,                          SensorStateClass.MEASUREMENT,      "mdi:thermometer-water"),       # r:DpId 575  w:DpId 574
     # Version strings from instanced DpIds 785–787
-    ("alba_fus_version",                            "FUS Version",                    None, None,                          None,                             "mdi:chip"),
-    ("alba_geberit_loader_version",                 "Geberit Loader Version",         None, None,                          None,                             "mdi:chip"),
-    ("alba_wireless_stack_version",                 "Wireless Stack Version",         None, None,                          None,                             "mdi:chip"),
+    ("alba_fus_version",                             "FUS Version",                       None, None,                          None,                              "mdi:chip"),                    # DpId 785 (3 instances)
+    ("alba_geberit_loader_version",                  "Geberit Loader Version",            None, None,                          None,                              "mdi:chip"),                    # DpId 786 (2 instances)
+    ("alba_wireless_stack_version",                  "Wireless Stack Version",            None, None,                          None,                              "mdi:chip"),                    # DpId 787 (3 instances)
     # Progress percentages (live during operation)
-    ("alba_anal_shower_progress_pct",               "Anal Shower Progress",           "%",  None,                          SensorStateClass.MEASUREMENT,     "mdi:percent"),
-    ("alba_descaling_progress_pct",                 "Descaling Progress",             "%",  None,                          SensorStateClass.MEASUREMENT,     "mdi:percent"),
-    ("alba_spray_arm_cleaning_progress_pct",        "Spray Arm Cleaning Progress",    "%",  None,                          SensorStateClass.MEASUREMENT,     "mdi:percent"),
+    ("alba_anal_shower_progress_pct",                "Anal Shower Progress",              "%",  None,                          SensorStateClass.MEASUREMENT,      "mdi:percent"),                 # DpId 565 (instanced, pct)
+    ("alba_descaling_progress_pct",                  "Descaling Progress",                "%",  None,                          SensorStateClass.MEASUREMENT,      "mdi:percent"),                 # DpId 586 (instanced, pct)
+    ("alba_spray_arm_cleaning_progress_pct",         "Spray Arm Cleaning Progress",       "%",  None,                          SensorStateClass.MEASUREMENT,      "mdi:percent"),                 # DpId 568 (instanced, pct)
     # Lifetime statistics counters from instanced DpId 689
-    ("alba_stats_total_usages",                     "Total AquaClean Uses",           None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
-    ("alba_stats_total_anal_showers",               "Total Anal Shower Uses",         None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
-    ("alba_stats_total_lady_showers",               "Total Lady Shower Uses",         None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
-    ("alba_stats_total_dryings",                    "Total Dryer Uses",               None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
-    ("alba_stats_total_descalings",                 "Total Descaling Cycles",         None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
-    ("alba_stats_total_spray_arm_cleanings",        "Total Spray Arm Cleanings",      None, None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter"),
+    ("alba_stats_total_usages",                      "Total AquaClean Uses",              None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 689 inst=31
+    ("alba_stats_total_anal_showers",                "Total Anal Shower Uses",            None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 689 inst=32
+    ("alba_stats_total_lady_showers",                "Total Lady Shower Uses",            None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 689 inst=33
+    ("alba_stats_total_dryings",                     "Total Dryer Uses",                  None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 689 inst=34
+    ("alba_stats_total_descalings",                  "Total Descaling Cycles",            None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 689 inst=35
+    ("alba_stats_total_spray_arm_cleanings",         "Total Spray Arm Cleanings",         None, None,                          SensorStateClass.TOTAL_INCREASING,  "mdi:counter"),                 # DpId 689 inst=36
 ]
 
 

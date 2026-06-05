@@ -23,22 +23,23 @@ BINARY_SENSORS: list[tuple] = [
 
 # (data_key, friendly_name, device_class, icon)
 # Binary sensors only available on AquaClean Alba devices.
+# Trailing "# DpId N" comments are machine-readable: run tools/generate-alba-entity-docs.py after any change.
 ALBA_BINARY_SENSORS: list[tuple] = [
     # Error indicators — True means the fault is present
-    ("alba_error_power_supply",        "Power Supply Error",    BinarySensorDeviceClass.PROBLEM, "mdi:power-plug-off"),
-    ("alba_error_water_heater",        "Water Heater Error",    BinarySensorDeviceClass.PROBLEM, "mdi:water-boiler-off"),
-    ("alba_error_level_control",       "Level Control Error",   BinarySensorDeviceClass.PROBLEM, "mdi:gauge-low"),
-    ("alba_error_user_detection",      "User Detection Error",  BinarySensorDeviceClass.PROBLEM, "mdi:account-alert"),
-    ("alba_error_water_pump",          "Water Pump Error",      BinarySensorDeviceClass.PROBLEM, "mdi:water-pump-off"),
-    ("alba_error_spray_arm_drive",     "Spray Arm Drive Error", BinarySensorDeviceClass.PROBLEM, "mdi:cog-off"),
-    ("alba_error_maintenance_request", "Maintenance Request",   BinarySensorDeviceClass.PROBLEM, "mdi:wrench-clock"),
-    ("alba_error_descaling",           "Descaling Error",       BinarySensorDeviceClass.PROBLEM, "mdi:water-remove"),
+    ("alba_error_power_supply",        "Power Supply Error",    BinarySensorDeviceClass.PROBLEM, "mdi:power-plug-off"),    # DpId 93
+    ("alba_error_water_heater",        "Water Heater Error",    BinarySensorDeviceClass.PROBLEM, "mdi:water-boiler-off"),  # DpId 764
+    ("alba_error_level_control",       "Level Control Error",   BinarySensorDeviceClass.PROBLEM, "mdi:gauge-low"),         # DpId 765
+    ("alba_error_user_detection",      "User Detection Error",  BinarySensorDeviceClass.PROBLEM, "mdi:account-alert"),     # DpId 766
+    ("alba_error_water_pump",          "Water Pump Error",      BinarySensorDeviceClass.PROBLEM, "mdi:water-pump-off"),    # DpId 789
+    ("alba_error_spray_arm_drive",     "Spray Arm Drive Error", BinarySensorDeviceClass.PROBLEM, "mdi:cog-off"),           # DpId 790
+    ("alba_error_maintenance_request", "Maintenance Request",   BinarySensorDeviceClass.PROBLEM, "mdi:wrench-clock"),      # DpId 820
+    ("alba_error_descaling",           "Descaling Error",       BinarySensorDeviceClass.PROBLEM, "mdi:water-remove"),      # DpId 982
     # Operating modes
-    ("alba_demo_mode",                 "Demo Mode",             None,                            "mdi:monitor-eye"),
-    ("alba_showroom_mode",             "Showroom Mode",         None,                            "mdi:store-outline"),
-    ("alba_dry_run_mode",              "Dry Run Mode",          None,                            "mdi:water-off-outline"),
-    # Active oscillation
-    ("alba_active_oscillation",        "Spray Arm Oscillation", None,                            "mdi:rotate-360"),
+    ("alba_demo_mode",                 "Demo Mode",             None,                            "mdi:monitor-eye"),       # DpId 795
+    ("alba_showroom_mode",             "Showroom Mode",         None,                            "mdi:store-outline"),     # DpId 803
+    ("alba_dry_run_mode",              "Dry Run Mode",          None,                            "mdi:water-off-outline"), # DpId 810
+    # Active oscillation (also writable as number entity)
+    ("alba_active_oscillation",        "Spray Arm Oscillation", None,                            "mdi:rotate-360"),        # r:DpId 577  w:DpId 576
 ]
 
 

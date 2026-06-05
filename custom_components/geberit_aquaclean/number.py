@@ -31,11 +31,12 @@ PROFILE_NUMBERS: list[tuple] = [
 
 # (data_key, command, friendly_name, min_value, max_value, icon)
 # Live (active) setting sliders — only available on Alba; write takes effect immediately.
+# Trailing "# DpId N" comments are machine-readable: run tools/generate-alba-entity-docs.py after any change.
 ALBA_ACTIVE_NUMBERS: list[tuple] = [
-    ("alba_active_intensity",   "set_active_intensity",   "Active Spray Intensity",   0, 4, "mdi:water-boiler"),
-    ("alba_active_position",    "set_active_position",    "Active Spray Position",    0, 4, "mdi:arrow-left-right"),
-    ("alba_active_temperature", "set_active_temperature", "Active Water Temperature", 0, 5, "mdi:thermometer-water"),
-    ("alba_active_oscillation", "set_active_oscillation", "Spray Arm Oscillation",    0, 1, "mdi:rotate-360"),
+    ("alba_active_intensity",   "set_active_intensity",   "Active Spray Intensity",   0, 4, "mdi:water-boiler"),     # r:DpId 571  w:DpId 570
+    ("alba_active_position",    "set_active_position",    "Active Spray Position",    0, 4, "mdi:arrow-left-right"), # r:DpId 573  w:DpId 572
+    ("alba_active_temperature", "set_active_temperature", "Active Water Temperature", 0, 5, "mdi:thermometer-water"),# r:DpId 575  w:DpId 574
+    ("alba_active_oscillation", "set_active_oscillation", "Spray Arm Oscillation",    0, 1, "mdi:rotate-360"),       # r:DpId 577  w:DpId 576
 ]
 
 # (data_key, setting_id, friendly_name, min_value, max_value, icon)
