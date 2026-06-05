@@ -145,6 +145,21 @@ codes (33–36, 4, 37, 6–9) unless `--unsafe` is passed.
 
 ---
 
+### nRF52840 passive sniff of remote control BLE traffic
+
+**Goal:** discover procedure codes and SetCommand codes the phone app never sends.
+The physical remote control (`b0:10:a0:68:5c:8b`) connects to the toilet independently
+and may use remote-only procedures not visible in any app capture.
+
+**Method:** nRF52840 dongle in Wireshark passive-sniffer mode (REQ_FOLLOW, NOT direct
+serial — see `tools/archive/sniff.py`). Operate the remote normally during capture, then
+analyse ATT Write frames with `tools/find-geberit-remote.py <capture.pcapng>`. Compare
+result against known procedure table in `ble-protocol.md`.
+
+See `docs/developer/protocol-discovery.md` for full context and approach comparison.
+
+---
+
 ## Resolved / implemented items
 
 Archived to `.claude/rules/archive.md` (2026-06-03).
