@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Generate docs/developer/alba-entity-reference.md from annotated ALBA entity lists.
+"""Generate docs/developer/alba-entity-reference.md — complete HACS entity reference.
 
-Each entity tuple in the four HACS entity files carries a trailing  # DpId N  comment
-(machine-readable).  This script extracts those annotations and writes the reference table.
+Covers every entity registered by the geberit_aquaclean custom component:
+  - List-based entities parsed directly from the source files
+  - Class-based entities (performance stats, connection sensors) hardcoded here
+  - Availability column: All / Alba only / Mera only / ESPHome only
 
-Run after any change to ALBA_SENSORS, ALBA_BINARY_SENSORS, ALBA_ACTIVE_NUMBERS,
-ALBA_COMMAND_BUTTONS, or the _ALBA_ONLY entries in BUTTONS.
+Run after any change to entity lists in sensor/binary_sensor/number/button.py.
 
 Usage:
     /Users/jens/venv/bin/python tools/generate-alba-entity-docs.py
@@ -18,102 +19,232 @@ ROOT   = Path(__file__).resolve().parent.parent
 CUSTOM = ROOT / "custom_components" / "geberit_aquaclean"
 OUT    = ROOT / "docs" / "developer" / "alba-entity-reference.md"
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
-def _extract_block(src: str, list_name: str) -> str:
-    """Return the content between the opening [ and closing ] of list_name = [...]."""
-    # Match list_name followed by = [ (skipping the type annotation list[...])
-    m = re.search(rf'\b{re.escape(list_name)}\b[^=]*=\s*\[', src)
+def _extract_block(src: str, name: str) -> str:
+    """Return content of  name = [...]  (handles type annotations like list[tuple])."""
+    m = re.search(rf'\b{re.escape(name)}\b[^=]*=\s*\[', src)
     if not m:
         return ""
     depth, pos = 1, m.end()
     while pos < len(src) and depth:
-        if src[pos] == '[':
-            depth += 1
-        elif src[pos] == ']':
-            depth -= 1
+        if src[pos] == '[':   depth += 1
+        elif src[pos] == ']': depth -= 1
         pos += 1
     return src[m.end():pos - 1]
 
 
-# Matches a tuple line and captures:
-#   group 1 — first quoted string  (entity key or command)
-#   group 2 — last quoted string before the closing ) that is NOT an mdi/geberit icon
-#             (i.e. the friendly name)
-#   group 3 — trailing DpId annotation (may be absent)
-_LINE = re.compile(
-    r'\(\s*"([^"]+)"'           # first string: key / command
-    r'(?:.*?"([^"]+)")?'        # last non-icon string: friendly name (greedy inner)
-    r'[^)]*'
-    r'(?:#\s*(DpId[^)#\n]*))?'  # optional # DpId ... annotation
-    r'\s*\)'
-)
-
-# Simpler pattern to extract the friendly name: last string before the closing )
-# that does not start with mdi: or geberit:
-_NAME = re.compile(r'"(?!mdi:|geberit:)([^"]{3,})"')
+def _extract_set(src: str, name: str) -> set[str]:
+    """Return string members of  name = {"a", "b", ...}  or  name = {\\n  "a",\\n}."""
+    m = re.search(rf'\b{re.escape(name)}\b\s*=\s*\{{', src)
+    if not m:
+        return set()
+    depth, pos = 1, m.end()
+    while pos < len(src) and depth:
+        if src[pos] == '{':   depth += 1
+        elif src[pos] == '}': depth -= 1
+        pos += 1
+    block = src[m.end():pos - 1]
+    return set(re.findall(r'"([^"]+)"', block))
 
 
-def _parse_block(block: str, domain: str, name_field: int = 1) -> list[dict]:
-    """Extract rows from a list block.  name_field=1 for (key, name, ...) tuples,
-    name_field=2 for (command, value, name, ...) tuples."""
+_ICON_PREFIX = re.compile(r'^(?:mdi|geberit):')
+_NAME_RE     = re.compile(r'"([^"]*)"')
+
+
+def _strings(line: str) -> list[str]:
+    """All quoted strings on a line that are not icon references."""
+    return [s for s in _NAME_RE.findall(line) if not _ICON_PREFIX.match(s)]
+
+
+def _dpid(line: str) -> str:
+    m = re.search(r'#\s*((?:r:)?DpId[^\n]*)', line)
+    return m.group(1).strip() if m else "—"
+
+
+def _entity_id(domain: str, uid_suffix: str) -> str:
+    """Derive HA entity_id from domain and unique_id suffix for AquaCleanEntity."""
+    return f"{domain}.geberit_aquaclean_{uid_suffix}"
+
+
+def _proxy_entity_id(domain: str, uid_suffix: str) -> str:
+    """Derive HA entity_id for AquaCleanProxyEntity (device: AquaClean Proxy)."""
+    return f"{domain}.aquaclean_proxy_{uid_suffix}"
+
+
+# ── per-list extractors ───────────────────────────────────────────────────────
+
+def from_sensors(src: str, list_name: str, availability: str,
+                 name_field: int = 1) -> list[dict]:
+    """(key, [cmd,] name, ...) lists — no availability field in tuple."""
     rows = []
-    for line in block.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#'):
+    for line in _extract_block(src, list_name).splitlines():
+        if not line.strip() or line.strip().startswith('#'):
             continue
-        # extract all quoted strings on this line (excluding icon prefixes)
-        strings = _NAME.findall(line)
-        if len(strings) < 2:
+        strs = _strings(line)
+        if len(strs) < 2:
             continue
-        key  = strings[0]
-        name = strings[name_field] if len(strings) > name_field else strings[-1]
-        # extract trailing DpId comment
-        dpid_m = re.search(r'#\s*((?:r:)?DpId[^\n]*)', line)
-        dpid = dpid_m.group(1).strip() if dpid_m else "—"
-        rows.append({"key": key, "name": name, "domain": domain, "dpid": dpid})
+        key  = strs[0]
+        name = strs[name_field] if len(strs) > name_field else strs[-1]
+        rows.append({"entity_id": _entity_id("sensor", key),
+                     "name": name, "availability": availability,
+                     "dpid": _dpid(line)})
     return rows
 
 
-def _entity_id(key: str, domain: str) -> str:
-    return f"{domain}.geberit_aquaclean_{key}"
+def from_binary_sensors(src: str, list_name: str, availability: str,
+                        has_mera_only_field: bool = False) -> list[dict]:
+    """(key, name, device_class, icon_on, icon_off[, mera_only]) lists."""
+    rows = []
+    for line in _extract_block(src, list_name).splitlines():
+        if not line.strip() or line.strip().startswith('#'):
+            continue
+        strs = _strings(line)
+        if len(strs) < 2:
+            continue
+        key, name = strs[0], strs[1]
+        avail = availability
+        if has_mera_only_field:
+            # last Python token on the line before closing ) is True/False
+            if re.search(r'\bTrue\b', line):
+                avail = "Mera only"
+        rows.append({"entity_id": _entity_id("binary_sensor", key),
+                     "name": name, "availability": avail, "dpid": _dpid(line)})
+    return rows
 
 
-# ── parse ─────────────────────────────────────────────────────────────────────
+def from_numbers(src: str, list_name: str, availability: str,
+                 name_field: int = 1,
+                 mera_only_setting_ids: frozenset = frozenset()) -> list[dict]:
+    """(key[, setting_id], name, ...) lists — optional mera_only_setting_ids check."""
+    rows = []
+    for line in _extract_block(src, list_name).splitlines():
+        if not line.strip() or line.strip().startswith('#'):
+            continue
+        strs = _strings(line)
+        if len(strs) < 2:
+            continue
+        key  = strs[0]
+        name = strs[name_field] if len(strs) > name_field else strs[-1]
+        avail = availability
+        if mera_only_setting_ids:
+            ints = re.findall(r'(?<!["\w])(\d+)(?!["\w])', line)
+            if ints and int(ints[0]) in mera_only_setting_ids:
+                avail = "Mera only"
+        rows.append({"entity_id": _entity_id("number", key),
+                     "name": name, "availability": avail, "dpid": _dpid(line)})
+    return rows
+
+
+def from_buttons(src: str, list_name: str,
+                 mera_only: set[str], alba_only: set[str],
+                 name_field: int = 1,
+                 override_availability: str | None = None) -> list[dict]:
+    """(command[, value], name, icon) — availability from _MERA_ONLY / _ALBA_ONLY,
+    or overridden when override_availability is given (e.g. ALBA_COMMAND_BUTTONS)."""
+    rows = []
+    for line in _extract_block(src, list_name).splitlines():
+        if not line.strip() or line.strip().startswith('#'):
+            continue
+        strs = _strings(line)
+        if len(strs) < 2:
+            continue
+        key  = strs[0]
+        name = strs[name_field] if len(strs) > name_field else strs[-1]
+        if override_availability:
+            avail = override_availability
+        elif key in mera_only:
+            avail = "Mera only"
+        elif key in alba_only:
+            avail = "Alba only"
+        else:
+            avail = "All"
+        rows.append({"entity_id": _entity_id("button", key),
+                     "name": name, "availability": avail, "dpid": _dpid(line)})
+    return rows
+
+
+# ── hardcoded class-based entities ───────────────────────────────────────────
+# These are not defined in any list; they're individual classes in sensor.py / binary_sensor.py.
+# Update this table when those classes change.
+# entity_id is derived from _attr_name via HA slugification:
+#   AquaCleanEntity     → geberit_aquaclean_{slug}
+#   AquaCleanProxyEntity → aquaclean_proxy_{slug}  (separate HA device)
+
+HARDCODED: list[dict] = [
+    # ── sensor.py class-based — AquaCleanEntity (main toilet device) ──────────
+    {"entity_id": "sensor.geberit_aquaclean_ble_connection",   "name": "BLE Connection",    "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_last_connect",     "name": "Last Connect",      "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_last_poll_ms",     "name": "Last Poll ms",      "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_avg_connect",      "name": "Avg Connect",       "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_min_connect",      "name": "Min Connect",       "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_max_connect",      "name": "Max Connect",       "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_avg_poll",         "name": "Avg Poll",          "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_min_poll",         "name": "Min Poll",          "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_max_poll",         "name": "Max Poll",          "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_poll_samples",     "name": "Poll Samples",      "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_transport",        "name": "Transport",         "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_avg_ble_rssi",     "name": "Avg BLE RSSI",      "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_min_ble_rssi",     "name": "Min BLE RSSI",      "availability": "All",          "dpid": "—"},
+    {"entity_id": "sensor.geberit_aquaclean_max_ble_rssi",     "name": "Max BLE RSSI",      "availability": "All",          "dpid": "—"},
+    # ── sensor.py class-based — AquaCleanProxyEntity (ESPHome proxy device) ──
+    {"entity_id": "sensor.aquaclean_proxy_connection",         "name": "Connection",        "availability": "ESPHome only", "dpid": "—"},
+    {"entity_id": "sensor.aquaclean_proxy_wifi_signal",         "name": "WiFi Signal",       "availability": "ESPHome only", "dpid": "—"},
+    {"entity_id": "sensor.aquaclean_proxy_free_heap",          "name": "Free Heap",         "availability": "ESPHome only", "dpid": "—"},
+    {"entity_id": "sensor.aquaclean_proxy_max_free_block",     "name": "Max Free Block",    "availability": "ESPHome only", "dpid": "—"},
+    {"entity_id": "sensor.aquaclean_proxy_avg_wifi_rssi",      "name": "Avg WiFi RSSI",     "availability": "ESPHome only", "dpid": "—"},
+    {"entity_id": "sensor.aquaclean_proxy_min_wifi_rssi",      "name": "Min WiFi RSSI",     "availability": "ESPHome only", "dpid": "—"},
+    {"entity_id": "sensor.aquaclean_proxy_max_wifi_rssi",      "name": "Max WiFi RSSI",     "availability": "ESPHome only", "dpid": "—"},
+    # ── binary_sensor.py class-based ─────────────────────────────────────────
+    {"entity_id": "binary_sensor.geberit_aquaclean_ble_connected",     "name": "BLE Connected",     "availability": "All",          "dpid": "—"},
+    {"entity_id": "binary_sensor.aquaclean_proxy_connected",           "name": "Connected",         "availability": "ESPHome only", "dpid": "—"},
+    # ── button.py class-based — AquaCleanProxyEntity ─────────────────────────
+    {"entity_id": "button.aquaclean_proxy_restart_aquaclean_proxy",    "name": "Restart AquaClean Proxy", "availability": "ESPHome only", "dpid": "—"},
+]
+
+# CommonSetting IDs available only on Mera Comfort (IDs 4, 6, 7)
+_COMMON_MERA_ONLY_IDS: frozenset[int] = frozenset({4, 6, 7})
+
+# ── collect ───────────────────────────────────────────────────────────────────
 
 def collect_all() -> list[dict]:
+    sensor_src  = (CUSTOM / "sensor.py").read_text()
+    bsensor_src = (CUSTOM / "binary_sensor.py").read_text()
+    number_src  = (CUSTOM / "number.py").read_text()
+    button_src  = (CUSTOM / "button.py").read_text()
+
+    _MERA_ONLY_PROFILE_IDS = frozenset({0, 3, 5, 7, 8, 9, 13})
+    mera_only_btn = _extract_set(button_src, "_MERA_ONLY")
+    alba_only_btn = _extract_set(button_src, "_ALBA_ONLY")
+
     rows: list[dict] = []
 
-    # sensor.py — ALBA_SENSORS
-    src = (CUSTOM / "sensor.py").read_text()
-    rows += _parse_block(_extract_block(src, "ALBA_SENSORS"), "sensor")
+    # sensor.py
+    rows += from_sensors(sensor_src, "SENSORS",      "All")
+    rows += from_sensors(sensor_src, "ALBA_SENSORS",  "Alba only")
+    rows += HARDCODED
 
-    # binary_sensor.py — ALBA_BINARY_SENSORS
-    src = (CUSTOM / "binary_sensor.py").read_text()
-    rows += _parse_block(_extract_block(src, "ALBA_BINARY_SENSORS"), "binary_sensor")
+    # binary_sensor.py
+    rows += from_binary_sensors(bsensor_src, "BINARY_SENSORS",      "All", has_mera_only_field=True)
+    rows += from_binary_sensors(bsensor_src, "ALBA_BINARY_SENSORS",  "Alba only")
 
-    # number.py — ALBA_ACTIVE_NUMBERS  (key, command, name, …) → name_field=2
-    src = (CUSTOM / "number.py").read_text()
-    rows += _parse_block(_extract_block(src, "ALBA_ACTIVE_NUMBERS"), "number", name_field=2)
+    # number.py
+    rows += from_numbers(number_src, "PROFILE_NUMBERS", "All",
+                         mera_only_setting_ids=_MERA_ONLY_PROFILE_IDS)
+    rows += from_numbers(number_src, "COMMON_NUMBERS",  "All",
+                         mera_only_setting_ids=_COMMON_MERA_ONLY_IDS)
+    rows += from_numbers(number_src, "ALBA_ACTIVE_NUMBERS", "Alba only", name_field=2)
 
-    # button.py — _ALBA_ONLY entries inside BUTTONS (key == command, name_field=1)
-    src = (CUSTOM / "button.py").read_text()
-    # Alba-only single-command buttons
-    rows += _parse_block(_extract_block(src, "BUTTONS"), "button",
-                         name_field=1)
-    # Filter: only keep rows that have a DpId annotation (i.e. the _ALBA_ONLY ones)
-    rows = [r for r in rows if r["dpid"] != "—" or r["domain"] != "button"
-            or r["key"].startswith("alba_")]
+    # button.py
+    rows += from_buttons(button_src, "BUTTONS",             mera_only_btn, alba_only_btn)
+    rows += from_buttons(button_src, "ALBA_COMMAND_BUTTONS", mera_only_btn, alba_only_btn,
+                         name_field=2, override_availability="Alba only")
 
-    # button.py — ALBA_COMMAND_BUTTONS (command, value, name, …) → name_field=2
-    rows += _parse_block(_extract_block(src, "ALBA_COMMAND_BUTTONS"), "button", name_field=2)
-
-    # De-duplicate by (key, domain, name) — allows start/stop variants of same command;
-    # removes true duplicates where the same entity appears in multiple passes.
+    # de-duplicate by (entity_id, name) — allows start/stop variants of same command
     seen: set[tuple] = set()
     unique = []
     for r in rows:
-        sig = (r["key"], r["domain"], r["name"])
+        sig = (r["entity_id"], r["name"])
         if sig not in seen:
             seen.add(sig)
             unique.append(r)
@@ -129,23 +260,33 @@ _DOMAIN_LABEL = {
     "number":        "Numbers (`number.*`)",
     "button":        "Buttons (`button.*`)",
 }
+_AVAIL_BADGE = {
+    "All":          "All",
+    "Alba only":    "Alba only",
+    "Mera only":    "Mera only",
+    "ESPHome only": "ESPHome only",
+}
 
 
 def render(rows: list[dict]) -> str:
     by_domain: dict[str, list[dict]] = {d: [] for d in _DOMAIN_ORDER}
     for r in rows:
-        by_domain.setdefault(r["domain"], []).append(r)
+        domain = r["entity_id"].split(".")[0]
+        by_domain.setdefault(domain, []).append(r)
 
     lines = [
-        "# Alba HACS Entity Reference",
+        "# HACS Entity Reference",
         "",
         "**Auto-generated** — do not edit by hand.",
-        "Run `tools/generate-alba-entity-docs.py` after any change to the ALBA entity lists.",
+        "Run `tools/generate-alba-entity-docs.py` after any change to the entity lists.",
         "",
         "Entity IDs assume the default integration name `Geberit AquaClean`.",
-        "All entities are unavailable on Mera Comfort devices.",
+        "ESPHome proxy entities use the `aquaclean_proxy_` prefix (separate HA device).",
         "",
-        "DpId notation: `r:N` = read DpId, `w:N` = write DpId, `inst=N` = instance index.",
+        "**Availability:** All = Mera Comfort + Alba · Alba only · Mera only ·",
+        "ESPHome only = only when an ESPHome BLE proxy is configured.",
+        "",
+        "**DpId** (Alba only): `r:N` = read, `w:N` = write, `inst=N` = instance index.",
         "",
     ]
 
@@ -156,12 +297,13 @@ def render(rows: list[dict]) -> str:
         lines += [
             f"## {_DOMAIN_LABEL[domain]}",
             "",
-            "| Entity ID | Friendly Name | DpId |",
-            "|-----------|--------------|------|",
+            "| Entity ID | Friendly Name | Availability | DpId (Alba) |",
+            "|-----------|--------------|--------------|-------------|",
         ]
         for r in domain_rows:
-            eid = _entity_id(r["key"], r["domain"])
-            lines.append(f"| `{eid}` | {r['name']} | {r['dpid']} |")
+            avail = _AVAIL_BADGE.get(r["availability"], r["availability"])
+            dpid  = r["dpid"] if r["availability"] == "Alba only" else "—"
+            lines.append(f"| `{r['entity_id']}` | {r['name']} | {avail} | {dpid} |")
         lines.append("")
 
     return "\n".join(lines)
@@ -173,4 +315,9 @@ if __name__ == "__main__":
     rows = collect_all()
     doc  = render(rows)
     OUT.write_text(doc)
+    by_avail: dict[str, int] = {}
+    for r in rows:
+        by_avail[r["availability"]] = by_avail.get(r["availability"], 0) + 1
     print(f"Written {len(rows)} entities to {OUT.relative_to(ROOT)}")
+    for avail, count in sorted(by_avail.items()):
+        print(f"  {avail}: {count}")
