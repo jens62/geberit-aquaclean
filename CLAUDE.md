@@ -51,17 +51,22 @@ wrap the entire response in a fenced code block — square brackets are interpre
 
 ---
 
-## Rules — read the relevant file before every task
+## Rules — always loaded
 
-@.claude/rules/ble-connection-modes.md — BLE modes, polling, ESPHome API, MQTT reconnect
-@.claude/rules/device-state.md — device_state fields, `_set_ble_status` semantics, identification, GATT callbacks
-@.claude/rules/error-codes.md — ErrorCode system, hint propagation, CLI check-config
-@.claude/rules/circuit-breaker.md — On-demand circuit breaker, ESP32 auto-restart (implemented)
-@.claude/rules/ble-recovery.md — `wait_for_device_restart` protocol
-@.claude/rules/debugging-traps.md — Traps 1–15 + known open bugs (read first when debugging)
-@.claude/rules/ble-protocol.md — Protocol layers, Commands, ProfileSettings, SPL params, procedure codes
 @.claude/rules/naming-conventions.md — MANDATORY: config, REST, MQTT, webui labels, Python identifiers, MQTT↔HA sync
 @.claude/rules/release-process.md — Release checklist, HACS release, update.sh curl, tools/ curl
-@.claude/rules/roadmap-todo.md — All open TODO items and implementation notes
-@.claude/rules/hacs-roadmap.md — Planned HACS integration, zeroconf, Option A/B, dynamic UUIDs
-@.claude/rules/historical-notes.md — Feature summary, haggis removal, ESPHome probe results
+@.claude/rules/debugging-traps.md — Traps 1–15 + known open bugs (read first when debugging)
+
+## Rules — read on demand (do not auto-load; read before the relevant task)
+
+| File | Read when… |
+|------|------------|
+| `.claude/rules/ble-connection-modes.md` | Touching bridge modes, polling, ESPHome API, MQTT reconnect |
+| `.claude/rules/device-state.md` | Touching `device_state`, `_set_ble_status`, GATT callbacks |
+| `.claude/rules/error-codes.md` | Adding or changing error codes, hint propagation |
+| `.claude/rules/circuit-breaker.md` | Touching circuit breaker or ESP32 auto-restart |
+| `.claude/rules/ble-recovery.md` | Touching `wait_for_device_restart` |
+| `.claude/rules/ble-protocol.md` | Any BLE protocol work: procedures, SPL, Commands, ProfileSettings |
+| `.claude/rules/roadmap-todo.md` | Planning new features or checking open TODOs |
+| `.claude/rules/hacs-roadmap.md` | Planning HACS features, zeroconf, config flow |
+| `.claude/rules/historical-notes.md` | Background reference only |
