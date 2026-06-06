@@ -26,3 +26,10 @@ Active memory entries: 70  |  Pruned: 0 (1 inline MEMORY.md entry updated)  |  S
 
 ## Memory snapshot 2026-06-04
 Active memory entries: 70  |  Pruned: 0 (2 inline MEMORY.md entries updated)  |  Snapshot taken by /compress-memory
+
+## Archived 2026-06-06
+
+- ~~Proc 0x0A/0x0B — GetActiveCommonSetting / SetActiveCommonSetting~~ — **DONE** — removed from "Wire remaining unimplemented procedures" table; implemented via `SetActiveCommonSettingAsync`, used for orientation light control (confirmed live 2026-06-04)
+
+## Memory snapshot 2026-06-06
+Active memory entries: 68  |  Pruned: 2 (`feedback_python_interpreter.md`, `feedback_python_path.md` — duplicated CLAUDE.md Python path rule)  |  Snapshot taken by /compress-memory

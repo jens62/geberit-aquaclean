@@ -17,7 +17,6 @@ Wire CallClass first, then expose via REST/MQTT.
 |------|------|--------|
 | `0x06` | GetActualOutletTemperature | Not yet in bridge; trigger: start shower and sniff |
 | `0x07` | Per-node profile setting query | Wire format: `[node_id]` — 1-byte arg |
-| ~~`0x0A` / `0x0B`~~ | ~~GetActiveCommonSetting / SetActiveCommonSetting~~ | **DONE** — implemented via `SetActiveCommonSettingAsync`; used for orientation light control (confirmed live 2026-06-04) |
 | `0x51` | GetStoredCommonSetting(id) → 2-byte int | High priority; bridges to CommonSetting IDs 4–12 |
 | `0x56` | SetDeviceRegistrationLevel(int) // 257 | Low priority; purpose unclear |
 
