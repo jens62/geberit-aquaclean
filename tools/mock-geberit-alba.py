@@ -615,10 +615,16 @@ class _AriendiServerSide:
             # 5. Loop on incoming encrypted frames
             # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
             new_sabm = False
+            # Use a longer timeout for the first request after handshake: the app needs
+            # time to derive keys, encrypt, and transmit the Inventory request (500–1500 ms
+            # observed on iPhone).  Once the session is active, inter-frame gaps are <250 ms
+            # so 1 s is safe for subsequent frames.
+            _first_frame = True
             while True:
+                _timeout = 5.0 if _first_frame else 1.0
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
-                        self._rx_queue.get(), timeout=1.0
+                        self._rx_queue.get(), timeout=_timeout
                     )
                 except asyncio.TimeoutError:
                     # Client went silent — session is over.  Return WITHOUT setting
@@ -626,9 +632,6 @@ class _AriendiServerSide:
                     # disconnect, which makes advertising resume immediately rather
                     # than waiting ~30 s for the supervision timeout on the
                     # CONWISE/CSR USB adapter.
-                    # Timeout reduced from 5 s to 1 s: inter-frame gaps during active
-                    # sessions are < 250 ms; 1 s is safe.  Earlier force-disconnect
-                    # means advertising resumes 4 s sooner relative to the next scan.
                     print("[MockServer] no frames for 1 s — ending session to resume advertising")
                     return
 
@@ -642,6 +645,7 @@ class _AriendiServerSide:
                     break
                 if ft != 'I':
                     continue  # S-frame ACK or stray U-frame
+                _first_frame = False  # session is active; switch to 1 s inter-frame timeout
                 if not payload or payload[0] != _SEC_ENCRYPTED:
                     sec_str = f"0x{payload[0]:02X}" if payload else "0x??"
                     print(f"[MockServer] unexpected I-frame sec_type={sec_str} — ignored")
