@@ -690,6 +690,10 @@ Examples:
     if args.mac:
         mac = args.mac.upper()
 
+    # Infer alba from MAC OUI when auto-detection fails (e.g. no CONNECT_IND in file)
+    if device_type is None and mac and mac.lower().startswith("e4:85:01"):
+        device_type = "alba"
+
     if device_type is None:
         print("[!] Could not auto-detect device type — defaulting to Mera Comfort. "
               "Pass --mac to help with detection.", file=sys.stderr)
