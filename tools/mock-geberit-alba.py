@@ -1209,7 +1209,6 @@ Test sequence:
     )
     args = parser.parse_args()
 
-    global _VERBOSE
     _VERBOSE = args.verbose
 
     try:
