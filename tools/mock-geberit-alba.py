@@ -711,7 +711,7 @@ class GeberitServiceA(Service):
         print(f"Geberit A [Write]: {bytes(value).hex()}")
 
     @characteristic("559eb110-2390-11e8-b467-0ed5f89f718b", CharFlags.READ)
-    async def read_char(self, options):
+    def read_char(self, options):
         return b"Geberit-Mock"
 
 
