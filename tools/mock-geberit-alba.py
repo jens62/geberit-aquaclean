@@ -46,6 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
+_VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
     _BRIDGE_VERSION = _pkg_ver("geberit-aquaclean")
@@ -633,7 +634,7 @@ class _AriendiServerSide:
                     # disconnect, which makes advertising resume immediately rather
                     # than waiting ~30 s for the supervision timeout on the
                     # CONWISE/CSR USB adapter.
-                    print("[MockServer] no frames for 1 s — ending session to resume advertising")
+                    print(f"[MockServer] no frames for {_timeout:.0f} s — ending session to resume advertising")
                     return
 
                 if ft == 'DISCONNECT':
@@ -674,8 +675,12 @@ class _AriendiServerSide:
                             await asyncio.sleep(send_delay_sec)
                     # Drain any S-RR ACKs the app sent — the real device fires all notifications
                     # without blocking on per-frame ACKs; the app's auto-S-RR just accumulates here.
+                    _drained = 0
                     while not self._srr_queue.empty():
                         self._srr_queue.get_nowait()
+                        _drained += 1
+                    if _drained:
+                        print(f"[MockServer] drained {_drained} S-RR(s) after burst")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
@@ -763,7 +768,8 @@ class BtSigDataService(Service):
     @sig_write.setter
     def sig_write(self, value, options):
         data = bytes(value)
-        print(f"[Write→sig_write] {data.hex()}")
+        if _VERBOSE:
+            print(f"[Write→sig_write] {data.hex()}")
         if self._mode in ("handshake", "ble20") and self._arendi is not None:
             self._arendi.feed(data)
         else:
@@ -875,17 +881,19 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         await bus.disconnect()
         return
 
-    # Track the BlueZ object path of the currently connected BLE client.
+    # Track the BlueZ object path and address of the currently connected BLE client.
     # Used to force-disconnect when a session ends by timeout (not by peer).
     _connected_device_path = None
+    _connected_device_addr = None
 
     if objmgr is not None:
         def on_device_connected(path, interfaces):
-            nonlocal _connected_device_path
+            nonlocal _connected_device_path, _connected_device_addr
             if 'org.bluez.Device1' in interfaces:
                 addr = interfaces['org.bluez.Device1'].get('Address')
                 if isinstance(addr, Variant):
                     addr = addr.value
+                _connected_device_addr = addr
                 _connected_device_path = path
                 print(f"[Mock] BLE client connected:    {addr or path}")
 
@@ -896,7 +904,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 # there.  Clearing it here would prevent the force-disconnect when
                 # BlueZ fires the event before the session handler runs (which is
                 # the case when the connection is terminated cleanly by the peer).
-                print(f"[Mock] BLE client disconnected: {path}")
+                print(f"[Mock] BLE client disconnected: {_connected_device_addr or path}")
                 # Signal the running arendi session to exit immediately so advertising
                 # resumes right away — without this the frame loop waits 60 s for more
                 # frames and the mock stays "occupied" blocking the next BLE client.
@@ -994,7 +1002,10 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         nonlocal _connected_device_path
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         _user_sitting = False
+        _session_num = 0
         while True:
+            _session_num += 1
+            print(f"\n[Mock] ===== SESSION {_session_num} — waiting for client =====")
             sig_service._arendi = _AriendiServerSide()
             if mode == "ble20":
                 _ble20_app = _Ble20AppLayer()  # fresh store per session
@@ -1189,7 +1200,17 @@ Test sequence:
              "Use --send-delay 20 when testing over an ESPHome BLE proxy to prevent "
              "ATT notification drops caused by BLE link congestion.",
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help="Print raw ATT hex for every BLE write (default: suppressed). "
+             "Useful for HDLC parsing debugging; normally too noisy.",
+    )
     args = parser.parse_args()
+
+    global _VERBOSE
+    _VERBOSE = args.verbose
 
     try:
         asyncio.run(main(args.mode, send_delay_sec=args.send_delay / 1000.0))
