@@ -952,6 +952,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     else:
         print("WARNING: could not find notify characteristic — notifications disabled")
 
+    # Company ID 0x0602 = Geberit International AG — required by the Geberit Home App's
+    # CheckDiscovered filter (BleProductManager.cs).  Payload bytes 0x02 0xFA match the
+    # real Alba's advertised prefix; remaining bytes are zeroed (app only checks company ID).
     adv = Advertisement(
         "Geberit-Alba-Mock",
         [
@@ -959,7 +962,8 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             "0000fd48-0000-1000-8000-00805f9b34fb"
         ],
         appearance=0,
-        timeout=0
+        timeout=0,
+        manufacturerData={0x0602: bytes([0x02, 0xFA] + [0x00] * 13)},
     )
 
     adv_registered = False
