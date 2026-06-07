@@ -106,7 +106,7 @@ permanently corrupts `GetFilterStatus` state until power-cycle. Do NOT add 8/9/1
 | 8 | StateSprayCalibration | restricted — not for Mera Comfort |
 | 9 | StateOrientationLight | AcSela only |
 | 10 | StateDraining | AcCama/AcCamaTestset only |
-| 11 | ConnectedSsmDevices | AcSela only |
+| 11 | ConnectedSsmDevices | AcSela (fw ≥ 4); AcMeraFloorstanding, AcMeraComfort, AcMeraClassic (fw ≥ 23). Bitmask: bit0=FlushTrigger, bit1=OdourExtraction, bit2=OrientationLight |
 | 12 | LidOffsetPosition | AcMeraComfort, firmware ≥ RS25 — safe |
 | 13 | ShowerArmOffsetPosition | AcMeraComfort — safe |
 | 14 | DryerArmOffsetPosition | — |
