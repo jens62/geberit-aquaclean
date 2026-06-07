@@ -519,6 +519,14 @@ class AriendiSecurity:
         rx_key = key_material[0:16]   # app decrypts; device encrypts with this key
         tx_key = key_material[16:32]  # app encrypts; device decrypts with this key
 
+        logger.debug(
+            "AriendiSecurity: session_keys"
+            f" shared_secret={shared_secret.hex()}"
+            f" rx_key={rx_key.hex()}"
+            f" tx_key={tx_key.hex()}"
+            f" nonce2={nonce2.hex()}"
+        )
+
         # 8. Initialise ciphers (both start from nonce2)
         self._rx_cipher = _AesCtrState(rx_key, nonce2)
         self._tx_cipher = _AesCtrState(tx_key, nonce2)
