@@ -615,13 +615,14 @@ class _AriendiServerSide:
             # 5. Loop on incoming encrypted frames
             # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
             new_sabm = False
-            # Use a longer timeout for the first request after handshake: the app needs
-            # time to derive keys, encrypt, and transmit the Inventory request (500–1500 ms
-            # observed on iPhone).  Once the session is active, inter-frame gaps are <250 ms
-            # so 1 s is safe for subsequent frames.
+            # Timeouts:
+            #   _first_frame (True) — 5 s: app derives keys and encrypts first request
+            #                         after KE, observed 450–750 ms on iPhone.
+            #   active session (False) — 3 s: app processes each ReadAns before sending
+            #                           the next ReadCmd; observed >1 s gaps on iPhone.
             _first_frame = True
             while True:
-                _timeout = 5.0 if _first_frame else 1.0
+                _timeout = 5.0 if _first_frame else 3.0
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
                         self._rx_queue.get(), timeout=_timeout
