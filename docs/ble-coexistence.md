@@ -37,6 +37,25 @@ If the Python bridge is running in **persistent** BLE mode (permanent connection
 
 ---
 
+## Conflict with the physical remote control
+
+The physical Geberit remote control connects to the toilet as a BLE central — exactly like the bridge and the Geberit Home app.  While any central holds a BLE connection, all other centrals are locked out.
+
+The Geberit manuals state this explicitly:
+
+> "The remote control function of the Geberit AquaClean shower toilet is deactivated while the shower toilet is connected to the Geberit Home App."
+> — GEBERIT AQUACLEAN ALBA USER MANUAL, chapter 4 "Operating concept"
+
+The equivalent statement appears in the Geberit AquaClean Mera Comfort user manual as well.  The same restriction applies to the bridge: **while the bridge holds a BLE connection, the remote does not work.**
+
+**Mitigation — use on-demand mode with a reasonable poll interval.**
+In on-demand mode the bridge holds the BLE link for only ~1–2 seconds per poll and releases it immediately afterwards.  With a 30-second poll interval the remote has approximately 28–29 seconds free per cycle.  It may have to wait for the current poll to finish before it can connect, but it will not be permanently locked out.
+
+**Persistent mode is incompatible with remote control use.**
+In persistent mode the bridge never releases the BLE connection, so the remote stays locked out for as long as the bridge is running.
+
+---
+
 ## Stale connections after a crash
 
 If the Python process is killed without cleanly disconnecting, the AquaClean may continue to consider itself connected to the previous central until the BLE **supervision timeout** expires (typically 5–10 seconds).  During this window a new connection attempt may be refused.
@@ -50,6 +69,8 @@ If the bridge cannot reconnect after a crash or restart, wait a few seconds and 
 | Situation | Result |
 |-----------|--------|
 | Bridge in persistent mode + Geberit Home app | App cannot connect while bridge is connected |
+| Bridge in persistent mode + physical remote | Remote locked out indefinitely — switch to on-demand mode |
 | Bridge in on-demand mode + Geberit Home app | Coexist — connect windows are short; occasional timing conflict possible |
+| Bridge in on-demand mode + physical remote | Remote free for ~28–29 s per 30 s poll cycle; may wait briefly for current poll to finish |
 | Bridge crashed without clean disconnect | Wait for supervision timeout (~10 s), then retry |
 | Device unresponsive after days of persistent use | Power-cycle to reset; switch to on-demand mode |
