@@ -102,6 +102,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # _esphome_client is either AquaCleanClient (mera) or AlbaClient (alba).
         self._esphome_connector = None
         self._esphome_client = None
+        # habluetooth path: connector created per poll (local var in _do_poll).
+        # Stored here so async_close() can disconnect it if the integration is
+        # disabled while a poll is in progress.
+        self._habluetooth_connector = None
         self._unsupported_device = False
         # DataPointInventory cache for Alba devices.  The DpId inventory is static
         # (device hardware property) — fetched once on first poll and reused to
@@ -173,7 +177,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_client = None
 
     async def async_close(self) -> None:
-        """Full disconnect of the persistent ESPHome connector on integration unload."""
+        """Disconnect all active BLE connections on integration unload."""
         if self._esphome_connector is not None:
             _LOGGER.debug("Closing persistent ESPHome connector on unload")
             try:
@@ -183,6 +187,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 pass
             self._esphome_connector = None
             self._esphome_client = None
+        if self._habluetooth_connector is not None:
+            _LOGGER.debug("Closing in-progress habluetooth connector on unload")
+            try:
+                async with asyncio.timeout(5.0):
+                    await self._habluetooth_connector.disconnect()
+            except Exception:
+                pass
+            self._habluetooth_connector = None
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator protocol
@@ -273,6 +285,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             connector = self._get_esphome_connector()
         else:
             connector = self._make_connector()
+            self._habluetooth_connector = connector
 
         try:
             # ── Phase 1: connect ──────────────────────────────────────────────
@@ -508,6 +521,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("disconnect failed; resetting persistent ESPHome connector")
                     self._reset_esphome_connector()
             else:
+                self._habluetooth_connector = None
                 try:
                     async with asyncio.timeout(5.0):
                         await connector.disconnect()
