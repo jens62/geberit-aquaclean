@@ -58,14 +58,15 @@ except Exception:
 
 DEFAULT_MAC = "38:AB:41:2A:0D:67"   # Geberit AquaClean Mera Comfort
 
+# Arendi chip OUI — used by Alba toilet and physical remote.
+_ALBA_DEVICE_OUIS = {"e4:85:01"}
+
 # Embedded-device OUI prefixes — identifies initiators as physical remotes rather than
-# phones.  Includes Texas Instruments (Mera Comfort remote, toilet) and Arendi chips
-# (e4:85:01 — shared by Alba toilet and MuusLee's physical remote).
+# phones.  Includes Texas Instruments (Mera Comfort remote, toilet) and Arendi chips.
 _EMBEDDED_DEVICE_OUIS = {
     "38:ab:41", "b0:10:a0", "00:18:da", "34:b1:f7", "04:a3:16",
     "00:17:e9", "00:24:d6", "a4:34:d9", "98:5d:ad", "d0:b5:c2",
-    "e4:85:01",  # Arendi chip OUI (Alba toilet and physical remote)
-}
+} | _ALBA_DEVICE_OUIS
 
 # ATT opcodes we care about
 _OP_WRITE_REQ = 0x12   # ATT_WRITE_REQ  (also used for CCCD enables)
@@ -691,7 +692,7 @@ Examples:
         mac = args.mac.upper()
 
     # Infer alba from MAC OUI when auto-detection fails (e.g. no CONNECT_IND in file)
-    if device_type is None and mac and mac.lower().startswith("e4:85:01"):
+    if device_type is None and mac and mac[:8].lower() in _ALBA_DEVICE_OUIS:
         device_type = "alba"
 
     if device_type is None:
