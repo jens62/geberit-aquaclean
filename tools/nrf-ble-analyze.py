@@ -58,11 +58,13 @@ except Exception:
 
 DEFAULT_MAC = "38:AB:41:2A:0D:67"   # Geberit AquaClean Mera Comfort
 
-# Texas Instruments OUI prefixes — Geberit physical remote uses TI BLE chips
-# (toilet OUI 38:AB:41 and remote OUI B0:10:A0 are both TI-assigned)
-_TI_OUIS = {
+# Embedded-device OUI prefixes — identifies initiators as physical remotes rather than
+# phones.  Includes Texas Instruments (Mera Comfort remote, toilet) and Arendi chips
+# (e4:85:01 — shared by Alba toilet and MuusLee's physical remote).
+_EMBEDDED_DEVICE_OUIS = {
     "38:ab:41", "b0:10:a0", "00:18:da", "34:b1:f7", "04:a3:16",
     "00:17:e9", "00:24:d6", "a4:34:d9", "98:5d:ad", "d0:b5:c2",
+    "e4:85:01",  # Arendi chip OUI (Alba toilet and physical remote)
 }
 
 # ATT opcodes we care about
@@ -161,8 +163,8 @@ def _oui(mac: str) -> str:
     return mac[:8].lower()
 
 
-def _is_ti(mac: str) -> bool:
-    return _oui(mac) in _TI_OUIS
+def _is_embedded_device(mac: str) -> bool:
+    return _oui(mac) in _EMBEDDED_DEVICE_OUIS
 
 
 def _get_connection_events(tshark: str, pcapng: Path,
@@ -233,11 +235,11 @@ def _format_connection_events(connect_inds: list, directed_advs: list,
         lines.append("  No CONNECT_IND or ADV_DIRECT_IND frames found.")
         return "\n".join(lines)
 
-    # Auto-detect remote: first TI-OUI initiator that is NOT the toilet itself
+    # Auto-detect remote: first embedded-device OUI initiator that is NOT the toilet itself
     toilet_lower = toilet_mac.lower()
     remote_mac: str | None = None
     for c in connect_inds:
-        if c["initiator"].lower() != toilet_lower and _is_ti(c["initiator"]):
+        if c["initiator"].lower() != toilet_lower and _is_embedded_device(c["initiator"]):
             remote_mac = c["initiator"]
             break
 
@@ -251,8 +253,8 @@ def _format_connection_events(connect_inds: list, directed_advs: list,
     # Print timeline
     for ts, evt, addr in all_events:
         if evt == "CONNECT_IND":
-            if _is_ti(addr) and addr.lower() != toilet_lower:
-                tag = "← remote (TI OUI)"
+            if _is_embedded_device(addr) and addr.lower() != toilet_lower:
+                tag = "← remote (embedded-device OUI)"
             else:
                 tag = "← app / other"
         else:   # ADV_DIRECT_IND
@@ -275,10 +277,10 @@ def _format_connection_events(connect_inds: list, directed_advs: list,
     # --- Verdict ---
     lines.append("")
     n_remote = sum(1 for c in connect_inds
-                   if _is_ti(c["initiator"])
+                   if _is_embedded_device(c["initiator"])
                    and c["initiator"].lower() != toilet_lower)
     n_other  = sum(1 for c in connect_inds
-                   if not (_is_ti(c["initiator"])
+                   if not (_is_embedded_device(c["initiator"])
                            and c["initiator"].lower() != toilet_lower))
     n_direct = len(directed_advs)
     n_direct_to_remote = sum(
@@ -289,16 +291,16 @@ def _format_connection_events(connect_inds: list, directed_advs: list,
     if remote_mac:
         remote_line = f"Remote MAC (auto-detected): {remote_mac}"
     else:
-        remote_line = "Remote MAC: not detected (no TI-OUI initiator found)"
+        remote_line = "Remote MAC: not detected (no embedded-device OUI initiator found)"
 
     # Displacement verdict
     if n_remote > 0 and n_other > 0:
         # Check if remote connected AFTER at least one app/other session
         remote_ts = sorted(c["ts"] for c in connect_inds
-                           if _is_ti(c["initiator"])
+                           if _is_embedded_device(c["initiator"])
                            and c["initiator"].lower() != toilet_lower)
         other_ts  = sorted(c["ts"] for c in connect_inds
-                           if not (_is_ti(c["initiator"])
+                           if not (_is_embedded_device(c["initiator"])
                                    and c["initiator"].lower() != toilet_lower))
         last_other = max(other_ts)
         recoveries = sum(1 for t in remote_ts if t > last_other)
@@ -309,7 +311,7 @@ def _format_connection_events(connect_inds: list, directed_advs: list,
     elif n_remote > 0:
         verdict = f"ℹ️  Only remote connections seen (no app/other session to compare)"
     else:
-        verdict = f"⚠️  No remote (TI-OUI) connections detected"
+        verdict = f"⚠️  No remote (embedded-device OUI) connections detected"
 
     direct_line = (
         f"ADV_DIRECT_IND from toilet: {n_direct} frame(s)"
@@ -522,12 +524,12 @@ def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
     dfilter = (f"(btatt.opcode == 0x52 || btatt.opcode == 0x12 || btatt.opcode == 0x1b)"
                f" && (btatt.handle == {_ALBA_WRITE_HANDLE}"
                f" || btatt.handle == {_ALBA_NOTIFY_HANDLE})")
-    if mac:
-        dfilter += f" && {addr_field} == {mac.lower()}"
+    # No MAC filter in tshark — fetch all handles so we can separate
+    # pre-CONNECT_IND frames (no peripheral MAC assigned yet) from the main session.
 
-    rows = _run_tshark(tshark, pcapng, dfilter,
-                       ["frame.time_relative", "btatt.opcode",
-                        "btatt.handle", "btatt.value"])
+    all_rows = _run_tshark(tshark, pcapng, dfilter,
+                           ["frame.time_relative", "btatt.opcode",
+                            "btatt.handle", "btatt.value", addr_field])
 
     print(f"=== Arendi Security Capture Parser (nRF52840) ===")
     print(f"File: {pcapng.name}")
@@ -539,13 +541,61 @@ def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
         connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
         print(_format_connection_events(connect_inds, directed_advs, mac, markdown=False))
 
+    # Split: frames whose peripheral MAC matches the toilet → main session.
+    # Frames with an empty peripheral MAC came from a connection that was already
+    # active when the capture started (no CONNECT_IND → tshark left the role blank).
+    if mac:
+        pre_rows: list = []
+        main_rows: list = []
+        mac_lower = mac.lower()
+        for row in all_rows:
+            peripheral = row[4].strip() if len(row) > 4 else ""
+            if peripheral.lower() == mac_lower:
+                main_rows.append(row[:4])
+            elif not peripheral:
+                pre_rows.append(row[:4])
+            # else: different peripheral, skip
+    else:
+        pre_rows = []
+        main_rows = [row[:4] for row in all_rows]
+
+    if pre_rows:
+        print("Pre-capture connection (connection was already active at capture start)")
+        print("-" * 72)
+        pre_app_parser = _arendi._FrameParser()
+        pre_dev_parser = _arendi._FrameParser()
+        pre_state: dict = {}
+        pre_total = 0
+        for row in pre_rows:
+            if len(row) < 4:
+                continue
+            ts_raw, op_raw, handle_raw, value_raw = (row + [""] * 4)[:4]
+            if not op_raw.strip() or not handle_raw.strip():
+                continue
+            try:
+                opcode = _parse_int(op_raw)
+                handle = _parse_int(handle_raw)
+                data   = bytes.fromhex(_value_hex(value_raw))
+            except (ValueError, TypeError):
+                continue
+            ts = _ts_display(ts_raw)
+            if opcode in (_OP_WRITE_CMD, _OP_WRITE_REQ) and handle == _ALBA_WRITE_HANDLE:
+                direction, parser = "App→Dev", pre_app_parser
+            elif opcode == _OP_NOTIF and handle == _ALBA_NOTIFY_HANDLE:
+                direction, parser = "Dev→App", pre_dev_parser
+            else:
+                continue
+            pre_total += 1
+            for ctrl, payload, crc_ok in parser.feed(data):
+                _arendi._print_frame(ts, direction, ctrl, payload, crc_ok, pre_state)
+        print(f"\n  (pre-capture ATT PDUs: {pre_total})\n")
 
     app_parser = _arendi._FrameParser()
     dev_parser = _arendi._FrameParser()
     state: dict = {}
     total = 0
 
-    for row in rows:
+    for row in main_rows:
         if len(row) < 4:
             continue
         ts_raw, op_raw, handle_raw, value_raw = (row + [""] * 4)[:4]
