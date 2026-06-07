@@ -952,15 +952,18 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     else:
         print("WARNING: could not find notify characteristic — notifications disabled")
 
+    # Advertisement payload must fit within 31 bytes (BLE ADV_IND limit).
+    # Real Alba advertises: fd48 16-bit UUID (4 B) + mfr data (19 B) + flags (3 B) = 26 B.
+    # A long local name or 128-bit UUIDs push the total over the limit and BlueZ rejects
+    # the registration with "Advertising data too long".
+    #
     # Company ID 0x0602 = Geberit International AG — required by the Geberit Home App's
-    # CheckDiscovered filter (BleProductManager.cs).  Payload bytes 0x02 0xFA match the
-    # real Alba's advertised prefix; remaining bytes are zeroed (app only checks company ID).
+    # CheckDiscovered filter (BleProductManager.cs). fd48 alone satisfies the Stage 1
+    # UUID scan filter (FD48 is listed explicitly). 559eb100-... is in the GATT service
+    # and will be discovered after connection — it must NOT be in the advertisement.
     adv = Advertisement(
-        "Geberit-Alba-Mock",
-        [
-            "559eb100-2390-11e8-b467-0ed5f89f718b",
-            "0000fd48-0000-1000-8000-00805f9b34fb"
-        ],
+        "",                                          # no local name — matches real device
+        ["0000fd48-0000-1000-8000-00805f9b34fb"],   # fd48 only; 559eb100 stays in GATT
         appearance=0,
         timeout=0,
         manufacturerData={0x0602: bytes([0x02, 0xFA] + [0x00] * 13)},
@@ -975,7 +978,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
 
     print(f"--- Mock Device Active (mode={mode}) ---")
     print(f"    script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
-    print("Advertising as: Geberit-Alba-Mock")
+    print("Advertising: fd48 + Geberit mfr data (company 0x0602)")
 
     async def _handshake_loop():
         nonlocal _connected_device_path
