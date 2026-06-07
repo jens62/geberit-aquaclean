@@ -616,14 +616,18 @@ class _AriendiServerSide:
             # 5. Loop on incoming encrypted frames
             # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
             new_sabm = False
-            # Timeouts:
+            # Timeouts — both 5 s:
             #   _first_frame (True) — 5 s: app derives keys and encrypts first request
             #                         after KE, observed 450–750 ms on iPhone.
-            #   active session (False) — 3 s: app processes each ReadAns before sending
-            #                           the next ReadCmd; observed >1 s gaps on iPhone.
+            #   active session (False) — 5 s: app takes ~2.96 s to process each
+            #                           response batch before sending the next command
+            #                           (confirmed: CapabilitiesCmd arrives 2.96 s after
+            #                           inventory; next ReadCmd after DpId=8 ReadAns
+            #                           arrives ~3.0 s later, just after the old 3 s
+            #                           timeout fired by 40–50 ms).
             _first_frame = True
             while True:
-                _timeout = 5.0 if _first_frame else 3.0
+                _timeout = 5.0
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
                         self._rx_queue.get(), timeout=_timeout
