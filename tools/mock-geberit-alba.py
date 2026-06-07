@@ -637,35 +637,19 @@ class _AriendiServerSide:
                     responses = await app_handler(plaintext)
                     for resp in responses:
                         encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
-                        # Build the ATT frame once.  _att_i() advances _tx_seq; calling it
-                        # again on retry would give a new (wrong) sequence number and a new
-                        # (wrong) AES-CTR counter.  Resending the same bytes preserves both
-                        # the HDLC N(S) and the ciphertext so the bridge can decrypt it at
-                        # the counter it expects.
                         att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
-                        # _att_i() advanced _tx_seq; expected N(R) from bridge = current _tx_seq.
-                        expected_nr = self._tx_seq
-                        for _retry in range(3):
-                            try:
-                                await asyncio.wait_for(send_fn(att_frame), timeout=5.0)
-                            except asyncio.TimeoutError:
-                                print(f"[MockServer] ERROR: send_fn blocked >5 s for cmd=0x{resp[0]:02X}")
-                                print("[Mock]   → BLE notify congestion — too many rapid sends (inventory) saturated the adapter.")
-                                print("[Mock]   → Session aborted to prevent 30 s freeze + cipher desync.")
-                                print("[Mock]   → Restart the ESP32 via ESPHome web UI, then reconnect.")
-                                return False
-                            if send_delay_sec > 0:
-                                await asyncio.sleep(send_delay_sec)
-                            try:
-                                await self._await_s_rr(expected_nr, timeout=2.0)
-                                break  # ACK received — frame confirmed delivered
-                            except asyncio.TimeoutError:
-                                if _retry < 2:
-                                    print(f"[MockServer] WARNING: no S-RR for resp cmd=0x{resp[0]:02X}"
-                                          f", retrying ({_retry + 1}/2)…")
-                                else:
-                                    print(f"[MockServer] WARNING: no S-RR after 3 attempts"
-                                          f" for cmd=0x{resp[0]:02X} — frame lost, cipher desynced")
+                        try:
+                            await asyncio.wait_for(send_fn(att_frame), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            print(f"[MockServer] ERROR: send_fn blocked >5 s for cmd=0x{resp[0]:02X}")
+                            return False
+                        print(f"[MockServer] → cmd=0x{resp[0]:02X} N(S)={self._tx_seq - 1 & 7}")
+                        if send_delay_sec > 0:
+                            await asyncio.sleep(send_delay_sec)
+                    # Drain any S-RR ACKs the app sent — the real device fires all notifications
+                    # without blocking on per-frame ACKs; the app's auto-S-RR just accumulates here.
+                    while not self._srr_queue.empty():
+                        self._srr_queue.get_nowait()
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
