@@ -157,26 +157,14 @@ def _process_rows(row_list: list, sessions: dict, label: str) -> None:
     tx_cipher = None
 
     for row in row_list:
-        if len(row) < 4:
+        parsed = _nrf._parse_arendi_row(row)
+        if parsed is None:
             continue
-        ts_raw, op_raw, handle_raw, value_raw = (row + [""] * 4)[:4]
-        if not op_raw.strip() or not handle_raw.strip():
+        ts, opcode, handle, data = parsed
+        direction = _nrf._arendi_direction(opcode, handle)
+        if direction is None:
             continue
-        try:
-            opcode = _nrf._parse_int(op_raw)
-            handle = _nrf._parse_int(handle_raw)
-            data   = bytes.fromhex(_nrf._value_hex(value_raw))
-        except (ValueError, TypeError):
-            continue
-
-        ts = _nrf._ts_display(ts_raw)
-
-        if opcode in (_nrf._OP_WRITE_CMD, _nrf._OP_WRITE_REQ) and handle == _nrf._ALBA_WRITE_HANDLE:
-            direction, parser = "App→Dev", parser_app
-        elif opcode == _nrf._OP_NOTIF and handle == _nrf._ALBA_NOTIFY_HANDLE:
-            direction, parser = "Dev→App", parser_dev
-        else:
-            continue
+        parser = parser_app if direction == "App→Dev" else parser_dev
 
         for ctrl, payload, crc_ok in parser.feed(data):
             ft, _, _ = _arendi._decode_hdlc_ctrl(ctrl)
@@ -221,14 +209,7 @@ def _process_rows(row_list: list, sessions: dict, label: str) -> None:
 
 
 def _analyze(tshark: str, pcapng: Path, mac: str, addr_field: str, sessions: dict) -> None:
-    dfilter = (
-        f"(btatt.opcode == 0x52 || btatt.opcode == 0x12 || btatt.opcode == 0x1b)"
-        f" && (btatt.handle == {_nrf._ALBA_WRITE_HANDLE}"
-        f" || btatt.handle == {_nrf._ALBA_NOTIFY_HANDLE})"
-    )
-    all_rows = _nrf._run_tshark(tshark, pcapng, dfilter,
-                                ["frame.time_relative", "btatt.opcode",
-                                 "btatt.handle", "btatt.value", addr_field])
+    pre_rows, main_rows = _nrf._get_arendi_rows(tshark, pcapng, mac, addr_field)
 
     print(f"=== Arendi Decryption — bridge session keys from log ===")
     print(f"File   : {pcapng.name}")
@@ -236,20 +217,6 @@ def _analyze(tshark: str, pcapng: Path, mac: str, addr_field: str, sessions: dic
     if mac:
         print(f"Alba   : {mac}")
     print()
-
-    # Split pre-capture (no peripheral MAC) vs main session — same logic as nrf-ble-analyze.py
-    if mac:
-        pre_rows, main_rows = [], []
-        mac_lower = mac.lower()
-        for row in all_rows:
-            peripheral = row[4].strip() if len(row) > 4 else ""
-            if peripheral.lower() == mac_lower:
-                main_rows.append(row[:4])
-            elif not peripheral:
-                pre_rows.append(row[:4])
-    else:
-        pre_rows  = []
-        main_rows = [row[:4] for row in all_rows]
 
     _process_rows(pre_rows,  sessions, "Pre-capture connection" if pre_rows else "")
     _process_rows(main_rows, sessions, "Main session" if pre_rows else "")

@@ -511,39 +511,28 @@ def _print_mera_table(calls, pcapng: Path, mac: str, att_count: int,
     print()
 
 # ---------------------------------------------------------------------------
-# Alba — reuse arendi-parse-capture.py decode pipeline
+# Alba — shared row helpers (also imported by arendi-decrypt-session.py)
 # ---------------------------------------------------------------------------
 
-def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
-                  addr_field: str) -> None:
-    if not _ARENDI_AVAILABLE:
-        print("Error: Alba analysis requires the bridge package (aquaclean_console_app). "
-              "Run from the repo root with the venv active.", file=sys.stderr)
-        sys.exit(1)
+def _get_arendi_rows(tshark: str, pcapng: Path,
+                     mac: str, addr_field: str) -> tuple:
+    """
+    Fetch all ATT frames on the Alba Arendi channel and split into
+    (pre_rows, main_rows).
 
+    pre_rows  — frames with an empty peripheral_bd_addr; the connection was
+                already active at capture start (no CONNECT_IND recorded).
+    main_rows — frames whose peripheral_bd_addr matches *mac* (or all frames
+                when *mac* is empty).
+
+    Each row is [ts_raw, op_raw, handle_raw, value_raw] (4 strings).
+    """
     dfilter = (f"(btatt.opcode == 0x52 || btatt.opcode == 0x12 || btatt.opcode == 0x1b)"
                f" && (btatt.handle == {_ALBA_WRITE_HANDLE}"
                f" || btatt.handle == {_ALBA_NOTIFY_HANDLE})")
-    # No MAC filter in tshark — fetch all handles so we can separate
-    # pre-CONNECT_IND frames (no peripheral MAC assigned yet) from the main session.
-
     all_rows = _run_tshark(tshark, pcapng, dfilter,
                            ["frame.time_relative", "btatt.opcode",
                             "btatt.handle", "btatt.value", addr_field])
-
-    print(f"=== Arendi Security Capture Parser (nRF52840) ===")
-    print(f"File: {pcapng.name}")
-    if mac:
-        print(f"Alba: {mac}")
-    print()
-
-    if mac:
-        connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
-        print(_format_connection_events(connect_inds, directed_advs, mac, markdown=False))
-
-    # Split: frames whose peripheral MAC matches the toilet → main session.
-    # Frames with an empty peripheral MAC came from a connection that was already
-    # active when the capture started (no CONNECT_IND → tshark left the role blank).
     if mac:
         pre_rows: list = []
         main_rows: list = []
@@ -556,8 +545,61 @@ def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
                 pre_rows.append(row[:4])
             # else: different peripheral, skip
     else:
-        pre_rows = []
+        pre_rows  = []
         main_rows = [row[:4] for row in all_rows]
+    return pre_rows, main_rows
+
+
+def _parse_arendi_row(row: list):
+    """
+    Parse one row from *_get_arendi_rows* into (ts, opcode, handle, data).
+    Returns None if the row is malformed or has missing fields.
+    """
+    if len(row) < 4:
+        return None
+    ts_raw, op_raw, handle_raw, value_raw = (row + [""] * 4)[:4]
+    if not op_raw.strip() or not handle_raw.strip():
+        return None
+    try:
+        opcode = _parse_int(op_raw)
+        handle = _parse_int(handle_raw)
+        data   = bytes.fromhex(_value_hex(value_raw))
+    except (ValueError, TypeError):
+        return None
+    return _ts_display(ts_raw), opcode, handle, data
+
+
+def _arendi_direction(opcode: int, handle: int):
+    """Return "App→Dev", "Dev→App", or None (skip frame)."""
+    if opcode in (_OP_WRITE_CMD, _OP_WRITE_REQ) and handle == _ALBA_WRITE_HANDLE:
+        return "App→Dev"
+    if opcode == _OP_NOTIF and handle == _ALBA_NOTIFY_HANDLE:
+        return "Dev→App"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Alba — reuse arendi-parse-capture.py decode pipeline
+# ---------------------------------------------------------------------------
+
+def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
+                  addr_field: str) -> None:
+    if not _ARENDI_AVAILABLE:
+        print("Error: Alba analysis requires the bridge package (aquaclean_console_app). "
+              "Run from the repo root with the venv active.", file=sys.stderr)
+        sys.exit(1)
+
+    pre_rows, main_rows = _get_arendi_rows(tshark, pcapng, mac, addr_field)
+
+    print(f"=== Arendi Security Capture Parser (nRF52840) ===")
+    print(f"File: {pcapng.name}")
+    if mac:
+        print(f"Alba: {mac}")
+    print()
+
+    if mac:
+        connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
+        print(_format_connection_events(connect_inds, directed_advs, mac, markdown=False))
 
     if pre_rows:
         print("Pre-capture connection (connection was already active at capture start)")
@@ -567,24 +609,14 @@ def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
         pre_state: dict = {}
         pre_total = 0
         for row in pre_rows:
-            if len(row) < 4:
+            parsed = _parse_arendi_row(row)
+            if parsed is None:
                 continue
-            ts_raw, op_raw, handle_raw, value_raw = (row + [""] * 4)[:4]
-            if not op_raw.strip() or not handle_raw.strip():
+            ts, opcode, handle, data = parsed
+            direction = _arendi_direction(opcode, handle)
+            if direction is None:
                 continue
-            try:
-                opcode = _parse_int(op_raw)
-                handle = _parse_int(handle_raw)
-                data   = bytes.fromhex(_value_hex(value_raw))
-            except (ValueError, TypeError):
-                continue
-            ts = _ts_display(ts_raw)
-            if opcode in (_OP_WRITE_CMD, _OP_WRITE_REQ) and handle == _ALBA_WRITE_HANDLE:
-                direction, parser = "App→Dev", pre_app_parser
-            elif opcode == _OP_NOTIF and handle == _ALBA_NOTIFY_HANDLE:
-                direction, parser = "Dev→App", pre_dev_parser
-            else:
-                continue
+            parser = pre_app_parser if direction == "App→Dev" else pre_dev_parser
             pre_total += 1
             for ctrl, payload, crc_ok in parser.feed(data):
                 _arendi._print_frame(ts, direction, ctrl, payload, crc_ok, pre_state)
@@ -596,29 +628,14 @@ def _analyze_alba(tshark: str, pcapng: Path, mac: str, args,
     total = 0
 
     for row in main_rows:
-        if len(row) < 4:
+        parsed = _parse_arendi_row(row)
+        if parsed is None:
             continue
-        ts_raw, op_raw, handle_raw, value_raw = (row + [""] * 4)[:4]
-
-        if not op_raw.strip() or not handle_raw.strip():
+        ts, opcode, handle, data = parsed
+        direction = _arendi_direction(opcode, handle)
+        if direction is None:
             continue
-
-        try:
-            opcode = _parse_int(op_raw)
-            handle = _parse_int(handle_raw)
-            data   = bytes.fromhex(_value_hex(value_raw))
-        except (ValueError, TypeError):
-            continue
-
-        ts = _ts_display(ts_raw)
-
-        if opcode in (_OP_WRITE_CMD, _OP_WRITE_REQ) and handle == _ALBA_WRITE_HANDLE:
-            direction, parser = "App→Dev", app_parser
-        elif opcode == _OP_NOTIF and handle == _ALBA_NOTIFY_HANDLE:
-            direction, parser = "Dev→App", dev_parser
-        else:
-            continue
-
+        parser = app_parser if direction == "App→Dev" else dev_parser
         total += 1
         for ctrl, payload, crc_ok in parser.feed(data):
             _arendi._print_frame(ts, direction, ctrl, payload, crc_ok, state)
