@@ -43,10 +43,10 @@ The physical Geberit remote control connects to the toilet as a BLE central — 
 
 The Geberit manuals state this explicitly:
 
-> "The remote control function of the Geberit AquaClean shower toilet is deactivated while the shower toilet is connected to the Geberit Home App."
-> — GEBERIT AQUACLEAN ALBA USER MANUAL, chapter 4 "Operating concept"
+> "ⓘ The remote control function of the Geberit AquaClean shower toilet is deactivated while the shower toilet is connected to the Geberit Home App."
+> — [GEBERIT AQUACLEAN ALBA USER MANUAL](https://cdn.data.geberit.com/documents-a6/971.833.00.0_01-A6_20250523070209.pdf), chapter 4 "Operating concept"
 
-The equivalent statement appears in the Geberit AquaClean Mera Comfort user manual as well.  The same restriction applies to the bridge: **while the bridge holds a BLE connection, the remote does not work.**
+The same statement appears in the [GEBERIT AQUACLEAN MERA COMFORT USER MANUAL](https://cdn.data.geberit.com/documents-a6/966.732.00.0_10-A6_20251009063003.pdf).  The same restriction applies to the bridge: **while the bridge holds a BLE connection, the remote does not work.**
 
 **Mitigation — use on-demand mode with a reasonable poll interval.**
 In on-demand mode the bridge holds the BLE link for only ~1–2 seconds per poll and releases it immediately afterwards.  With a 30-second poll interval the remote has approximately 28–29 seconds free per cycle.  It may have to wait for the current poll to finish before it can connect, but it will not be permanently locked out.
