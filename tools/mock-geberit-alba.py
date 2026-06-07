@@ -282,6 +282,12 @@ class _Ble20AppLayer:
             return self._notify_enable(plaintext)
         if cmd == CommandId.NotifyDisable:
             return self._notify_disable(plaintext)
+        if cmd == CommandId.CapabilitiesCmd:
+            return self._capabilities()
+        if cmd == CommandId.EventStorageInventory:
+            return self._event_storage_inventory()
+        if cmd == CommandId.ListInventoryCmd:
+            return self._list_inventory()
         print(f"[MockBle20] unknown cmd=0x{cmd:02X} — ignored")
         return []
 
@@ -340,6 +346,21 @@ class _Ble20AppLayer:
         self._notify_subscribed.discard(dp_id)
         print(f"[MockBle20] ← NOTIFY_DISABLE DpId={dp_id} → ACK")
         return [bytes([CommandId.NotifyAck]) + addr]
+
+    def _capabilities(self) -> list:
+        # flags=0x00: no extended event storage, no other extensions
+        print("[MockBle20] ← CAPABILITIES_CMD → ACK flags=0x00")
+        return [bytes([CommandId.CapabilitiesAck, 0x00])]
+
+    def _event_storage_inventory(self) -> list:
+        # No stored events — respond with count=0
+        print("[MockBle20] ← EVENT_STORAGE_INVENTORY → count=0")
+        return [struct.pack('<BH', CommandId.EventStorageInventoryCount, 0)]
+
+    def _list_inventory(self) -> list:
+        # No lists — respond with count=0
+        print("[MockBle20] ← LIST_INVENTORY_CMD → count=0")
+        return [struct.pack('<BH', CommandId.ListInventoryCount, 0)]
 
 
 # ---------------------------------------------------------------------------
