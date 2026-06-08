@@ -90,10 +90,28 @@ Add to `ProfileSettings.py` enum. Add getters to `AquaCleanClient`; expose via R
 
 ---
 
+### Wire AcSela-specific features: StateOrientationLight, ConnectedSsmDevices, ToggleOrientationLight
+
+Requested in [issue #27](https://github.com/jens62/geberit-aquaclean/issues/27#issuecomment-4642370701).
+All three are **AcSela only** — must be guarded by model detection (see "HACS: model-aware entity visibility").
+
+| Feature | Protocol | Notes |
+|---------|----------|-------|
+| `StateOrientationLight` | SPL index 9 | Live on/off state; **⚠️ DO NOT query on Mera Comfort** — permanently corrupts `GetFilterStatus` until power-cycle |
+| `ConnectedSsmDevices` | SPL index 100 | Bitmask: bit0=FlushTrigger, bit1=OdourExtraction, bit2=OrientationLight; AcSela fw≥4 / AcMeraComfort fw≥23 |
+| `ToggleOrientationLight` | `SetCommand` code 20 | Toggle on/off; **AcSela ONLY** — confirmed from factory source; does NOT work on Mera Comfort |
+
+Implementation order:
+1. Add SPL index 9 to `SPL_PARAMS_ACSELA` (separate list from `SPL_PARAMS_MERA_COMFORT`)
+2. Add SPL index 100 to AcSela + AcMeraComfort fw≥23 lists
+3. Wire `ToggleOrientationLight` (SetCommand 20) to REST/MQTT/HACS behind model guard
+4. Expose `StateOrientationLight` and `ConnectedSsmDevices` as HACS sensors (AcSela only)
+
+---
+
 ### Wire remaining Commands enum entries (all interfaces)
 
-Remaining: `ToggleOrientationLight` for AcSela — wire to MQTT/HACS/CLI when AcSela is supported.
-(Stop, OdourExtraction, OdourExtractionRunOn done in v3.0.6.)
+(Stop, OdourExtraction, OdourExtractionRunOn done in v3.0.6. ToggleOrientationLight moved to AcSela task above.)
 
 ---
 
