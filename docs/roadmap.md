@@ -195,6 +195,24 @@ Standalone bridge + MQTT path fully preserved alongside.
 
 ---
 
+### HACS: expose cached stored settings as entities with explicit refresh
+
+`GetStoredProfileSettings` (11 settings) and `GetStoredCommonSettings` (7 settings) are
+fetched once per integration load and then cached. Their values should be visible as HACS
+entities and re-queryable on demand.
+
+**Entities to add** (all as `number` or `select` entities, DIAGNOSTIC or user-facing):
+- All 11 `ProfileSettings` entries (OdourExtraction, AnalShowerPressure, WaterTemperature, …)
+- All 7 `CommonSettings` entries (WaterHardness, OrientationLightBrightness, Language, …)
+
+**Explicit refresh button:**
+Add a `button` entity "Refresh cached settings" that clears `_mera_profile_settings_cache`
+and `_mera_common_settings_cache` on press and triggers an immediate coordinator refresh.
+This lets the user force a re-read after changing settings via the Geberit Home app (which
+the bridge cannot detect automatically).
+
+---
+
 ### HACS: model-aware entity visibility
 
 Only register entities that apply to the connected device model. Currently all entities
