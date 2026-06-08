@@ -265,6 +265,44 @@ The same data is available via `GET /info/performance` (add `?format=markdown` f
 
 ---
 
+## Standalone tools (`tools/`)
+
+These scripts run independently — no bridge process, no BLE connection, no `config.ini` required.
+
+### `geberit-firmware-download.py`
+
+Downloads the latest active firmware for any Geberit AquaClean device from the Geberit cloud firmware API.
+
+```bash
+# Auto-detect series from the device's firmware version string
+python tools/geberit-firmware-download.py --firmware "RS28.0 TS199"
+
+# Specify series and variants directly
+python tools/geberit-firmware-download.py --series 248 --variants 1,2,3
+
+# List all available series and their latest versions
+python tools/geberit-firmware-download.py --list
+
+# Save to a specific directory
+python tools/geberit-firmware-download.py --firmware "RS28.0 TS199" --output /tmp/
+```
+
+The firmware version string for `--firmware` is reported by the bridge at `GET /info/firmware` (field `main`), by the HACS `firmware_version` sensor, and in the bridge log at startup.
+
+| Argument | Description |
+|----------|-------------|
+| `--firmware VERSION` | Device firmware string (e.g. `"RS28.0 TS199"`); auto-detects series and variants |
+| `--series N` | Series number (e.g. `248` for Mera Comfort / AcSela) |
+| `--variants 1,2,3` | Comma-separated variant list; used with `--series` (default: all variants) |
+| `--output DIR` | Directory to save the firmware file (default: current directory) |
+| `--list` | Print all series numbers, variant lists, and latest versions from the catalogue |
+
+Known series: **248** = Mera Comfort (variants 1,2,3) / AcSela (variant 6). For all other models use `--firmware` to auto-detect.
+
+The firmware file is saved with the full package ID as filename (e.g. `FwPkg_F801-02-03_V30.0.206.250722_…_Mera_F8_01_RS_30_00_TS_206.bin`).
+
+---
+
 ## Error output
 
 Errors are also returned as JSON to stdout:
