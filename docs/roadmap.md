@@ -412,6 +412,31 @@ See `tools/generate-hacs-entity-docs.py` for the pattern to follow.
 
 ---
 
+### Mock server for AquaClean Sela — testing without real hardware
+
+Build `tools/mock-geberit-sela.py` analogous to the existing `tools/mock-geberit-alba.py`.
+Allows integration and coordinator testing without a physical Sela device.
+
+Implementation notes:
+- Reuse the Arendi/Ble20 layer from `mock-geberit-alba.py` where applicable (same BLE
+  advertisement format); Sela uses AquaCleanV1 (same GATT UUIDs as Mera Comfort), not Ble2V1.
+- Respond to the same GATT procedures the bridge calls: `GetSystemParameterList` (0x0D),
+  `GetStoredProfileSetting` (0x53), `GetStoredCommonSetting` (0x51), `GetDeviceIdentification`
+  (0x82), `GetFilterStatus` (0x59), `GetSOCApplicationVersions` (0x81),
+  `GetFirmwareVersionList`, `SetCommand` (0x09).
+- Use realistic Sela-specific SPL values: include SPL index 9 (StateOrientationLight) and
+  SPL index 100 (ConnectedSsmDevices) in responses — both AcSela-only.
+- Firmware version: RS08.0 TS57 (node 0x01) — from msperl's confirmed Sela.
+- Advertise article prefix `146.22` in manufacturer-specific data so the bridge detects
+  `AcSela` variant at scan time.
+
+Consider analysing the Sela firmware before building the mock:
+- Node 0x01 (`0x01_decompiled.c`, 18,739 lines) — main controller; contains SPL dispatcher,
+  procedure handlers, and the CommonSetting/ProfileSetting switch tables.
+- Sela-specific nodes not present in Mera Comfort: 0x0F (Durchlauferhitzer / tankless heater).
+- BLE controller (node 0x00) is identical to Mera Comfort (same binary, RS10 TS18).
+- Decompiled output: `local-assets/firmware/FwPkg_F806_V8.2.57.251023_0650871a_Sela_F8_06_RS_08_02_TS_57_extracted/`
+
 ### Agentic BLE protocol fuzzer
 
 New script `tools/geberit-ble-fuzz.py` with modes:
