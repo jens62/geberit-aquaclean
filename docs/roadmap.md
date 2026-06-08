@@ -131,16 +131,17 @@ See `docs/developer/protocol-discovery.md` for full context.
 
 ### Reduce poll query time from ~2.7 s to ~0.5 s
 
-Profiled from TRACE log 2026-04-23. Steady-state poll breakdown:
+Profiled from TRACE log 2026-04-23. Steady-state poll breakdown after v3.0.9:
 
 | Phase | Time | Every poll? | iPhone does this? |
 |-------|------|-------------|-------------------|
 | 8× SubscribeNotifications (unlock) | ~2,400 ms | Yes | No — once per app lifetime |
-| 11× GetStoredProfileSettings (0x53) | ~2,200 ms | Yes | No — once at session init |
+| 11× GetStoredProfileSettings (0x53) | ~2,200 ms | **Once per boot (cached since v3.0.9)** | No — once at session init |
+| 7× GetStoredCommonSettings (0x51) | ~1,400 ms | **Once per boot (cached since v3.0.9)** | No — once at session init |
 | GetSystemParameterList | ~410 ms | Yes | Yes |
 | BLE connect + wait_for_info_frames | ~700–1,300 ms | Yes | ~150 ms |
 
-**Fix 1** — Cache GetStoredProfileSettings (biggest win, ~2.2 s saved per poll).
+**Fix 1** — ~~Cache GetStoredProfileSettings + GetStoredCommonSettings~~ — **Done in v3.0.9** (~3.6 s saved after first poll).
 **Fix 2** — Make SubscribeNotifications conditional (~2.4 s saved per connect):
 skip if last poll succeeded less than N seconds ago.
 **Fix 3** — Reduce GetFilterStatus timeout from 5 s to 2 s.
