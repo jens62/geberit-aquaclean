@@ -311,6 +311,36 @@ Auto-select ESPHome path when `[ESPHOME] host` is set in `config.ini` or `--esph
 
 ## Code quality / Maintenance
 
+### Refactor web UI (`static/index.html`)
+
+`aquaclean_console_app/static/index.html` is a single monolithic file that has grown too
+large to maintain. It is also feature-incomplete relative to the HACS integration.
+
+Suggested split:
+- Extract CSS into `static/style.css`
+- Extract JavaScript into one or more `static/app.js` / `static/panels/*.js` files
+- Break HTML into logical sections (connection, controls, descaling, filter, settings, debug)
+- Bring feature parity closer to HACS: orientation light panel, odour extraction,
+  firmware info, performance stats
+
+---
+
+### Refactor `main.py`
+
+`aquaclean_console_app/main.py` is far too long — it contains config parsing, REST route
+handlers, SSE logic, BLE orchestration, MQTT wiring, and HA discovery all in one file.
+
+Suggested split (each becomes its own module under `aquaclean_console_app/`):
+- `config.py` — config loading, validation, `_check_config_errors()`
+- `ha_discovery.py` — `get_ha_discovery_configs()`, publish/remove HA discovery
+- `api_handlers.py` — REST endpoint implementations (currently inline lambdas / methods on `ApiMode`)
+- `service_mode.py` — `ServiceMode` class (already partially isolated; move fully)
+- `api_mode.py` — `ApiMode` class
+
+`main.py` should become a thin entry point: load config, wire services, start the event loop.
+
+---
+
 ### Log error codes to the Python log file
 
 When an exception is mapped to an error code in `_on_demand_inner`'s finally block,
