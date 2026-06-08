@@ -236,6 +236,26 @@ the bridge cannot detect automatically).
 
 ---
 
+### HACS: detect model from BLE advertisement before first poll
+
+**Prerequisite for all model-specific work below.**
+
+The device model (`AcSela`, `AcMeraComfort`, `AcCama`, …) can be determined from the
+**BLE advertisement manufacturer-specific data** without a GATT connection — the same
+5-char article number prefix that the Geberit Home App uses at scan time.
+See `docs/developer/ble-advertisement-model-detection.md` for the full lookup table and
+payload format.
+
+**Implementation:** after a BLE scan finds the device MAC (but before connecting),
+parse bytes 3–7 of the manufacturer-specific data payload → article number prefix →
+call `AcDeviceTypeHelper`-equivalent lookup → store result as
+`coordinator.device_variant` (`"AcSela"` | `"AcMeraComfort"` | …).
+
+This allows `async_setup_entry` to register only the correct model's entities immediately,
+without waiting for a first-poll `GetDeviceIdentification` round-trip.
+
+---
+
 ### HACS: model-aware entity visibility
 
 Only register entities that apply to the connected device model. Currently all entities
