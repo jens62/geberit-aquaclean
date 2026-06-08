@@ -238,6 +238,17 @@ to manually hide them.
 
 ---
 
+### HACS: poll interval slider
+
+Add a `number` entity (or options-flow field) to control the poll interval from the HA UI
+without editing `config.ini` or restarting the integration.
+
+**Suggested entity:** `number.geberit_aquaclean_poll_interval` — range 10–3600 s, step 10 s,
+DIAGNOSTIC category. Writing the entity calls `coordinator.async_set_poll_interval(value)`
+which updates the in-memory interval and reschedules the next update.
+
+---
+
 ### HACS open items
 
 - **Config flow: validate ESPHome host field syntax** — malformed IP passes `cv.string` but fails at aioesphomeapi. Add validator for `CONF_ESPHOME_HOST`.
