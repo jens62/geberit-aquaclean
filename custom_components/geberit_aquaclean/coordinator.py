@@ -544,7 +544,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "ble_dis_info": connector.ble_dis_info,
                 # Firmware cloud check (populated asynchronously after first poll)
                 "firmware_update_available": (self._firmware_update_result or {}).get("update_available"),
+                "firmware_version_date": (self._firmware_update_result or {}).get("device_firmware_date"),
                 "cloud_firmware_version": (self._firmware_update_result or {}).get("cloud_version"),
+                "cloud_firmware_date": (self._firmware_update_result or {}).get("cloud_firmware_date"),
             }
 
         except UpdateFailed:

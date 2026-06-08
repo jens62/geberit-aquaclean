@@ -26,7 +26,9 @@ SENSORS: list[tuple] = [
     ("initial_operation_date",  "Initial Operation Date",     None,  None,                          None,                              "mdi:calendar-check"),
     ("soc_versions",            "SOC Versions",               None,  None,                          None,                              "mdi:chip"),
     ("firmware_version",        "Firmware Version",           None,  None,                          None,                              "mdi:chip"),
+    ("firmware_version_date",   "Firmware Release Date",      None,  None,                          None,                              "mdi:calendar-chip"),
     ("cloud_firmware_version",  "Cloud Firmware Version",     None,  None,                          None,                              "mdi:cloud-upload"),
+    ("cloud_firmware_date",     "Cloud Firmware Release Date", None, None,                          None,                              "mdi:calendar-clock"),
     # Descale statistics
     ("days_until_next_descale",          "Days Until Next Descale",          "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-remove"),
     ("days_until_shower_restricted",     "Days Until Shower Restricted",     "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-alert"),

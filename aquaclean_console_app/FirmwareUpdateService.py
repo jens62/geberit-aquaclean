@@ -86,41 +86,53 @@ def _parse_rs_ts(firmware_main: str) -> Optional[tuple]:
         return None
 
 
+def _pkg_date(fp: dict) -> Optional[str]:
+    """Extract YYYY-MM-DD from firmwarePackage.packageCreatedDate, or None."""
+    raw = fp.get("packageCreatedDate", "")
+    return raw[:10] if raw else None
+
+
 def _find_series_and_variant(rs_ts_str: str, packages: list) -> Optional[tuple]:
     """
-    Find (series, variants) for a given rsTsVersion string (e.g. "8.57").
+    Find (series, variants, device_date) for a given rsTsVersion string (e.g. "8.57").
 
     Series 248 covers both Mera Comfort (variants [1,2,3]) and Sela (variant [6])
     with different firmware version ranges — variant filtering is required to avoid
     comparing a Sela against Mera Comfort firmware.
 
+    device_date is the YYYY-MM-DD packageCreatedDate of the active matching package
+    (or the first matching package if none is active).
+
     If the version appears in more than one series (rare, only affects very old
     firmware), prefers the series where it is NOT the active release.
     Falls back to the lowest series number if still ambiguous.
     """
-    matches = []  # list of (series, variants, is_active)
+    matches = []  # list of (series, variants, is_active, date)
     for pkg in packages:
         fp = pkg.get("firmwarePackage", {})
         series = fp.get("series")
         variants = fp.get("variants", [])
         is_active = pkg.get("isActive", False)
+        date = _pkg_date(fp)
         for node in fp.get("nodeFirmwares", []):
             if node.get("rsTsVersion") == rs_ts_str:
-                matches.append((series, variants, is_active))
+                matches.append((series, variants, is_active, date))
                 break
 
     if not matches:
         return None
 
-    unique_series = {s for s, _, _ in matches}
+    unique_series = {s for s, _, _, _ in matches}
     if len(unique_series) == 1:
-        # Prefer the active package to get canonical variants; fall back to first.
-        active = [(s, v) for s, v, a in matches if a]
-        return active[0] if active else (matches[0][0], matches[0][1])
+        # Prefer the active package (canonical variants + most recent date).
+        active = [(s, v, d) for s, v, a, d in matches if a]
+        if active:
+            return active[0]
+        return (matches[0][0], matches[0][1], matches[0][3])
 
     # Prefer series where the version is historical (not active)
-    inactive = [(s, v) for s, v, a in matches if not a]
-    inactive_series = {s for s, _ in inactive}
+    inactive = [(s, v, d) for s, v, a, d in matches if not a]
+    inactive_series = {s for s, _, _ in inactive}
     if len(inactive_series) == 1:
         return inactive[0]
 
@@ -129,20 +141,21 @@ def _find_series_and_variant(rs_ts_str: str, packages: list) -> Optional[tuple]:
         rs_ts_str, sorted(unique_series),
     )
     lowest = min(unique_series)
-    return next((s, v) for s, v, _ in matches if s == lowest)
+    return next((s, v, d) for s, v, _, d in matches if s == lowest)
 
 
 def _get_latest_for_series_and_variant(series: int, variants: list, packages: list) -> Optional[tuple]:
     """
-    Return the highest (RS, TS) among isActive=True packages for the given series
-    that share at least one variant with the device's variant list.
+    Return (RS, TS, date) for the highest active firmware package in the given series
+    that shares at least one variant with the device's variant list.
     Only considers the main node (nodeId 0x01) to match how the device reports
     its version via GetFirmwareVersionList (component ID 1).
     If variants is empty, the variant filter is skipped (all packages for the
     series are considered).
+    date is the YYYY-MM-DD packageCreatedDate of the winning package.
     """
     device_variants = set(variants)
-    best: Optional[tuple] = None
+    best: Optional[tuple] = None  # (rs, ts, date)
     for pkg in packages:
         if not pkg.get("isActive"):
             continue
@@ -151,6 +164,7 @@ def _get_latest_for_series_and_variant(series: int, variants: list, packages: li
             continue
         if device_variants and not device_variants.intersection(fp.get("variants", [])):
             continue
+        date = _pkg_date(fp)
         for node in fp.get("nodeFirmwares", []):
             # main node only
             if node.get("nodeId") not in ("0x01", 1):
@@ -160,8 +174,8 @@ def _get_latest_for_series_and_variant(series: int, variants: list, packages: li
                 continue
             try:
                 rs, ts = int(rv.split(".")[0]), int(rv.split(".")[1])
-                if best is None or (rs, ts) > best:
-                    best = (rs, ts)
+                if best is None or (rs, ts) > (best[0], best[1]):
+                    best = (rs, ts, date)
             except ValueError:
                 continue
     return best
@@ -177,17 +191,21 @@ async def check_firmware_update(firmware_main: str) -> dict:
 
     Returns a dict:
         {
-            "update_available": bool,
-            "device_version":   "RS28.0 TS199",
-            "cloud_version":    "RS30.0 TS206" | None,
-            "series":           248 | None,
-            "error":            None | str,
+            "update_available":    bool,
+            "device_version":      "RS28.0 TS199",
+            "device_firmware_date": "2024-02-05" | None,
+            "cloud_version":       "RS30.0 TS206" | None,
+            "cloud_firmware_date": "2025-07-22" | None,
+            "series":              248 | None,
+            "error":               None | str,
         }
     """
     result: dict = {
         "update_available": False,
         "device_version": firmware_main,
+        "device_firmware_date": None,
         "cloud_version": None,
+        "cloud_firmware_date": None,
         "series": None,
         "error": None,
     }
@@ -211,8 +229,9 @@ async def check_firmware_update(firmware_main: str) -> dict:
         logger.warning("Firmware update check: %s", result["error"])
         return result
 
-    series, variants = match
+    series, variants, device_date = match
     result["series"] = series
+    result["device_firmware_date"] = device_date
 
     latest = _get_latest_for_series_and_variant(series, variants, packages)
     if latest is None:
@@ -220,9 +239,10 @@ async def check_firmware_update(firmware_main: str) -> dict:
         logger.warning("Firmware update check: %s", result["error"])
         return result
 
-    cloud_rs, cloud_ts = latest
+    cloud_rs, cloud_ts, cloud_date = latest
     result["cloud_version"] = f"RS{cloud_rs:02d}.0 TS{cloud_ts}"
-    result["update_available"] = latest > device_tuple
+    result["cloud_firmware_date"] = cloud_date
+    result["update_available"] = (cloud_rs, cloud_ts) > device_tuple
 
     logger.info(
         "Firmware check: device=%s cloud=%s series=%s update_available=%s",
