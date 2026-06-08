@@ -84,17 +84,25 @@ CallClasses `0x53` / `0x54` are already migrated but not yet wired into any inte
 Reads live device state. **NOT** DpIds — separate index space.
 `SPL_PARAMS_MERA_COMFORT` in `AquaCleanClient.py` defines the list sent.
 
-**Current list**: `[0,1,2,3,4,5,6,7]` — safe for all standard variants.
-**iPhone sends**: `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]` (confirmed OTA capture 2026-06-01, HB2304EU298413 fw RS146.21).
-Params 12 and 13 are safe on Mera Comfort firmware ≥ RS25 (LidOffsetPosition, ShowerArmOffsetPosition).
+**Bridge current list**: `[0,1,2,3,4,5,6,7,12,13]` — 12 = UnpostedShowerCycles, 13 = DaysUntilNextDescale.
+⚠️ **Mislabeling bug**: the bridge currently labels these as `LidOffsetPosition`/`ShowerArmOffsetPosition` — that is wrong.
+See `docs/roadmap.md` → "Fix: SPL parameter mislabeling" for the fix TODO.
+**iPhone v2.13.2 sends**: `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]` (OTA capture 2026-06-01, HB2304EU298413 fw RS146.21).
+Indices 12 and 13 in this capture = UnpostedShowerCycles and DaysUntilNextDescale (confirmed iOS app v2.14.1 DpId.cs).
+The real LidOffset/ShowerArmOffset are at SPL indices 104/105 — queryability unconfirmed; check v2.14.1 OTA.
 
 **DANGER**: indices 8, 9, 10 are device-variant specific — sending them to a Mera Comfort
 permanently corrupts `GetFilterStatus` state until power-cycle. Do NOT add 8/9/10 to Mera Comfort list.
 
 ### SPL parameter index definitions
 
-| Index | Name | Device restriction |
-|-------|------|--------------------|
+Indices 0–22 confirmed from iOS app v2.14.1 DpId.cs (formula: DpId = 65596 + index).
+Firmware SPL dispatcher in node 0x01 handles switch cases 0–21 (0x00–0x15).
+Indices 100+ follow the same DpId offset formula; queryability via GetSystemParameterList
+unconfirmed for those — check v2.14.1 OTA capture.
+
+| Index | Name | Notes |
+|-------|------|-------|
 | 0 | StateUserPresent | all |
 | 1 | StateShowerAnal | all |
 | 2 | StateShowerLady | all |
@@ -103,29 +111,53 @@ permanently corrupts `GetFilterStatus` state until power-cycle. Do NOT add 8/9/1
 | 5 | DurationDescaling | all |
 | 6 | LastError | all |
 | 7 | StateService | all |
-| 8 | StateSprayCalibration | restricted — not for Mera Comfort |
-| 9 | StateOrientationLight | AcSela only |
-| 10 | StateDraining | AcCama/AcCamaTestset only |
-| 11 | ConnectedSsmDevices | AcSela (fw ≥ 4); AcMeraFloorstanding, AcMeraComfort, AcMeraClassic (fw ≥ 23). Bitmask: bit0=FlushTrigger, bit1=OdourExtraction, bit2=OrientationLight |
-| 12 | LidOffsetPosition | AcMeraComfort, firmware ≥ RS25 — safe |
-| 13 | ShowerArmOffsetPosition | AcMeraComfort — safe |
-| 14 | DryerArmOffsetPosition | — |
-| 255 | EndiannessCheck | — |
+| 8 | StateSprayCalibration | ⚠️ not for Mera Comfort — corrupts GetFilterStatus |
+| 9 | StateOrientationLight | ⚠️ AcSela only — not for Mera Comfort |
+| 10 | StateDraining | ⚠️ AcCama/AcCamaTestset only — not for Mera Comfort |
+| 11 | EndiannessCheck | all (DpId 65607) |
+| 12 | UnpostedShowerCycles | all (DpId 65608) — also via GetStatisticsDescale |
+| 13 | DaysUntilNextDescale | all (DpId 65609) — also via GetStatisticsDescale |
+| 14 | DaysUntilShowerRestricted | all (DpId 65610) — also via GetStatisticsDescale |
+| 15 | ShowerCyclesUntilConfirmation | all (DpId 65611) — also via GetStatisticsDescale |
+| 16 | TimestampAtLastDescale | all (DpId 65612) |
+| 17 | TimestampAtLastDescalePrompt | all (DpId 65613) |
+| 18 | NumberOfDescaleCycles | all (DpId 65614) — also via GetStatisticsDescale |
+| 19 | DaysUntilNextFilterChange | all (DpId 65615) — also via GetFilterStatus |
+| 20 | TimestampAtLastFilterChange | all (DpId 65616) |
+| 21 | TimestampAtLastFilterChangePrompt | all (DpId 65617) |
+| 22 | NumberOfFilterChanges | all (DpId 65618) — also via GetFilterStatus |
+| 23 | LocalAppTime | write: app clock sync (DpId 65619) |
+| 24–27 | LightDailyBlock1/2 Start/Stop | orientation light schedule; written by app (DpIds 65620–65623) |
+| 28 | TimestampAtLastPowerdown | all (DpId 65624) |
+| 31 | RealtimeClockUtcTime | all (DpId 65627) |
+| 32–46 | ActiveProfileSettings 0–14 | mirror of proc 0x0A read values (DpIds 65628–65642) |
+| 47–60 | ActiveCommonSettings 0–13 | mirror of proc 0x0A read values (DpIds 65643–65656) |
+| 100 | ConnectedSsmDevices | AcSela fw≥4; AcMeraComfort fw≥23 (DpId 65696). Bitmask: bit0=FlushTrigger, bit1=OdourExtraction, bit2=OrientationLight |
+| 104 | LidOffsetPosition | AcMeraComfort (DpId 65700) — queryability unconfirmed; check v2.14.1 OTA |
+| 105 | ShowerArmOffsetPosition | AcMeraComfort (DpId 65701) — queryability unconfirmed |
+| 106 | DryerArmOffsetPosition | AcMeraComfort (DpId 65702) — queryability unconfirmed |
 
 ### AC_ DpId namespace — mapping to SPL indices
 
 The app uses two DpId namespaces: **`AC_`** for all AquaClean models (Mera Comfort, AcSela,
 AcCama, …) and **`DP_`** for Alba/Ble20 devices. They do not overlap.
 
-`AC_STATUS_*` DpIds map directly to SPL indices:
-`AC_STATUS_USER_PRESENT = 65596` = index 0, `AC_STATUS_ORIENTATION_LIGHT = 65605` = index 9,
-and so on (offset 65596). **`AC_` does not mean Mera Comfort** — it is the general AquaClean
-protocol namespace.
+`AC_STATUS_*` DpIds follow `DpId = 65596 + SPL_index` for the contiguous block indices 0–22
+(DpIds 65596–65618). At higher offsets the same formula gives SPL indices 100+ (e.g.
+`AC_STATUS_CONNECTED_SSM_DEVICES = 65696` = index 100; `AC_STATUS_LID_OFFSET_POSITION = 65700`
+= index 104). Whether those high indices are queryable via GetSystemParameterList is unconfirmed
+— check v2.14.1 OTA capture. **`AC_` does not mean Mera Comfort** — it is the general
+AquaClean protocol namespace.
+
+**No motion detection in SPL namespace.** The Mera Comfort has a proximity sensor node
+(hardware confirmed in RS30 firmware, node 0x0B). It drives lid mechanics via internal bus only.
+No SPL parameter, GATT notification, or BLE advertisement bit for motion/approach state exists
+on Mera Comfort. `AC_STATUS_USER_PRESENT` (SPL index 0) = seat sensor only.
 
 **`AC_STATUS_ORIENTATION_LIGHT` (= 65605, SPL index 9):**
 - AcSela only. Index 9 always returns 0 on HB2304EU298413 — orientation light state is
   invisible over BLE on Mera Comfort (confirmed from BLE log analysis).
-- Not in `SPL_PARAMS_MERA_COMFORT = [0,1,2,3,4,5,6,7]` — intentionally excluded.
+- Not in `SPL_PARAMS_MERA_COMFORT` — intentionally excluded.
 - **DO NOT probe index 9 on Mera Comfort** — same danger as indices 8 and 10:
   permanently corrupts `GetFilterStatus` state until power-cycle.
 

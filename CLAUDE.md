@@ -67,6 +67,6 @@ wrap the entire response in a fenced code block — square brackets are interpre
 | `.claude/rules/circuit-breaker.md` | Touching circuit breaker or ESP32 auto-restart |
 | `.claude/rules/ble-recovery.md` | Touching `wait_for_device_restart` |
 | `.claude/rules/ble-protocol.md` | Any BLE protocol work: procedures, SPL, Commands, ProfileSettings |
-| `.claude/rules/roadmap-todo.md` | Planning new features or checking open TODOs |
+| `docs/roadmap.md` | Planning new features or checking open TODOs |
 | `.claude/rules/hacs-roadmap.md` | Planning HACS features, zeroconf, config flow |
 | `.claude/rules/historical-notes.md` | Background reference only |
