@@ -9,8 +9,11 @@ Series detection algorithm
 --------------------------
 1. Parse the BLE firmware string, e.g. "RS28.0 TS199" → rsTsVersion "28.199".
 2. GET /api/firmwares (no filter) returns ~170 packages covering all series.
-3. Find the package whose nodeFirmwares contains rsTsVersion "28.199" → series 248.
-4. From the same response, find isActive=True packages for series 248 → latest.
+3. Find the package whose nodeFirmwares contains rsTsVersion "28.199" → series 248,
+   variants [1, 2, 3].  Record the variant list — series 248 covers both Mera
+   Comfort (variants [1,2,3]) and Sela (variant [6]) with different firmware.
+4. From the same response, find isActive=True packages for series 248 that share
+   at least one variant with the device's variant list → latest.
 5. Compare (device RS, TS) < (cloud RS, TS) → update available.
 
 This avoids hardcoding the series number and works for any AquaClean variant.
@@ -83,55 +86,70 @@ def _parse_rs_ts(firmware_main: str) -> Optional[tuple]:
         return None
 
 
-def _find_series(rs_ts_str: str, packages: list) -> Optional[int]:
+def _find_series_and_variant(rs_ts_str: str, packages: list) -> Optional[tuple]:
     """
-    Find the product series for a given rsTsVersion string (e.g. "28.199").
+    Find (series, variants) for a given rsTsVersion string (e.g. "8.57").
+
+    Series 248 covers both Mera Comfort (variants [1,2,3]) and Sela (variant [6])
+    with different firmware version ranges — variant filtering is required to avoid
+    comparing a Sela against Mera Comfort firmware.
 
     If the version appears in more than one series (rare, only affects very old
     firmware), prefers the series where it is NOT the active release.
     Falls back to the lowest series number if still ambiguous.
     """
-    matches = []  # list of (series, is_active)
+    matches = []  # list of (series, variants, is_active)
     for pkg in packages:
         fp = pkg.get("firmwarePackage", {})
         series = fp.get("series")
+        variants = fp.get("variants", [])
         is_active = pkg.get("isActive", False)
         for node in fp.get("nodeFirmwares", []):
             if node.get("rsTsVersion") == rs_ts_str:
-                matches.append((series, is_active))
+                matches.append((series, variants, is_active))
                 break
 
     if not matches:
         return None
 
-    unique_series = {s for s, _ in matches}
+    unique_series = {s for s, _, _ in matches}
     if len(unique_series) == 1:
-        return unique_series.pop()
+        # Prefer the active package to get canonical variants; fall back to first.
+        active = [(s, v) for s, v, a in matches if a]
+        return active[0] if active else (matches[0][0], matches[0][1])
 
     # Prefer series where the version is historical (not active)
-    inactive_series = {s for s, active in matches if not active}
+    inactive = [(s, v) for s, v, a in matches if not a]
+    inactive_series = {s for s, _ in inactive}
     if len(inactive_series) == 1:
-        return inactive_series.pop()
+        return inactive[0]
 
     logger.warning(
         "Firmware version %s matches multiple series %s — picking lowest",
         rs_ts_str, sorted(unique_series),
     )
-    return min(unique_series)
+    lowest = min(unique_series)
+    return next((s, v) for s, v, _ in matches if s == lowest)
 
 
-def _get_latest_for_series(series: int, packages: list) -> Optional[tuple]:
+def _get_latest_for_series_and_variant(series: int, variants: list, packages: list) -> Optional[tuple]:
     """
-    Return the highest (RS, TS) among all isActive=True packages for a series.
+    Return the highest (RS, TS) among isActive=True packages for the given series
+    that share at least one variant with the device's variant list.
     Only considers the main node (nodeId 0x01) to match how the device reports
     its version via GetFirmwareVersionList (component ID 1).
+    If variants is empty, the variant filter is skipped (all packages for the
+    series are considered).
     """
+    device_variants = set(variants)
     best: Optional[tuple] = None
     for pkg in packages:
         if not pkg.get("isActive"):
             continue
         fp = pkg.get("firmwarePackage", {})
         if fp.get("series") != series:
+            continue
+        if device_variants and not device_variants.intersection(fp.get("variants", [])):
             continue
         for node in fp.get("nodeFirmwares", []):
             # main node only
@@ -187,22 +205,23 @@ async def check_firmware_update(firmware_main: str) -> dict:
         return result
 
     rs_ts_str = f"{device_tuple[0]}.{device_tuple[1]}"
-    series = _find_series(rs_ts_str, packages)
-    if series is None:
+    match = _find_series_and_variant(rs_ts_str, packages)
+    if match is None:
         result["error"] = f"Device firmware {rs_ts_str} not found in Geberit cloud"
         logger.warning("Firmware update check: %s", result["error"])
         return result
 
+    series, variants = match
     result["series"] = series
 
-    latest = _get_latest_for_series(series, packages)
+    latest = _get_latest_for_series_and_variant(series, variants, packages)
     if latest is None:
         result["error"] = f"No active firmware found for series {series}"
         logger.warning("Firmware update check: %s", result["error"])
         return result
 
     cloud_rs, cloud_ts = latest
-    result["cloud_version"] = f"RS{cloud_rs}.0 TS{cloud_ts}"
+    result["cloud_version"] = f"RS{cloud_rs:02d}.0 TS{cloud_ts}"
     result["update_available"] = latest > device_tuple
 
     logger.info(
