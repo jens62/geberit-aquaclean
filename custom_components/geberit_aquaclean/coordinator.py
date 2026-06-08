@@ -116,6 +116,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # read only 9 live-changing DpIds and merge with this cache.
         self._alba_slow_cache: dict = {}
         self._alba_poll_num: int = 0
+        # Stored-settings cache for Mera devices. Fetched once per device boot; cleared
+        # when a write is issued via async_set_profile_setting / async_set_common_setting.
+        # Both setting types change rarely (only on explicit user action) — re-fetching
+        # every poll wastes ~3.6 s of BLE time (11 profile + 7 common queries).
+        self._mera_profile_settings_cache: dict | None = None
+        self._mera_common_settings_cache: dict | None = None
         # Firmware cloud check: result cached here; re-checked hourly inside _do_poll.
         self._firmware_update_result: dict | None = None
         self._last_firmware_check_at: datetime | None = None
@@ -589,8 +595,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         soc_versions = await client.base_client.get_soc_application_versions_async()
         firmware_versions = await client.base_client.get_firmware_version_list_async()
         filter_status = await client.base_client.get_filter_status_async()
-        profile_settings = await client.base_client.get_stored_profile_settings_async()
-        common_settings = await client.base_client.get_stored_common_settings_async()
+        if self._mera_profile_settings_cache is None:
+            self._mera_profile_settings_cache = await client.base_client.get_stored_profile_settings_async()
+        profile_settings = self._mera_profile_settings_cache
+        if self._mera_common_settings_cache is None:
+            self._mera_common_settings_cache = await client.base_client.get_stored_common_settings_async()
+        common_settings = self._mera_common_settings_cache
 
         return {
             # Device identification
@@ -808,8 +818,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 else:
                     await client.connect_ble_only(self._device_id)
                 await client.set_stored_profile_setting(setting_id, value)
-                # Profile settings changed — force a slow poll so the cache re-reads them.
+                # Invalidate caches so the next poll re-reads the updated values.
                 self._alba_slow_cache = {}
+                self._mera_profile_settings_cache = None
             except ESPHomeConnectionError:
                 self._reset_esphome_connector()
                 raise
@@ -847,6 +858,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             try:
                 await client.connect_ble_only(self._device_id)
                 await client.set_stored_common_setting(setting_id, value)
+                self._mera_common_settings_cache = None
             except ESPHomeConnectionError:
                 self._reset_esphome_connector()
                 raise

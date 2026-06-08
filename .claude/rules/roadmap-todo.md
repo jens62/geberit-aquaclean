@@ -90,6 +90,24 @@ Tools: `tools/ble-session-replay.py --dry-run` to verify proc appears in capture
 
 ---
 
+### Alba: session caching — skip KE handshake on every poll
+
+The bridge currently does a full Arendi handshake (`SABM → UA → Version → EP → KE`) on every poll.
+The Geberit Home App does one KE per user session and stays connected.
+
+**Benefits (both from the same change):**
+1. **Performance**: skips 5 round trips of cryptographic operations per poll.
+2. **Remote displacement fix**: reduces keyset-0 KE count from 1-per-poll to 1-per-device-boot (Hypothesis A from issue #21).
+
+**Implementation**: after a successful KE, persist `(rx_key, tx_key, nonce2, rx_counter, tx_counter)` on
+the coordinator between polls. On reconnect: `SABM → UA → Version → EP` → skip KE → resume with cached
+keys at the correct counter position. Invalidate cache when `nonce2` in EP Response changes (= device power-cycle).
+
+**Diagnostic prerequisite before coding**: set poll interval to 3600s. If displacement moves from ~2.5 min
+to ~5 hours, threshold is ~5 KEs and session caching is the right fix. See `memory/alba-session-caching-fix.md`.
+
+---
+
 ### HACS Alba: configurable DpId polling frequency
 
 `_ALBA_SLOW_POLL_EVERY = 10` is hardcoded.
