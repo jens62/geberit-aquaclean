@@ -15,10 +15,11 @@ from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
 # (data_key, friendly_name, device_class, icon_on, icon_off, mera_only)
 BINARY_SENSORS: list[tuple] = [
-    ("is_user_sitting",        "User Sitting",        BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on", "geberit:is_user_sitting-off", False),
-    ("is_anal_shower_running", "Anal Shower Running", None,                              "geberit:analshower",         "geberit:analshower",          False),
-    ("is_lady_shower_running", "Lady Shower Running", None,                              "geberit:ladywash",           "geberit:ladywash",            True),
-    ("is_dryer_running",       "Dryer Running",       None,                              "geberit:dryer-on",           "geberit:dryer-off",           True),
+    ("is_user_sitting",           "User Sitting",              BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on", "geberit:is_user_sitting-off", False),
+    ("is_anal_shower_running",    "Anal Shower Running",       None,                              "geberit:analshower",         "geberit:analshower",          False),
+    ("is_lady_shower_running",    "Lady Shower Running",       None,                              "geberit:ladywash",           "geberit:ladywash",            True),
+    ("is_dryer_running",          "Dryer Running",             None,                              "geberit:dryer-on",           "geberit:dryer-off",           True),
+    ("firmware_update_available", "Firmware Update Available", BinarySensorDeviceClass.UPDATE,    "mdi:update",                 "mdi:check-circle",            False),
 ]
 
 # (data_key, friendly_name, device_class, icon)

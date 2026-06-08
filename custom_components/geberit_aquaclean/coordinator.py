@@ -116,6 +116,10 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         # read only 9 live-changing DpIds and merge with this cache.
         self._alba_slow_cache: dict = {}
         self._alba_poll_num: int = 0
+        # Firmware cloud check: result cached here; background task runs hourly.
+        self._firmware_update_result: dict | None = None
+        self._firmware_check_task: asyncio.Task | None = None
+        self._identification_logged: bool = False
         super().__init__(
             hass,
             _LOGGER,
@@ -195,6 +199,31 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             except Exception:
                 pass
             self._habluetooth_connector = None
+        if self._firmware_check_task is not None:
+            self._firmware_check_task.cancel()
+            self._firmware_check_task = None
+
+    async def _firmware_check_loop(self, firmware_version: str) -> None:
+        """Background task: check Geberit cloud for firmware updates, then re-check hourly."""
+        from aquaclean_console_app.FirmwareUpdateService import check_firmware_update
+        while True:
+            try:
+                result = await check_firmware_update(firmware_version)
+                self._firmware_update_result = result
+                if result.get("error"):
+                    _LOGGER.warning("Firmware cloud check failed: %s", result["error"])
+                else:
+                    _LOGGER.info(
+                        "Firmware cloud check: device=%s cloud=%s series=%s update_available=%s",
+                        result.get("device_version"), result.get("cloud_version"),
+                        result.get("series"), result.get("update_available"),
+                    )
+                self.async_update_listeners()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                _LOGGER.warning("Firmware cloud check error: %s", exc)
+            await asyncio.sleep(3600)
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator protocol
@@ -445,6 +474,24 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._set_error(ec)
                 raise UpdateFailed(f"{ec.code} — {ec.message}: {exc}") from exc
 
+            # First successful poll: log consolidated identification and start cloud check.
+            if not self._identification_logged and result_data.get("sap_number"):
+                self._identification_logged = True
+                fw = result_data.get("firmware_version") or "?"
+                soc = result_data.get("soc_versions") or "n/a"
+                _LOGGER.info(
+                    "%s — SAP=%s Serial=%s fw=%s SOC=%s initial_op=%s",
+                    result_data.get("description", "?"),
+                    result_data.get("sap_number", "?"),
+                    result_data.get("serial_number", "?"),
+                    fw, soc,
+                    result_data.get("initial_operation_date", "?"),
+                )
+                if fw != "?" and self._firmware_check_task is None:
+                    self._firmware_check_task = self.hass.async_create_task(
+                        self._firmware_check_loop(fw)
+                    )
+
             poll_ms = int((time.perf_counter() - t_poll) * 1000)
             self._last_poll_ms = poll_ms
 
@@ -495,6 +542,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 "max_wifi_rssi": self._wifi_rssi_max,
                 "transport": self._transport,
                 "ble_dis_info": connector.ble_dis_info,
+                # Firmware cloud check (populated asynchronously after first poll)
+                "firmware_update_available": (self._firmware_update_result or {}).get("update_available"),
+                "cloud_firmware_version": (self._firmware_update_result or {}).get("cloud_version"),
             }
 
         except UpdateFailed:
