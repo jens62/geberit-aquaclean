@@ -33,3 +33,6 @@ Active memory entries: 70  |  Pruned: 0 (2 inline MEMORY.md entries updated)  | 
 
 ## Memory snapshot 2026-06-06
 Active memory entries: 68  |  Pruned: 2 (`feedback_python_interpreter.md`, `feedback_python_path.md` — duplicated CLAUDE.md Python path rule)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-08
+Active memory entries: 71  |  Pruned: 0 (no file removals; MEMORY.md index condensed: merged two GetSPL sections, removed 3 DONE/RESOLVED bullets from Unknown/Unresolved list — 212→198 lines)  |  Snapshot taken by /compress-memory

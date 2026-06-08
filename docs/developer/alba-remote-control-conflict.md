@@ -25,7 +25,7 @@ scan. Between polls the device is free — but the toilet actively rejects the r
 even then. The remote's `WrongPairingSecret`-style rejection is an application-layer
 decision, not a BLE-layer busy signal.
 
-## Root Cause — PARTIALLY IDENTIFIED, INCOMPLETE (2026-05-28)
+## Root Cause — PARTIALLY IDENTIFIED, INCOMPLETE (updated 2026-06-07)
 
 ### What was fixed in v3.0.3 (necessary but not sufficient)
 
@@ -92,10 +92,12 @@ Root cause unknown.
 | Option | Status |
 |--------|--------|
 | `CapabilitiesCmd` + `EventStorageInventory` on every fresh BLE connection | ✅ **IMPLEMENTED (v3.0.3)** — necessary but NOT sufficient; displacement persists |
+| Fix coordinator `async_unload_entry` to await `client.disconnect()` | ⚠️ **Bug confirmed (capture B, 2026-06-07)** — bridge held connection after integration disabled; must fix independently of root cause |
 | `DP_JOIN_DEVICE` once with PIN | ❌ **Invalidated** — DpId 543 absent from inventory on Alba 250 |
 | `DP_START_USER_SESSION` (DpId 802) write after KE | ❌ **Ruled out** — not observed in any app session |
 | keyset_id=1 in KE Request | ❌ **Ruled out (2026-05-28)** — app confirmed keyset_id=0x00; keyset 1 is the remote's key |
-| BLE notification mode — connect once, stay connected | Open — would remove the repeated-connect problem but adds complexity |
+| Protocol-level disconnect (HDLC DISC before BLE drop) | ❌ **Not confirmed** — iOS app also drops BLE without any protocol teardown; not a differentiator |
+| BLE notification mode — connect once, stay connected | Open — would eliminate repeated-KE problem (Hypothesis A); adds complexity |
 
 ## Investigation Steps — Cheapest First
 
@@ -231,7 +233,7 @@ compared frame-by-frame against MuusLee's v3.0.2 HA DEBUG log (poll 1).
 Ble20 command level. keyset_id is identical (both 0x00). No remaining KE Request
 difference has been identified.
 
-### Step 5 — Mera Comfort baseline capture (jens62, 2026-06-03)
+### Step 6 — Mera Comfort baseline capture (jens62, 2026-06-03)
 
 **Status: DONE — no displacement on Mera Comfort.**
 
@@ -251,6 +253,7 @@ zero displacement. This isolates the Alba problem to the **Arendi security layer
 the device firmware in general.
 
 ### Step 7 — v3.0.3 hardware test result (2026-05-28)
+
 
 **Status: DONE — displacement still occurs.**
 
@@ -376,6 +379,104 @@ comparison (step 8) is the only remaining way to observe it at the wire level.
 
 ---
 
+## Step 10 — MuusLee nRF52840 BLE captures (2026-06-07)
+
+**Status: DONE — new protocol facts confirmed; root cause still open.**
+
+MuusLee provided five PCA10059 captures analysed with `tools/nrf-ble-analyze.py`:
+
+| Capture | Description | Key finding |
+|---------|-------------|-------------|
+| A `alba-app-session.pcapng` | Geberit Home App session | Handshake baseline; keyset_mask=0x0300 |
+| B `alba-bridge-session.pcapng` | HA bridge via M5Stack ESPHome proxy | Bridge did NOT disconnect after integration deactivated |
+| C `alba-remote-session.pcapng` | Physical remote session | Remote KE NOT captured (sniffer lost sync) |
+| D1 `alba-displacement_D1without-ping.pcapng` | Displacement, "all advertising devices" mode | No CONNECT_IND captured; no ATT frames decoded |
+| D2 `alba-displacement_D2.pcapng` | Displacement, "following device" mode | Two bridge polls decoded; nonces confirmed per-boot |
+
+### New confirmed protocol facts
+
+**Nonces are per-boot constants, not per-session random.**
+Within capture D2, bridge poll 1 (t=26.4 s) and poll 2 (t=109 s) return identical
+nonce pairs (`5D08EFD96EEE2595...` / `9A735BAC09E197...`). Captures B and D2 have
+different nonces because the toilet was power-cycled between the two sessions.
+Earlier analysis (Step 8) observed this only with failed KE; D2 confirms it holds
+for successful keyset-0 KE completions too.
+
+**Server key material is per-boot and stable within a boot.**
+Capture D2: both polls return the same `server_pub` and `server_CMAC` from the
+toilet. Different boots produce different values. The toilet never regenerates its
+server-side X25519 key or CMAC within a boot.
+
+**Bridge identity confirmed in capture C (CMAC verification).**
+The connection active at the start of the remote session capture (before the remote
+connected at t=20.8 s) was the bridge: the KE Request was decoded, CMAC verified
+against `aquacleanBridgeId`, and matched exactly:
+```
+client_CMAC = CMAC(HKDF(aquacleanBridgeId, nonce1), client_pub)  →  EE2B166F…  ✓
+```
+
+**App disconnects identically to the bridge — no protocol teardown.**
+Confirmed from the Geberit iOS app source: `Disconnect()` calls the platform BLE
+disconnect API (`cancelPeripheralConnection()`) directly. No HDLC DISC frame, no
+Arendi Security layer close step. Both app and bridge disconnect by dropping the
+BLE link. A "protocol-level graceful disconnect" fix is therefore NOT the
+differentiator and NOT a valid fix hypothesis.
+
+**Bridge did not disconnect cleanly in capture B — coordinator lifecycle bug.**
+Capture B: the BLE connection (dongle red) persisted even after the HA integration
+was deactivated. This means `async_unload_entry` did not await `client.disconnect()`.
+This is a separate bug from the displacement root cause but should be fixed
+independently: a stuck connection blocks the remote from reconnecting for minutes.
+
+**Remote KE not captured — decisive test still pending.**
+Capture C: the sniffer followed the remote's CONNECT_IND (MAC `E4:85:01:DF:D0:03`)
+but captured only one ATT frame from the remote's session (WRITE_REQ 0x001e `0100`).
+The sniffer lost BLE channel sync immediately after the CONNECT_IND. The remote's
+`client_id` (HKDF IKM used to build its KE CMAC) is still unknown.
+
+**Tool bug: remote OUI `e4:85:01` not in `_TI_OUIS`.**
+MuusLee's remote (`E4:85:01:DF:D0:03`) shares the Arendi chip OUI with the toilet.
+`tools/nrf-ble-analyze.py` classifies it as "app / other" instead of detecting it
+as the physical remote. The `_TI_OUIS` set needs `"e4:85:01"` added (both toilet
+and remote are Arendi chips); remote detection must then exclude the toilet MAC.
+
+### Remaining two hypotheses
+
+All evidence from steps 1–10 narrows to two candidates:
+
+**Hypothesis A — repeated KE exhausts a session counter on the keyset-0 slot.**
+The bridge runs a full Arendi handshake (SABM → UA → Version → EP → KE) on every
+poll. The app connects once and holds the session. After N successful keyset-0 KE
+completions from the bridge, the device's internal counter for the keyset-0 slot
+reaches a threshold that invalidates the keyset-1 (remote's) registration. This
+would explain the "~5 polls / 5 minutes" onset observed in v3.0.4b3.
+
+**Hypothesis B — coordinator lifecycle bug allows bridge to occupy the device.**
+The coordinator holds the BLE connection indefinitely when the integration is not
+properly unloaded. If the user presses the remote button repeatedly while the
+bridge is stuck connected, the remote's state machine transitions to yellow !.
+
+Hypotheses A and B are NOT mutually exclusive; both may contribute.
+
+**Decisive test for Hypothesis A:**
+Run the bridge for 10+ polls without pressing the remote button at all. If yellow !
+appears → A is confirmed (repeated KE is the cause, not button-press failures).
+If remote stays green → B is the primary cause.
+
+### Updated evidence table
+
+| Scenario | KE | DpId reads | Repeated connects | Remote displaced? |
+|---|---|---|---|---|
+| v3.0.3 bridge | ✓ keyset 0 completes | ✓ full | ✓ every poll | **Yes** |
+| v3.0.4b1 bridge | ✗ keyset 1, fails | ✗ none | ✓ 7 attempts | **Yes (1st attempt)** |
+| v3.0.4b3 bridge | ✓ keyset 0, 17× | ✓ full | ✓ every poll | **Yes (~5 polls)** |
+| Wrong-PIN app | ✓ keyset 0 completes | ✗ none | ✗ once | **No** |
+| Geberit Home App (registered) | ✓ keyset 0 completes | ✓ full | ✗ once | **No** |
+
+The pattern "once → no displacement, repeated → yes" supports Hypothesis A.
+
+---
+
 ## Investigation Plan — PCA10059 BLE Sniff
 
 The PCA10059 (nRF52840 dongle) flashed with Nordic sniffer firmware + Wireshark
@@ -389,24 +490,30 @@ install + tshark extraction + KE Request decode script.
 
 ### Captures needed
 
-**A. Official app session (baseline)**
-- Open Geberit app → connect → complete init
-- Establishes the app's KE Request as ground truth (keyset_id=0x00 already confirmed
-  from two independent sources; sniffer gives a third independent confirmation)
+**A. Official app session (baseline)** ✅ Done (capture A, 2026-06-07)
+- App KE confirmed: keyset_id=0x00, handshake completes, keyset_mask=0x0300.
+- App session ATT pattern identical to bridge at the Ble20 level.
 
-**B. Bridge poll cycle**
-- Trigger one HACS poll
-- Compare bridge KE Request byte-for-byte against the app capture
+**B. Bridge poll cycle** ✅ Done (captures B, D2, 2026-06-07)
+- Bridge KE confirmed: keyset_id=0x00, `aquacleanBridgeId` verified via CMAC.
+- Server key material stable per-boot; nonces stable within boot.
+
+**C. Remote control — KE Request** ❌ Pending
+- Capture C obtained but sniffer lost sync; remote KE not decoded.
+- Need: "Following device" mode throughout, do not switch to "all advertising devices".
+- Goal: decode remote's KE Request → confirm keyset_id=0x01, extract remote `client_id`.
 
 **C. Remote control**
 - Press a button on the physical remote (it BLE-connects momentarily)
 - **Only way to see the remote's KE Request** — confirms keyset_id=0x01 and reveals
   whether any other byte differs from app/bridge frames
 
-**D. Displacement in action**
-- Remote in normal (no exclamation) state → trigger bridge poll → observe
-- Key timing question: does the toilet notify the remote **before** bridge KE completes,
-  or after? This locates the displacement trigger at EP level vs KE level
+**D. Displacement in action** ✅ Partial (captures D1, D2, 2026-06-07)
+- D2 decoded: one bridge poll captured with full handshake visible.
+- Remote showed yellow ! after polls; CONNECT_IND from bridge confirmed.
+- Key pending question: does the toilet notify the remote **before** bridge KE
+  completes, or after? Need a cleaner capture with both bridge and remote visible
+  simultaneously to observe device→remote traffic at displacement moment.
 
 ### How to identify KE frames in the raw capture
 
