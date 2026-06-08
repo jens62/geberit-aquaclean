@@ -195,6 +195,23 @@ Standalone bridge + MQTT path fully preserved alongside.
 
 ---
 
+### HACS: model-aware entity visibility
+
+Only register entities that apply to the connected device model. Currently all entities
+are registered at setup regardless of which model is connected, so Mera Comfort users see
+Alba-only entities (and vice versa) as unavailable clutter.
+
+**Approach:**
+- Detect the connected model from coordinator data (SAP number / device series / `is_variant_a` flag)
+- Split entity lists into model-specific subsets: `ENTITIES_MERA_COMFORT`, `ENTITIES_ALBA`, `ENTITIES_ALL`
+- Register only the matching subset in `async_setup_entry`; skip entities whose model
+  requirement does not match the detected device
+
+This removes grey/unavailable entities from the HA dashboard without requiring the user
+to manually hide them.
+
+---
+
 ### HACS Alba: configurable DpId polling frequency
 
 `_ALBA_SLOW_POLL_EVERY = 10` is hardcoded.
