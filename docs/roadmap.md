@@ -347,6 +347,33 @@ Auto-select ESPHome path when `[ESPHOME] host` is set in `config.ini` or `--esph
 
 ---
 
+## Testing / CI
+
+### Automated tests as GitHub Actions
+
+Investigate what can be tested without real BLE hardware and wire it into a GitHub Actions
+workflow so tests run on every push.
+
+Candidates:
+- **Unit tests** — `pytest` on pure-Python logic: frame encoding/decoding (`FrameService`),
+  error code formatting (`ErrorManager`), config validation (`_check_config_errors`),
+  firmware version parsing (`_parse_rs_ts`, `_find_series_and_variant`).
+- **Protocol tests against mock device** — run the bridge against `tools/mock-geberit-alba.py`
+  (and future `mock-geberit-sela.py`) in the same CI job; assert that a full poll cycle
+  completes and returns expected data shapes.
+- **HACS integration smoke test** — `pytest-homeassistant-custom-component` can load the
+  custom component against a mocked coordinator; assert entity states without BLE.
+- **Import / type check** — `python -m py_compile` on all modules + `mypy --ignore-missing-imports`
+  to catch regressions without a test harness.
+- **Firmware download script** — `--list` against the real Geberit cloud API (read-only,
+  no credentials); assert the catalogue is non-empty and series 248 is present.
+
+Suggested workflow file: `.github/workflows/ci.yml`, triggered on push to `main` and on PRs.
+Start with the cheapest tests (import check, unit tests) and add mock-device tests once the
+Sela mock server exists.
+
+---
+
 ## Code quality / Maintenance
 
 ### Refactor web UI (`static/index.html`)
