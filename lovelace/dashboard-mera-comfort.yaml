@@ -395,4 +395,12 @@ views:
           - entity: sensor.geberit_aquaclean_soc_versions
             name: SOC Versions
           - entity: sensor.geberit_aquaclean_firmware_version
-            name: Firmware Version
+            name: Installed Firmware
+          - entity: sensor.geberit_aquaclean_firmware_version_date
+            name: Installed Firmware Release Date
+          - entity: sensor.geberit_aquaclean_cloud_firmware_version
+            name: Cloud Firmware
+          - entity: sensor.geberit_aquaclean_cloud_firmware_date
+            name: Cloud Firmware Release Date
+          - entity: binary_sensor.geberit_aquaclean_firmware_update_available
+            name: Firmware Update Available
