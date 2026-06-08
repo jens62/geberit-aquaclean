@@ -266,6 +266,28 @@ which updates the in-memory interval and reschedules the next update.
 
 ## CLI / Setup
 
+### Orientation Light card — richer UI in Lovelace dashboards
+
+Replace the current plain `number` sliders for the Orientation Light card with a
+purpose-built UI using HACS frontend cards:
+
+- **Activation** — `select` entity or dropdown rendered via the existing
+  `number.geberit_aquaclean_orientation_light_activation` (0=Off, 1=On, 2=When Approached)
+- **Brightness** — `custom:number-box-card` with +/− buttons instead of a slider
+- **Colour** — `custom:rgb-light-card` with 7 colour dots matching the seven
+  `OrientationLightColour` values (Blue, Turquoise, Magenta, Orange, Yellow, WarmWhite, ColdWhite)
+
+Prerequisites (HACS Frontend):
+- `custom:number-box-card`
+- `custom:rgb-light-card`
+
+The colour entity would need a backing `light` entity or a workaround that maps the
+7-value `number.geberit_aquaclean_orientation_light_color` to an `rgb_color` the card
+can read and write. Options: HA template light, input_select + automation, or a custom
+entity in the integration that exposes the 7 colours as a proper `light` with `color_mode`.
+
+---
+
 ### `--scan` CLI command — BLE device discovery
 
 **Goal:** Let users discover the Geberit's BLE MAC address without manually scanning with
