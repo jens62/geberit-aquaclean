@@ -146,6 +146,8 @@ Profiled from TRACE log 2026-04-23. Steady-state poll breakdown after v3.0.9:
 do not disconnect at poll end; reconnect only on error or timeout. SubscribeNotifications
 runs once at connect time and is reused across all polls until the connection drops.
 Equivalent to persistent BLE mode scoped to the poll interval.
+Expose as a **"Stay connected" toggle in the HACS options flow** — off by default
+(on-demand is safer when BLE adapter is shared); on = persistent between polls.
 **Fix 3** — Reduce GetFilterStatus timeout from 5 s to 2 s.
 
 ---
