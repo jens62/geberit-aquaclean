@@ -256,7 +256,7 @@ which updates the in-memory interval and reschedules the next update.
 - **`sensor.geberit_aquaclean_ble_state`** — intra-poll BLE cycle tracking. Self-push via `async_write_ha_state()` only — do NOT call `coordinator.async_update_listeners()` mid-poll.
 - **Poll countdown sensor** — `next_poll` timestamp from `poll_epoch` + `poll_interval`.
 - **RSSI tracking** — add `ble_rssi` and `wifi_rssi` to PollStats and HACS coordinator.
-- **Integration version sensor** — read from `manifest.json`, expose as DIAGNOSTIC entity.
+- **Integration version sensor** — read from `manifest.json`, expose as DIAGNOSTIC entity. Also log the version as INFO in the HA log at integration startup (alongside firmware version).
 - **Multilingual support (EN/DE/FR/IT)** — `strings.json` + translation files; replace `_attr_name` with `_attr_translation_key`. ~1 session.
 - **Download button for Performance Statistics panel** — Option 1 (quickest): `custom:button-card` + inline JS.
 
