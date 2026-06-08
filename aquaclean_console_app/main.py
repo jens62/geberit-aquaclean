@@ -2984,11 +2984,13 @@ class ApiMode:
         }
         if _skip_profile:
             return state
-        # Fetch profile settings via proc 0x53 on every regular poll so they stay current.
-        # Skipped on the first poll (_fetch_state_and_info path) so GetFilterStatus is
-        # reached before the device is exhausted by 10 extra Proc_0x53 calls.
-        profile_settings = await client.base_client.get_stored_profile_settings_async()
-        self.service.device_state["profile_settings"] = profile_settings
+        # Use cached profile settings — they change only on explicit user action via
+        # set_profile_setting(), which updates device_state["profile_settings"] directly.
+        # Re-querying all 11 settings every poll wastes ~2.2 s.
+        if self.service.device_state["profile_settings"] is None:
+            profile_settings = await client.base_client.get_stored_profile_settings_async()
+            self.service.device_state["profile_settings"] = profile_settings
+        profile_settings = self.service.device_state["profile_settings"]
         return {**state, "profile_settings": profile_settings}
 
     async def _fetch_state_and_info(self, client):
