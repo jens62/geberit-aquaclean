@@ -162,7 +162,8 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Binary sensor | **BLE Connected** — `True` (green) when the last poll reached the Geberit via BLE, `False` (red) when the last poll failed; attribute `connected_at` shows the timestamp of the last successful BLE connect |
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
 | Sensor | **BLE Connection** — shows `{BLE device name} (MAC)` after the first successful poll, or just the MAC until then |
-| Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions, **Firmware Version** (e.g. `RS28.0 TS199`) |
+| Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions, **Firmware Version** (e.g. `RS28.0 TS199`), **Firmware Release Date**, **Cloud Firmware Version**, **Cloud Firmware Release Date** |
+| Binary sensor | **Firmware Update Available** — `True` when the Geberit cloud has a newer firmware than the device; checked on first poll and every hour thereafter |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Sensor (filter) | **Days Until Filter Change**, **Last Filter Reset** (timestamp), **Filter Reset Count** |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
