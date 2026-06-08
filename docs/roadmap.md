@@ -142,8 +142,10 @@ Profiled from TRACE log 2026-04-23. Steady-state poll breakdown after v3.0.9:
 | BLE connect + wait_for_info_frames | ~700–1,300 ms | Yes | ~150 ms |
 
 **Fix 1** — ~~Cache GetStoredProfileSettings + GetStoredCommonSettings~~ — **Done in v3.0.9** (~3.6 s saved after first poll).
-**Fix 2** — Make SubscribeNotifications conditional (~2.4 s saved per connect):
-skip if last poll succeeded less than N seconds ago.
+**Fix 2** — Keep BLE connection alive between polls (~2.4 s saved per poll):
+do not disconnect at poll end; reconnect only on error or timeout. SubscribeNotifications
+runs once at connect time and is reused across all polls until the connection drops.
+Equivalent to persistent BLE mode scoped to the poll interval.
 **Fix 3** — Reduce GetFilterStatus timeout from 5 s to 2 s.
 
 ---
