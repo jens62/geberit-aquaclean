@@ -218,6 +218,16 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         result.get("device_version"), result.get("cloud_version"),
                         result.get("series"), result.get("update_available"),
                     )
+                # Patch coordinator.data immediately so entities show the new values
+                # without waiting for the next scheduled poll (up to 30 s away).
+                if self.data is not None:
+                    self.data = {
+                        **self.data,
+                        "firmware_update_available": result.get("update_available"),
+                        "firmware_version_date": result.get("device_firmware_date"),
+                        "cloud_firmware_version": result.get("cloud_version"),
+                        "cloud_firmware_date": result.get("cloud_firmware_date"),
+                    }
                 self.async_update_listeners()
             except asyncio.CancelledError:
                 return
