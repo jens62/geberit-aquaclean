@@ -498,8 +498,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     result_data.get("initial_operation_date", "?"),
                 )
                 if fw != "?" and self._firmware_check_task is None:
-                    self._firmware_check_task = self.hass.async_create_task(
-                        self._firmware_check_loop(fw)
+                    self._firmware_check_task = self.hass.async_create_background_task(
+                        self._firmware_check_loop(fw),
+                        name="geberit_aquaclean_firmware_check",
                     )
 
             poll_ms = int((time.perf_counter() - t_poll) * 1000)
