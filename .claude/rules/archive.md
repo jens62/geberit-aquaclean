@@ -36,3 +36,6 @@ Active memory entries: 68  |  Pruned: 2 (`feedback_python_interpreter.md`, `feed
 
 ## Memory snapshot 2026-06-08
 Active memory entries: 71  |  Pruned: 0 (no file removals; MEMORY.md index condensed: merged two GetSPL sections, removed 3 DONE/RESOLVED bullets from Unknown/Unresolved list — 212→198 lines)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-08 (session 2)
+Active memory entries: 69  |  Pruned: 2 (`feedback_update_sh_not_install_sh.md`, `feedback_curl_oneliner.md` — both covered verbatim by .claude/rules/release-process.md MANDATORY rules; stale note in former said CLAUDE.md had install.sh which is no longer true)  |  Snapshot taken by /compress-memory
