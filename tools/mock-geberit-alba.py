@@ -273,6 +273,44 @@ class _Ble20AppLayer:
         if not plaintext:
             return []
         cmd = plaintext[0]
+        if cmd == 0xD0:  # TunnelDataExchange wrapper (GetEndProduct path)
+            return self._tunnel_dispatch(plaintext)
+        return self._dispatch_sync(plaintext)
+
+    def _tunnel_dispatch(self, frame: bytes) -> list:
+        """Unwrap a TunnelDataExchange (0xD0) frame, dispatch inner frames, rewrap responses.
+
+        Wire format: [0xD0, series, variant, uid0-3, (len-1, inner_bytes)...]
+        Response:    same header, one wrapped inner response per inner request frame.
+        """
+        if len(frame) < 9:
+            print(f"[MockBle20] tunnel frame too short ({len(frame)} bytes) — ignored")
+            return []
+        series  = frame[1]
+        variant = frame[2]
+        uid     = frame[3:7]
+        hdr     = bytes([0xD0, series, variant]) + uid
+
+        responses = []
+        pos = 7
+        while pos + 1 < len(frame):
+            inner_len = frame[pos] + 1
+            pos += 1
+            if pos + inner_len > len(frame):
+                print(f"[MockBle20] tunnel inner frame truncated at pos={pos} — ignored")
+                break
+            inner = frame[pos:pos + inner_len]
+            pos += inner_len
+            print(f"[MockBle20] [tunnel] inner cmd=0x{inner[0]:02X}")
+            for resp in self._dispatch_sync(inner):
+                responses.append(hdr + bytes([len(resp) - 1]) + resp)
+        return responses
+
+    def _dispatch_sync(self, plaintext: bytes) -> list:
+        """Dispatch one unwrapped frame synchronously (no 0xD0 recursion)."""
+        if not plaintext:
+            return []
+        cmd = plaintext[0]
         if cmd == CommandId.Inventory:
             return self._inventory()
         if cmd == CommandId.ReadCmd:
@@ -616,18 +654,18 @@ class _AriendiServerSide:
             # 5. Loop on incoming encrypted frames
             # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
             new_sabm = False
-            # Timeouts — both 5 s:
+            # Timeouts:
             #   _first_frame (True) — 5 s: app derives keys and encrypts first request
             #                         after KE, observed 450–750 ms on iPhone.
-            #   active session (False) — 5 s: app takes ~2.96 s to process each
-            #                           response batch before sending the next command
-            #                           (confirmed: CapabilitiesCmd arrives 2.96 s after
-            #                           inventory; next ReadCmd after DpId=8 ReadAns
-            #                           arrives ~3.0 s later, just after the old 3 s
-            #                           timeout fired by 40–50 ms).
+            #   active session (False) — 30 s: inter-command gap once session is running.
+            #                           During init, gaps are ~2.96 s (CapabilitiesCmd after
+            #                           inventory; ReadCmd after DpId=8 ReadAns).
+            #                           After Initialize() returns, the iOS app may take
+            #                           10–20 s before sending NotifyEnable frames (async
+            #                           UI rendering, possible cloud-call timeout).
             _first_frame = True
             while True:
-                _timeout = 5.0
+                _timeout = 5.0 if _first_frame else 30.0
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
                         self._rx_queue.get(), timeout=_timeout
