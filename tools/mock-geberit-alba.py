@@ -46,6 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
+_MOCK_VERSION = "1.1.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -666,6 +667,7 @@ class _AriendiServerSide:
             _first_frame = True
             while True:
                 _timeout = 5.0 if _first_frame else 30.0
+                print(f"[MockServer] ⏳ waiting for next frame (timeout={_timeout:.0f}s, tx_seq={self._tx_seq})")
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
                         self._rx_queue.get(), timeout=_timeout
@@ -810,6 +812,8 @@ class BtSigDataService(Service):
     @sig_write.setter
     def sig_write(self, value, options):
         data = bytes(value)
+        head = data[:4].hex() if len(data) >= 4 else data.hex()
+        print(f"[BLE←] {len(data)} B  head={head}{'...' if len(data) > 4 else ''}")
         if _VERBOSE:
             print(f"[Write→sig_write] {data.hex()}")
         if self._mode in ("handshake", "ble20") and self._arendi is not None:
@@ -1037,7 +1041,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         print("Advertisement registration failed:", e)
 
     print(f"--- Mock Device Active (mode={mode}) ---")
-    print(f"    script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
+    print(f"    mock: {_MOCK_VERSION}  script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
     print("Advertising: fd48 + Geberit mfr data (company 0x0602)")
 
     async def _handshake_loop():
