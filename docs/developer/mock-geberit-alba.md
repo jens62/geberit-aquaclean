@@ -2,13 +2,14 @@
 
 **File:** `tools/mock-geberit-alba.py`
 
-Simulates the AquaClean Alba BLE peripheral on Linux (BlueZ). Supports two
+Simulates the AquaClean Alba BLE peripheral on Linux (BlueZ). Supports three
 modes:
 
 | Mode | Purpose |
 |------|---------|
 | `--mode unsupported` (default) | Advertises the Alba GATT profile but ignores all writes — triggers the unsupported-device detection path in the HACS config flow |
 | `--mode handshake` | Implements the full server-side Arendi Security protocol — use this to test end-to-end encryption without a physical Alba |
+| `--mode ble20` | Full Alba application layer: Arendi Security + complete Ble20 DpId store — use this to test the Geberit Home App against a mock device |
 
 For a purely in-process crypto test (no BLE hardware at all) see
 **`tests/test_arendi_security.py`** below.
@@ -224,6 +225,74 @@ WARNING [AquaClean] Config flow: unsupported GATT profile — svc=0000fd48...
 If you see `connection test failed` with `0 total BLE advertisement packet(s)`:
 the `aquaclean-proxy` ESPHome integration is still enabled or another client
 holds the subscription slot.
+
+---
+
+## Mode: `--mode ble20` — full Ble20 application layer
+
+### What it tests
+
+The complete Alba application protocol as seen by the **Geberit Home App** (iOS/Android).
+Specifically:
+
+- Full Arendi Security handshake (same as `--mode handshake`)
+- Phase 1 — raw Ble20 initialization sequence (DataPointInventory, ReadCapabilities,
+  EventStorageInventory, ReadRsTsVersion)
+- Phase 2 — TunnelDataExchange-wrapped (0xD0) repeat of the same sequence, which the
+  app runs after Phase 1 completes via `GetEndProduct()`
+- All standard Ble20 commands: Read, Write, Notify subscription, List/Event inventories
+
+### How to run
+
+```bash
+sudo /Users/jens/venv/bin/python tools/mock-geberit-alba.py --mode ble20
+```
+
+Connect the Geberit Home App to the mock's BLE address (printed at startup).
+
+### Two-phase connection (why 0xD0 frames appear)
+
+After Phase 1 (`Initialize()`) completes, the app creates a second
+`ConfigurationManager` that wraps all BLE writes in a `TunnelDataExchange`
+header (`0xD0 series variant uid[4] len-1 inner_frame`).  Phase 2 runs an
+identical inventory + read sequence, but every frame is wrapped with this header.
+
+The mock's `_Ble20AppLayer.dispatch()` detects `cmd == 0xD0` and calls
+`_tunnel_dispatch()`, which:
+1. Parses the tunnel header (series, variant, 4-byte uid)
+2. Extracts each inner frame (packed as `len-1 + bytes` pairs)
+3. Dispatches each inner frame through `_dispatch_sync()` (identical to the raw path)
+4. Wraps each response with the same tunnel header before returning
+
+Log output during Phase 2 looks like:
+```
+[MockServer] ← encrypted frame DECRYPTED: d0fa009a6a1202...
+[MockBle20] [tunnel] inner cmd=0x00        ← InventoryCmd
+[MockBle20] → INVENTORY_DATA DpId=0        ← ×78 entries
+[MockServer] → cmd=0xD0 N(S)=...           ← each wrapped response
+```
+
+### Timing: gap between Phase 1 and Phase 2
+
+The app takes **10–20 seconds** between Phase 1 completing and sending the first
+Phase 2 frame.  This gap is caused by async UI rendering and optional cloud calls
+on the app's main thread.  The mock uses a 30 s inter-frame timeout (not 5 s) to
+survive this gap — this is intentional.
+
+### Known limitation: cloud sync ("jetzt verbinden")
+
+After `GetEndProduct()` succeeds, the app calls `SyncSettingsForDevice("250-0")`
+— an HTTPS call to the Geberit cloud.  The mock cannot serve this.  The
+connection itself succeeds (no "cannot connect" error), but the "jetzt verbinden"
+button may show a cloud-related error.  This is a separate issue from the Ble20
+protocol layer.
+
+### DpId store
+
+The mock maintains 78 DpIds mirroring a real AquaClean Alba (series 250), with
+obfuscated values for identifiers (device number, serial, timestamps offset by
+-457751 s, counters offset by -57911).  DpId=236 (`UNIQUE_DEVICE_NUMBER`) returns
+the obfuscated value `34761370` — the app uses this as the tunnel `uniqueId`.
 
 ---
 

@@ -7,6 +7,7 @@ haggis/
 docs/developer/alba-protocol-analysis.md
 docs/developer/alba-ble20-protocol.md
 docs/developer/alba-bridge-integration.md
+docs/developer/alba-app-connection-flow.md
 
 # Arendi Security capture parser — contains sensitive material, must not be published
 tools/arendi-parse-capture.py
