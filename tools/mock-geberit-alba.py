@@ -1009,7 +1009,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     # → ATT "Insufficient Authentication" → SMP Security Request → iPhone pairs
     # → "Pairing Not Supported" → iOS surfaces "cannot connect" to the app.
     _agent = _NoIOPairingAgent()
-    bus.export_object(_AGENT_DBUS_PATH, _agent)
+    # dbus_next uses export(); dbus_fast renamed it to export_object()
+    _bus_export = getattr(bus, 'export_object', None) or getattr(bus, 'export', None)
+    _bus_export(_AGENT_DBUS_PATH, _agent)
     _agent_mgr = None
     try:
         _intr = await bus.introspect('org.bluez', '/org/bluez')
