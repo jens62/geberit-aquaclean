@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.1.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "1.2.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -65,9 +65,96 @@ import sys as _sys
 if "dbus_fast" in _sys.modules:
     from dbus_fast.aio import MessageBus
     from dbus_fast import BusType, Variant
+    from dbus_fast.service import ServiceInterface, dbus_property, method as dbus_method
+    from dbus_fast.constants import PropertyAccess
 else:
     from dbus_next.aio import MessageBus
     from dbus_next import BusType, Variant
+    from dbus_next.service import ServiceInterface, dbus_property, method as dbus_method
+    from dbus_next.constants import PropertyAccess
+
+
+class _Advertisement(Advertisement):
+    """Advertisement subclass that attempts to set a fast advertising interval.
+
+    BlueZ defaults to 1280 ms when MinInterval/MaxInterval are absent from the
+    LEAdvertisement1 D-Bus interface.  At 1280 ms the nRF52840 sniffer's device
+    list rarely populates because the sniffer hops faster than the ad interval.
+
+    NOTE: The @dbus_property override below does NOT work with the current version
+    of dbus_next/bluez_peripheral.  btmon confirms BlueZ receives MinInterval=0x0000,
+    MaxInterval=0x0000 via MGMT 0x0054 and falls back to the 1280 ms default.
+    The subclass properties are parsed by the dbus_next metaclass but never read by
+    BlueZ because bluez_peripheral's ServiceInterface registration path does not
+    expose subclass-added properties to the MGMT interface interrogation layer.
+    The class is kept so adding a working fix later requires minimal changes.
+    """
+    @dbus_property(access=PropertyAccess.READ)
+    def MinInterval(self) -> 'u':
+        return 200
+
+    @dbus_property(access=PropertyAccess.READ)
+    def MaxInterval(self) -> 'u':
+        return 200
+
+
+_AGENT_DBUS_PATH = "/mock/geberit/pairingagent"
+
+
+class _NoIOPairingAgent(ServiceInterface):
+    """BlueZ pairing agent with NoInputNoOutput capability (Just Works).
+
+    Without a registered agent, BlueZ responds "Pairing Not Supported" when
+    iOS attempts to pair (triggered by bluetoothd reading the iPhone's Battery
+    Level characteristic → ATT "Insufficient Authentication" → SMP Security
+    Request → iPhone sends Pairing Request → BlueZ has no agent → Pairing
+    Failed).  iOS immediately surfaces "cannot connect" to the app.
+
+    Registering this agent with NoInputNoOutput causes BlueZ to accept the iOS
+    pairing attempt silently via Just Works, eliminating the SMP failure.
+    Root cause confirmed from pcapng frames 5875-5879 (SMP Pairing Failed:
+    Pairing Not Supported) captured during Geberit Home App 2.14.1 testing.
+    """
+
+    def __init__(self):
+        super().__init__("org.bluez.Agent1")
+
+    @dbus_method()
+    def Release(self) -> None:
+        pass
+
+    @dbus_method()
+    def RequestPinCode(self, device: 'o') -> 's':
+        return "0000"
+
+    @dbus_method()
+    def DisplayPinCode(self, device: 'o', pincode: 's') -> None:
+        pass
+
+    @dbus_method()
+    def RequestPasskey(self, device: 'o') -> 'u':
+        return 0
+
+    @dbus_method()
+    def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q') -> None:
+        pass
+
+    @dbus_method()
+    def RequestConfirmation(self, device: 'o', passkey: 'u') -> None:
+        pass  # auto-accept for Just Works
+
+    @dbus_method()
+    def RequestAuthorization(self, device: 'o') -> None:
+        pass  # auto-accept
+
+    @dbus_method()
+    def AuthorizeService(self, device: 'o', uuid: 's') -> None:
+        pass  # auto-accept
+
+    @dbus_method()
+    def Cancel(self) -> None:
+        pass
+
 
 # --- Import Arendi Security crypto from the bridge package -------------------
 # Adds the repo root to sys.path so we can import from aquaclean_console_app.
@@ -906,6 +993,36 @@ async def safe_call(obj, method_name, *args, **kwargs):
 async def main(mode: str, send_delay_sec: float = 0.0):
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
+    # Suppress the noisy "does not have property TxPower" error from dbus_next.
+    # BlueZ queries TxPower from our LEAdvertisement1 interface; when the property
+    # is absent dbus_next logs an ERROR but falls back to no TxPower in the adv —
+    # harmless.  Filter it from the root logger to keep output readable.
+    import logging as _logging
+    class _SuppressDbusPropertyNotFound(_logging.Filter):
+        def filter(self, record):
+            return "does not have property" not in record.getMessage()
+    _logging.getLogger().addFilter(_SuppressDbusPropertyNotFound())
+
+    # Register a NoInputNoOutput BLE pairing agent so iOS "Just Works" pairing
+    # succeeds silently instead of BlueZ replying "Pairing Not Supported".
+    # Without this, bluetoothd reads the iPhone's Battery Level characteristic
+    # → ATT "Insufficient Authentication" → SMP Security Request → iPhone pairs
+    # → "Pairing Not Supported" → iOS surfaces "cannot connect" to the app.
+    _agent = _NoIOPairingAgent()
+    bus.export_object(_AGENT_DBUS_PATH, _agent)
+    _agent_mgr = None
+    try:
+        _intr = await bus.introspect('org.bluez', '/org/bluez')
+        _proxy = bus.get_proxy_object('org.bluez', '/org/bluez', _intr)
+        _agent_mgr = _proxy.get_interface('org.bluez.AgentManager1')
+        await _agent_mgr.call_register_agent(_AGENT_DBUS_PATH, 'NoInputNoOutput')
+        await _agent_mgr.call_request_default_agent(_AGENT_DBUS_PATH)
+        print("Pairing agent registered (NoInputNoOutput — Just Works auto-accept)")
+    except Exception as _e:
+        print(f"WARNING: pairing agent registration failed: {_e}")
+        print("         iOS SMP pairing may fail with 'Pairing Not Supported'")
+        _agent_mgr = None
+
     adapter_wrapper = await Adapter.get_first(bus)
     if adapter_wrapper:
         print("Adapter wrapper obtained from bluez_peripheral.")
@@ -916,7 +1033,8 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     try:
         adapter_path, adapter_address, objmgr = await find_first_adapter_path_and_address(bus)
         print("Adapter DBus path:", adapter_path)
-        print("Adapter BLE address:", adapter_address)
+        print("Adapter BLE address:", adapter_address,
+              "(controller identity — BlueZ may advertise with a random/rotating address on-air; run 'sudo btmon' to see the actual transmitted address)")
     except Exception as e:
         print("Could not read adapter path/address via ObjectManager:", e)
         adapter_path = None
@@ -1025,7 +1143,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     # CheckDiscovered filter (BleProductManager.cs). fd48 alone satisfies the Stage 1
     # UUID scan filter (FD48 is listed explicitly). 559eb100-... is in the GATT service
     # and will be discovered after connection — it must NOT be in the advertisement.
-    adv = Advertisement(
+    adv = _Advertisement(
         "",                                          # no local name — matches real device
         ["0000fd48-0000-1000-8000-00805f9b34fb"],   # fd48 only; 559eb100 stays in GATT
         appearance=0,
@@ -1149,6 +1267,11 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         print("\nShutting down...")
         if server_task and not server_task.done():
             server_task.cancel()
+        if _agent_mgr is not None:
+            try:
+                await _agent_mgr.call_unregister_agent(_AGENT_DBUS_PATH)
+            except Exception:
+                pass
         if adv_registered:
             await safe_call(adv, "unregister", bus, adapter_wrapper)
             await safe_call(adv, "unregister", adapter_wrapper)

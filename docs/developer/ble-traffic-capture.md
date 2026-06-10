@@ -903,6 +903,77 @@ across 20-byte ATT frames.
 
 ![Wireshark showing successful Mera Comfort OTA BLE capture. Frame 10059 (highlighted) is an ATT Handle Value Notification on handle 0x000f — the first response fragment from the toilet to the iPhone after a GetSystemParameterList write. The capture contains 1393 ATT frames including identification data, GetStoredCommonSetting responses, and the full polling loop.](images/ble-traffic-capture/nRF52840-dongle/Wireshark%20-%20Mera%20Comfort%20sniff%20-%20ATT.png)
 
+### Troubleshooting — Mock server BLE address not visible in sniffer
+
+When capturing traffic to/from `tools/mock-geberit-alba.py` running on a Linux VM (e.g. UTM/Debian with a USB Bluetooth adapter), the adapter's MAC address printed by the mock script may not appear in Wireshark's device list.
+
+**Root causes:**
+
+- **The mock prints the controller identity, not the on-air advertising address.** The script reads `Address` from BlueZ via D-Bus `ObjectManager` and prints it as `Adapter BLE address:`. This is the controller's public identity — not necessarily the address BlueZ actually transmits on the air.
+- **BlueZ commonly advertises with a random or rotating private address.** When LE privacy is active (the default on many distributions), the on-air address differs from the controller identity and may rotate. The address you expect will not appear in the sniffer list.
+- **The nRF52840 sniffer shows what is actually transmitted over the air.** If BlueZ uses a random or resolvable private address, Wireshark shows that address — not the D-Bus identity.
+
+**Troubleshooting steps (in order):**
+
+1. **Confirm the on-air address with `btmon`:** in a second shell, run `sudo btmon` while starting the mock. Look for `LE Set Advertising Parameters` and note the `Own address type` field. `Random (0x01)` explains the mismatch — BlueZ is advertising with a different address.
+
+2. **Compare controller identity vs. advertised address:** run `bluetoothctl show` (or read the mock's printed `Adapter BLE address`) and compare with the addresses visible in Wireshark. Expect them to differ when privacy is enabled.
+
+3. **Move the nRF dongle close and use a USB 2.0 port** (USB 3.0 generates 2.4 GHz interference). Use a passive USB extension cable if needed. Select **All advertising devices** in the sniffer toolbar and scan for any unknown address that appears when the mock starts — that is likely the on-air address BlueZ is using.
+
+4. **Force a static address so the sniffer shows the same MAC as the mock:** BlueZ allows a static random address to be set only while the adapter is powered off. Use the BlueZ management API:
+   ```bash
+   sudo btmgmt power off
+   sudo btmgmt static-addr AA:BB:CC:DD:EE:FF   # any valid static random address
+   sudo btmgmt power on
+   ```
+   Restart the mock after this — the on-air address will now match what you set. Note: `bluez_peripheral` still reads the controller's public identity for display; the printed `Adapter BLE address` will still show the public address, but the sniffer will see the static random address you assigned.
+
+### Troubleshooting — Mock server: app shows "cannot connect" immediately after inventory
+
+When the Geberit Home App 2.14.1 (iOS) connects to `mock-geberit-alba.py` and the full
+Arendi Security handshake + DataPointInventory (78 DpIds) complete successfully, but iOS
+immediately shows "cannot connect" at the same moment the inventory burst drains its S-RR
+ACKs — this is caused by BLE SMP pairing failure, not by the application layer.
+
+**Root cause — SMP Pairing Failed: Pairing Not Supported (confirmed from pcapng):**
+
+1. `bluetoothd` (the BlueZ daemon on the VM) acts as a GATT client and reads the iPhone's
+   Battery Level characteristic (handle 0x001b on the iPhone).
+2. iOS returns ATT Error: **Insufficient Authentication** — standard iOS behavior, Battery
+   Level requires bonding.
+3. `bluetoothd` sends an **SMP Security Request** to the iPhone (`AuthReq: Bonding, SecureConnection`).
+4. The iPhone responds with an **SMP Pairing Request** (willing to pair).
+5. The mock's `bluetoothd` replies: **"Pairing Failed: Pairing Not Supported"** — because no
+   BlueZ pairing agent is registered.
+6. iOS immediately surfaces "cannot connect" to the Geberit Home App.
+
+The real Alba device firmware never triggers GATT client reads on the phone's services (it has
+no GATT client role in its firmware). Zero SMP frames appear in any real-device capture.
+The mock triggers this chain solely because `bluetoothd` runs as a general-purpose BLE host that
+proactively explores the peer's GATT services.
+
+**Fix — `_NoIOPairingAgent` (implemented in `mock-geberit-alba.py`):**
+
+`mock-geberit-alba.py` registers an `org.bluez.Agent1` D-Bus object at startup with
+capability `"NoInputNoOutput"` and calls `RequestDefaultAgent`. When `bluetoothd` next
+attempts to pair with the iPhone, BlueZ invokes the agent's `RequestConfirmation` method;
+the agent auto-accepts (returns without raising), completing Just Works pairing silently.
+iOS no longer sees a rejection and the session proceeds to the application layer.
+
+**Capture evidence (file: `Verbindungsversuch-zum-mockserver-mit-home-app-2.14.1.pcapng`):**
+
+| pcapng time (rel.) | Event |
+|--------------------|-------|
+| 49.684 s | `Peripheral → Central  SMP Pairing Failed: Pairing Not Supported` |
+| ≈ 49.7 s | App shows "cannot connect" |
+| mock log 11:43:30.276 | `[MockServer] drained 3 S-RR(s) after burst` — same moment |
+
+The sniffer WAS following the mock's MAC `a0:ad:9f:72:c4:f public` — the Wireshark
+device-follow toolbar confirmed this.  The inventory burst (78 notifications in 364 ms)
+caused a sniffer overrun so the notifications themselves are absent from the pcapng; the
+S-RR ACKs in the mock log confirm the iPhone received all 78 DpIds regardless.
+
 ---
 
 ## What to Include When Sharing a Capture
