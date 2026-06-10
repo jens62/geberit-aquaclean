@@ -557,11 +557,17 @@ class _AriendiServerSide:
             payload = decoded[1:-2]
             if (ctrl & 0x01) == 0:        # I-frame
                 peer_ns = (ctrl >> 1) & 0x07
+                peer_nr = (ctrl >> 5) & 0x07
                 self._rx_ack = (peer_ns + 1) % 8
+                cmd_byte = f"0x{payload[1]:02X}" if len(payload) >= 2 and payload[0] == _SEC_ENCRYPTED else f"sec=0x{payload[0]:02X}" if payload else "empty"
+                print(f"[HDLC←] I-frame N(S)={peer_ns} N(R)={peer_nr} payload={len(payload)}B cmd={cmd_byte}")
                 self._rx_queue.put_nowait(('I', ctrl, payload))
             elif (ctrl & 0x03) == 0x03:   # U-frame
+                print(f"[HDLC←] U-frame ctrl=0x{ctrl:02X}")
                 self._rx_queue.put_nowait(('U', ctrl, payload))
             elif (ctrl & 0x03) == 0x01:  # S-frame (RR/RNR) — signal flow control
+                peer_nr = (ctrl >> 5) & 0x07
+                print(f"[HDLC←] S-RR N(R)={peer_nr}")
                 self._srr_queue.put_nowait(ctrl)
 
     # -----------------------------------------------------------------------
@@ -892,17 +898,14 @@ class BtSigDataService(Service):
         else:
             print("[MockServer] WARNING: notify char interface not set — cannot send notification")
 
-    @characteristic("559eb001-2390-11e8-b467-0ed5f89f718b", CharFlags.WRITE)
+    @characteristic("559eb001-2390-11e8-b467-0ed5f89f718b", CharFlags.WRITE_WITHOUT_RESPONSE)
     def sig_write(self, options):
         pass
 
     @sig_write.setter
     def sig_write(self, value, options):
         data = bytes(value)
-        head = data[:4].hex() if len(data) >= 4 else data.hex()
-        print(f"[BLE←] {len(data)} B  head={head}{'...' if len(data) > 4 else ''}")
-        if _VERBOSE:
-            print(f"[Write→sig_write] {data.hex()}")
+        print(f"[BLE←] {len(data)} B  {data.hex()}")
         if self._mode in ("handshake", "ble20") and self._arendi is not None:
             self._arendi.feed(data)
         else:
