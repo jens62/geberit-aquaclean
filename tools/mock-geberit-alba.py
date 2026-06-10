@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.2.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "1.3.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -96,64 +96,6 @@ class _Advertisement(Advertisement):
     @dbus_property(access=PropertyAccess.READ)
     def MaxInterval(self) -> 'u':
         return 200
-
-
-_AGENT_DBUS_PATH = "/mock/geberit/pairingagent"
-
-
-class _NoIOPairingAgent(ServiceInterface):
-    """BlueZ pairing agent with NoInputNoOutput capability (Just Works).
-
-    Without a registered agent, BlueZ responds "Pairing Not Supported" when
-    iOS attempts to pair (triggered by bluetoothd reading the iPhone's Battery
-    Level characteristic → ATT "Insufficient Authentication" → SMP Security
-    Request → iPhone sends Pairing Request → BlueZ has no agent → Pairing
-    Failed).  iOS immediately surfaces "cannot connect" to the app.
-
-    Registering this agent with NoInputNoOutput causes BlueZ to accept the iOS
-    pairing attempt silently via Just Works, eliminating the SMP failure.
-    Root cause confirmed from pcapng frames 5875-5879 (SMP Pairing Failed:
-    Pairing Not Supported) captured during Geberit Home App 2.14.1 testing.
-    """
-
-    def __init__(self):
-        super().__init__("org.bluez.Agent1")
-
-    @dbus_method()
-    def Release(self) -> None:
-        pass
-
-    @dbus_method()
-    def RequestPinCode(self, device: 'o') -> 's':
-        return "0000"
-
-    @dbus_method()
-    def DisplayPinCode(self, device: 'o', pincode: 's') -> None:
-        pass
-
-    @dbus_method()
-    def RequestPasskey(self, device: 'o') -> 'u':
-        return 0
-
-    @dbus_method()
-    def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q') -> None:
-        pass
-
-    @dbus_method()
-    def RequestConfirmation(self, device: 'o', passkey: 'u') -> None:
-        pass  # auto-accept for Just Works
-
-    @dbus_method()
-    def RequestAuthorization(self, device: 'o') -> None:
-        pass  # auto-accept
-
-    @dbus_method()
-    def AuthorizeService(self, device: 'o', uuid: 's') -> None:
-        pass  # auto-accept
-
-    @dbus_method()
-    def Cancel(self) -> None:
-        pass
 
 
 # --- Import Arendi Security crypto from the bridge package -------------------
@@ -1006,27 +948,14 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             return "does not have property" not in record.getMessage()
     _logging.getLogger().addFilter(_SuppressDbusPropertyNotFound())
 
-    # Register a NoInputNoOutput BLE pairing agent so iOS "Just Works" pairing
-    # succeeds silently instead of BlueZ replying "Pairing Not Supported".
-    # Without this, bluetoothd reads the iPhone's Battery Level characteristic
-    # → ATT "Insufficient Authentication" → SMP Security Request → iPhone pairs
-    # → "Pairing Not Supported" → iOS surfaces "cannot connect" to the app.
-    _agent = _NoIOPairingAgent()
-    # dbus_next uses export(); dbus_fast renamed it to export_object()
-    _bus_export = getattr(bus, 'export_object', None) or getattr(bus, 'export', None)
-    _bus_export(_AGENT_DBUS_PATH, _agent)
+    # No pairing agent registered intentionally. Real Geberit firmware ignores SMP
+    # entirely — the device never appears in iOS Bluetooth Settings (no link-layer
+    # pairing). Registering an agent makes BlueZ run a full SC key exchange (~4s)
+    # before rejecting User Confirmation, during which iOS CoreBluetooth pauses the
+    # ATT write queue — DpId=9 never arrives in FrameHandler.m()'s 2000ms window.
+    # Without an agent, "Pairing Not Supported" is returned in ~5ms and iOS
+    # resumes unencrypted writes immediately. Both DpId=8 and DpId=9 arrive fine.
     _agent_mgr = None
-    try:
-        _intr = await bus.introspect('org.bluez', '/org/bluez')
-        _proxy = bus.get_proxy_object('org.bluez', '/org/bluez', _intr)
-        _agent_mgr = _proxy.get_interface('org.bluez.AgentManager1')
-        await _agent_mgr.call_register_agent(_AGENT_DBUS_PATH, 'NoInputNoOutput')
-        await _agent_mgr.call_request_default_agent(_AGENT_DBUS_PATH)
-        print("Pairing agent registered (NoInputNoOutput — Just Works auto-accept)")
-    except Exception as _e:
-        print(f"WARNING: pairing agent registration failed: {_e}")
-        print("         iOS SMP pairing may fail with 'Pairing Not Supported'")
-        _agent_mgr = None
 
     adapter_wrapper = await Adapter.get_first(bus)
     if adapter_wrapper:
