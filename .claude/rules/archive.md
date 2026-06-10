@@ -39,3 +39,6 @@ Active memory entries: 71  |  Pruned: 0 (no file removals; MEMORY.md index conde
 
 ## Memory snapshot 2026-06-08 (session 2)
 Active memory entries: 69  |  Pruned: 2 (`feedback_update_sh_not_install_sh.md`, `feedback_curl_oneliner.md` — both covered verbatim by .claude/rules/release-process.md MANDATORY rules; stale note in former said CLAUDE.md had install.sh which is no longer true)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-10
+Active memory entries: 31  |  Pruned: 0 (all linked entries load-bearing; no duplicates of rules files found)  |  Snapshot taken by /compress-memory

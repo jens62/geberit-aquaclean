@@ -218,6 +218,30 @@ Standalone bridge + MQTT path fully preserved alongside.
 
 ---
 
+### HACS Option B — integrate with HA's `bluetooth` domain (eliminates ESP32 subscription conflict)
+
+**Problem (confirmed in issue #28):** the current Option A transport opens its own
+aioesphomeapi connection and requests an advertisement subscription from the ESP32.
+If HA's Bluetooth integration is also configured to use the same ESP32 as a proxy,
+HA holds the subscription slot permanently — the bridge gets 0 advertisement packets
+and the connection fails with `ESPHomeDeviceNotFoundError`.
+
+The workaround (disable the ESP32 from HA's Bluetooth integration) is a friction point
+for new users who have a generic ESP32 BT proxy already in use.
+
+**Option B fix:** instead of opening a direct aioesphomeapi subscription, register as
+a consumer of HA's `bluetooth` domain. HA already owns the slot and delivers
+`BLEDevice` objects via callbacks — the integration piggybacks on that without any
+conflict. GATT operations would also go through HA's bluetooth stack (`habluetooth`).
+
+**Effort:** ~4× more than Option A (~1,500–2,500 new lines). The coordinator and entity
+structure are identical; only the transport layer behind `coordinator.py` changes.
+
+**Prerequisite:** Option A must be stable first. Implement Option B as a follow-on.
+See also `.claude/rules/hacs-roadmap.md` for the full Option B architecture notes.
+
+---
+
 ### HACS: expose cached stored settings as entities with explicit refresh
 
 `GetStoredProfileSettings` (11 settings) and `GetStoredCommonSettings` (7 settings) are
