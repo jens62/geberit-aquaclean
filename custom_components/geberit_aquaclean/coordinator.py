@@ -813,7 +813,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
         async with self._ble_lock:
-            if self._esphome_host:
+            if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
             else:
@@ -833,7 +833,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._reset_esphome_connector()
                 raise
             finally:
-                if self._esphome_host:
+                if self._esphome_host and not self._use_ha_bluetooth:
                     try:
                         async with asyncio.timeout(5.0):
                             await connector.disconnect_ble_only()
@@ -856,7 +856,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
         async with self._ble_lock:
-            if self._esphome_host:
+            if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
             else:
@@ -871,7 +871,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._reset_esphome_connector()
                 raise
             finally:
-                if self._esphome_host:
+                if self._esphome_host and not self._use_ha_bluetooth:
                     try:
                         async with asyncio.timeout(5.0):
                             await connector.disconnect_ble_only()
@@ -890,7 +890,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
         async with self._ble_lock:
-            if self._esphome_host:
+            if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
             else:
@@ -958,7 +958,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._reset_esphome_connector()
                 raise
             finally:
-                if self._esphome_host:
+                if self._esphome_host and not self._use_ha_bluetooth:
                     try:
                         async with asyncio.timeout(5.0):
                             await connector.disconnect_ble_only()
@@ -977,7 +977,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
         async with self._ble_lock:
-            if self._esphome_host:
+            if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
             else:
@@ -1005,7 +1005,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 self._reset_esphome_connector()
                 raise
             finally:
-                if self._esphome_host:
+                if self._esphome_host and not self._use_ha_bluetooth:
                     try:
                         async with asyncio.timeout(5.0):
                             await connector.disconnect_ble_only()
