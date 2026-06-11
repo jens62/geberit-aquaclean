@@ -210,6 +210,7 @@ tail -f /var/log/aquaclean/aquaclean.log
 | Device | Status | Firmware |
 |--------|--------|---------|
 | Geberit AquaClean Mera Comfort | ✅ Confirmed working | • RS28.0 TS199<br>• RS30.0 TS206 ([@Kiana321](https://github.com/Kiana321), [#12](https://github.com/jens62/geberit-aquaclean/issues/12#issuecomment-4319550984)) |
+| Geberit AquaClean Mera Classic | ✅ Confirmed working via HACS integration ([#28](https://github.com/jens62/geberit-aquaclean/issues/28)) | RS30.0 TS206 |
 | Geberit AquaClean Sela | ✅ Confirmed working via HACS integration ([@msperl](https://github.com/msperl), [#27](https://github.com/jens62/geberit-aquaclean/issues/27)) | RS08.0 TS57 |
 | Geberit AquaClean Alba | ✅ Supported via HACS integration (known limitation: [remote control conflict #21](https://github.com/jens62/geberit-aquaclean/issues/21)) | RS03.0 TS89 |
 

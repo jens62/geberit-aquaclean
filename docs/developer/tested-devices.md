@@ -10,6 +10,7 @@ This document lists every Geberit AquaClean device that has been confirmed to wo
 | Device | Serial / Prefix | GATT Profile | BLE MAC | Tested By | Notes |
 |--------|----------------|--------------|---------|-----------|-------|
 | AquaClean Mera Comfort | HB2304EU298413 | Standard (`3334429d`) | `38:AB:41:2A:0D:67` | Developer (primary device) | All features tested; BLE logs in `local-assets/Bluetooth-Logs/`. DIS: model/serial/hw = `n/a`; fw `BLD 01 1`; sw `APP 10 18` |
+| AquaClean Mera Classic | GB2007EU206562 (SAP prefix `146.20x`) | Standard (`3334429d`) | `64:69:4E:8C:64:D0` | thogens ([#28](https://github.com/jens62/geberit-aquaclean/issues/28), HACS v3.0.10b2, 2026-06-11) | fw RS30.0 TS206; SOC RS10.0 TS18; initial operation 2020-08-12. DIS identical to Mera Comfort (`n/a` model/serial, `BLD 01 1` fw, `APP 10 18` sw). Uses identical GATT profile and AquaClean protocol as Mera Comfort — no special configuration required. Note: BLE advertisement uses `0x3EA0` UUID (node 0x00 default not overridden by node 0x01), but GATT service is still `3334429d-...`. |
 | AquaClean Alba | DIS serial `115946`, SAP `828.860.00.0` | Variant A (`0000fd48` + `559eb` chars) | `E4:85:01:CD:C4:1E` | MuusLee (v3.0.0, 2026-05-26) | DIS hw rev `02`, fw `RS03TS89`, sw `1.14.1 1.2.0`. Full poll cycle working; restart button (dp_id=153) confirmed; known limitation: remote control conflict ([#21](https://github.com/jens62/geberit-aquaclean/issues/21)). |
 
 ---
@@ -36,17 +37,21 @@ Geberit devices expose two separate sets of identification data:
 The BLE DIS fields have different meanings across device generations and are **not reliable
 cross-device identifiers**. Confirmed from comparing Mera Comfort vs. Alba DIS reads:
 
-| DIS field | Mera Comfort (`38:AB:41:2A:0D:67`) | Alba kstr (`E4:85:01:CD:6B:04`) | Alba MuusLee (`E4:85:01:CD:C4:1E`) |
-|---|---|---|---|
-| `manufacturer_name` | `Geberit` | `Geberit` | `Geberit` |
-| `model_number` | `n/a` | `828.860.00.A` | `828.860.00.0` |
-| `serial_number` | `n/a` | `93136` | `115946` |
-| `firmware_revision` | `BLD 01 1` | `RS03TS89` | `RS03TS89` |
-| `hardware_revision` | `n/a` | `00` | `02` |
-| `software_revision` | `APP 10 18` | `1.14.1 1.2.0` | `1.14.1 1.2.0` |
+| DIS field | Mera Comfort (`38:AB:41:2A:0D:67`) | Mera Classic (`64:69:4E:8C:64:D0`) | Alba kstr (`E4:85:01:CD:6B:04`) | Alba MuusLee (`E4:85:01:CD:C4:1E`) |
+|---|---|---|---|---|
+| `manufacturer_name` | `Geberit` | `Geberit` | `Geberit` | `Geberit` |
+| `model_number` | `n/a` | `n/a` | `828.860.00.A` | `828.860.00.0` |
+| `serial_number` | `n/a` | `n/a` | `93136` | `115946` |
+| `firmware_revision` | `BLD 01 1` | `BLD 01 1` | `RS03TS89` | `RS03TS89` |
+| `hardware_revision` | `n/a` | `n/a` | `00` | `02` |
+| `software_revision` | `APP 10 18` | `APP 10 18` | `1.14.1 1.2.0` | `1.14.1 1.2.0` |
 
-The Mera Comfort deliberately returns `n/a` for model/serial — Geberit expects those to be read
-via proc `0x82` (GetDeviceIdentification). The Alba does populate them with internal values.
+The Mera Comfort and Mera Classic return identical DIS values — `n/a` for model/serial, because
+Geberit expects those to be read via proc `0x82` (GetDeviceIdentification). The Alba does populate
+them with the BLE board's internal article number and PCB serial (not the toilet's Geberit serial).
+
+The Mera Classic DIS is indistinguishable from Mera Comfort at the BLE level. The device
+self-identifies as "AquaClean Mera Classic" only via proc `0x82` after GATT connection.
 
 `828.860.00.A` follows the Geberit `XXX.XXX.XX.X` article-number format but is NOT the toilet's
 Artikelnummer (`146.350.01.x` shown in the app). It is likely the article number of the **BLE
@@ -70,8 +75,16 @@ See `docs/developer/gatt-uuid-variants.md` for full GATT table details and UUID 
 
 | Profile | Service UUID | Known devices |
 |---------|-------------|---------------|
-| Standard | `3334429d-90f3-4c41-a02d-5cb3a03e0000` | AquaClean Mera Comfort (confirmed) |
+| Standard | `3334429d-90f3-4c41-a02d-5cb3a03e0000` | AquaClean Mera Comfort (confirmed), AquaClean Mera Classic (confirmed [#28](https://github.com/jens62/geberit-aquaclean/issues/28)), AquaClean Sela (confirmed [#27](https://github.com/jens62/geberit-aquaclean/issues/27)) |
 | Variant A | `0000fd48-0000-1000-8000-00805f9b34fb` | AquaClean Alba (confirmed via issue #17) |
+
+**Note on Mera Classic BLE advertisement:** The Mera Classic advertises with the legacy `0x3EA0`
+16-bit UUID (the node 0x00 BLE controller firmware default), not with the `3334429d-...` 128-bit
+UUID used by the Mera Comfort advertisement. However, the GATT *service* registered in firmware
+is still `3334429d-...` on both. Node 0x01 on the Mera Comfort overrides the advertisement UUID
+at startup; on the Mera Classic it does not. This means BLE scanners that filter by advertisement
+UUID will not find the Mera Classic using the `3334429d-...` filter — but connection by MAC address
+works and the GATT profile is identical once connected.
 
 ---
 
