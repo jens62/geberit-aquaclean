@@ -9,7 +9,16 @@
           "esphome_host": "ESPHome Proxy Host (lämna tomt för lokal BLE)",
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Krypteringsnyckel (valfri, base64)",
-          "poll_interval": "Pollingsintervall (sekunder)"
+          "poll_interval": "Pollingsintervall (sekunder)",
+          "use_ha_bluetooth": "Använd Home Assistant Bluetooth-domän (Alternativ B — aktivera om HA redan använder samma ESPHome-proxy)"
+        },
+        "data_description": {
+          "device_id": "Bluetooth MAC-adress för din AquaClean (t.ex. 38:AB:41:2A:0D:67). Finns på etiketten inuti toaletten eller i Geberit Home-appen.",
+          "esphome_host": "Värdnamn eller IP för en ESPHome Bluetooth-proxy. Lämna tomt för att använda en lokal Bluetooth-adapter på denna HA-värd.",
+          "esphome_port": "Nativ API-port för ESPHome-proxyn. Standard: 6053.",
+          "noise_psk": "API-krypteringsnyckel från din ESPHome YAML-fil (api: encryption: key:). Lämna tomt om kryptering inte är konfigurerat.",
+          "poll_interval": "Hur ofta enheten efterfrågas via Bluetooth. Kortare intervall ger mer responsiva sensorer men håller BLE upptaget längre.",
+          "use_ha_bluetooth": "Alternativ A (av, standard): direkt ESPHome-anslutning — ger även ESP32-signalstyrka, ledigt heap och transporttyp som sensorer. Alternativ B (på): dirigeras via HA:s Bluetooth-domän — använd när HA:s Bluetooth-integration redan upptar samma ESPHome-proxy. ESP32-statistik är inte tillgänglig med Alternativ B."
         }
       }
     },
@@ -38,7 +47,16 @@
           "esphome_host": "ESPHome Proxy Host (lämna tomt för lokal BLE)",
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Krypteringsnyckel (valfri, base64)",
-          "poll_interval": "Pollingsintervall (sekunder)"
+          "poll_interval": "Pollingsintervall (sekunder)",
+          "use_ha_bluetooth": "Använd Home Assistant Bluetooth-domän (Alternativ B — aktivera om HA redan använder samma ESPHome-proxy)"
+        },
+        "data_description": {
+          "device_id": "Bluetooth MAC-adress för din AquaClean (t.ex. 38:AB:41:2A:0D:67). Finns på etiketten inuti toaletten eller i Geberit Home-appen.",
+          "esphome_host": "Värdnamn eller IP för en ESPHome Bluetooth-proxy. Lämna tomt för att använda en lokal Bluetooth-adapter på denna HA-värd.",
+          "esphome_port": "Nativ API-port för ESPHome-proxyn. Standard: 6053.",
+          "noise_psk": "API-krypteringsnyckel från din ESPHome YAML-fil (api: encryption: key:). Lämna tomt om kryptering inte är konfigurerat.",
+          "poll_interval": "Hur ofta enheten efterfrågas via Bluetooth. Kortare intervall ger mer responsiva sensorer men håller BLE upptaget längre.",
+          "use_ha_bluetooth": "Alternativ A (av, standard): direkt ESPHome-anslutning — ger även ESP32-signalstyrka, ledigt heap och transporttyp som sensorer. Alternativ B (på): dirigeras via HA:s Bluetooth-domän — använd när HA:s Bluetooth-integration redan upptar samma ESPHome-proxy. ESP32-statistik är inte tillgänglig med Alternativ B."
         }
       }
     },

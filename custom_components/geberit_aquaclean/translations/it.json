@@ -9,7 +9,16 @@
           "esphome_host": "Host proxy ESPHome (vuoto per BLE locale)",
           "esphome_port": "Porta proxy ESPHome",
           "noise_psk": "Chiave di crittografia ESPHome (opzionale, base64)",
-          "poll_interval": "Intervallo di polling (secondi)"
+          "poll_interval": "Intervallo di polling (secondi)",
+          "use_ha_bluetooth": "Usa il dominio Bluetooth di Home Assistant (Opzione B — abilita se HA usa già lo stesso proxy ESPHome)"
+        },
+        "data_description": {
+          "device_id": "Indirizzo MAC Bluetooth del tuo AquaClean (es. 38:AB:41:2A:0D:67). Trovato sull'etichetta all'interno del water o nell'app Geberit Home.",
+          "esphome_host": "Nome host o IP di un proxy Bluetooth ESPHome. Lasciare vuoto per usare un adattatore Bluetooth locale su questo host HA.",
+          "esphome_port": "Porta API nativa del proxy ESPHome. Predefinita: 6053.",
+          "noise_psk": "Chiave di crittografia API dal file YAML ESPHome (api: encryption: key:). Lasciare vuoto se la crittografia non è configurata.",
+          "poll_interval": "Con quale frequenza il dispositivo viene interrogato via Bluetooth. Intervalli più brevi danno sensori più reattivi ma tengono BLE occupato più a lungo.",
+          "use_ha_bluetooth": "Opzione A (disattivata, predefinita): connessione ESPHome diretta — fornisce anche intensità del segnale ESP32, heap libero e tipo di trasporto come sensori. Opzione B (attivata): instrada tramite il dominio Bluetooth di HA — usare quando l'integrazione Bluetooth di HA occupa già lo stesso proxy ESPHome. Le statistiche ESP32 non sono disponibili con l'Opzione B."
         }
       }
     },
@@ -38,7 +47,16 @@
           "esphome_host": "Host proxy ESPHome (vuoto per BLE locale)",
           "esphome_port": "Porta proxy ESPHome",
           "noise_psk": "Chiave di crittografia ESPHome (opzionale, base64)",
-          "poll_interval": "Intervallo di polling (secondi)"
+          "poll_interval": "Intervallo di polling (secondi)",
+          "use_ha_bluetooth": "Usa il dominio Bluetooth di Home Assistant (Opzione B — abilita se HA usa già lo stesso proxy ESPHome)"
+        },
+        "data_description": {
+          "device_id": "Indirizzo MAC Bluetooth del tuo AquaClean (es. 38:AB:41:2A:0D:67). Trovato sull'etichetta all'interno del water o nell'app Geberit Home.",
+          "esphome_host": "Nome host o IP di un proxy Bluetooth ESPHome. Lasciare vuoto per usare un adattatore Bluetooth locale su questo host HA.",
+          "esphome_port": "Porta API nativa del proxy ESPHome. Predefinita: 6053.",
+          "noise_psk": "Chiave di crittografia API dal file YAML ESPHome (api: encryption: key:). Lasciare vuoto se la crittografia non è configurata.",
+          "poll_interval": "Con quale frequenza il dispositivo viene interrogato via Bluetooth. Intervalli più brevi danno sensori più reattivi ma tengono BLE occupato più a lungo.",
+          "use_ha_bluetooth": "Opzione A (disattivata, predefinita): connessione ESPHome diretta — fornisce anche intensità del segnale ESP32, heap libero e tipo di trasporto come sensori. Opzione B (attivata): instrada tramite il dominio Bluetooth di HA — usare quando l'integrazione Bluetooth di HA occupa già lo stesso proxy ESPHome. Le statistiche ESP32 non sono disponibili con l'Opzione B."
         }
       }
     },

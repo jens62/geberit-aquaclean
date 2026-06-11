@@ -9,7 +9,16 @@
           "esphome_host": "ESPHome-välityspalvelimen isäntä (tyhjä paikalliselle BLE:lle)",
           "esphome_port": "ESPHome-välityspalvelimen portti",
           "noise_psk": "ESPHome-salausavain (valinnainen, base64)",
-          "poll_interval": "Kyselyväli (sekuntia)"
+          "poll_interval": "Kyselyväli (sekuntia)",
+          "use_ha_bluetooth": "Käytä Home Assistantin Bluetooth-toimialuetta (Vaihtoehto B — ota käyttöön, jos HA käyttää jo samaa ESPHome-proxyä)"
+        },
+        "data_description": {
+          "device_id": "AquaClean-laitteesi Bluetooth MAC-osoite (esim. 38:AB:41:2A:0D:67). Löytyy laitteen sisällä olevasta tarrasta tai Geberit Home -sovelluksesta.",
+          "esphome_host": "ESPHome Bluetooth -proxyn isäntänimi tai IP. Jätä tyhjäksi käyttääksesi tämän HA-isännän paikallista Bluetooth-sovitinta.",
+          "esphome_port": "ESPHome-proxyn natiivi API-portti. Oletus: 6053.",
+          "noise_psk": "API-salausavain ESPHome YAML-tiedostostasi (api: encryption: key:). Jätä tyhjäksi, jos salausta ei ole määritetty.",
+          "poll_interval": "Kuinka usein laitetta kysytään Bluetoothin kautta. Lyhyemmät välit antavat nopeammin reagoivia antureita, mutta pitävät BLE:n varattuna pidempään.",
+          "use_ha_bluetooth": "Vaihtoehto A (pois, oletus): suora ESPHome-yhteys — tarjoaa myös ESP32-signaalivoimakkuuden, vapaan muistin ja kuljetustyypin antureina. Vaihtoehto B (päällä): reititetään HA:n Bluetooth-toimialueen kautta — käytä tätä, kun HA:n oma Bluetooth-integraatio jo varaa saman ESPHome-proxyn. ESP32-tilastot eivät ole saatavilla Vaihtoehto B:llä."
         }
       }
     },
@@ -38,7 +47,16 @@
           "esphome_host": "ESPHome-välityspalvelimen isäntä (tyhjä paikalliselle BLE:lle)",
           "esphome_port": "ESPHome-välityspalvelimen portti",
           "noise_psk": "ESPHome-salausavain (valinnainen, base64)",
-          "poll_interval": "Kyselyväli (sekuntia)"
+          "poll_interval": "Kyselyväli (sekuntia)",
+          "use_ha_bluetooth": "Käytä Home Assistantin Bluetooth-toimialuetta (Vaihtoehto B — ota käyttöön, jos HA käyttää jo samaa ESPHome-proxyä)"
+        },
+        "data_description": {
+          "device_id": "AquaClean-laitteesi Bluetooth MAC-osoite (esim. 38:AB:41:2A:0D:67). Löytyy laitteen sisällä olevasta tarrasta tai Geberit Home -sovelluksesta.",
+          "esphome_host": "ESPHome Bluetooth -proxyn isäntänimi tai IP. Jätä tyhjäksi käyttääksesi tämän HA-isännän paikallista Bluetooth-sovitinta.",
+          "esphome_port": "ESPHome-proxyn natiivi API-portti. Oletus: 6053.",
+          "noise_psk": "API-salausavain ESPHome YAML-tiedostostasi (api: encryption: key:). Jätä tyhjäksi, jos salausta ei ole määritetty.",
+          "poll_interval": "Kuinka usein laitetta kysytään Bluetoothin kautta. Lyhyemmät välit antavat nopeammin reagoivia antureita, mutta pitävät BLE:n varattuna pidempään.",
+          "use_ha_bluetooth": "Vaihtoehto A (pois, oletus): suora ESPHome-yhteys — tarjoaa myös ESP32-signaalivoimakkuuden, vapaan muistin ja kuljetustyypin antureina. Vaihtoehto B (päällä): reititetään HA:n Bluetooth-toimialueen kautta — käytä tätä, kun HA:n oma Bluetooth-integraatio jo varaa saman ESPHome-proxyn. ESP32-tilastot eivät ole saatavilla Vaihtoehto B:llä."
         }
       }
     },

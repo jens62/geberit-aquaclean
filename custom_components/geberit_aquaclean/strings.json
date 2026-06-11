@@ -11,6 +11,14 @@
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
           "poll_interval": "Poll Interval (seconds)",
           "use_ha_bluetooth": "Use Home Assistant Bluetooth domain (Option B — enable if HA already uses the same ESPHome proxy)"
+        },
+        "data_description": {
+          "device_id": "Bluetooth MAC address of your AquaClean (e.g. 38:AB:41:2A:0D:67). Found on the label inside the toilet or in the Geberit Home app.",
+          "esphome_host": "Hostname or IP of an ESPHome Bluetooth proxy. Leave empty to use a local Bluetooth adapter on this HA host.",
+          "esphome_port": "Native API port of the ESPHome proxy. Default: 6053.",
+          "noise_psk": "API encryption key from your ESPHome YAML (api: encryption: key:). Leave empty if encryption is not configured.",
+          "poll_interval": "How often the device is polled over Bluetooth. Shorter intervals give more responsive sensors but keep BLE occupied longer.",
+          "use_ha_bluetooth": "Option A (off, default): direct ESPHome connection — also provides ESP32 signal strength, free heap and transport type as sensors. Option B (on): routes through HA's Bluetooth domain — use when HA's Bluetooth integration already occupies the same ESPHome proxy. ESP32 statistics are not available with Option B."
         }
       }
     },
@@ -41,6 +49,14 @@
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
           "poll_interval": "Poll Interval (seconds)",
           "use_ha_bluetooth": "Use Home Assistant Bluetooth domain (Option B — enable if HA already uses the same ESPHome proxy)"
+        },
+        "data_description": {
+          "device_id": "Bluetooth MAC address of your AquaClean (e.g. 38:AB:41:2A:0D:67). Found on the label inside the toilet or in the Geberit Home app.",
+          "esphome_host": "Hostname or IP of an ESPHome Bluetooth proxy. Leave empty to use a local Bluetooth adapter on this HA host.",
+          "esphome_port": "Native API port of the ESPHome proxy. Default: 6053.",
+          "noise_psk": "API encryption key from your ESPHome YAML (api: encryption: key:). Leave empty if encryption is not configured.",
+          "poll_interval": "How often the device is polled over Bluetooth. Shorter intervals give more responsive sensors but keep BLE occupied longer.",
+          "use_ha_bluetooth": "Option A (off, default): direct ESPHome connection — also provides ESP32 signal strength, free heap and transport type as sensors. Option B (on): routes through HA's Bluetooth domain — use when HA's Bluetooth integration already occupies the same ESPHome proxy. ESP32 statistics are not available with Option B."
         }
       }
     },
