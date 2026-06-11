@@ -5,6 +5,7 @@ CONF_ESPHOME_HOST = "esphome_host"
 CONF_ESPHOME_PORT = "esphome_port"
 CONF_NOISE_PSK = "noise_psk"
 CONF_POLL_INTERVAL = "poll_interval"
+CONF_USE_HA_BLUETOOTH = "use_ha_bluetooth"
 
 DEFAULT_ESPHOME_PORT = 6053
 DEFAULT_POLL_INTERVAL = 30

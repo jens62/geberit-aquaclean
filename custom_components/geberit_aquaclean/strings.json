@@ -9,7 +9,8 @@
           "esphome_host": "ESPHome Proxy Host (leave empty for local BLE)",
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
-          "poll_interval": "Poll Interval (seconds)"
+          "poll_interval": "Poll Interval (seconds)",
+          "use_ha_bluetooth": "Use Home Assistant Bluetooth domain (Option B — enable if HA already uses the same ESPHome proxy)"
         }
       }
     },
@@ -38,7 +39,8 @@
           "esphome_host": "ESPHome Proxy Host (leave empty for local BLE)",
           "esphome_port": "ESPHome Proxy Port",
           "noise_psk": "ESPHome Encryption Key (optional, base64)",
-          "poll_interval": "Poll Interval (seconds)"
+          "poll_interval": "Poll Interval (seconds)",
+          "use_ha_bluetooth": "Use Home Assistant Bluetooth domain (Option B — enable if HA already uses the same ESPHome proxy)"
         }
       }
     },

@@ -21,6 +21,7 @@ from .const import (
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
     CONF_POLL_INTERVAL,
+    CONF_USE_HA_BLUETOOTH,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
 )
@@ -54,6 +55,7 @@ def _build_schema(defaults: dict) -> vol.Schema:
             vol.Optional(CONF_POLL_INTERVAL, default=defaults.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): vol.All(
                 int, vol.Range(min=5, max=3600)
             ),
+            vol.Optional(CONF_USE_HA_BLUETOOTH, default=defaults.get(CONF_USE_HA_BLUETOOTH, False)): cv.boolean,
         }
     )
 
@@ -153,19 +155,21 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             data = _normalise(user_input)
-            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
+            use_ha_bt = data.get(CONF_USE_HA_BLUETOOTH, False)
+            test_esphome_host = None if use_ha_bt else data[CONF_ESPHOME_HOST]
+            if not test_esphome_host and not use_ha_bt and not await _has_local_bluetooth():
                 errors["base"] = "no_bluetooth"
             else:
                 # Both paths perform a live BLE connection test.
-                # Local BLE: BluetoothLeConnector uses HA's bluetooth stack
+                # Local BLE / Option B: BluetoothLeConnector uses HA's bluetooth stack
                 #   (habluetooth + bleak_retry_connector) via the hass= parameter —
                 #   no raw BleakScanner conflict, no event loop hang.
-                # ESPHome: connects over TCP as before.
-                hass = self.hass if not data[CONF_ESPHOME_HOST] else None
+                # ESPHome (Option A): connects over TCP as before.
+                hass = self.hass if (not data[CONF_ESPHOME_HOST] or use_ha_bt) else None
                 try:
                     profile = await _test_connection(
                         data[CONF_DEVICE_ID],
-                        data[CONF_ESPHOME_HOST],
+                        test_esphome_host,
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
                         data[CONF_NOISE_PSK],
                         hass=hass,
@@ -254,6 +258,7 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
             # ESPHomeDeviceNotFoundError (0 packets — slot already in use).
             _connection_keys = (
                 CONF_DEVICE_ID, CONF_ESPHOME_HOST, CONF_ESPHOME_PORT, CONF_NOISE_PSK,
+                CONF_USE_HA_BLUETOOTH,
             )
             connection_unchanged = all(
                 data.get(k) == current.get(k) for k in _connection_keys
@@ -262,14 +267,16 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                 _LOGGER.debug("[AquaClean] Options flow: connection params unchanged — skipping BLE test")
                 return self.async_create_entry(title="", data=data)
 
-            if not data[CONF_ESPHOME_HOST] and not await _has_local_bluetooth():
+            use_ha_bt = data.get(CONF_USE_HA_BLUETOOTH, False)
+            test_esphome_host = None if use_ha_bt else data[CONF_ESPHOME_HOST]
+            if not test_esphome_host and not use_ha_bt and not await _has_local_bluetooth():
                 errors["base"] = "no_bluetooth"
             else:
-                hass = self.hass if not data[CONF_ESPHOME_HOST] else None
+                hass = self.hass if (not data[CONF_ESPHOME_HOST] or use_ha_bt) else None
                 try:
                     profile = await _test_connection(
                         data[CONF_DEVICE_ID],
-                        data[CONF_ESPHOME_HOST],
+                        test_esphome_host,
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
                         data[CONF_NOISE_PSK],
                         hass=hass,

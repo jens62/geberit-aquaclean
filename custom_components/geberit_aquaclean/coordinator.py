@@ -20,6 +20,7 @@ from .const import (
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
     CONF_POLL_INTERVAL,
+    CONF_USE_HA_BLUETOOTH,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
 )
@@ -62,6 +63,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self._esphome_host: str | None = conf.get(CONF_ESPHOME_HOST) or None
         self._esphome_port: int = conf.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
         self._noise_psk: str | None = conf.get(CONF_NOISE_PSK) or None
+        self._use_ha_bluetooth: bool = conf.get(CONF_USE_HA_BLUETOOTH, False)
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None
         self._ble_name_cache: str | None = None
@@ -138,8 +140,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------
 
     def _make_connector(self):
-        """Create a fresh BluetoothLeConnector for the local BLE path."""
+        """Create a fresh BluetoothLeConnector for the local BLE path.
+
+        When use_ha_bluetooth is True (Option B), bypasses the ESPHome path entirely
+        and uses HA's bluetooth domain even if esphome_host is configured.
+        """
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
+        if self._use_ha_bluetooth:
+            return BluetoothLeConnector(None, self._esphome_port, self._noise_psk, hass=self.hass)
         ha = self.hass if not self._esphome_host else None
         return BluetoothLeConnector(self._esphome_host, self._esphome_port, self._noise_psk, hass=ha)
 
@@ -229,7 +237,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             from aquaclean_console_app.ErrorCodes import E0010
             raise UpdateFailed(f"{E0010.code} — {E0010.message}")
 
-        if self._circuit_open and self._esphome_host:
+        if self._circuit_open and self._esphome_host and not self._use_ha_bluetooth:
             _LOGGER.debug(
                 "Circuit open (%d consecutive failures) — sleeping %d s before probe",
                 self._consecutive_failures,
@@ -243,7 +251,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             except UpdateFailed:
                 self._consecutive_failures += 1
 
-                if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host:
+                if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host and not self._use_ha_bluetooth:
                     self._circuit_open = True
                     _LOGGER.warning(
                         "Circuit breaker open: %d consecutive poll failures — triggering ESP32 restart",
@@ -260,7 +268,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         _LOGGER.warning(
                             "Failed to send ESP32 restart command: %s", restart_exc,
                         )
-                elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and not self._esphome_host:
+                elif self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and (not self._esphome_host or self._use_ha_bluetooth):
                     self._circuit_open = True
                     _LOGGER.warning(
                         "Circuit breaker open: %d consecutive poll failures",
@@ -291,7 +299,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
         poll_start = datetime.now(timezone.utc)
 
-        if self._esphome_host:
+        if self._esphome_host and not self._use_ha_bluetooth:
             connector = self._get_esphome_connector()
         else:
             connector = self._make_connector()
@@ -304,7 +312,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             try:
                 if self._device_type == "alba":
                     # Alba: connect_ble_only = connect_async + post_connect (DataPointInventory)
-                    if self._esphome_host:
+                    if self._esphome_host and not self._use_ha_bluetooth:
                         client = self._ensure_esphome_client(connector)
                     else:
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
@@ -315,7 +323,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     )
 
                 elif self._device_type == "mera":
-                    if self._esphome_host:
+                    if self._esphome_host and not self._use_ha_bluetooth:
                         client = self._ensure_esphome_client(connector)
                     else:
                         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
@@ -333,7 +341,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         self._device_type = "alba"
                         from aquaclean_console_app.aquaclean_core.Clients.AlbaClient import AlbaClient
                         client = AlbaClient(connector)
-                        if self._esphome_host:
+                        if self._esphome_host and not self._use_ha_bluetooth:
                             self._esphome_client = client
                         await client.post_connect()  # DataPointInventory — mandatory first step
                         self._alba_inventory = client._inventory  # cache for subsequent polls
@@ -344,7 +352,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         self._device_type = "mera"
                         from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
                         client = AquaCleanClientFactory(connector).create_client()
-                        if self._esphome_host:
+                        if self._esphome_host and not self._use_ha_bluetooth:
                             self._esphome_client = client
                         _LOGGER.info("Detected AquaClean Mera Comfort device — using Mera protocol")
 
@@ -418,7 +426,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             esphome_free_heap = connector.esphome_free_heap
             esphome_max_free_block = connector.esphome_max_free_block
 
-            if self._esphome_host:
+            if self._esphome_host and not self._use_ha_bluetooth:
                 self._transport = "esp32-wifi" if esphome_wifi_rssi is not None else "esp32-eth"
             else:
                 self._transport = "bleak"
@@ -559,7 +567,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"{E7002.code} — {E7002.message}: {exc}") from exc
         finally:
             self._push_ble_state("disconnected")
-            if self._esphome_host:
+            if self._esphome_host and not self._use_ha_bluetooth:
                 try:
                     async with asyncio.timeout(5.0):
                         if connector.client is not None:
