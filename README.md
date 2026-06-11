@@ -280,6 +280,7 @@ The web UI also has a one-click toggle button.  See [docs/modes.md](docs/modes.m
 
 - [Geberit AquaClean Mera Comfort — Service Manual (PDF)](https://cdn.data.geberit.com/documents-a6/972.447.00.0_00-A6.pdf)
 - [Geberit AquaClean Mera Classic — User Manual (PDF)](https://cdn.data.geberit.com/documents/972.448.00.0_00.pdf)
+- [Geberit AquaClean Mera Classic — User Manual A6 rev. 2024 (PDF)](https://cdn.data.geberit.com/documents-a6/972.448.00.0_00-A6_20240417131309.pdf)
 - [Geberit AquaClean Sela — User Manual (PDF)](https://cdn.data.geberit.com/documents-a6/972.047.00.0_00-A6_20240117161907.pdf)
 - [Geberit AquaClean Alba — Service Manual (PDF)](https://cdn.data.geberit.com/documents/971.794.00.0_00.pdf)
 
