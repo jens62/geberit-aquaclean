@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.3.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "1.5.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -164,7 +164,7 @@ class _Ble20AppLayer:
         (1,   None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # DEVICE_VARIANT = 0 (Alba)
         (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 35225)),      # DEVICE_NUMBER (obf)
         (3,   None,  0, 13, 0,         0,          4, struct.pack('<I', 1757175271)), # DEVICE_PRODUCTION_DATE (obf)
-        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.X'),               # DEVICE_SAP_NUMBER (obf)
+        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.A'),               # DEVICE_SAP_NUMBER
         (8,   None,  0,  8, 2,         2,          0, b'03'),                         # FW_RS_VERSION → RS03TS89
         (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
         (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
@@ -172,7 +172,7 @@ class _Ble20AppLayer:
         (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
         (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
         (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf; never set — equals 2000-01-01 epoch + OPERATION_TIME_TOTAL)
-        (16,  None,  0,  8, 0,         4,          4, b'AcAl'),                      # DP_NAME (truncated: 6-byte "AcAlba" exceeds BLE PDU on CONWISE/CSR adapters)
+        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),                    # DP_NAME
         (62,  None,  1, 10, 0,         4,          2, b'\x00'),                       # RESET (Command, write-only)
         (83,  None,  1, 10, 0,         1,          2, b'\x00'),                       # START_BOOTLOADER (Command, write-only)
         (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # POWER_SUPPLY_ERROR_STATUS = 0
@@ -181,9 +181,9 @@ class _Ble20AppLayer:
         (153, None,  0,  0, 0,         0,          2, b''),                           # RESTART (Command, write-only)
         (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 34761370)),   # UNIQUE_DEVICE_NUMBER (obf)
         (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 947286443)), # SET_RTC_TIME (Command, write-only)
-        (313, None,  0,  8, 0,         20,         4, b'245.832.00.X'),               # SALES_SAP_NUMBER (obf)
+        (313, None,  0,  8, 0,         20,         4, b'245.832.00.1'),               # SALES_SAP_NUMBER
         (337, None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # BOOTLOADER_VARIANT = 0
-        (369, None,  0,  8, 0,         20,         4, b'SB0000EU000000'),             # SALES_PRODUCT_SERIAL_NUMBER (obf)
+        (369, None,  0,  8, 0,         20,         4, b'SB2603EU000001'),             # SALES_PRODUCT_SERIAL_NUMBER (year/region from kstr; last digits obfuscated)
         (370, None,  0, 13, 0,         0,          4, struct.pack('<I', 1774187093)), # SALES_PRODUCT_PRODUCTION_DATE (obf)
         (371, None,  0,  8, 0,         12,         4, b'146.350.01.x'),               # SALES_PRODUCT_SAP_NUMBER (confirms Alba 250 toilet)
         (431, None,  0,  3, 0,         0,          4, struct.pack('<I', 0)),          # OPERATION_TIME_OFFSET = 0
@@ -806,7 +806,22 @@ class GeberitServiceA(Service):
 
     @characteristic("559eb110-2390-11e8-b467-0ed5f89f718b", CharFlags.READ)
     def read_char(self, options):
-        return b"Geberit-Mock"
+        # 18-byte BLE OTA/chip info (length == 18 branch in Ble20Product.Initialize).
+        # Values derived from kstr Alba DpId readall (2026-05-08):
+        #   OtaVersion = 1.14  (WFW major.minor from sw "1.14.1 1.2.0" in BLE DIS)
+        #   DeviceUniqueId = DpId 236 UNIQUE_DEVICE_NUMBER = 34761370 (obfuscated)
+        #   ChipId = 0x0057 (nRF52840 FICR)   ChipRevision = 1
+        #   WirelessFirmwareVersion = 1.14.1   FusVersion = 1.2.0
+        return bytes([
+            1, 14,                      # offsets 0-1: OtaMajor, OtaMinor → Version(1,14)
+            0,                          # offset  2: reserved
+            0,                          # offset  3: DeviceBootVariant
+            0x9A, 0x6A, 0x12, 0x02,   # offsets 4-7: DeviceUniqueId LE = 34761370
+            0x57, 0x00,                 # offsets 8-9: ChipId LE = 0x0057 (nRF52840)
+            0x01, 0x00,                 # offsets 10-11: ChipRevision LE = 1
+            1, 14, 1,                   # offsets 12-14: WirelessFirmwareVersion = 1.14.1
+            1, 2, 0,                    # offsets 15-17: FusVersion = 1.2.0
+        ])
 
 
 class BtSigDataService(Service):
@@ -973,6 +988,20 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         print("Could not read adapter path/address via ObjectManager:", e)
         adapter_path = None
         adapter_address = None
+
+    # Set the BlueZ adapter alias so GATT 0x2a00 (GAP Device Name) returns "AcAlba"
+    # instead of the system hostname.  iOS shows this name in Bluetooth Settings and
+    # the app reads it after the Arendi protocol completes.
+    # "AcAlba" = DpId 16 DP_NAME from the real kstr Alba (kstr-dpid-readall-2026-05-08.md).
+    if adapter_path:
+        try:
+            _adap_intro = await bus.introspect('org.bluez', adapter_path)
+            _adap_proxy = bus.get_proxy_object('org.bluez', adapter_path, _adap_intro)
+            _adap_props = _adap_proxy.get_interface('org.freedesktop.DBus.Properties')
+            await _adap_props.call_set('org.bluez.Adapter1', 'Alias', Variant('s', 'AcAlba'))
+            print("Adapter alias set to 'AcAlba' (GATT 0x2a00 Device Name)")
+        except Exception as e:
+            print(f"Warning: could not set adapter alias: {e}")
 
     if not adapter_wrapper:
         print("No adapter wrapper available; cannot register GATT services/advertisement.")
