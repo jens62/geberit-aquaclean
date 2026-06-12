@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.5.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "1.6.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -807,13 +807,13 @@ class GeberitServiceA(Service):
     @characteristic("559eb110-2390-11e8-b467-0ed5f89f718b", CharFlags.READ)
     def read_char(self, options):
         # 18-byte BLE OTA/chip info (length == 18 branch in Ble20Product.Initialize).
-        # Values derived from kstr Alba DpId readall (2026-05-08):
-        #   OtaVersion = 1.14  (WFW major.minor from sw "1.14.1 1.2.0" in BLE DIS)
+        # Values derived from kstr Alba DpId readall (2026-05-08) + firmware HAR:
+        #   OtaVersion = RS3.TS89 (application firmware V3.0.89 = FwPkg_FA00_V3.0.89.250423)
         #   DeviceUniqueId = DpId 236 UNIQUE_DEVICE_NUMBER = 34761370 (obfuscated)
         #   ChipId = 0x0057 (nRF52840 FICR)   ChipRevision = 1
         #   WirelessFirmwareVersion = 1.14.1   FusVersion = 1.2.0
         return bytes([
-            1, 14,                      # offsets 0-1: OtaMajor, OtaMinor → Version(1,14)
+            3, 89,                      # offsets 0-1: OtaMajor, OtaMinor → Version(3,89) = RS3.TS89
             0,                          # offset  2: reserved
             0,                          # offset  3: DeviceBootVariant
             0x9A, 0x6A, 0x12, 0x02,   # offsets 4-7: DeviceUniqueId LE = 34761370
