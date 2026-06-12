@@ -1,7 +1,9 @@
+---
 name: Bug Report
 description: Report a bug in the Geberit AquaClean bridge or HACS integration
-title: "[Bug]: "
-labels: ["bug"]
+title: '[Bug]: '
+labels:
+  - bug
 body:
   - type: dropdown
     id: version
@@ -9,10 +11,38 @@ body:
       label: Version
       description: Which version are you running?
       options:
-        - placeholder
+        - v3.1.0
+        - v3.0.10b2
+        - v3.0.10b1
+        - v3.0.9
+        - v3.0.9b1
+        - v3.0.8
+        - v3.0.8b9
+        - v3.0.8b8
+        - v3.0.8b7
+        - v3.0.8b6
+        - v3.0.8b5
+        - v3.0.8b4
+        - v3.0.8b3
+        - v3.0.8b2
+        - v3.0.8b1
+        - v3.0.7
+        - v3.0.7b1
+        - v3.0.6
+        - v3.0.6b4
+        - v3.0.6b3
+        - v3.0.6b2
+        - v3.0.6b1
+        - v3.0.5
+        - v3.0.5b5
+        - v3.0.5b4
+        - v3.0.5b3
+        - v3.0.5b2
+        - v3.0.5b1
+        - v3.0.4b3
+        - v3.0.4b2
     validations:
       required: true
-
   - type: dropdown
     id: connection
     attributes:
@@ -23,7 +53,6 @@ body:
         - HACS integration
     validations:
       required: true
-
   - type: textarea
     id: description
     attributes:
@@ -31,14 +60,14 @@ body:
       description: What happened? What did you expect?
     validations:
       required: true
-
   - type: textarea
     id: logs
     attributes:
       label: Relevant log output
-      description: Paste relevant log lines (use `--log-level debug` or `--log-level silly` if needed)
+      description: >-
+        Paste relevant log lines (use `--log-level debug` or `--log-level silly`
+        if needed)
       render: text
-
   - type: textarea
     id: config
     attributes:
