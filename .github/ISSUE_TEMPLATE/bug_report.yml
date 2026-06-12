@@ -1,0 +1,47 @@
+name: Bug Report
+description: Report a bug in the Geberit AquaClean bridge or HACS integration
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: version
+    attributes:
+      label: Version
+      description: Which version are you running?
+      options:
+        - placeholder
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - ESPHome BLE proxy
+        - Local Bluetooth (direct)
+        - HACS integration
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste relevant log lines (use `--log-level debug` or `--log-level silly` if needed)
+      render: text
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config (redacted)
+      description: Paste your `config.ini` with passwords/MACs redacted
+      render: ini

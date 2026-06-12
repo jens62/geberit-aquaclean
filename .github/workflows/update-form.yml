@@ -7,12 +7,20 @@ on:
 jobs:
   update-form:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Get releases
+        id: releases
+        run: |
+          echo "options=$(gh release list --limit 30 --json tagName --jq '[.[].tagName]')" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Update dropdown
         uses: ShaMan123/gha-form-dropdown-options@v2.1.0
         with:
-          file: .github/ISSUE_TEMPLATE/bug_report.yml
-          field-id: version # This must match the 'id' in your bug_report.yml
-          options: github-releases
-          token: ${{ secrets.GITHUB_TOKEN }}
+          form: .github/ISSUE_TEMPLATE/bug_report.yml
+          dropdown: version
+          options: ${{ steps.releases.outputs.options }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
