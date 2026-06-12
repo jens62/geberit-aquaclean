@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.6.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "1.7.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -608,9 +608,11 @@ class _AriendiServerSide:
         # need_sabm=True  → wait for SABM before sending UA (first session).
         # need_sabm=False → SABM already received in frame loop; go straight to UA.
         need_sabm = True
+        _ble_session_phase = 0
         while True:
+            _ble_session_phase += 1
             if need_sabm:
-                print("[MockServer] waiting for SABM...")
+                print(f"[MockServer] [Phase {_ble_session_phase}] waiting for SABM...")
                 try:
                     await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE), timeout=60.0)
                 except asyncio.TimeoutError:
@@ -618,11 +620,13 @@ class _AriendiServerSide:
                     print("[Mock] If the bridge/HACS was running, the ESP32 BLE scanner may be stuck.")
                     print("[Mock]   → Restart it via ESPHome web UI (Restart button) — no other action needed.")
                     return False
-                print("[MockServer] ← SABM")
+                print(f"[MockServer] [Phase {_ble_session_phase}] ← SABM")
+            else:
+                print(f"[MockServer] [Phase {_ble_session_phase}] SABM (mid-session restart) — fresh Arendi KE")
 
             # 1. UA
             await send_fn(self._att_u(_HDLC_UA_TYPE))
-            print("[MockServer] → UA")
+            print(f"[MockServer] [Phase {_ble_session_phase}] → UA")
 
             # 2. VERSION_REQ → VERSION_RESP
             try:
@@ -784,6 +788,16 @@ class _AriendiServerSide:
                 return
             # SABM received mid-session: loop back and re-do the handshake.
             # The coordinator is waiting for UA — we send it at the top of the loop.
+            # Reset HDLC sequence counters: after SABM both sides start fresh at 0.
+            # Without this, N(S) continues from Phase 1's final value; the app
+            # expects N(S)=0 for the first Phase 2 frame and immediately rejects it,
+            # causing "cannot connect" at ~7 s on iOS.
+            self._tx_seq = 0
+            self._rx_ack = 0
+            # Drain any stale S-RR ACKs left over from Phase 1 so Phase 2's
+            # _await_s_rr() calls don't match Phase 1 N(R) values.
+            while not self._srr_queue.empty():
+                self._srr_queue.get_nowait()
             self.handshake_done = False
             need_sabm = False  # SABM already consumed from queue
 
@@ -989,17 +1003,18 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         adapter_path = None
         adapter_address = None
 
-    # Set the BlueZ adapter alias so GATT 0x2a00 (GAP Device Name) returns "AcAlba"
-    # instead of the system hostname.  iOS shows this name in Bluetooth Settings and
-    # the app reads it after the Arendi protocol completes.
-    # "AcAlba" = DpId 16 DP_NAME from the real kstr Alba (kstr-dpid-readall-2026-05-08.md).
+    # Set the BlueZ adapter alias so GATT 0x2a00 (GAP Device Name) returns "AC250"
+    # instead of the system hostname.  iOS reads this after the Arendi protocol completes.
+    # Real kstr (E4:85:01:CD:6B:04) has Name/Alias = "AC250" in BlueZ cache
+    # (aquaclean2.log line 47).  "AcAlba" is the app-internal GeberitDeviceType class name,
+    # not the BLE device identity.
     if adapter_path:
         try:
             _adap_intro = await bus.introspect('org.bluez', adapter_path)
             _adap_proxy = bus.get_proxy_object('org.bluez', adapter_path, _adap_intro)
             _adap_props = _adap_proxy.get_interface('org.freedesktop.DBus.Properties')
-            await _adap_props.call_set('org.bluez.Adapter1', 'Alias', Variant('s', 'AcAlba'))
-            print("Adapter alias set to 'AcAlba' (GATT 0x2a00 Device Name)")
+            await _adap_props.call_set('org.bluez.Adapter1', 'Alias', Variant('s', 'AC250'))
+            print("Adapter alias set to 'AC250' (GATT 0x2a00 Device Name)")
         except Exception as e:
             print(f"Warning: could not set adapter alias: {e}")
 
