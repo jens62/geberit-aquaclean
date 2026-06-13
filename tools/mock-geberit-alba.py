@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.5.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.7.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -75,27 +75,18 @@ else:
 
 
 class _Advertisement(Advertisement):
-    """Advertisement subclass that attempts to set a fast advertising interval.
+    """Advertisement subclass — kept as a thin wrapper.
 
-    BlueZ defaults to 1280 ms when MinInterval/MaxInterval are absent from the
-    LEAdvertisement1 D-Bus interface.  At 1280 ms the nRF52840 sniffer's device
-    list rarely populates because the sniffer hops faster than the ad interval.
+    The @dbus_property approach for MinInterval/MaxInterval does NOT work:
+    bluez_peripheral passes an empty options dict to RegisterAdvertisement, so
+    BlueZ receives MinInterval=0x0000 via MGMT and falls back to 1280 ms.
+    BlueZ reads the interval from the RegisterAdvertisement OPTIONS DICT, not
+    from the advertisement object's D-Bus properties.
 
-    NOTE: The @dbus_property override below does NOT work with the current version
-    of dbus_next/bluez_peripheral.  btmon confirms BlueZ receives MinInterval=0x0000,
-    MaxInterval=0x0000 via MGMT 0x0054 and falls back to the 1280 ms default.
-    The subclass properties are parsed by the dbus_next metaclass but never read by
-    BlueZ because bluez_peripheral's ServiceInterface registration path does not
-    expose subclass-added properties to the MGMT interface interrogation layer.
-    The class is kept so adding a working fix later requires minimal changes.
+    The fast-interval fix is applied after register() by unregistering and
+    re-registering with {'MinInterval': 100, 'MaxInterval': 100} in the options
+    dict — see the block below adv.register() in the main function.
     """
-    @dbus_property(access=PropertyAccess.READ)
-    def MinInterval(self) -> 'u':
-        return 200
-
-    @dbus_property(access=PropertyAccess.READ)
-    def MaxInterval(self) -> 'u':
-        return 200
 
 
 # --- Import Arendi Security crypto from the bridge package -------------------
@@ -1069,6 +1060,54 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     except Exception as e:
         print("Advertisement registration failed:", e)
 
+    # Fix: re-register the advertisement with a fast advertising interval (100 ms).
+    #
+    # Root cause of iOS crash (2026-06-13, mock 2.5.0):
+    #   After Phase 2 BLE disconnect the iOS app calls GetEndProduct() ~1.1 s later.
+    #   GetEndProduct() → b.c() → FrameHandler.l() checks TunnelDataExchange.IsConnected
+    #   (= bz.IsConnected).  bz.IsConnected is only restored to True when Phase 3
+    #   connects and runs Ble20Product.Initialize() → bz.InitializeDataExchange().
+    #   With BlueZ's default 1280 ms advertising interval iOS takes ~15 s to find the
+    #   mock for Phase 3 — far longer than the ~1.1 s GetEndProduct() window — so
+    #   GetEndProduct() runs with bz disconnected and the app crashes (SIGABRT).
+    #   On real hardware the device advertises at ~100 ms so Phase 3 connects in <1 s.
+    #
+    # Fix: unregister and re-register the advertisement with MinInterval/MaxInterval=100 ms
+    # via LEAdvertisingManager1 options (BlueZ >= 5.58).  The @dbus_property override in
+    # _Advertisement does NOT work — BlueZ reads intervals from the RegisterAdvertisement
+    # options dict, not from the advertisement object's D-Bus properties.
+    #
+    # After this re-registration BlueZ advertises at 100 ms for all subsequent sessions
+    # (including after BLE disconnects, since BlueZ reuses the stored interval without
+    # calling LE_Set_Advertising_Parameters again on each reconnect).
+    if adv_registered and adapter_path:
+        try:
+            _adv_path = getattr(adv, '_path', None)
+            if _adv_path is None:
+                # Fallback: scan object attributes for a /org/... path string
+                for _attr in dir(adv):
+                    if 'path' in _attr.lower() and not _attr.startswith('__'):
+                        _val = getattr(adv, _attr, None)
+                        if isinstance(_val, str) and _val.startswith('/'):
+                            _adv_path = _val
+                            break
+            if _adv_path:
+                _ai = await bus.introspect('org.bluez', adapter_path)
+                _ap = bus.get_proxy_object('org.bluez', adapter_path, _ai)
+                _am = _ap.get_interface('org.bluez.LEAdvertisingManager1')
+                await _am.call_unregister_advertisement(_adv_path)
+                await _am.call_register_advertisement(_adv_path, {
+                    'MinInterval': Variant('u', 100),
+                    'MaxInterval': Variant('u', 100),
+                })
+                print("[Mock] Advertising interval set to 100 ms (Phase 3 connects in <1 s)")
+            else:
+                print("[Mock] Warning: adv path unknown — advertising at BlueZ default 1280 ms")
+                print("[Mock]   Phase 3 may not connect within the iOS app's ~1 s window → crash")
+        except Exception as _e:
+            print(f"[Mock] Warning: fast advertising interval not set ({_e})")
+            print("[Mock]   Needs BlueZ >= 5.58 and LEAdvertisingManager1 support")
+
     print(f"--- Mock Device Active (mode={mode}) ---")
     print(f"    mock: {_MOCK_VERSION}  script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
     print("Advertising: fd48 + Geberit mfr data (company 0x0602)")
@@ -1078,22 +1117,25 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
         _user_sitting = False
         _session_num = 0
+        _session_pre_created = False  # True when cleanup pre-created the next session
         while True:
             _session_num += 1
             print(f"\n[Mock] ===== SESSION {_session_num} — waiting for client =====")
-            sig_service._arendi = _AriendiServerSide()
-            if mode == "ble20":
-                _ble20_app = _Ble20AppLayer()  # fresh store per session
-                if _user_sitting:
-                    _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
-                app_handler = _ble20_app.dispatch
-            # Reset notify subscription state so the next BLE client can subscribe.
-            # bluez_peripheral sets _notifying=True in StartNotify() and never resets
-            # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
-            # second connection, StartNotify() raises "Already notifying" → BlueZ
-            # returns ATT error 0x01 to the ESP32 → "Invalid handle" → poll failure.
-            if notify_char is not None and hasattr(notify_char, '_notifying'):
-                notify_char._notifying = False
+            if not _session_pre_created:
+                sig_service._arendi = _AriendiServerSide()
+                if mode == "ble20":
+                    _ble20_app = _Ble20AppLayer()  # fresh store per session
+                    if _user_sitting:
+                        _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
+                    app_handler = _ble20_app.dispatch
+                # Reset notify subscription state so the next BLE client can subscribe.
+                # bluez_peripheral sets _notifying=True in StartNotify() and never resets
+                # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
+                # second connection, StartNotify() raises "Already notifying" → BlueZ
+                # returns ATT error 0x01 to the ESP32 → "Invalid handle" → poll failure.
+                if notify_char is not None and hasattr(notify_char, '_notifying'):
+                    notify_char._notifying = False
+            _session_pre_created = False  # consume the flag
             _completed = None
             _session_completed = False
             try:
@@ -1113,9 +1155,27 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # Only toggle when a client actually connected and completed a session.
             # Timeouts (no client within 60 s) raise an exception so _session_completed
             # stays False — the sitting state is preserved until the next real poll.
+            by_peer = getattr(sig_service._arendi, 'disconnected_by_peer', False)
             if _session_completed and _completed is not False:
                 _user_sitting = not _user_sitting
                 print(f"[Mock] Next session USER_DETECTION_STATUS → {'1 (sitting)' if _user_sitting else '0 (absent)'}")
+
+            # When the peer disconnected (by_peer=True), pre-create the next session
+            # immediately so incoming Phase 3 HDLC frames (SABM) are queued in the
+            # correct session object.  With 100 ms advertising interval the iOS app
+            # connects within ~400 ms of Phase 2 disconnect — the cleanup's 0.8 s sleeps
+            # would otherwise cause the SABM to arrive in the defunct Phase 2 queue,
+            # leaving Phase 3's run() waiting forever for a frame that already passed.
+            if by_peer:
+                sig_service._arendi = _AriendiServerSide()
+                if mode == "ble20":
+                    _ble20_app = _Ble20AppLayer()
+                    if _user_sitting:
+                        _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
+                    app_handler = _ble20_app.dispatch
+                if notify_char is not None and hasattr(notify_char, '_notifying'):
+                    notify_char._notifying = False
+                _session_pre_created = True
 
             # Always force a BlueZ-side disconnect after every session so advertising
             # resumes immediately (< 100 ms) rather than waiting for the supervision
@@ -1129,11 +1189,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             #
             # _connected_device_path is intentionally NOT cleared by on_device_disconnected
             # so it is always available here regardless of which path ended the session.
-            arendi_just_ran = sig_service._arendi
             if _connected_device_path is not None:
                 _path_to_disconnect = _connected_device_path
                 _connected_device_path = None  # clear before attempt — not needed after
-                by_peer = getattr(arendi_just_ran, 'disconnected_by_peer', False)
                 print(f"[Mock] Forcing BlueZ disconnect to resume advertising{' (already disconnected by peer — call may fail)' if by_peer else ''}: {_path_to_disconnect}")
                 try:
                     introspect = await bus.introspect('org.bluez', _path_to_disconnect)
@@ -1153,7 +1211,10 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # re-register here would race with BlueZ's own resume and cause "Already
             # Exists" failures, leaving the mock dark for up to 60 s.  Just let BlueZ
             # do its job.
-            await asyncio.sleep(0.3)
+            # Skip the 0.3 s delay when by_peer — Phase 3 may arrive within 400 ms and
+            # the next session is already pre-created above.
+            if not by_peer:
+                await asyncio.sleep(0.3)
             print("[Mock] Ready for next client")
 
     server_task = None
