@@ -169,6 +169,20 @@ _DISCONNECT_REASONS = {
     0x3B: "Connection Failed to Establish",
 }
 
+# Known 128-bit UUIDs in the Geberit Ble20 service family
+_KNOWN_UUIDS_128 = {
+    "559eb100-2390-11e8-b467-0ed5f89f718b": "Ble20Service",
+    "559eb110-2390-11e8-b467-0ed5f89f718b": "OtaVersion/DeviceSeries (read before Phase 1)",
+    "559eb001-2390-11e8-b467-0ed5f89f718b": "Ble20Write (Write Cmd target)",
+    "559eb002-2390-11e8-b467-0ed5f89f718b": "Ble20Notify (Notification source)",
+}
+
+# ATT Characteristic Declaration property bits
+_PROP_BITS = [
+    (0x02, "Read"), (0x04, "WriteNoResp"), (0x08, "Write"),
+    (0x10, "Notify"), (0x20, "Indicate"),
+]
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -193,6 +207,18 @@ class MockEvent:
     line: str
     kind: str = ""   # 'ble_rx', 'hdlc', 'proto', 'session', 'phase', 'other'
     payload_hex: str = ""  # for [BLE←] lines
+
+
+@dataclass
+class RefEvent:
+    """One ATT event from the reference TSV (GeberitFirstconnection.att-fields.tsv)."""
+    rel_s: float            # seconds relative to capture start (from TSV)
+    ts_dt: datetime.datetime = field(default_factory=datetime.datetime.now)
+    opcode: int = 0
+    handle: int = 0
+    info: str = ""
+    value_hex: str = ""
+    uuid128: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +343,9 @@ def _decode_acl(ev: BtsnoopEvent, direction: str):
 
     if l2cap_cid != 0x0004:  # not ATT channel
         return
-    if len(d) < 8 + l2cap_len or l2cap_len < 1:
+    if l2cap_len < 1:
         return
-
+    # Use available bytes — L2CAP PDU may span multiple HCI ACL fragments
     att = d[8 : 8 + l2cap_len]
     att_op = att[0]
 
@@ -505,6 +531,181 @@ def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# GATT characteristic map
+# ---------------------------------------------------------------------------
+
+def _parse_uuid128_le(b: bytes) -> str:
+    """Convert 16 little-endian ATT bytes to UUID string (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)."""
+    r = bytes(reversed(b))
+    return (f"{r[0:4].hex()}-{r[4:6].hex()}-{r[6:8].hex()}-"
+            f"{r[8:10].hex()}-{r[10:16].hex()}")
+
+
+def build_gatt_char_map(records: list) -> list:
+    """
+    Extract GATT characteristic declarations from Read By Type Resp frames.
+    Returns sorted list of (decl_handle, value_handle, properties, uuid_str).
+    Handles both 16-bit UUID (item_len=7) and 128-bit UUID (item_len=21).
+    """
+    chars = []
+    for ev in records:
+        if ev.opcode not in (_OP_ACL_TX, _OP_ACL_RX):
+            continue
+        d = ev.data
+        if len(d) < 9:
+            continue
+        l2cap_len = struct.unpack_from("<H", d, 4)[0]
+        l2cap_cid = struct.unpack_from("<H", d, 6)[0]
+        if l2cap_cid != 0x0004:
+            continue
+        if l2cap_len < 2:
+            continue
+        att = d[8 : 8 + l2cap_len]  # may be truncated for fragmented L2CAP
+        if att[0] != _ATT_READ_BY_TYPE_RESP:
+            continue
+        item_len = att[1]
+        if item_len not in (7, 21):
+            continue
+        uuid_byte_count = item_len - 5  # 7→2, 21→16
+        off = 2
+        while off + item_len <= len(att):
+            decl_h = struct.unpack_from("<H", att, off)[0]
+            props   = att[off + 2]
+            val_h   = struct.unpack_from("<H", att, off + 3)[0]
+            if uuid_byte_count == 16:
+                uuid_str = _parse_uuid128_le(att[off + 5 : off + 21])
+            else:
+                uid16 = struct.unpack_from("<H", att, off + 5)[0]
+                uuid_str = f"0x{uid16:04X}"
+            chars.append((decl_h, val_h, props, uuid_str))
+            off += item_len
+    return sorted(chars, key=lambda x: x[0])
+
+
+def print_gatt_map(chars: list):
+    print()
+    print("=" * 90)
+    print("GATT CHARACTERISTIC MAP (from ATT characteristic discovery in this capture)")
+    print("=" * 90)
+    print(f"  {'DeclH':6}  {'ValH':6}  {'Props':22}  {'UUID':<40}  Known name")
+    print("-" * 90)
+    for decl_h, val_h, props, uuid_str in chars:
+        prop_names = "|".join(n for bit, n in _PROP_BITS if props & bit) or "0x00"
+        name = _KNOWN_UUIDS_128.get(uuid_str, "")
+        print(f"  0x{decl_h:04X}  0x{val_h:04X}  0x{props:02X} ({prop_names:<15})  {uuid_str:<40}  {name}")
+
+
+# ---------------------------------------------------------------------------
+# Reference TSV loader (GeberitFirstconnection.att-fields.tsv)
+# ---------------------------------------------------------------------------
+
+def load_reference_tsv(path) -> list:
+    """
+    Load an .att-fields.tsv produced by decode-pcapng.sh and return
+    list of RefEvent.  Only retains ATT opcodes relevant to cross-ref.
+    """
+    _INTERESTING_OPS = {
+        _ATT_MTU_REQ, _ATT_MTU_RESP,
+        _ATT_READ_REQ, _ATT_READ_RESP,
+        _ATT_READ_BY_GROUP_TYPE_REQ, _ATT_READ_BY_GROUP_TYPE_RESP,
+        _ATT_READ_BY_TYPE_REQ, _ATT_READ_BY_TYPE_RESP,
+        _ATT_WRITE_CMD, _ATT_NOTIF, _ATT_WRITE_REQ, _ATT_WRITE_RESP,
+        _ATT_ERROR_RESP,
+    }
+    events = []
+    with open(path, encoding="utf-8") as f:
+        header = None
+        sep = '\t'
+        for raw in f:
+            line = raw.rstrip('\n')
+            if header is None:
+                sep = '|' if '|' in line else '\t'
+                header = [c.lower() for c in line.split(sep)]
+                continue
+            parts = line.split(sep)
+            row = dict(zip(header, parts + [''] * max(0, len(header) - len(parts))))
+            try:
+                rel_s = float(row.get('frame.time_relative', '0') or '0')
+            except ValueError:
+                continue
+            opcode_raw = (row.get('btatt.opcode') or '').strip()
+            try:
+                opcode = int(opcode_raw, 16) if opcode_raw.startswith('0x') else \
+                         int(opcode_raw, 0) if opcode_raw else 0
+            except ValueError:
+                opcode = 0
+            if opcode not in _INTERESTING_OPS:
+                continue
+            handle_raw = (row.get('btatt.handle') or '').strip().split(',')[0]
+            try:
+                handle = int(handle_raw, 0) if handle_raw else 0
+            except ValueError:
+                handle = 0
+            events.append(RefEvent(
+                rel_s=rel_s,
+                opcode=opcode,
+                handle=handle,
+                info=(row.get('_ws.col.info') or row.get('_ws.col.Info') or '').strip(),
+                value_hex=(row.get('btatt.value') or '').strip(),
+                uuid128=(row.get('btatt.uuid128') or '').strip(),
+            ))
+    return events
+
+
+def _find_first_write_cmd_dt(btsnoop_events: list, offset_us: int) -> Optional[datetime.datetime]:
+    """Return wall-clock time of first ATT Write Cmd (0x52) after applying offset."""
+    for ev in btsnoop_events:
+        if ev.kind == "att_write":
+            shifted_us = int(ev.ts_dt.timestamp() * 1_000_000) + offset_us
+            return datetime.datetime.fromtimestamp(shifted_us / 1_000_000)
+    return None
+
+
+def normalize_and_build_ref_entries(ref_events: list, ref_tsv_path: str,
+                                    curr_sabm_dt: datetime.datetime) -> list:
+    """
+    Find the first Write Cmd (0x52) in ref_events as T=0, then shift all
+    ref times so that SABM aligns with curr_sabm_dt.
+    Returns list of (datetime, "RF", summary_str, colour).
+    """
+    # Find SABM offset in reference
+    ref_sabm_s: Optional[float] = None
+    for ev in ref_events:
+        if ev.opcode == _ATT_WRITE_CMD:
+            ref_sabm_s = ev.rel_s
+            break
+    if ref_sabm_s is None:
+        print(f"  [warn] No Write Cmd (0x52) found in {ref_tsv_path} — cross-ref skipped",
+              file=sys.stderr)
+        return []
+
+    entries = []
+    for ev in ref_events:
+        delta_s = ev.rel_s - ref_sabm_s
+        dt = curr_sabm_dt + datetime.timedelta(seconds=delta_s)
+        op_name = _ATT_OP_NAMES.get(ev.opcode, f"0x{ev.opcode:02X}")
+        hdl = f"h=0x{ev.handle:04X}" if ev.handle else ""
+        uuid_short = ""
+        if ev.uuid128:
+            uuid_short = _KNOWN_UUIDS_128.get(ev.uuid128, ev.uuid128[:18])
+        val_short = ""
+        if ev.value_hex and len(ev.value_hex) <= 40:
+            val_short = f" val={ev.value_hex}"
+        elif ev.value_hex:
+            val_short = f" val={ev.value_hex[:40]}…"
+        parts = [op_name]
+        if hdl:
+            parts.append(hdl)
+        if uuid_short:
+            parts.append(uuid_short)
+        if val_short:
+            parts.append(val_short)
+        summary = "  ".join(parts)
+        entries.append((dt, "RF", f"[kstr] {summary}", ""))
+    return entries
+
+
+# ---------------------------------------------------------------------------
 # Mock log parser
 # ---------------------------------------------------------------------------
 
@@ -648,12 +849,13 @@ def _gap_marker(prev_dt: Optional[datetime.datetime],
 
 
 def print_timeline(
-    btsnoop_events: list[BtsnoopEvent],
-    mock_events: list[MockEvent],
+    btsnoop_events: list,
+    mock_events: list,
     offset_us: int,
     no_srr: bool = True,
     att_only: bool = False,
     gap_threshold_ms: int = 500,
+    ref_entries: Optional[list] = None,
 ):
     """Print a merged, chronologically sorted timeline."""
 
@@ -709,6 +911,9 @@ def print_timeline(
         else:
             col = ""
         entries.append((mev.ts_dt, "MK", mev.line, col))
+
+    if ref_entries:
+        entries.extend(ref_entries)
 
     entries.sort(key=lambda x: x[0])
 
@@ -828,6 +1033,11 @@ def main():
     ap.add_argument("--offset-ms", type=float, default=None,
                     help="manually specify time offset (mock − btsnoop) in ms; "
                          "use when auto-detect fails")
+    ap.add_argument("--gatt-map", action="store_true",
+                    help="print GATT characteristic map (handle→UUID) derived from discovery frames")
+    ap.add_argument("--cross-ref", metavar="TSV",
+                    help="path to reference .att-fields.tsv (e.g. GeberitFirstconnection.att-fields.tsv); "
+                         "adds normalised reference events to the timeline as [kstr] entries")
     args = ap.parse_args()
 
     if args.no_color:
@@ -880,12 +1090,38 @@ def main():
 
     print()
 
+    # Build GATT map (always, used by both --gatt-map and summary)
+    gatt_chars = build_gatt_char_map(raw_records)
+
+    # Load reference TSV for cross-ref if requested
+    ref_entries = None
+    if args.cross_ref:
+        ref_path = Path(args.cross_ref)
+        if not ref_path.exists():
+            sys.exit(f"Reference TSV not found: {ref_path}")
+        print(f"Loading reference TSV: {ref_path.name} ...", end=" ", flush=True)
+        ref_events = load_reference_tsv(ref_path)
+        print(f"{len(ref_events)} ATT events")
+        curr_sabm_dt = _find_first_write_cmd_dt(raw_records, offset_us)
+        if curr_sabm_dt:
+            ref_entries = normalize_and_build_ref_entries(
+                ref_events, args.cross_ref, curr_sabm_dt)
+            print(f"Reference events normalised to SABM at {_format_ts(curr_sabm_dt)}")
+        else:
+            print("[warn] No Write Cmd found in btsnoop — cross-ref skipped",
+                  file=sys.stderr)
+    print()
+
     if not args.summary_only:
         print_timeline(raw_records, mock_events, offset_us,
                        no_srr=no_srr, att_only=args.att_only,
-                       gap_threshold_ms=args.gap)
+                       gap_threshold_ms=args.gap,
+                       ref_entries=ref_entries)
 
     print_summary(raw_records, mock_events, offset_us)
+
+    if args.gatt_map:
+        print_gatt_map(gatt_chars)
 
 
 if __name__ == "__main__":

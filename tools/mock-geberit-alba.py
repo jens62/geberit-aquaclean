@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.3.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.4.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -157,7 +157,7 @@ class _Ble20AppLayer:
     # not with the full 78-DpId store, one of the removed entries is the cause.
     _DEFAULT_STORE = [
         # ── Device identification ──────────────────────────────────────────
-        (0,   None, 1,  1, 0, 255,          1, b'\x02'),                   # DEVICE_SERIES  = 2
+        (0,   None, 1,  1, 0, 255,          1, b'\xFA'),                   # DEVICE_SERIES  = 250 (kstr real, matches 559eb110 bytes 2-3)
         (1,   None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_VARIANT = 0
         (2,   None, 1, 15, -2147483648, 2147483647, 1,
               struct.pack('<i', 123)),                                       # DEVICE_NUMBER  = 123 (mock)
@@ -165,7 +165,7 @@ class _Ble20AppLayer:
         (8,   None, 1,  8, 0, 0,            1, b'03'),                     # FW_RS_VERSION  = "03"
         (9,   None, 1,  9, 0, 255,          1, b'\x59'),                   # FW_TS_VERSION  = 89
         (16,  None, 1,  8, 0, 0,            1, b'AcAlba\x00'),             # DP_NAME
-        (236, None, 1,  9, 0, 2147483647,   1, struct.pack('<I', 123)),    # UNIQUE_DEVICE_NUMBER = 123
+        (236, None, 1,  9, 0, 2147483647,   1, struct.pack('<I', 0x02134CD1)),  # UNIQUE_DEVICE_NUMBER = kstr real (matches 559eb110 bytes 4-7)
         (304, None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_MODEL   = 0
         (337, None, 1,  1, 0, 255,          1, b'\x00'),                   # BOOTLOADER_VARIANT = 0
         # ── Application state ─────────────────────────────────────────────
