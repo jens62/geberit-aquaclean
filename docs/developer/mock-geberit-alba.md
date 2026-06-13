@@ -400,6 +400,45 @@ before raising E0010 — so a successful handshake falls through to normal polli
 
 ---
 
+## Current status — mock 2.1.0 (2026-06-13)
+
+| Fact | Detail |
+|------|--------|
+| Phase 1 | ✅ completes correctly |
+| App response after Phase 1 | "cannot connect" shown immediately after final `S-RR N(R)=4` |
+| PIN dialog | Never appears |
+| 30-second wait | Does NOT occur — failure is instant |
+| Phase 2 SABM | Never arrives — zero ATT writes after Phase 1 S-RR ACK |
+| Root cause | **OPEN** — unknown why app aborts immediately |
+| 559eb110 data | Correct — `05 06 FA 00 D1 4C 13 02 95 04 03 20 01 0E 01 01 02 00` confirmed by `GeberitFirstconnection.decoded.txt` |
+| Device name "AC250" | Correct for all Alba 250 devices; uniqueness via BLE MAC, not name |
+
+**Key confirmed facts (btmon + mock log correlation via `tools/analyze-btmon-mock.py`):**
+- `_E008() = false` because bytes 0-1 of 559eb110 = `05 06` → DeviceSeries=1541, not recognized
+- With `_E008() = false`, no `_E004()` firmware check, no HTTP call — so HTTP timeout theory is wrong
+- btsnoop confirms: BLE connection stays alive, only 1 ATT write after Phase 1 (the S-RR ACK), then 6.85 s silence before user dismissed the "cannot connect" screen
+- The app makes the failure decision based on Phase 1 data alone — cause not yet identified
+
+**Authoritative reference for 559eb110 value:**
+`local-assets/Android-BLE-Logs/kstr/GeberitFirstconnection.decoded.txt` — GATT handle `att_handle=0x0010`, read before Phase 1 SABM.
+
+---
+
+## btmon correlation tool
+
+`tools/analyze-btmon-mock.py` correlates a btmon btsnoop binary capture with a mock server log
+to produce a unified timeline. Auto-detects the clock offset between btmon and mock log
+by matching ATT Write Command payloads.
+
+```bash
+/Users/jens/venv/bin/python tools/analyze-btmon-mock.py \
+  path/to/capture.btsnoop path/to/mock.log
+```
+
+Flags: `--att-only`, `--no-color`, `--summary-only`, `--gap MS`, `--offset-ms FLOAT`
+
+---
+
 ## Connection test usage
 
 ```bash

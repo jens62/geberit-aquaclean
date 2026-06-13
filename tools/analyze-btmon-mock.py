@@ -123,18 +123,30 @@ _HCI_CMD_LE_EXT_CREATE_CONN        = 0x2043
 _HCI_CMD_DISCONNECT                = 0x0406
 
 # ATT opcodes
-_ATT_MTU_REQ     = 0x02
-_ATT_MTU_RESP    = 0x03
-_ATT_WRITE_REQ   = 0x12
-_ATT_WRITE_RESP  = 0x13
-_ATT_NOTIF       = 0x1B
-_ATT_IND         = 0x1D
-_ATT_WRITE_CMD   = 0x52
-_ATT_ERROR_RESP  = 0x01
+_ATT_MTU_REQ       = 0x02
+_ATT_MTU_RESP      = 0x03
+_ATT_READ_BY_TYPE_REQ  = 0x08
+_ATT_READ_BY_TYPE_RESP = 0x09
+_ATT_READ_REQ      = 0x0A
+_ATT_READ_RESP     = 0x0B
+_ATT_READ_BY_GROUP_TYPE_REQ  = 0x10
+_ATT_READ_BY_GROUP_TYPE_RESP = 0x11
+_ATT_WRITE_REQ     = 0x12
+_ATT_WRITE_RESP    = 0x13
+_ATT_NOTIF         = 0x1B
+_ATT_IND           = 0x1D
+_ATT_WRITE_CMD     = 0x52
+_ATT_ERROR_RESP    = 0x01
 
 _ATT_OP_NAMES = {
     _ATT_MTU_REQ:   "Exchange MTU Req",
     _ATT_MTU_RESP:  "Exchange MTU Resp",
+    _ATT_READ_BY_TYPE_REQ:  "Read By Type Req",
+    _ATT_READ_BY_TYPE_RESP: "Read By Type Resp",
+    _ATT_READ_REQ:  "Read Req",
+    _ATT_READ_RESP: "Read Resp",
+    _ATT_READ_BY_GROUP_TYPE_REQ:  "Read By Group Type Req",
+    _ATT_READ_BY_GROUP_TYPE_RESP: "Read By Group Type Resp",
     _ATT_WRITE_REQ: "Write Req",
     _ATT_WRITE_RESP: "Write Resp",
     _ATT_NOTIF:     "Handle Value Notif",
@@ -370,6 +382,66 @@ def _decode_acl(ev: BtsnoopEvent, direction: str):
                       f"att_handle=0x{att_handle:04X}  "
                       f"len={len(value)}  value: {hex_val}")
 
+    elif att_op == _ATT_READ_REQ and len(att) >= 3:
+        att_handle = struct.unpack_from("<H", att, 1)[0]
+        ev.kind = "att_read_req"
+        ev.payload_hex = f"{att_handle:04x}"
+        ev.summary = (f"ATT Read Req  acl=0x{acl_handle:04X}  "
+                      f"att_handle=0x{att_handle:04X}")
+
+    elif att_op == _ATT_READ_RESP and len(att) >= 1:
+        value = att[1:]
+        hex_val = value.hex()
+        ev.kind = "att_read_resp"
+        ev.payload_hex = hex_val
+        ev.summary = (f"ATT Read Resp  acl=0x{acl_handle:04X}  "
+                      f"len={len(value)}  value: {hex_val}")
+
+    elif att_op == _ATT_READ_BY_TYPE_REQ and len(att) >= 5:
+        start_h = struct.unpack_from("<H", att, 1)[0]
+        end_h   = struct.unpack_from("<H", att, 3)[0]
+        uuid_b  = att[5:]
+        uuid_hex = uuid_b.hex()
+        ev.kind = "att_read_by_type_req"
+        ev.summary = (f"ATT Read By Type Req  acl=0x{acl_handle:04X}  "
+                      f"start=0x{start_h:04X}  end=0x{end_h:04X}  uuid={uuid_hex}")
+
+    elif att_op == _ATT_READ_BY_TYPE_RESP and len(att) >= 2:
+        item_len = att[1]
+        pairs = []
+        off = 2
+        while off + item_len <= len(att):
+            h = struct.unpack_from("<H", att, off)[0]
+            v = att[off+2 : off+item_len].hex()
+            pairs.append(f"0x{h:04X}={v}")
+            off += item_len
+        ev.kind = "att_read_by_type_resp"
+        ev.summary = (f"ATT Read By Type Resp  acl=0x{acl_handle:04X}  "
+                      f"item_len={item_len}  [{', '.join(pairs)}]")
+
+    elif att_op == _ATT_READ_BY_GROUP_TYPE_REQ and len(att) >= 5:
+        start_h = struct.unpack_from("<H", att, 1)[0]
+        end_h   = struct.unpack_from("<H", att, 3)[0]
+        uuid_b  = att[5:]
+        uuid_hex = uuid_b.hex()
+        ev.kind = "att_read_by_group_type_req"
+        ev.summary = (f"ATT Read By Group Type Req  acl=0x{acl_handle:04X}  "
+                      f"start=0x{start_h:04X}  end=0x{end_h:04X}  uuid={uuid_hex}")
+
+    elif att_op == _ATT_READ_BY_GROUP_TYPE_RESP and len(att) >= 2:
+        item_len = att[1]
+        groups = []
+        off = 2
+        while off + item_len <= len(att):
+            sh = struct.unpack_from("<H", att, off)[0]
+            eh = struct.unpack_from("<H", att, off+2)[0]
+            v  = att[off+4 : off+item_len].hex()
+            groups.append(f"0x{sh:04X}-0x{eh:04X}={v}")
+            off += item_len
+        ev.kind = "att_read_by_group_type_resp"
+        ev.summary = (f"ATT Read By Group Type Resp  acl=0x{acl_handle:04X}  "
+                      f"[{', '.join(groups)}]")
+
 
 def decode_btsnoop_events(records: list[BtsnoopEvent]):
     """Decode each record in-place; skip uninteresting ones."""
@@ -425,7 +497,10 @@ def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
     if att_only:
         return ev.kind in ("connect", "disconnect", "disconnect_cmd",
                            "att_write", "att_write_req", "att_notif",
-                           "att_ind", "att_error", "mtu")
+                           "att_ind", "att_error", "mtu",
+                           "att_read_req", "att_read_resp",
+                           "att_read_by_type_req", "att_read_by_type_resp",
+                           "att_read_by_group_type_req", "att_read_by_group_type_resp")
     return bool(ev.kind)
 
 
