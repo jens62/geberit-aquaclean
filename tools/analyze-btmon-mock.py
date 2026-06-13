@@ -1,0 +1,817 @@
+#!/usr/bin/env python3
+"""
+analyze-btmon-mock.py — Correlate btmon btsnoop with mock-geberit-alba log
+==========================================================================
+
+Produces a unified timeline showing both the HCI/ATT level (btsnoop) and the
+application-layer Ble20/HDLC decode (mock log) side by side.
+
+Usage:
+  python tools/analyze-btmon-mock.py <btsnoop_file> <mock_log>
+  python tools/analyze-btmon-mock.py <btsnoop_file> <mock_log> --no-srr
+  python tools/analyze-btmon-mock.py <btsnoop_file> <mock_log> --att-only
+
+Key questions answered:
+  - When did BLE connect/disconnect at HCI level, and with what reason?
+  - Did the app send any frames after Phase 1 complete?
+  - Does the btsnoop gap match the mock-log gap before ^C?
+  - What ATT MTU was negotiated?
+
+Btsnoop format (monitor, datalink 0x7D1):
+  File header: 16 bytes — magic "btsnoop\0" + version uint32 BE + datalink uint32 BE
+  Each record: 24-byte header + data
+    uint32 BE: original length
+    uint32 BE: included length
+    uint32 BE: flags  →  index = flags>>16,  opcode = flags & 0xFFFF
+    uint32 BE: cumulative drops
+    int64  BE: timestamp (µs since midnight Jan 1, year 0 CE nominal Gregorian)
+
+  Key opcodes:
+    1  NEW_INDEX      — new HCI controller
+    3  HCI_CMD        — HCI command (host→controller)
+    4  HCI_EVT        — HCI event (controller→host)
+    5  ACL_TX         — ACL data host→controller (app→device)
+    6  ACL_RX         — ACL data controller→host (device→app)
+    11 INDEX_INFO     — controller address + manufacturer
+    13 SYSTEM_NOTE    — kernel/bluetoothd text note
+
+  HCI events decoded:
+    0x05  Disconnection Complete  — reason code and connection handle
+    0x3E  LE Meta:
+            0x01  LE Connection Complete
+            0x0A  LE Enhanced Connection Complete
+
+  ATT opcodes decoded (L2CAP CID 0x0004):
+    0x02  Exchange MTU Request
+    0x03  Exchange MTU Response
+    0x12  Write Request       (ACL_TX)
+    0x13  Write Response      (ACL_RX)
+    0x52  Write Command       (ACL_TX) — WRITE_WITHOUT_RESPONSE; value = raw mock payload
+    0x1B  Handle Value Notification (ACL_RX) — mock→app data
+    0x1D  Handle Value Indication  (ACL_RX)
+    0x01  Error Response
+
+Time correlation:
+  The first [BLE←] raw hex in the mock log must match the value bytes of the
+  first ATT Write Command (0x52) in btsnoop.  The script auto-detects the
+  clock offset between the two sources and applies it to btsnoop timestamps.
+"""
+
+import argparse
+import datetime
+import re
+import struct
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# btmon uses this offset so that btsnoop timestamps are in the nominal-Gregorian
+# "year 0" epoch (standard BTSnoop spec).
+# Microseconds from year-0-Jan-1 to Unix epoch (1970-Jan-1).
+_BTSNOOP_EPOCH_OFFSET_US = 0x00DCDDB30F2F8000
+
+# btmon monitor opcodes
+_OP_NEW_INDEX    = 1
+_OP_DEL_INDEX    = 2
+_OP_HCI_CMD      = 3
+_OP_HCI_EVT      = 4
+_OP_ACL_TX       = 5
+_OP_ACL_RX       = 6
+_OP_OPEN_INDEX   = 9
+_OP_CLOSE_INDEX  = 10
+_OP_INDEX_INFO   = 11
+_OP_VENDOR_DIAG  = 12
+_OP_SYSTEM_NOTE  = 13
+_OP_USER_LOG     = 14
+
+_OP_NAMES = {
+    _OP_NEW_INDEX:   "NEW_INDEX",
+    _OP_DEL_INDEX:   "DEL_INDEX",
+    _OP_HCI_CMD:     "HCI_CMD",
+    _OP_HCI_EVT:     "HCI_EVT",
+    _OP_ACL_TX:      "ACL_TX",
+    _OP_ACL_RX:      "ACL_RX",
+    _OP_OPEN_INDEX:  "OPEN_INDEX",
+    _OP_CLOSE_INDEX: "CLOSE_INDEX",
+    _OP_INDEX_INFO:  "INDEX_INFO",
+    _OP_VENDOR_DIAG: "VENDOR_DIAG",
+    _OP_SYSTEM_NOTE: "SYSTEM_NOTE",
+    _OP_USER_LOG:    "USER_LOG",
+}
+
+# HCI event codes
+_HCI_EVT_DISCONNECT    = 0x05
+_HCI_EVT_CMD_COMPLETE  = 0x0E
+_HCI_EVT_LE_META       = 0x3E
+
+# LE Meta subevent codes
+_LE_CONN_COMPLETE          = 0x01
+_LE_ENH_CONN_COMPLETE_V1   = 0x0A
+_LE_ENH_CONN_COMPLETE_V2   = 0x0B
+
+# HCI command opcodes (OGF|OCF packed)
+_HCI_CMD_LE_SET_SCAN_ENABLE        = 0x200C
+_HCI_CMD_LE_SET_EXT_SCAN_ENABLE    = 0x2042
+_HCI_CMD_LE_CREATE_CONN            = 0x200D
+_HCI_CMD_LE_EXT_CREATE_CONN        = 0x2043
+_HCI_CMD_DISCONNECT                = 0x0406
+
+# ATT opcodes
+_ATT_MTU_REQ     = 0x02
+_ATT_MTU_RESP    = 0x03
+_ATT_WRITE_REQ   = 0x12
+_ATT_WRITE_RESP  = 0x13
+_ATT_NOTIF       = 0x1B
+_ATT_IND         = 0x1D
+_ATT_WRITE_CMD   = 0x52
+_ATT_ERROR_RESP  = 0x01
+
+_ATT_OP_NAMES = {
+    _ATT_MTU_REQ:   "Exchange MTU Req",
+    _ATT_MTU_RESP:  "Exchange MTU Resp",
+    _ATT_WRITE_REQ: "Write Req",
+    _ATT_WRITE_RESP: "Write Resp",
+    _ATT_NOTIF:     "Handle Value Notif",
+    _ATT_IND:       "Handle Value Ind",
+    _ATT_WRITE_CMD: "Write Cmd",
+    _ATT_ERROR_RESP: "Error Resp",
+}
+
+# HCI disconnect reason codes (subset)
+_DISCONNECT_REASONS = {
+    0x05: "Authentication Failure",
+    0x08: "Connection Timeout",
+    0x13: "Remote User Terminated",
+    0x14: "Remote Low Resources",
+    0x15: "Remote Power Off",
+    0x16: "Local Host Terminated",
+    0x1A: "Unsupported Remote Feature",
+    0x1F: "Unspecified Error",
+    0x22: "LMP Response Timeout",
+    0x3B: "Connection Failed to Establish",
+}
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BtsnoopEvent:
+    ts_us: int           # raw btsnoop timestamp (µs, year-0 epoch)
+    ts_dt: datetime.datetime  # converted to local datetime (set after offset applied)
+    opcode: int
+    hci_index: int
+    data: bytes
+    # decoded fields (populated by decode_*)
+    kind: str = ""       # 'connect', 'disconnect', 'att_write', 'att_notif', 'mtu', 'note', etc.
+    summary: str = ""    # human-readable one-liner
+    payload_hex: str = ""  # hex of ATT value (for write/notif correlation)
+
+
+@dataclass
+class MockEvent:
+    ts_dt: datetime.datetime
+    line: str
+    kind: str = ""   # 'ble_rx', 'hdlc', 'proto', 'session', 'phase', 'other'
+    payload_hex: str = ""  # for [BLE←] lines
+
+
+# ---------------------------------------------------------------------------
+# btsnoop parser
+# ---------------------------------------------------------------------------
+
+def _btsnoop_ts_to_dt(ts_us: int) -> datetime.datetime:
+    unix_us = ts_us - _BTSNOOP_EPOCH_OFFSET_US
+    return datetime.datetime.fromtimestamp(unix_us / 1_000_000)
+
+
+def parse_btsnoop(path: Path) -> list[BtsnoopEvent]:
+    """Parse a btmon btsnoop file (monitor type 0x7d1) into raw records."""
+    data = path.read_bytes()
+    if len(data) < 16:
+        sys.exit(f"btsnoop file too small: {path}")
+
+    magic = data[:8]
+    if magic != b"btsnoop\x00":
+        sys.exit(f"Not a btsnoop file (bad magic): {path}")
+
+    version, datalink = struct.unpack_from(">II", data, 8)
+    if version != 1:
+        sys.exit(f"Unsupported btsnoop version {version} (expected 1)")
+    if datalink != 0x07D1:
+        print(f"[warn] btsnoop datalink type 0x{datalink:04X} — expected 0x07D1 (btmon monitor); "
+              "some decoding may be incorrect", file=sys.stderr)
+
+    records = []
+    offset = 16
+    while offset + 24 <= len(data):
+        orig_len, incl_len, flags, _drops = struct.unpack_from(">IIII", data, offset)
+        ts_us = struct.unpack_from(">q", data, offset + 16)[0]
+        payload = data[offset + 24 : offset + 24 + incl_len]
+        offset += 24 + incl_len
+
+        opcode = flags & 0xFFFF
+        hci_index = (flags >> 16) & 0xFFFF
+
+        ev = BtsnoopEvent(
+            ts_us=ts_us,
+            ts_dt=_btsnoop_ts_to_dt(ts_us),
+            opcode=opcode,
+            hci_index=hci_index,
+            data=payload,
+        )
+        records.append(ev)
+
+    return records
+
+
+# ---------------------------------------------------------------------------
+# btsnoop event decoder
+# ---------------------------------------------------------------------------
+
+def _mac_bytes_le(b: bytes, start: int) -> str:
+    return ":".join(f"{b[start + 5 - i]:02x}" for i in range(6))
+
+
+def _decode_hci_evt(ev: BtsnoopEvent):
+    d = ev.data
+    if len(d) < 2:
+        return
+    evt_code = d[0]
+    # param_len = d[1]
+
+    if evt_code == _HCI_EVT_DISCONNECT and len(d) >= 6:
+        # status(1), handle(2 LE), reason(1)
+        status = d[2]
+        handle = struct.unpack_from("<H", d, 3)[0]
+        reason = d[5]
+        reason_str = _DISCONNECT_REASONS.get(reason, f"0x{reason:02X}")
+        ev.kind = "disconnect"
+        ev.summary = (f"HCI_EVT Disconnection Complete  "
+                      f"handle=0x{handle:04X}  status={status}  "
+                      f"reason=0x{reason:02X} ({reason_str})")
+
+    elif evt_code == _HCI_EVT_LE_META and len(d) >= 3:
+        subevent = d[2]
+
+        if subevent in (_LE_CONN_COMPLETE, _LE_ENH_CONN_COMPLETE_V1) and len(d) >= 20:
+            # LE Connection Complete:
+            #   status(1) handle(2LE) role(1) peer_addr_type(1) peer_addr(6) ...
+            status = d[3]
+            handle = struct.unpack_from("<H", d, 4)[0]
+            role = d[6]
+            peer_type = d[7]
+            peer_mac = _mac_bytes_le(d, 8)
+            interval = struct.unpack_from("<H", d, 14)[0] * 1.25
+            ev.kind = "connect"
+            ev.summary = (f"LE_CONNECTION_COMPLETE  status={status}  "
+                          f"handle=0x{handle:04X}  role={'central' if role==0 else 'peripheral'}  "
+                          f"peer={'random' if peer_type else 'public'} {peer_mac}  "
+                          f"interval={interval:.2f}ms")
+
+        elif subevent == _LE_ENH_CONN_COMPLETE_V2 and len(d) >= 30:
+            status = d[3]
+            handle = struct.unpack_from("<H", d, 4)[0]
+            role = d[6]
+            peer_type = d[7]
+            peer_mac = _mac_bytes_le(d, 8)
+            ev.kind = "connect"
+            ev.summary = (f"LE_ENHANCED_CONNECTION_COMPLETE_V2  status={status}  "
+                          f"handle=0x{handle:04X}  role={'central' if role==0 else 'peripheral'}  "
+                          f"peer={'random' if peer_type else 'public'} {peer_mac}")
+
+
+def _decode_acl(ev: BtsnoopEvent, direction: str):
+    """Decode ACL data; direction = 'TX' (host→ctrl) or 'RX' (ctrl→host)."""
+    d = ev.data
+    if len(d) < 9:
+        return
+    # ACL header: handle[11:0] + pb_flag[13:12] + bc_flag[15:14] in 2 bytes LE, then length 2 LE
+    acl_handle = struct.unpack_from("<H", d, 0)[0] & 0x0FFF
+    acl_len    = struct.unpack_from("<H", d, 2)[0]
+    if len(d) < 4 + acl_len:
+        return
+
+    # L2CAP header: length(2 LE) + CID(2 LE)
+    l2cap_len = struct.unpack_from("<H", d, 4)[0]
+    l2cap_cid = struct.unpack_from("<H", d, 6)[0]
+
+    if l2cap_cid != 0x0004:  # not ATT channel
+        return
+    if len(d) < 8 + l2cap_len or l2cap_len < 1:
+        return
+
+    att = d[8 : 8 + l2cap_len]
+    att_op = att[0]
+
+    if att_op == _ATT_MTU_REQ and len(att) >= 3:
+        mtu = struct.unpack_from("<H", att, 1)[0]
+        ev.kind = "mtu"
+        ev.summary = f"ATT Exchange MTU Req  client_mtu={mtu}  (ACL_TX handle=0x{acl_handle:04X})"
+
+    elif att_op == _ATT_MTU_RESP and len(att) >= 3:
+        mtu = struct.unpack_from("<H", att, 1)[0]
+        ev.kind = "mtu"
+        ev.summary = f"ATT Exchange MTU Resp  server_mtu={mtu}  (ACL_RX handle=0x{acl_handle:04X})"
+
+    elif att_op == _ATT_WRITE_CMD and len(att) >= 3:
+        att_handle = struct.unpack_from("<H", att, 1)[0]
+        value = att[3:]
+        hex_val = value.hex()
+        ev.kind = "att_write"
+        ev.payload_hex = hex_val
+        ev.summary = (f"ATT Write Cmd  acl=0x{acl_handle:04X}  "
+                      f"att_handle=0x{att_handle:04X}  "
+                      f"len={len(value)}  value: {hex_val}")
+
+    elif att_op == _ATT_WRITE_REQ and len(att) >= 3:
+        att_handle = struct.unpack_from("<H", att, 1)[0]
+        value = att[3:]
+        hex_val = value.hex()
+        ev.kind = "att_write_req"
+        ev.payload_hex = hex_val
+        ev.summary = (f"ATT Write Req  acl=0x{acl_handle:04X}  "
+                      f"att_handle=0x{att_handle:04X}  "
+                      f"len={len(value)}  value: {hex_val}")
+
+    elif att_op == _ATT_NOTIF and len(att) >= 3:
+        att_handle = struct.unpack_from("<H", att, 1)[0]
+        value = att[3:]
+        hex_val = value.hex()
+        ev.kind = "att_notif"
+        ev.payload_hex = hex_val
+        ev.summary = (f"ATT Handle Value Notif  acl=0x{acl_handle:04X}  "
+                      f"att_handle=0x{att_handle:04X}  "
+                      f"len={len(value)}  value: {hex_val}")
+
+    elif att_op == _ATT_ERROR_RESP and len(att) >= 5:
+        req_op   = att[1]
+        err_hdl  = struct.unpack_from("<H", att, 2)[0]
+        err_code = att[4]
+        ev.kind = "att_error"
+        ev.summary = (f"ATT Error Resp  for_opcode=0x{req_op:02X}  "
+                      f"handle=0x{err_hdl:04X}  error=0x{err_code:02X}  "
+                      f"(acl=0x{acl_handle:04X})")
+
+    elif att_op == _ATT_IND and len(att) >= 3:
+        att_handle = struct.unpack_from("<H", att, 1)[0]
+        value = att[3:]
+        hex_val = value.hex()
+        ev.kind = "att_ind"
+        ev.payload_hex = hex_val
+        ev.summary = (f"ATT Handle Value Ind  acl=0x{acl_handle:04X}  "
+                      f"att_handle=0x{att_handle:04X}  "
+                      f"len={len(value)}  value: {hex_val}")
+
+
+def decode_btsnoop_events(records: list[BtsnoopEvent]):
+    """Decode each record in-place; skip uninteresting ones."""
+    for ev in records:
+        if ev.opcode == _OP_SYSTEM_NOTE:
+            note = ev.data.rstrip(b"\x00").decode("utf-8", errors="replace")
+            ev.kind = "note"
+            ev.summary = f"System: {note}"
+
+        elif ev.opcode == _OP_NEW_INDEX and len(ev.data) >= 8:
+            # type(1) bus(1) addr(6) name(8)
+            mac = _mac_bytes_le(ev.data, 2)
+            name = ev.data[8:16].rstrip(b"\x00").decode("ascii", errors="replace")
+            ev.kind = "note"
+            ev.summary = f"NEW_INDEX  addr={mac}  name={name}"
+
+        elif ev.opcode == _OP_INDEX_INFO and len(ev.data) >= 8:
+            mac = _mac_bytes_le(ev.data, 0)
+            mfr = struct.unpack_from("<H", ev.data, 6)[0]
+            ev.kind = "note"
+            ev.summary = f"INDEX_INFO  addr={mac}  manufacturer=0x{mfr:04X}"
+
+        elif ev.opcode == _OP_HCI_EVT:
+            _decode_hci_evt(ev)
+
+        elif ev.opcode == _OP_ACL_TX:
+            _decode_acl(ev, "TX")
+
+        elif ev.opcode == _OP_ACL_RX:
+            _decode_acl(ev, "RX")
+
+        elif ev.opcode == _OP_HCI_CMD and len(ev.data) >= 3:
+            opcode = struct.unpack_from("<H", ev.data, 0)[0]
+            if opcode == _HCI_CMD_DISCONNECT:
+                handle = struct.unpack_from("<H", ev.data, 3)[0] & 0x0FFF
+                reason = ev.data[5] if len(ev.data) >= 6 else 0
+                ev.kind = "disconnect_cmd"
+                ev.summary = (f"HCI_CMD Disconnect  handle=0x{handle:04X}  "
+                              f"reason=0x{reason:02X} "
+                              f"({_DISCONNECT_REASONS.get(reason, '?')})")
+            elif opcode == _HCI_CMD_LE_CREATE_CONN:
+                ev.kind = "connect_cmd"
+                ev.summary = "HCI_CMD LE_Create_Connection"
+            elif opcode == _HCI_CMD_LE_EXT_CREATE_CONN:
+                ev.kind = "connect_cmd"
+                ev.summary = "HCI_CMD LE_Extended_Create_Connection"
+
+    return records
+
+
+def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
+    """Return True if this event should appear in the timeline."""
+    if att_only:
+        return ev.kind in ("connect", "disconnect", "disconnect_cmd",
+                           "att_write", "att_write_req", "att_notif",
+                           "att_ind", "att_error", "mtu")
+    return bool(ev.kind)
+
+
+# ---------------------------------------------------------------------------
+# Mock log parser
+# ---------------------------------------------------------------------------
+
+# Timestamp prefix: "HH:MM:SS.mmm "
+_TS_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}\.\d{3})\s+(.*)")
+# [BLE←] N B  <hex>
+_BLE_RX_RE = re.compile(r"\[BLE←\]\s+(\d+)\s+B\s+([0-9a-fA-F]+)")
+
+
+def _parse_mock_ts(ts_str: str, date: datetime.date) -> datetime.datetime:
+    h, m, s_ms = ts_str.split(":")
+    s, ms = s_ms.split(".")
+    return datetime.datetime(date.year, date.month, date.day,
+                             int(h), int(m), int(s), int(ms) * 1000)
+
+
+def _mock_event_kind(line: str) -> str:
+    if "[BLE←]" in line:
+        return "ble_rx"
+    if "[HDLC←]" in line:
+        return "hdlc"
+    if "[MockServer]" in line or "[MockBle20]" in line:
+        return "proto"
+    if "SESSION" in line or "waiting for client" in line:
+        return "session"
+    if "Phase 1" in line or "Phase 2" in line or "HANDSHAKE" in line:
+        return "phase"
+    if "Shutting down" in line or "Cleanup complete" in line:
+        return "shutdown"
+    return "other"
+
+
+def parse_mock_log(path: Path, date: Optional[datetime.date] = None) -> list[MockEvent]:
+    """Parse mock server log; infer date from btsnoop filename if not given."""
+    text = path.read_text(errors="replace")
+    lines = text.splitlines()
+    # use today if no date hint
+    ref_date = date or datetime.date.today()
+
+    events = []
+    for line in lines:
+        m = _TS_RE.match(line)
+        if not m:
+            continue
+        ts_str, rest = m.group(1), m.group(2)
+        ts_dt = _parse_mock_ts(ts_str, ref_date)
+        kind = _mock_event_kind(rest)
+        ev = MockEvent(ts_dt=ts_dt, line=rest, kind=kind)
+
+        # extract raw hex for [BLE←] lines
+        bm = _BLE_RX_RE.search(rest)
+        if bm:
+            ev.payload_hex = bm.group(2).lower()
+
+        events.append(ev)
+
+    return events
+
+
+# ---------------------------------------------------------------------------
+# Time-offset correlation
+# ---------------------------------------------------------------------------
+
+def find_time_offset_us(btsnoop_events: list[BtsnoopEvent],
+                        mock_events: list[MockEvent]) -> Optional[int]:
+    """
+    Auto-detect the clock offset between btsnoop and mock log.
+
+    Strategy: for each ATT Write Command in btsnoop, find all mock [BLE←] events
+    with the same payload, compute mock_ts - btsnoop_ts.  Pick the candidate with
+    the smallest absolute delta (i.e. both sources were on the same machine and
+    should agree to within a few seconds; a 34-minute mismatch means a different
+    session was matched).
+
+    Returns offset in microseconds (add to btsnoop unix_us to get mock wall time).
+    """
+    candidates = []  # (abs_delta_us, offset_us)
+
+    # Index mock events by payload for fast lookup
+    mock_by_payload: dict[str, list[MockEvent]] = {}
+    for mev in mock_events:
+        if mev.kind == "ble_rx" and mev.payload_hex:
+            mock_by_payload.setdefault(mev.payload_hex, []).append(mev)
+
+    for bev in btsnoop_events:
+        if bev.kind != "att_write" or not bev.payload_hex:
+            continue
+        for mev in mock_by_payload.get(bev.payload_hex, []):
+            mock_us = int(mev.ts_dt.timestamp() * 1_000_000)
+            btsnoop_us = int(bev.ts_dt.timestamp() * 1_000_000)
+            offset = mock_us - btsnoop_us
+            candidates.append((abs(offset), offset))
+
+    if not candidates:
+        return None
+
+    # Pick the candidate with the smallest absolute offset
+    candidates.sort()
+    return candidates[0][1]
+
+
+# ---------------------------------------------------------------------------
+# Timeline output
+# ---------------------------------------------------------------------------
+
+# ANSI colours (disabled if stdout is not a tty)
+_USE_COLOR = sys.stdout.isatty()
+
+def _c(code: str, text: str) -> str:
+    if not _USE_COLOR:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+_COL_BTSNOOP_CONNECT    = "1;32"   # bold green
+_COL_BTSNOOP_DISCONNECT = "1;31"   # bold red
+_COL_BTSNOOP_ATT_WRITE  = "36"     # cyan
+_COL_BTSNOOP_ATT_NOTIF  = "35"     # magenta
+_COL_BTSNOOP_MTU        = "33"     # yellow
+_COL_BTSNOOP_NOTE       = "2"      # dim
+_COL_MOCK_BLE_RX        = "36"     # cyan
+_COL_MOCK_PROTO         = "37"     # white
+_COL_MOCK_PHASE         = "1;33"   # bold yellow
+_COL_MOCK_SESSION       = "1"      # bold
+_COL_MOCK_SHUTDOWN      = "1;31"   # bold red
+_COL_GAP                = "1;35"   # bold magenta
+
+
+def _format_ts(dt: datetime.datetime) -> str:
+    return dt.strftime("%H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
+
+
+def _gap_marker(prev_dt: Optional[datetime.datetime],
+                cur_dt: datetime.datetime,
+                threshold_ms: int = 500) -> Optional[str]:
+    if prev_dt is None:
+        return None
+    delta_ms = (cur_dt - prev_dt).total_seconds() * 1000
+    if delta_ms >= threshold_ms:
+        return _c(_COL_GAP, f"  ─── gap {delta_ms:.0f} ms ───")
+    return None
+
+
+def print_timeline(
+    btsnoop_events: list[BtsnoopEvent],
+    mock_events: list[MockEvent],
+    offset_us: int,
+    no_srr: bool = True,
+    att_only: bool = False,
+    gap_threshold_ms: int = 500,
+):
+    """Print a merged, chronologically sorted timeline."""
+
+    # Apply offset to btsnoop events
+    for bev in btsnoop_events:
+        if offset_us != 0:
+            shifted_us = int(bev.ts_dt.timestamp() * 1_000_000) + offset_us
+            bev.ts_dt = datetime.datetime.fromtimestamp(shifted_us / 1_000_000)
+
+    # Filter mock events
+    def keep_mock(ev: MockEvent) -> bool:
+        if att_only:
+            return ev.kind in ("ble_rx", "phase", "session", "shutdown")
+        if no_srr and ev.kind == "hdlc" and "S-RR" in ev.line:
+            return False
+        return True
+
+    # Filter btsnoop events
+    def keep_btsnoop(ev: BtsnoopEvent) -> bool:
+        return interesting_btsnoop(ev, att_only)
+
+    # Build unified list: (datetime, source, display_str, colour)
+    entries = []
+
+    for bev in btsnoop_events:
+        if not keep_btsnoop(bev):
+            continue
+        if bev.kind in ("connect", "connect_cmd"):
+            col = _COL_BTSNOOP_CONNECT
+        elif bev.kind in ("disconnect", "disconnect_cmd"):
+            col = _COL_BTSNOOP_DISCONNECT
+        elif bev.kind in ("att_write", "att_write_req"):
+            col = _COL_BTSNOOP_ATT_WRITE
+        elif bev.kind in ("att_notif", "att_ind"):
+            col = _COL_BTSNOOP_ATT_NOTIF
+        elif bev.kind == "mtu":
+            col = _COL_BTSNOOP_MTU
+        else:
+            col = _COL_BTSNOOP_NOTE
+        entries.append((bev.ts_dt, "BT", bev.summary, col))
+
+    for mev in mock_events:
+        if not keep_mock(mev):
+            continue
+        if mev.kind == "ble_rx":
+            col = _COL_MOCK_BLE_RX
+        elif mev.kind == "phase":
+            col = _COL_MOCK_PHASE
+        elif mev.kind in ("session", "shutdown"):
+            col = _COL_MOCK_SESSION
+        elif mev.kind == "proto":
+            col = _COL_MOCK_PROTO
+        else:
+            col = ""
+        entries.append((mev.ts_dt, "MK", mev.line, col))
+
+    entries.sort(key=lambda x: x[0])
+
+    prev_dt = None
+    for dt, src, text, col in entries:
+        gap = _gap_marker(prev_dt, dt, gap_threshold_ms)
+        if gap:
+            print(gap)
+        ts = _format_ts(dt)
+        line = f"[{ts}] [{src}] {text}"
+        print(_c(col, line) if col else line)
+        prev_dt = dt
+
+
+# ---------------------------------------------------------------------------
+# Summary stats
+# ---------------------------------------------------------------------------
+
+def print_summary(btsnoop_events: list[BtsnoopEvent],
+                  mock_events: list[MockEvent],
+                  offset_us: Optional[int]):
+    print()
+    print("=" * 72)
+    print("SUMMARY")
+    print("=" * 72)
+
+    # Connection events
+    connects = [e for e in btsnoop_events if e.kind == "connect"]
+    disconnects = [e for e in btsnoop_events if e.kind == "disconnect"]
+
+    if connects:
+        print(f"\nBLE connections found in btsnoop: {len(connects)}")
+        for e in connects:
+            print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
+    else:
+        print("\nNo LE Connection Complete events found in btsnoop")
+
+    if disconnects:
+        print(f"\nBLE disconnections found in btsnoop: {len(disconnects)}")
+        for e in disconnects:
+            print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
+    else:
+        print("\nNo Disconnection Complete events found in btsnoop")
+
+    # MTU
+    mtus = [e for e in btsnoop_events if e.kind == "mtu"]
+    if mtus:
+        print(f"\nATT MTU exchanges:")
+        for e in mtus:
+            print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
+
+    # ATT writes
+    att_writes = [e for e in btsnoop_events if e.kind in ("att_write", "att_write_req")]
+    att_notifs = [e for e in btsnoop_events if e.kind in ("att_notif", "att_ind")]
+    print(f"\nATT Write Commands (app→mock):   {len(att_writes)}")
+    print(f"ATT Notifications (mock→app):    {len(att_notifs)}")
+
+    # Mock phase milestones
+    phase1_done = [e for e in mock_events if "Phase 1 complete" in e.line]
+    if phase1_done:
+        print(f"\nPhase 1 complete: {_format_ts(phase1_done[-1].ts_dt)}")
+        # Count writes after Phase 1
+        p1_ts = phase1_done[-1].ts_dt
+        writes_after = [e for e in btsnoop_events
+                        if e.kind in ("att_write", "att_write_req") and e.ts_dt > p1_ts]
+        print(f"ATT Write Cmds after Phase 1:  {len(writes_after)}")
+        if writes_after:
+            for e in writes_after:
+                print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
+
+    # Offset info
+    if offset_us is not None:
+        print(f"\nTime offset (mock − btsnoop): {offset_us / 1000:.1f} ms "
+              f"({'btsnoop ahead' if offset_us < 0 else 'mock ahead or same timezone offset'})")
+    else:
+        print("\nTime offset: could not auto-detect (no matching payload found)")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Date inference
+# ---------------------------------------------------------------------------
+
+def _infer_date(btsnoop_path: Path) -> Optional[datetime.date]:
+    """Try to extract a date from the btsnoop filename, e.g. btmon_2026-06-13_09-04."""
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", btsnoop_path.name)
+    if m:
+        return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Correlate btmon btsnoop with mock-geberit-alba server log",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    ap.add_argument("btsnoop",  help="btmon btsnoop file (binary, datalink 0x7d1)")
+    ap.add_argument("mock_log", help="mock-geberit-alba text log")
+    ap.add_argument("--no-srr", action="store_true", default=True,
+                    help="suppress [HDLC←] S-RR lines from mock log (default: on)")
+    ap.add_argument("--keep-srr", action="store_true",
+                    help="show S-RR acknowledgement lines")
+    ap.add_argument("--att-only", action="store_true",
+                    help="show only ATT and connection events (suppress non-ATT btsnoop + most mock lines)")
+    ap.add_argument("--gap", type=int, default=500, metavar="MS",
+                    help="gap threshold in ms to print separator (default: 500)")
+    ap.add_argument("--no-color", action="store_true",
+                    help="disable ANSI colour output")
+    ap.add_argument("--summary-only", action="store_true",
+                    help="print summary only (no timeline)")
+    ap.add_argument("--offset-ms", type=float, default=None,
+                    help="manually specify time offset (mock − btsnoop) in ms; "
+                         "use when auto-detect fails")
+    args = ap.parse_args()
+
+    if args.no_color:
+        global _USE_COLOR
+        _USE_COLOR = False
+
+    no_srr = not args.keep_srr
+
+    btsnoop_path = Path(args.btsnoop)
+    mock_path = Path(args.mock_log)
+
+    for p in (btsnoop_path, mock_path):
+        if not p.exists():
+            sys.exit(f"File not found: {p}")
+
+    print(f"btsnoop : {btsnoop_path.name}  ({btsnoop_path.stat().st_size:,} bytes)")
+    print(f"mock log: {mock_path.name}  ({mock_path.stat().st_size:,} bytes)")
+
+    # Infer date for mock log timestamps
+    date_hint = _infer_date(btsnoop_path)
+    if date_hint:
+        print(f"date    : {date_hint} (from btsnoop filename)")
+    else:
+        date_hint = datetime.date.today()
+        print(f"date    : {date_hint} (today — override with --offset-ms if wrong)")
+
+    print()
+
+    # Parse
+    print("Parsing btsnoop...", end=" ", flush=True)
+    raw_records = parse_btsnoop(btsnoop_path)
+    decode_btsnoop_events(raw_records)
+    print(f"{len(raw_records)} records")
+
+    print("Parsing mock log...", end=" ", flush=True)
+    mock_events = parse_mock_log(mock_path, date_hint)
+    print(f"{len(mock_events)} events")
+
+    # Time offset
+    if args.offset_ms is not None:
+        offset_us = int(args.offset_ms * 1000)
+        print(f"Time offset: {args.offset_ms:.1f} ms (manual)")
+    else:
+        offset_us = find_time_offset_us(raw_records, mock_events)
+        if offset_us is not None:
+            print(f"Time offset: {offset_us / 1000:.1f} ms (auto-detected)")
+        else:
+            offset_us = 0
+            print("Time offset: 0 (auto-detect failed — timestamps may not align)")
+
+    print()
+
+    if not args.summary_only:
+        print_timeline(raw_records, mock_events, offset_us,
+                       no_srr=no_srr, att_only=args.att_only,
+                       gap_threshold_ms=args.gap)
+
+    print_summary(raw_records, mock_events, offset_us)
+
+
+if __name__ == "__main__":
+    main()
