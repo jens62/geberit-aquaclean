@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.8.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "1.9.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -381,6 +381,8 @@ class _Ble20AppLayer:
             return [bytes([CommandId.ReadError]) + addr + bytes([0x01])]
         val = bytes(entry['value'])
         print(f"[MockBle20] ← READ DpId={dp_id} → {val.hex()}")
+        if dp_id == 8:
+            print("[MockServer] *** Phase 1 complete — if app shows PIN dialog, enter: 0000 ***")
         return [bytes([CommandId.ReadAns]) + addr + val]
 
     def _write(self, frame: bytes) -> list:
