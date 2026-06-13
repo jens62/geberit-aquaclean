@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.2.1"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.3.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -711,30 +711,34 @@ class GeberitServiceA(Service):
 
     @characteristic("559eb110-2390-11e8-b467-0ed5f89f718b", CharFlags.READ)
     def read_char(self, options):
-        # 18 bytes — exact copy of real kstr Alba GATT handle 0x0010 response.
-        # Byte layout (confirmed from Android pcapng GeberitFirstconnection):
+        # 16 bytes — deliberately NOT 14 or 18.
+        # Ble20Product.Initialize() only parses OtaVersion from exactly 14- or 18-byte
+        # responses; any other length leaves OtaVersion = null.
+        # With OtaVersion null no HTTP call is made to mobileappsv1.services.geberit.com,
+        # so Phase 2 (GetEndProduct) proceeds.  18 bytes would set OtaVersion → HTTP call
+        # → server returns {"Data": null} → exception → Phase 2 blocked (confirmed via
+        # Charles Proxy HAR 2026-06-13 and btsnoop analysis 2026-06-13).
+        #
+        # Byte layout mirrors real kstr GATT handle 0x0010, bytes 0-15
+        # (bytes 16-17 = FusVersion "02 00" omitted to land at 16 bytes):
         #   bytes 0-1:   LoaderVersion major/minor = 05 06
         #   bytes 2-3:   DeviceSeries LE / DeviceVariant = FA 00 (series 250)
-        #   bytes 4-7:   DeviceUniqueId LE = D1 4C 13 02 (= 34819281, DpId 236)
+        #   bytes 4-7:   DeviceUniqueId LE = D1 4C 13 02 (= DpId 236 value)
         #   bytes 8-9:   ChipId LE = 95 04
         #   bytes 10-11: ChipRevision LE = 03 20
-        #   bytes 12-14: WirelessFirmwareVersion = 01 0E 01 (1.14.1)
-        #   bytes 15-17: FusVersion = 01 02 00 (1.2.0)
+        #   bytes 12-15: WirelessFirmwareVersion = 01 0E 01 01
         #
-        # iOS extracts DeviceSeries from bytes 0-1 (= 0x0605 LE = 1541).
+        # bytes 0-1 = 05 06 → DeviceSeries read by iOS = 0x0605 LE = 1541.
         # Series 1541 is not in GeberitDeviceConfig → _E008() = false →
-        # _E004() (firmware update check) is never called → m__E002 = false →
-        # FirmwareForceUpdateViewModel is NOT shown → Phase 2 proceeds.
-        # (Using FA 00 at bytes 0-1 gives series 250 = recognised → _E008() = true
-        #  → firmware screen blocks Phase 2 — confirmed btmon 2026-06-13.)
+        # FirmwareForceUpdateViewModel is NOT shown after Phase 2.
         return bytes([
-            0x05, 0x06,             # LoaderVersion = 5.6 (kstr real, bytes 0-1)
+            0x05, 0x06,             # LoaderVersion = 5.6 (bytes 0-1, kstr real)
             0xFA, 0x00,             # DeviceSeries=250, DeviceVariant=0 (bytes 2-3)
-            0xD1, 0x4C, 0x13, 0x02, # DeviceUniqueId LE = 34819281 (= DpId 236, kstr real)
-            0x95, 0x04,             # ChipId LE = 0x0495 (kstr)
-            0x03, 0x20,             # ChipRevision LE (kstr)
-            0x01, 0x0E, 0x01,       # WirelessFirmwareVersion = 1.14.1
-            0x01, 0x02, 0x00,       # FusVersion = 1.2.0
+            0xD1, 0x4C, 0x13, 0x02, # DeviceUniqueId LE (bytes 4-7, = DpId 236, kstr real)
+            0x95, 0x04,             # ChipId LE (bytes 8-9, kstr)
+            0x03, 0x20,             # ChipRevision LE (bytes 10-11, kstr)
+            0x01, 0x0E, 0x01, 0x01, # WirelessFirmwareVersion (bytes 12-15)
+            # bytes 16-17 (FusVersion 02 00) intentionally omitted → 16 bytes total
         ])
 
 
