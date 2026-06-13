@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "1.9.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.0.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -179,11 +179,11 @@ class _Ble20AppLayer:
         (148, None,  0,  3, 0,         0,          1, struct.pack('<I', 601643)),     # OPERATION_TIME_TOTAL (obf; = RTC − 2000-01-01 epoch)
         (149, None,  0,  3, 0,         0,          1, struct.pack('<I', 492999)),     # OPERATION_TIME_SINCE_POWER_UP (obf)
         (153, None,  0,  0, 0,         0,          2, b''),                           # RESTART (Command, write-only)
-        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 34761370)),   # UNIQUE_DEVICE_NUMBER (obf)
+        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 34819281)),   # UNIQUE_DEVICE_NUMBER (kstr real)
         (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 947286443)), # SET_RTC_TIME (Command, write-only)
         (313, None,  0,  8, 0,         20,         4, b'245.832.00.1'),               # SALES_SAP_NUMBER
         (337, None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # BOOTLOADER_VARIANT = 0
-        (369, None,  0,  8, 0,         20,         4, b'SB2603EU000001'),             # SALES_PRODUCT_SERIAL_NUMBER (year/region from kstr; last digits obfuscated)
+        (369, None,  0,  8, 0,         20,         4, b'SB2603EU208023'),             # SALES_PRODUCT_SERIAL_NUMBER (kstr real)
         (370, None,  0, 13, 0,         0,          4, struct.pack('<I', 1774187093)), # SALES_PRODUCT_PRODUCTION_DATE (obf)
         (371, None,  0,  8, 0,         12,         4, b'146.350.01.x'),               # SALES_PRODUCT_SAP_NUMBER (confirms Alba 250 toilet)
         (431, None,  0,  3, 0,         0,          4, struct.pack('<I', 0)),          # OPERATION_TIME_OFFSET = 0
@@ -822,21 +822,25 @@ class GeberitServiceA(Service):
 
     @characteristic("559eb110-2390-11e8-b467-0ed5f89f718b", CharFlags.READ)
     def read_char(self, options):
-        # 18-byte BLE OTA/chip info (length == 18 branch in Ble20Product.Initialize).
-        # Values derived from kstr Alba DpId readall (2026-05-08) + firmware HAR:
-        #   OtaVersion = RS3.TS89 (application firmware V3.0.89 = FwPkg_FA00_V3.0.89.250423)
-        #   DeviceUniqueId = DpId 236 UNIQUE_DEVICE_NUMBER = 34761370 (obfuscated)
-        #   ChipId = 0x0057 (nRF52840 FICR)   ChipRevision = 1
-        #   WirelessFirmwareVersion = 1.14.1   FusVersion = 1.2.0
+        # 16 bytes — deliberately not 14 or 18.
+        # Ble20Product.Initialize only parses OtaVersion from 14- or 18-byte responses;
+        # any other length leaves OtaVersion = null.  With OtaVersion null,
+        # RequiresFirmwareUpdate() returns True without making any HTTP call, so
+        # FetchDevicePairingSecretViewModel.Connect() proceeds to Phase 2 (GetEndProduct).
+        # An 18-byte response produces a non-null OtaVersion, which triggers an HTTP call to
+        # mobileappsv1.services.geberit.com; the server returns {"Data": null} → throws →
+        # Phase 2 never starts (confirmed via Charles Proxy HAR, 2026-06-13).
+        #
+        # Content mirrors kstr real device bytes 2-17 from GATT handle 0x0010:
+        #   0506 FA00 D14C1302 9504 0320 010E01 010200
+        # (first two bytes 05/06 = loader version omitted; length adjusted to 16)
         return bytes([
-            3, 89,                      # offsets 0-1: OtaMajor, OtaMinor → Version(3,89) = RS3.TS89
-            0,                          # offset  2: reserved
-            0,                          # offset  3: DeviceBootVariant
-            0x9A, 0x6A, 0x12, 0x02,   # offsets 4-7: DeviceUniqueId LE = 34761370
-            0x57, 0x00,                 # offsets 8-9: ChipId LE = 0x0057 (nRF52840)
-            0x01, 0x00,                 # offsets 10-11: ChipRevision LE = 1
-            1, 14, 1,                   # offsets 12-14: WirelessFirmwareVersion = 1.14.1
-            1, 2, 0,                    # offsets 15-17: FusVersion = 1.2.0
+            0xFA, 0x00,             # DeviceSeries=250, DeviceVariant=0 (kstr confirmed)
+            0xD1, 0x4C, 0x13, 0x02, # DeviceUniqueId LE = 34819281 (= DpId 236, kstr real)
+            0x95, 0x04,             # ChipId LE = 0x0495 (kstr)
+            0x03, 0x20,             # ChipRevision LE (kstr)
+            0x01, 0x0E, 0x01,       # WirelessFirmwareVersion = 1.14.1
+            0x01, 0x02, 0x00,       # FusVersion = 1.2.0
         ])
 
 
