@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.1.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.2.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -149,142 +149,31 @@ class _Ble20AppLayer:
     """
 
     # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
-    # datatype: 0=Unused 1=Binary 2=MilliSeconds 3=Seconds 8=String 9=Counter
-    #           10=Enum 11=OffOn 13=TimeStampUtc
-    # behavior: 0=Info  1=Status  2=Command  3=Nvm  4=Protected
+    # datatype: 1=Binary  8=String  9=Counter  10=Enum  11=OffOn  15=Signed
+    # behavior: 1=Status  2=Command
     #
-    # 78 DpIds mirroring a real kstr AquaClean Alba (AC250) inventory.
-    # Values from kstr readall 2026-05-08 with obfuscation applied:
-    #   Timestamps / Seconds: real value − 457751 (= 5d 7h 9m 11s)
-    #   Counters (serial/device IDs): real value − 57911
-    #   Strings: last identifying segment replaced with X/zeros
+    # Minimal 15-DpId store (bisect baseline — pre-kstr-probe inventory).
+    # Kept intentionally sparse: if Phase 2 SABM arrives with this store but
+    # not with the full 78-DpId store, one of the removed entries is the cause.
     _DEFAULT_STORE = [
-        # ── System / device identification ────────────────────────────────
-        (0,   None,  0,  9, 0,         255,        0, struct.pack('<I', 250)),        # DEVICE_SERIES = 250 (Aquaclean)
-        (1,   None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # DEVICE_VARIANT = 0 (Alba)
-        (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 35225)),      # DEVICE_NUMBER (obf)
-        (3,   None,  0, 13, 0,         0,          4, struct.pack('<I', 1757175271)), # DEVICE_PRODUCTION_DATE (obf)
-        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.A'),               # DEVICE_SAP_NUMBER
-        (8,   None,  0,  8, 2,         2,          0, b'03'),                         # FW_RS_VERSION → RS03TS89
-        (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
-        (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
-        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (obf)
-        (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
-        (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
-        (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf; never set — equals 2000-01-01 epoch + OPERATION_TIME_TOTAL)
-        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),                    # DP_NAME
-        (62,  None,  1, 10, 0,         4,          2, b'\x00'),                       # RESET (Command, write-only)
-        (83,  None,  1, 10, 0,         1,          2, b'\x00'),                       # START_BOOTLOADER (Command, write-only)
-        (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # POWER_SUPPLY_ERROR_STATUS = 0
-        (148, None,  0,  3, 0,         0,          1, struct.pack('<I', 601643)),     # OPERATION_TIME_TOTAL (obf; = RTC − 2000-01-01 epoch)
-        (149, None,  0,  3, 0,         0,          1, struct.pack('<I', 492999)),     # OPERATION_TIME_SINCE_POWER_UP (obf)
-        (153, None,  0,  0, 0,         0,          2, b''),                           # RESTART (Command, write-only)
-        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 34819281)),   # UNIQUE_DEVICE_NUMBER (kstr real)
-        (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 947286443)), # SET_RTC_TIME (Command, write-only)
-        (313, None,  0,  8, 0,         20,         4, b'245.832.00.1'),               # SALES_SAP_NUMBER
-        (337, None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # BOOTLOADER_VARIANT = 0
-        (369, None,  0,  8, 0,         20,         4, b'SB2603EU208023'),             # SALES_PRODUCT_SERIAL_NUMBER (kstr real)
-        (370, None,  0, 13, 0,         0,          4, struct.pack('<I', 1774187093)), # SALES_PRODUCT_PRODUCTION_DATE (obf)
-        (371, None,  0,  8, 0,         12,         4, b'146.350.01.x'),               # SALES_PRODUCT_SAP_NUMBER (confirms Alba 250 toilet)
-        (431, None,  0,  3, 0,         0,          4, struct.pack('<I', 0)),          # OPERATION_TIME_OFFSET = 0
-        # ── Anal shower ───────────────────────────────────────────────────
-        (563, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_ANAL_SHOWER (Command, write-only)
-        (564, None,  0, 10, 0,         7,          1, b'\x01'),                       # ANAL_SHOWER_STATUS = 1 (Disabled at rest)
-        (566, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_SPRAY_ARM_CLEANING (Command, write-only)
-        (567, None,  0, 10, 0,         5,          1, b'\x02'),                       # SPRAY_ARM_CLEANING_STATUS = 2 (Ready)
-        (569, None,  0, 10, 0,         0,          2, b'\x00'),                       # LOAD_PROFILE (Command, write-only)
-        (570, None,  0, 10, 0,         4,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_INTENSITY (Command, write-only)
-        (571, None,  0, 10, 0,         4,          1, b'\x04'),                       # ACTIVE_ANAL_SPRAY_INTENSITY_STATUS = 4 (Level 5)
-        (572, None,  0, 10, 0,         4,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_ARM_POSITION (Command, write-only)
-        (573, None,  0, 10, 0,         4,          1, b'\x04'),                       # ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS = 4 (Position 5)
-        (574, None,  0, 10, 0,         5,          2, b'\x00'),                       # SET_ACTIVE_SHOWER_WATER_TEMPERATURE (Command, write-only)
-        (575, None,  0, 10, 0,         5,          1, b'\x05'),                       # ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS = 5 (Level 5)
-        (576, None,  0, 11, 0,         1,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION (Command, write-only)
-        (577, None,  0, 11, 0,         1,          1, b'\x00'),                       # ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS = Off
-        (580, None,  0, 10, 0,         4,          3, b'\x04'),                       # STORED_ANAL_SPRAY_INTENSITY = 4 (Level 5)
-        (581, None,  0, 10, 0,         4,          3, b'\x04'),                       # STORED_ANAL_SPRAY_ARM_POSITION = 4 (Position 5)
-        (582, None,  0, 10, 0,         5,          3, b'\x05'),                       # STORED_SHOWER_WATER_TEMPERATURE = 5 (Level 5)
-        (583, None,  0, 11, 0,         1,          3, b'\x00'),                       # STORED_ANAL_SPRAY_ARM_OSCILLATION = Off
-        (584, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_DESCALING (Command, write-only)
-        (585, None,  0, 10, 0,         4,          1, b'\x02'),                       # DESCALING_STATUS = 2 (Ready)
-        (588, None,  0,  9, 0,         0,          3, struct.pack('<I', 1)),          # UNACCOUNTED_SHOWER_CYCLES = 1
-        (589, None,  0,  9, 0,         0,          1, struct.pack('<I', 168)),        # DAYS_UNTIL_NEXT_DESCALING = 168
-        (590, None,  0, 13, 0,         0,          3, struct.pack('<I', 0)),          # TIMESTAMP_OF_LAST_DESCALING = 0 (never descaled)
-        (591, None,  0, 13, 0,         0,          3, struct.pack('<I', 0)),          # TIMESTAMP_OF_LAST_DESCALING_REQUEST = 0 (never)
-        (592, None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # DESCALING_CYCLES = 0
-        (607, None,  0, 10, 0,         1,          1, b'\x00'),                       # USER_DETECTION_STATUS = 0 (User absent)
-        (711, None,  0,  9, 0,         0,          1, struct.pack('<I', 340)),        # STATISTIC_COUNTER_SINCE_POWER_UP_SUM = 340
-        (764, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # WATER_HEATER_ERROR_STATUS = 0
-        (765, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # LEVEL_CONTROL_ERROR_STATUS = 0
-        (766, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # USER_DETECTION_ERROR_STATUS = 0
-        (781, None,  0,  9, 0,         0,          3, struct.pack('<I', 33600)),      # CREDITS_UNTIL_NEXT_DESCALING = 33600 (= 168 days × 200)
-        (789, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # WATER_PUMP_ERROR_STATUS = 0
-        (790, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_DRIVE_ERROR_STATUS = 0
-        (795, None,  0, 11, 0,         1,          3, b'\x00'),                       # DEMO_MODE = Off
-        (796, None,  0, 10, 0,         2,          3, b'\x00'),                       # PRODUCT_REGISTRATION_LEVEL = 0 (Unregistered)
-        (802, None,  0,  0, 0,         0,          2, b''),                           # START_USER_SESSION (Command, write-only)
-        (803, None,  0, 11, 0,         1,          4, b'\x00'),                       # SHOWROOM_MODE = Off
-        (810, None,  0, 11, 0,         1,          1, b'\x00'),                       # DRY_RUN_MODE = Off
-        (820, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # MAINTENANCE_REQUEST_STATUS = 0
-        (977, None,  0,  9, 0,         0,          3, struct.pack('<I', 14)),         # DESCALING_DEVICE_LOCK_REMAINING_DAYS = 14
-        (978, None,  0,  0, 0,         0,          2, b''),                           # DESCALING_UNLOCK_DEVICE (Command, write-only)
-        (979, None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # DESCALING_DEVICE_RELOCK_REMAINING_CYCLES = 0
-        (982, None,  0,  1, 4,         4,          0, b'\x00\x00\x00\x00'),          # DESCALING_ERROR_STATUS = 0
-        (983, None,  0, 11, 0,         1,          1, b'\x00'),                       # DESCALING_DEVICE_LOCK_STATUS = Off
-        # ── Instanced DpIds — inventory descriptors (instance = n_instances) ────
-        (785,  3,    0,  9, 0,       255,  0, struct.pack('<I', 3)),          # FUS_VERSION: 3 instances (0–2)
-        (786,  2,    0,  9, 0,       255,  0, struct.pack('<I', 2)),          # GEBERIT_LOADER_VERSION: 2 instances (0–1)
-        (787,  3,    0,  9, 0,       255,  0, struct.pack('<I', 3)),          # WIRELESS_STACK_VERSION: 3 instances (0–2)
-        (565,  4,    0,  2, 0,         0,  1, b'\x00\x00\x00\x00'),          # ANAL_SHOWER_PROGRESS: 4 instances (0–3)
-        (568,  4,    0,  2, 0,         0,  1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_CLEANING_PROGRESS: 4 instances
-        (586,  4,    0,  2, 0,         0,  1, b'\x00\x00\x00\x00'),          # DESCALING_PROGRESS: 4 instances
-        # ── Version DpId per-instance values (FUS 1.2.0, LOADER 5.6, WIRELESS 1.14.1) ─
-        (785,  0,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # FUS_VERSION Major = 1
-        (785,  1,    0,  9, 0,       255,  1, struct.pack('<I', 2)),          # FUS_VERSION Minor = 2
-        (785,  2,    0,  9, 0,       255,  1, struct.pack('<I', 0)),          # FUS_VERSION Bugfix = 0
-        (786,  0,    0,  9, 0,       255,  1, struct.pack('<I', 5)),          # GEBERIT_LOADER_VERSION Major = 5
-        (786,  1,    0,  9, 0,       255,  1, struct.pack('<I', 6)),          # GEBERIT_LOADER_VERSION Minor = 6
-        (787,  0,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # WIRELESS_STACK_VERSION Major = 1
-        (787,  1,    0,  9, 0,       255,  1, struct.pack('<I', 14)),         # WIRELESS_STACK_VERSION Minor = 14
-        (787,  2,    0,  9, 0,       255,  1, struct.pack('<I', 1)),          # WIRELESS_STACK_VERSION Bugfix = 1
-        # ── Progress DpId per-instance values (all zero at rest) ──────────────
-        (565,  0,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # ANAL_SHOWER_PROGRESS MaxTotal
-        (565,  1,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # ANAL_SHOWER_PROGRESS ElapsedTotal
-        (565,  2,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # ANAL_SHOWER_PROGRESS MaxStep
-        (565,  3,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # ANAL_SHOWER_PROGRESS ElapsedStep
-        (568,  0,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # SPRAY_ARM_CLEANING_PROGRESS MaxTotal
-        (568,  1,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # SPRAY_ARM_CLEANING_PROGRESS ElapsedTotal
-        (568,  2,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # SPRAY_ARM_CLEANING_PROGRESS MaxStep
-        (568,  3,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # SPRAY_ARM_CLEANING_PROGRESS ElapsedStep
-        (586,  0,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # DESCALING_PROGRESS MaxTotal
-        (586,  1,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # DESCALING_PROGRESS ElapsedTotal
-        (586,  2,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # DESCALING_PROGRESS MaxStep
-        (586,  3,    0,  3, 0,         0,  1, struct.pack('<I', 0)),          # DESCALING_PROGRESS ElapsedStep
-        # ── Statistics counter per-instance values (instances 2, 31–36) ───────
-        # STATISTIC_COUNTER_SINCE_POWER_UP (405)
-        (405,  2,    1,  9, 0, 999999999,  1, struct.pack('<I', 12)),         # UseWithFlush = 12
-        (405, 31,    1,  9, 0, 999999999,  1, struct.pack('<I', 5)),          # AquacleanUsages = 5
-        (405, 32,    1,  9, 0, 999999999,  1, struct.pack('<I', 3)),          # AnalShowers = 3
-        (405, 33,    1,  9, 0, 999999999,  1, struct.pack('<I', 0)),          # LadyShowers = 0
-        (405, 34,    1,  9, 0, 999999999,  1, struct.pack('<I', 2)),          # Dryings = 2
-        (405, 35,    1,  9, 0, 999999999,  1, struct.pack('<I', 0)),          # Descalings = 0
-        (405, 36,    1,  9, 0, 999999999,  1, struct.pack('<I', 1)),          # SprayArmCleanings = 1
-        # STATISTIC_COUNTER_SINCE_RESET (688)
-        (688,  2,    1,  9, 0, 999999999,  1, struct.pack('<I', 120)),        # UseWithFlush = 120
-        (688, 31,    1,  9, 0, 999999999,  1, struct.pack('<I', 47)),         # AquacleanUsages = 47
-        (688, 32,    1,  9, 0, 999999999,  1, struct.pack('<I', 28)),         # AnalShowers = 28
-        (688, 33,    1,  9, 0, 999999999,  1, struct.pack('<I', 5)),          # LadyShowers = 5
-        (688, 34,    1,  9, 0, 999999999,  1, struct.pack('<I', 18)),         # Dryings = 18
-        (688, 35,    1,  9, 0, 999999999,  1, struct.pack('<I', 3)),          # Descalings = 3
-        (688, 36,    1,  9, 0, 999999999,  1, struct.pack('<I', 9)),          # SprayArmCleanings = 9
-        # STATISTIC_COUNTER_TOTAL (689)
-        (689,  2,    1,  9, 0, 999999999,  1, struct.pack('<I', 843)),        # UseWithFlush = 843
-        (689, 31,    1,  9, 0, 999999999,  1, struct.pack('<I', 312)),        # AquacleanUsages = 312
-        (689, 32,    1,  9, 0, 999999999,  1, struct.pack('<I', 187)),        # AnalShowers = 187
-        (689, 33,    1,  9, 0, 999999999,  1, struct.pack('<I', 35)),         # LadyShowers = 35
-        (689, 34,    1,  9, 0, 999999999,  1, struct.pack('<I', 112)),        # Dryings = 112
-        (689, 35,    1,  9, 0, 999999999,  1, struct.pack('<I', 18)),         # Descalings = 18
-        (689, 36,    1,  9, 0, 999999999,  1, struct.pack('<I', 64)),         # SprayArmCleanings = 64
+        # ── Device identification ──────────────────────────────────────────
+        (0,   None, 1,  1, 0, 255,          1, b'\x02'),                   # DEVICE_SERIES  = 2
+        (1,   None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_VARIANT = 0
+        (2,   None, 1, 15, -2147483648, 2147483647, 1,
+              struct.pack('<i', 123)),                                       # DEVICE_NUMBER  = 123 (mock)
+        (4,   None, 1,  8, 0, 0,            1, b'828.860.00.A\x00'),       # DEVICE_SAP_NUMBER
+        (8,   None, 1,  8, 0, 0,            1, b'03'),                     # FW_RS_VERSION  = "03"
+        (9,   None, 1,  9, 0, 255,          1, b'\x59'),                   # FW_TS_VERSION  = 89
+        (16,  None, 1,  8, 0, 0,            1, b'AcAlba\x00'),             # DP_NAME
+        (236, None, 1,  9, 0, 4294967295,   1, struct.pack('<I', 123)),    # UNIQUE_DEVICE_NUMBER = 123
+        (304, None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_MODEL   = 0
+        (337, None, 1,  1, 0, 255,          1, b'\x00'),                   # BOOTLOADER_VARIANT = 0
+        # ── Application state ─────────────────────────────────────────────
+        (60,   None, 1, 11, 0, 1,   1, b'\x00'),                          # USER_PRESENT
+        (563,  None, 1, 11, 0, 1,   2, b'\x00'),                          # START_STOP_ANAL_SHOWER
+        (564,  None, 1, 10, 0, 5,   1, b'\x00'),                          # ANAL_SHOWER_STATUS
+        (1008, None, 1, 15, 0, 100, 1, b'\x00\x00\x00\x00'),              # LID_LIFTER_POSITION
+        (1009, None, 1, 11, 0, 1,   2, b'\x00'),                          # TRIGGER_LID_LIFTING
     ]
 
     def __init__(self):
@@ -934,6 +823,23 @@ class DeviceInformationService(Service):
         return b"1.14.1 1.2.0"
 
 
+class BatteryService(Service):
+    """Standard BLE Battery Service (0x180F).
+
+    BlueZ auto-registers its own Battery Service which requires authentication
+    (Insufficient Authentication, ATT error 0x05) for reads.  Registering our
+    own service overrides it with an unauthenticated READ, silencing the
+    spurious error from iOS without affecting Phase 1 or Phase 2.
+    """
+
+    def __init__(self):
+        super().__init__("0000180f-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("00002a19-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def battery_level(self, options):
+        return bytes([100])
+
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -1074,11 +980,13 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     geb_service = GeberitServiceA()
     sig_service = BtSigDataService(mode=mode)
     dis_service = DeviceInformationService()
+    bat_service = BatteryService()
 
     try:
         await geb_service.register(bus, "/org/bluez/example/geberit", adapter_wrapper)
         await sig_service.register(bus, "/org/bluez/example/sigdata", adapter_wrapper)
         await dis_service.register(bus, "/org/bluez/example/dis", adapter_wrapper)
+        await bat_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
     except Exception as e:
         print("Service registration failed:", e)
 
