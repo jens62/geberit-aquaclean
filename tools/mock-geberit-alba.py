@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.4.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.5.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -152,26 +152,31 @@ class _Ble20AppLayer:
     # datatype: 1=Binary  8=String  9=Counter  10=Enum  11=OffOn  15=Signed
     # behavior: 1=Status  2=Command
     #
-    # Minimal 15-DpId store (bisect baseline — pre-kstr-probe inventory).
-    # Kept intentionally sparse: if Phase 2 SABM arrives with this store but
-    # not with the full 78-DpId store, one of the removed entries is the cause.
     _DEFAULT_STORE = [
         # ── Device identification ──────────────────────────────────────────
-        (0,   None, 1,  1, 0, 255,          1, b'\xFA'),                   # DEVICE_SERIES  = 250 (kstr real, matches 559eb110 bytes 2-3)
+        # DpId=0: DEVICE_SERIES must be 250 so iOS recognises Alba product type
+        # and proceeds past the initial device-type check.
+        (0,   None, 1,  1, 0, 255,          1, b'\xFA'),                   # DEVICE_SERIES  = 250
         (1,   None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_VARIANT = 0
         (2,   None, 1, 15, -2147483648, 2147483647, 1,
               struct.pack('<i', 123)),                                       # DEVICE_NUMBER  = 123 (mock)
         (4,   None, 1,  8, 0, 0,            1, b'828.860.00.A\x00'),       # DEVICE_SAP_NUMBER
         (8,   None, 1,  8, 0, 0,            1, b'03'),                     # FW_RS_VERSION  = "03"
         (9,   None, 1,  9, 0, 255,          1, b'\x59'),                   # FW_TS_VERSION  = 89
+        # DpId=12: PAIRING_SECRET — returned in Phase 2 tunnelled Read; iOS shows
+        # this as the PIN for the "Jetzt verbinden" dialog.
+        (12,  None, 0,  8, 0, 4,            4, b'0000'),                   # PAIRING_SECRET = "0000"
         (16,  None, 1,  8, 0, 0,            1, b'AcAlba\x00'),             # DP_NAME
-        (236, None, 1,  9, 0, 2147483647,   1, struct.pack('<I', 0x02134CD1)),  # UNIQUE_DEVICE_NUMBER = kstr real (matches 559eb110 bytes 4-7)
+        (236, None, 1,  9, 0, 2147483647,   1, struct.pack('<I', 0x02134CD1)),  # UNIQUE_DEVICE_NUMBER
         (304, None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_MODEL   = 0
         (337, None, 1,  1, 0, 255,          1, b'\x00'),                   # BOOTLOADER_VARIANT = 0
         # ── Application state ─────────────────────────────────────────────
         (60,   None, 1, 11, 0, 1,   1, b'\x00'),                          # USER_PRESENT
         (563,  None, 1, 11, 0, 1,   2, b'\x00'),                          # START_STOP_ANAL_SHOWER
         (564,  None, 1, 10, 0, 5,   1, b'\x00'),                          # ANAL_SHOWER_STATUS
+        # DpId=607: USER_DETECTION_STATUS — written between sessions; missing entry
+        # caused KeyError crash in _handshake_loop after session timeout.
+        (607,  None, 0, 10, 0, 1,   1, b'\x00'),                          # USER_DETECTION_STATUS = 0
         (1008, None, 1, 15, 0, 100, 1, b'\x00\x00\x00\x00'),              # LID_LIFTER_POSITION
         (1009, None, 1, 11, 0, 1,   2, b'\x00'),                          # TRIGGER_LID_LIFTING
     ]
@@ -719,22 +724,27 @@ class GeberitServiceA(Service):
         # → server returns {"Data": null} → exception → Phase 2 blocked (confirmed via
         # Charles Proxy HAR 2026-06-13 and btsnoop analysis 2026-06-13).
         #
-        # Byte layout mirrors real kstr GATT handle 0x0010, bytes 0-15
-        # (bytes 16-17 = FusVersion "02 00" omitted to land at 16 bytes):
-        #   bytes 0-1:   LoaderVersion major/minor = 05 06
-        #   bytes 2-3:   DeviceSeries LE / DeviceVariant = FA 00 (series 250)
-        #   bytes 4-7:   DeviceUniqueId LE = D1 4C 13 02 (= DpId 236 value)
-        #   bytes 8-9:   ChipId LE = 95 04
-        #   bytes 10-11: ChipRevision LE = 03 20
-        #   bytes 12-15: WirelessFirmwareVersion = 01 0E 01 01
+        # 16 bytes (deliberately NOT 14 or 18: OtaVersion stays null → no HTTP gate).
         #
-        # bytes 0-1 = 05 06 → DeviceSeries read by iOS = 0x0605 LE = 1541.
-        # Series 1541 is not in GeberitDeviceConfig → _E008() = false →
-        # FirmwareForceUpdateViewModel is NOT shown after Phase 2.
+        # Byte layout (kstr GATT handle 0x0010, bytes 0-15):
+        #   bytes 0-1:   LoaderVersion major/minor = 05 06 (kstr real)
+        #   bytes 2-3:   DeviceSeries LE = 00 00  ← intentionally NOT 250 (FA 00)
+        #   bytes 4-7:   DeviceUniqueId LE = D1 4C 13 02 (kstr real)
+        #   bytes 8-15:  ChipId/ChipRevision/WirelessFw (kstr real)
+        #   bytes 16-17: FusVersion omitted → 16 bytes total
+        #
+        # Why bytes 2-3 = 00 00 (not FA 00 = 250):
+        #   _E008() reads bytes 2-3 as DeviceSeries LE.  FA 00 = 250 is a recognised
+        #   series → _E008() = true → _E004() called → Device Name reads + HTTP
+        #   GetDeviceApiMinVersions → no cache on test device → throws → "cannot connect".
+        #   00 00 = 0 is NOT recognised → _E008() = false → _E004() skipped → Phase 2
+        #   proceeds.  DpId=0=250 is still required (separate device-type check before
+        #   _E008()); these two values do NOT need to match.
+        #   Confirmed from mock 1.3.0: bytes 2-3 = 62 65 (unrecognised), DpId=0=250 → worked.
         return bytes([
             0x05, 0x06,             # LoaderVersion = 5.6 (bytes 0-1, kstr real)
-            0xFA, 0x00,             # DeviceSeries=250, DeviceVariant=0 (bytes 2-3)
-            0xD1, 0x4C, 0x13, 0x02, # DeviceUniqueId LE (bytes 4-7, = DpId 236, kstr real)
+            0x00, 0x00,             # DeviceSeries=0 unrecognised → _E008()=false (bytes 2-3)
+            0xD1, 0x4C, 0x13, 0x02, # DeviceUniqueId LE (bytes 4-7, kstr real)
             0x95, 0x04,             # ChipId LE (bytes 8-9, kstr)
             0x03, 0x20,             # ChipRevision LE (bytes 10-11, kstr)
             0x01, 0x0E, 0x01, 0x01, # WirelessFirmwareVersion (bytes 12-15)
