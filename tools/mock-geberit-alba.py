@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.12.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.13.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -604,9 +604,12 @@ class _AriendiServerSide:
                 if _first_frame:
                     _timeout = 5.0
                 elif _ble_session_phase >= 2:
-                    # Short fallback: real-time detection below handles the normal case;
-                    # this fires only if the sequence is different from expected.
-                    _timeout = 0.5
+                    # Fallback: real-time detection below fires immediately after
+                    # EVENT_STORAGE_INVENTORY + READ — that handles the normal end of
+                    # Phase 2.  This 3 s timeout only covers the ~2 s gap between
+                    # sub-phase A (quick KE + READ) and sub-phase B (full inventory),
+                    # plus edge cases.  Must be > 2 s or it fires mid-inventory.
+                    _timeout = 3.0
                 else:
                     # Phase 1: iOS shows the PIN dialog after this; the inter-session gap
                     # can be long if the user is slow.  Keep a generous timeout.
