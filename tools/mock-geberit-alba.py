@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.14.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.15.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -482,7 +482,7 @@ class _AriendiServerSide:
     # Handshake + encrypted data exchange
     # -----------------------------------------------------------------------
 
-    async def run(self, send_fn, app_handler=None, send_delay_sec: float = 0.0) -> None:
+    async def run(self, send_fn, app_handler=None, send_delay_sec: float = 0.0, disconnect_fn=None) -> None:
         """
         Run the full server-side handshake, then loop on incoming encrypted frames.
 
@@ -612,9 +612,10 @@ class _AriendiServerSide:
                 if _first_frame:
                     _timeout = 5.0
                 elif _ble_session_phase >= 2 and _disc_sent:
-                    # DISC sent; iOS is showing save screen waiting for user to press
-                    # Save.  Give a generous timeout so slow users aren't timed out.
-                    _timeout = 60.0
+                    # DISC sent + BLE disconnect scheduled.  The disconnect fires within
+                    # ~50 ms and delivers DISCONNECT to the queue; this 10 s is just a
+                    # safety net if the fast-disconnect task fails.
+                    _timeout = 10.0
                 elif _ble_session_phase >= 2:
                     # Before DISC: covers the ~2 s gap between Phase 2 sub-phase A
                     # (quick KE + READ) and sub-phase B (full inventory).
@@ -703,8 +704,10 @@ class _AriendiServerSide:
                             _disc_type = 8  # DISC U-frame ctrl = 0x43
                             await send_fn(self._att_u(_disc_type))
                             _disc_sent = True
-                            print("[MockServer] Phase 2 complete — sent DISC; "
-                                  "waiting for Phase 3 SABM or iOS disconnect")
+                            if disconnect_fn is not None:
+                                asyncio.create_task(disconnect_fn())
+                            print("[MockServer] Phase 2 complete — sent DISC + BLE disconnect scheduled; "
+                                  "Phase 3 expected as new BLE connection")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
@@ -1003,16 +1006,31 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     # Used to force-disconnect when a session ends by timeout (not by peer).
     _connected_device_path = None
     _connected_device_addr = None
+    # Pre-introspected Device1 proxy interface — avoids the 2+ s bus.introspect() round
+    # trip at disconnect time.  Set when a device connects; cleared after disconnect.
+    _connected_dev_iface = None
+
+    async def _cache_dev_iface(path):
+        nonlocal _connected_dev_iface
+        try:
+            intro = await bus.introspect('org.bluez', path)
+            proxy = bus.get_proxy_object('org.bluez', path, intro)
+            _connected_dev_iface = proxy.get_interface('org.bluez.Device1')
+            print(f"[Mock] Device1 interface cached for fast disconnect: {path}")
+        except Exception as e:
+            print(f"[Mock] Pre-introspect failed (fast disconnect unavailable): {e}")
 
     if objmgr is not None:
         def on_device_connected(path, interfaces):
-            nonlocal _connected_device_path, _connected_device_addr
+            nonlocal _connected_device_path, _connected_device_addr, _connected_dev_iface
             if 'org.bluez.Device1' in interfaces:
                 addr = interfaces['org.bluez.Device1'].get('Address')
                 if isinstance(addr, Variant):
                     addr = addr.value
                 _connected_device_addr = addr
                 _connected_device_path = path
+                _connected_dev_iface = None  # clear stale cache; new one coming
+                asyncio.ensure_future(_cache_dev_iface(path))
                 print(f"[Mock] BLE client connected:    {addr or path}")
 
         def on_device_disconnected(path, interfaces):
@@ -1181,8 +1199,20 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     print("Advertising: fd48 + Geberit mfr data (company 0x0602)")
 
     async def _handshake_loop():
-        nonlocal _connected_device_path
+        nonlocal _connected_device_path, _connected_dev_iface
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
+
+        async def _fast_disconnect():
+            """Disconnect BLE using the pre-cached Device1 interface (< 50 ms)."""
+            iface = _connected_dev_iface
+            if iface is None:
+                print("[Mock] Fast-disconnect: no cached interface — relying on end-of-session disconnect")
+                return
+            try:
+                await iface.call_disconnect()
+                print("[Mock] Fast-disconnect: BLE link terminated")
+            except Exception as e:
+                print(f"[Mock] Fast-disconnect: {e}")
         _user_sitting = False
         _session_num = 0
         _session_pre_created = False  # True when cleanup pre-created the next session
@@ -1207,7 +1237,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             _completed = None
             _session_completed = False
             try:
-                _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec)
+                _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec, disconnect_fn=_fast_disconnect)
                 _session_completed = True   # run() returned — a client connected
                 if _completed is not False:
                     print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
