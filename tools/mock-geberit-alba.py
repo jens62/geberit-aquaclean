@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.7.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.8.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -1082,9 +1082,22 @@ async def main(mode: str, send_delay_sec: float = 0.0):
     # calling LE_Set_Advertising_Parameters again on each reconnect).
     if adv_registered and adapter_path:
         try:
-            _adv_path = getattr(adv, '_path', None)
+            # dbus_next stores exported object paths in bus._path_exports, not on the
+            # interface object itself.  Scan the bus export table to find the path where
+            # adv was registered.  Fallback to attribute scan for older library versions.
+            _adv_path = None
+            for _p, _ifaces in getattr(bus, '_path_exports', {}).items():
+                if isinstance(_ifaces, dict):
+                    if any(_v is adv for _v in _ifaces.values()):
+                        _adv_path = _p
+                        break
+                elif _ifaces is adv:
+                    _adv_path = _p
+                    break
             if _adv_path is None:
-                # Fallback: scan object attributes for a /org/... path string
+                # Legacy fallback: some library versions store path on the object
+                _adv_path = getattr(adv, '_path', None)
+            if _adv_path is None:
                 for _attr in dir(adv):
                     if 'path' in _attr.lower() and not _attr.startswith('__'):
                         _val = getattr(adv, _attr, None)
@@ -1100,9 +1113,10 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     'MinInterval': Variant('u', 100),
                     'MaxInterval': Variant('u', 100),
                 })
-                print("[Mock] Advertising interval set to 100 ms (Phase 3 connects in <1 s)")
+                print(f"[Mock] Advertising interval set to 100 ms via {_adv_path} (Phase 3 connects in <1 s)")
             else:
                 print("[Mock] Warning: adv path unknown — advertising at BlueZ default 1280 ms")
+                print(f"[Mock]   bus._path_exports keys: {list(getattr(bus, '_path_exports', {}).keys())}")
                 print("[Mock]   Phase 3 may not connect within the iOS app's ~1 s window → crash")
         except Exception as _e:
             print(f"[Mock] Warning: fast advertising interval not set ({_e})")
