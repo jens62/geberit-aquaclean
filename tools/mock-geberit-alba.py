@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.9.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.10.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -345,6 +345,9 @@ class _AriendiServerSide:
         # Set to True when the frame loop exits because the BLE peer closed the link.
         # False means the session ended by timeout (BLE link may still be alive).
         self.disconnected_by_peer = False
+        # Set to True by Phase 2+ short timeout: DataPointInventory complete, iOS went
+        # silent — the mock should disconnect now so iOS can start Phase 3 immediately.
+        self.should_disconnect_after = False
 
     # -----------------------------------------------------------------------
     # Incoming ATT byte feeding — same COBS/CRC/HDLC parser as AriendiSecurity
@@ -592,19 +595,37 @@ class _AriendiServerSide:
             #                           UI rendering, possible cloud-call timeout).
             _first_frame = True
             while True:
-                _timeout = 5.0 if _first_frame else 30.0
+                if _first_frame:
+                    _timeout = 5.0
+                elif _ble_session_phase >= 2:
+                    # Phase 2+: iOS goes silent after DataPointInventory.  Use a short
+                    # timeout (3 s, 1 s margin over the observed 1.92 s max inter-frame
+                    # gap inside inventory) so the mock disconnects the BLE link quickly.
+                    # On real Alba hardware the device disconnects at this point; iOS then
+                    # starts Phase 3 immediately.  Without this, iOS waits ~5 s for a
+                    # disconnect that never comes, then crashes in GetEndProduct().
+                    _timeout = 3.0
+                else:
+                    # Phase 1: iOS shows the PIN dialog after this; the inter-session gap
+                    # can be long if the user is slow.  Keep a generous timeout.
+                    _timeout = 30.0
                 print(f"[MockServer] ⏳ waiting for next frame (timeout={_timeout:.0f}s, tx_seq={self._tx_seq})")
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
                         self._rx_queue.get(), timeout=_timeout
                     )
                 except asyncio.TimeoutError:
-                    # Client went silent — session is over.  Return WITHOUT setting
-                    # disconnected_by_peer so the caller can force a BlueZ-side
-                    # disconnect, which makes advertising resume immediately rather
-                    # than waiting ~30 s for the supervision timeout on the
-                    # CONWISE/CSR USB adapter.
-                    print(f"[MockServer] no frames for {_timeout:.0f} s — ending session to resume advertising")
+                    if _ble_session_phase >= 2:
+                        print(f"[MockServer] Phase {_ble_session_phase} complete — no frames for "
+                              f"{_timeout:.0f} s; setting should_disconnect_after so iOS can start Phase 3")
+                        self.should_disconnect_after = True
+                    else:
+                        # Client went silent — session is over.  Return WITHOUT setting
+                        # disconnected_by_peer so the caller can force a BlueZ-side
+                        # disconnect, which makes advertising resume immediately rather
+                        # than waiting ~30 s for the supervision timeout on the
+                        # CONWISE/CSR USB adapter.
+                        print(f"[MockServer] no frames for {_timeout:.0f} s — ending session to resume advertising")
                     return
 
                 if ft == 'DISCONNECT':
@@ -1170,17 +1191,20 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # Timeouts (no client within 60 s) raise an exception so _session_completed
             # stays False — the sitting state is preserved until the next real poll.
             by_peer = getattr(sig_service._arendi, 'disconnected_by_peer', False)
+            # should_disconnect_after: Phase 2 short-timeout fired — DataPointInventory
+            # complete, iOS went silent.  Treat like by_peer so the next session is
+            # pre-created immediately and advertising resumes before Phase 3 connects.
+            should_disconnect = getattr(sig_service._arendi, 'should_disconnect_after', False)
             if _session_completed and _completed is not False:
                 _user_sitting = not _user_sitting
                 print(f"[Mock] Next session USER_DETECTION_STATUS → {'1 (sitting)' if _user_sitting else '0 (absent)'}")
 
-            # When the peer disconnected (by_peer=True), pre-create the next session
-            # immediately so incoming Phase 3 HDLC frames (SABM) are queued in the
-            # correct session object.  With 100 ms advertising interval the iOS app
-            # connects within ~400 ms of Phase 2 disconnect — the cleanup's 0.8 s sleeps
-            # would otherwise cause the SABM to arrive in the defunct Phase 2 queue,
-            # leaving Phase 3's run() waiting forever for a frame that already passed.
-            if by_peer:
+            # Pre-create next session immediately when:
+            #   by_peer=True  — iOS disconnected the BLE link
+            #   should_disconnect=True — Phase 2 short-timeout: mock is about to disconnect
+            # Both cases: iOS connects Phase 3 within ~400 ms.  Pre-creating now ensures
+            # the Phase 3 SABM lands in the correct session queue, not the defunct one.
+            if by_peer or should_disconnect:
                 sig_service._arendi = _AriendiServerSide()
                 if mode == "ble20":
                     _ble20_app = _Ble20AppLayer()
@@ -1225,9 +1249,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # re-register here would race with BlueZ's own resume and cause "Already
             # Exists" failures, leaving the mock dark for up to 60 s.  Just let BlueZ
             # do its job.
-            # Skip the 0.3 s delay when by_peer — Phase 3 may arrive within 400 ms and
-            # the next session is already pre-created above.
-            if not by_peer:
+            # Skip the 0.3 s delay when Phase 3 is expected imminently — it may arrive
+            # within 400 ms and the next session is already pre-created above.
+            if not (by_peer or should_disconnect):
                 await asyncio.sleep(0.3)
             print("[Mock] Ready for next client")
 

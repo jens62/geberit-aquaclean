@@ -27,13 +27,13 @@ Btsnoop format (monitor, datalink 0x7D1):
     int64  BE: timestamp (µs since midnight Jan 1, year 0 CE nominal Gregorian)
 
   Key opcodes:
-    1  NEW_INDEX      — new HCI controller
-    3  HCI_CMD        — HCI command (host→controller)
-    4  HCI_EVT        — HCI event (controller→host)
-    5  ACL_TX         — ACL data host→controller (app→device)
-    6  ACL_RX         — ACL data controller→host (device→app)
-    11 INDEX_INFO     — controller address + manufacturer
-    13 SYSTEM_NOTE    — kernel/bluetoothd text note
+    0  NEW_INDEX      — new HCI controller
+    2  HCI_CMD        — HCI command (host→controller)
+    3  HCI_EVT        — HCI event (controller→host)
+    4  ACL_TX         — ACL data host→controller (mock sends to iOS)
+    5  ACL_RX         — ACL data controller→host (iOS sends to mock)
+    10 INDEX_INFO     — controller address + manufacturer
+    12 SYSTEM_NOTE    — kernel/bluetoothd text note
 
   HCI events decoded:
     0x05  Disconnection Complete  — reason code and connection handle
@@ -76,19 +76,19 @@ from typing import Optional
 # Microseconds from year-0-Jan-1 to Unix epoch (1970-Jan-1).
 _BTSNOOP_EPOCH_OFFSET_US = 0x00DCDDB30F2F8000
 
-# btmon monitor opcodes
-_OP_NEW_INDEX    = 1
-_OP_DEL_INDEX    = 2
-_OP_HCI_CMD      = 3
-_OP_HCI_EVT      = 4
-_OP_ACL_TX       = 5
-_OP_ACL_RX       = 6
-_OP_OPEN_INDEX   = 9
-_OP_CLOSE_INDEX  = 10
-_OP_INDEX_INFO   = 11
-_OP_VENDOR_DIAG  = 12
-_OP_SYSTEM_NOTE  = 13
-_OP_USER_LOG     = 14
+# btmon monitor opcodes — from BlueZ monitor/pcap.h (BTSNOOP_OPCODE_*)
+_OP_NEW_INDEX    = 0
+_OP_DEL_INDEX    = 1
+_OP_HCI_CMD      = 2
+_OP_HCI_EVT      = 3
+_OP_ACL_TX       = 4   # host→controller: mock sends notifications/responses to iOS
+_OP_ACL_RX       = 5   # controller→host: iOS sends write-cmds/reqs to mock
+_OP_OPEN_INDEX   = 8
+_OP_CLOSE_INDEX  = 9
+_OP_INDEX_INFO   = 10
+_OP_VENDOR_DIAG  = 11
+_OP_SYSTEM_NOTE  = 12
+_OP_USER_LOG     = 13
 
 _OP_NAMES = {
     _OP_NEW_INDEX:   "NEW_INDEX",
@@ -196,9 +196,11 @@ class BtsnoopEvent:
     hci_index: int
     data: bytes
     # decoded fields (populated by decode_*)
-    kind: str = ""       # 'connect', 'disconnect', 'att_write', 'att_notif', 'mtu', 'note', etc.
+    kind: str = ""       # 'connect', 'disconnect', 'att_write', 'att_notif', 'mtu', 'note',
+                         # 'ccc_enable', 'ccc_disable', etc.
     summary: str = ""    # human-readable one-liner
     payload_hex: str = ""  # hex of ATT value (for write/notif correlation)
+    acl_handle: int = 0  # HCI ACL connection handle (0x0FFF mask); set for all ACL events
 
 
 @dataclass
@@ -333,6 +335,7 @@ def _decode_acl(ev: BtsnoopEvent, direction: str):
         return
     # ACL header: handle[11:0] + pb_flag[13:12] + bc_flag[15:14] in 2 bytes LE, then length 2 LE
     acl_handle = struct.unpack_from("<H", d, 0)[0] & 0x0FFF
+    ev.acl_handle = acl_handle          # always store for Phase 3 connection-reuse analysis
     acl_len    = struct.unpack_from("<H", d, 2)[0]
     if len(d) < 4 + acl_len:
         return
@@ -352,12 +355,12 @@ def _decode_acl(ev: BtsnoopEvent, direction: str):
     if att_op == _ATT_MTU_REQ and len(att) >= 3:
         mtu = struct.unpack_from("<H", att, 1)[0]
         ev.kind = "mtu"
-        ev.summary = f"ATT Exchange MTU Req  client_mtu={mtu}  (ACL_TX handle=0x{acl_handle:04X})"
+        ev.summary = f"ATT Exchange MTU Req  client_mtu={mtu}  (ACL_{direction} handle=0x{acl_handle:04X})"
 
     elif att_op == _ATT_MTU_RESP and len(att) >= 3:
         mtu = struct.unpack_from("<H", att, 1)[0]
         ev.kind = "mtu"
-        ev.summary = f"ATT Exchange MTU Resp  server_mtu={mtu}  (ACL_RX handle=0x{acl_handle:04X})"
+        ev.summary = f"ATT Exchange MTU Resp  server_mtu={mtu}  (ACL_{direction} handle=0x{acl_handle:04X})"
 
     elif att_op == _ATT_WRITE_CMD and len(att) >= 3:
         att_handle = struct.unpack_from("<H", att, 1)[0]
@@ -373,6 +376,21 @@ def _decode_acl(ev: BtsnoopEvent, direction: str):
         att_handle = struct.unpack_from("<H", att, 1)[0]
         value = att[3:]
         hex_val = value.hex()
+        # CCC writes: 2-byte value 0x0001 = enable notifications, 0x0000 = disable
+        if len(value) == 2:
+            ccc_val = struct.unpack_from("<H", value, 0)[0]
+            if ccc_val == 0x0001:
+                ev.kind = "ccc_enable"
+                ev.payload_hex = hex_val
+                ev.summary = (f"ATT Write Req [CCC ENABLE]  acl=0x{acl_handle:04X}  "
+                              f"att_handle=0x{att_handle:04X}  value=0100")
+                return
+            elif ccc_val == 0x0000:
+                ev.kind = "ccc_disable"
+                ev.payload_hex = hex_val
+                ev.summary = (f"ATT Write Req [CCC DISABLE ← Phase 2 disconnect trigger]  "
+                              f"acl=0x{acl_handle:04X}  att_handle=0x{att_handle:04X}  value=0000")
+                return
         ev.kind = "att_write_req"
         ev.payload_hex = hex_val
         ev.summary = (f"ATT Write Req  acl=0x{acl_handle:04X}  "
@@ -524,6 +542,7 @@ def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
         return ev.kind in ("connect", "disconnect", "disconnect_cmd",
                            "att_write", "att_write_req", "att_notif",
                            "att_ind", "att_error", "mtu",
+                           "ccc_enable", "ccc_disable",
                            "att_read_req", "att_read_resp",
                            "att_read_by_type_req", "att_read_by_type_resp",
                            "att_read_by_group_type_req", "att_read_by_group_type_resp")
@@ -825,6 +844,8 @@ _COL_BTSNOOP_ATT_WRITE  = "36"     # cyan
 _COL_BTSNOOP_ATT_NOTIF  = "35"     # magenta
 _COL_BTSNOOP_MTU        = "33"     # yellow
 _COL_BTSNOOP_NOTE       = "2"      # dim
+_COL_BTSNOOP_CCC_ENABLE  = "1;36"  # bold cyan
+_COL_BTSNOOP_CCC_DISABLE = "1;31"  # bold red (Phase 2 disconnect trigger)
 _COL_MOCK_BLE_RX        = "36"     # cyan
 _COL_MOCK_PROTO         = "37"     # white
 _COL_MOCK_PHASE         = "1;33"   # bold yellow
@@ -887,6 +908,10 @@ def print_timeline(
             col = _COL_BTSNOOP_CONNECT
         elif bev.kind in ("disconnect", "disconnect_cmd"):
             col = _COL_BTSNOOP_DISCONNECT
+        elif bev.kind == "ccc_disable":
+            col = _COL_BTSNOOP_CCC_DISABLE
+        elif bev.kind == "ccc_enable":
+            col = _COL_BTSNOOP_CCC_ENABLE
         elif bev.kind in ("att_write", "att_write_req"):
             col = _COL_BTSNOOP_ATT_WRITE
         elif bev.kind in ("att_notif", "att_ind"):
@@ -965,11 +990,21 @@ def print_summary(btsnoop_events: list[BtsnoopEvent],
         for e in mtus:
             print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
 
-    # ATT writes
+    # ATT writes / notifications
     att_writes = [e for e in btsnoop_events if e.kind in ("att_write", "att_write_req")]
     att_notifs = [e for e in btsnoop_events if e.kind in ("att_notif", "att_ind")]
+    ccc_disables = [e for e in btsnoop_events if e.kind == "ccc_disable"]
+    ccc_enables  = [e for e in btsnoop_events if e.kind == "ccc_enable"]
     print(f"\nATT Write Commands (app→mock):   {len(att_writes)}")
     print(f"ATT Notifications (mock→app):    {len(att_notifs)}")
+    if ccc_enables:
+        print(f"CCC Enable  (notifications on):  {len(ccc_enables)}")
+        for e in ccc_enables:
+            print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
+    if ccc_disables:
+        print(f"CCC Disable (notifications off): {len(ccc_disables)}")
+        for e in ccc_disables:
+            print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
 
     # Mock phase milestones
     phase1_done = [e for e in mock_events if "Phase 1 complete" in e.line]
@@ -983,6 +1018,88 @@ def print_summary(btsnoop_events: list[BtsnoopEvent],
         if writes_after:
             for e in writes_after:
                 print(f"  {_format_ts(e.ts_dt)}  {e.summary}")
+
+    # -------------------------------------------------------------------
+    # Phase 2/3 transition analysis
+    # -------------------------------------------------------------------
+    # Goal: determine whether Phase 3 is a NEW BLE connection (new ACL handle)
+    # or reuses the same BLE link as Phase 2 (same ACL handle, new SABM only).
+    #
+    # Trigger point: CCC Disable (0x0000) → bz.Reset() → bz.IsConnected=false.
+    # If Phase 3 is a new BLE connection, a LE_CONNECTION_COMPLETE event follows.
+    # If Phase 3 reuses the same link, the next ATT Write Cmd has the same ACL handle.
+    print()
+    print("=" * 72)
+    print("PHASE 2/3 TRANSITION ANALYSIS")
+    print("=" * 72)
+
+    if not ccc_disables:
+        print("No CCC Disable found — Phase 2/3 transition did not occur in this capture.")
+    else:
+        for i, ccc_ev in enumerate(ccc_disables):
+            print(f"\nCCC Disable #{i+1}: {_format_ts(ccc_ev.ts_dt)}")
+            print(f"  acl_handle=0x{ccc_ev.acl_handle:04X}  att_handle=0x"
+                  f"{int(ccc_ev.summary.split('att_handle=0x')[1].split()[0], 16):04X}"
+                  if "att_handle=0x" in ccc_ev.summary else "")
+
+            # Find BLE reconnect (new LE_CONNECTION_COMPLETE) after this CCC disable
+            reconnect_ev = next(
+                (e for e in btsnoop_events
+                 if e.kind == "connect" and e.ts_dt > ccc_ev.ts_dt),
+                None
+            )
+
+            # Find first ATT Write Cmd after this CCC disable (= Phase 3 first frame)
+            first_phase3_write = next(
+                (e for e in btsnoop_events
+                 if e.kind == "att_write" and e.ts_dt > ccc_ev.ts_dt),
+                None
+            )
+
+            if reconnect_ev:
+                gap_ms = (reconnect_ev.ts_dt - ccc_ev.ts_dt).total_seconds() * 1000
+                print(f"  LE_CONNECTION_COMPLETE (Phase 3 new BLE conn) at "
+                      f"{_format_ts(reconnect_ev.ts_dt)}  "
+                      f"gap={gap_ms:.0f} ms after CCC Disable")
+                if first_phase3_write:
+                    write_gap_ms = (first_phase3_write.ts_dt - ccc_ev.ts_dt).total_seconds() * 1000
+                    conn_reused = (first_phase3_write.acl_handle == ccc_ev.acl_handle)
+                    print(f"  First Phase 3 ATT Write Cmd:  "
+                          f"{_format_ts(first_phase3_write.ts_dt)}  "
+                          f"gap={write_gap_ms:.0f} ms  "
+                          f"acl=0x{first_phase3_write.acl_handle:04X}  "
+                          f"({'SAME ACL handle — BLE link reused' if conn_reused else 'DIFFERENT ACL handle — new BLE connection'})")
+            elif first_phase3_write:
+                write_gap_ms = (first_phase3_write.ts_dt - ccc_ev.ts_dt).total_seconds() * 1000
+                conn_reused = (first_phase3_write.acl_handle == ccc_ev.acl_handle)
+                print(f"  No LE_CONNECTION_COMPLETE found after CCC Disable.")
+                print(f"  First ATT Write Cmd after CCC Disable:  "
+                      f"{_format_ts(first_phase3_write.ts_dt)}  "
+                      f"gap={write_gap_ms:.0f} ms  "
+                      f"acl=0x{first_phase3_write.acl_handle:04X}")
+                if conn_reused:
+                    print(f"  *** SAME ACL handle → Phase 3 reuses the existing BLE connection ***")
+                    print(f"  *** No BLE disconnect/reconnect. 'bz.Reset()' must be reversed by  ***")
+                    print(f"  *** CCC Re-enable (CCC Enable write) before Phase 3 SABM.          ***")
+                else:
+                    print(f"  *** DIFFERENT ACL handle → Phase 3 is a new BLE connection. ***")
+            else:
+                print(f"  No ATT Write Cmd found after CCC Disable — Phase 3 did not connect "
+                      f"within the capture window.")
+
+            # Check for CCC re-enable between CCC disable and first Phase 3 write
+            if first_phase3_write:
+                ccc_reenable = next(
+                    (e for e in btsnoop_events
+                     if e.kind == "ccc_enable"
+                     and e.ts_dt > ccc_ev.ts_dt
+                     and e.ts_dt < first_phase3_write.ts_dt),
+                    None
+                )
+                if ccc_reenable:
+                    reenable_gap_ms = (ccc_reenable.ts_dt - ccc_ev.ts_dt).total_seconds() * 1000
+                    print(f"  CCC Re-enable at {_format_ts(ccc_reenable.ts_dt)}  "
+                          f"gap={reenable_gap_ms:.0f} ms after CCC Disable")
 
     # Offset info
     if offset_us is not None:
