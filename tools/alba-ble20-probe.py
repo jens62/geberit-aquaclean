@@ -85,6 +85,7 @@ log = logging.getLogger('alba-probe')
 # ---------------------------------------------------------------------------
 # Bridge imports
 # ---------------------------------------------------------------------------
+from bleak import BleakScanner
 from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
 from aquaclean_console_app.bluetooth_le.LE.dp_ids import dp_name
 from aquaclean_console_app.bluetooth_le.LE.dp_type import DpType
@@ -323,6 +324,27 @@ def _load_config(config_path: Optional[str] = None):
 
 
 # ---------------------------------------------------------------------------
+# BLE scanner — find Alba/Geberit devices by manufacturer data
+# ---------------------------------------------------------------------------
+_GEBERIT_COMPANY_ID = 0x0602  # Geberit manufacturer ID in BLE advertisements
+
+async def scan_for_geberit(timeout: float = 10.0) -> list:
+    """Scan for BLE devices advertising Geberit manufacturer data (company 0x0602).
+    Returns list of (address, name, rssi) tuples, sorted by RSSI descending."""
+    found = {}
+    def _cb(device, adv):
+        mfr = adv.manufacturer_data or {}
+        if _GEBERIT_COMPANY_ID in mfr:
+            found[device.address] = (device.address, device.name or '', adv.rssi or -999)
+
+    scanner = BleakScanner(detection_callback=_cb)
+    await scanner.start()
+    await asyncio.sleep(timeout)
+    await scanner.stop()
+    return sorted(found.values(), key=lambda x: -x[2])
+
+
+# ---------------------------------------------------------------------------
 # Main async runner
 # ---------------------------------------------------------------------------
 async def run(args):
@@ -333,9 +355,28 @@ async def run(args):
     psk    = args.esphome_psk  or cfg_psk
     device = args.device       or cfg_dev
 
-    if not device:
-        log.error("No device address.  Provide --device or set [BLE] device_id in config.ini.")
-        return 1
+    if getattr(args, 'scan', False) or not device:
+        timeout = getattr(args, 'scan_timeout', 10.0)
+        print(f"Scanning for Geberit devices ({timeout:.0f} s)...")
+        found = await scan_for_geberit(timeout)
+        if not found:
+            print("  No Geberit devices found (company=0x0602).")
+            if getattr(args, 'scan', False):
+                return 0
+        else:
+            print(f"  Found {len(found)} device(s):")
+            for addr, name, rssi in found:
+                print(f"    {addr}  {name or '(no name)':20s}  RSSI {rssi} dBm")
+            if getattr(args, 'scan', False) and not device:
+                if len(found) == 1:
+                    device = found[0][0]
+                    print(f"  → using {device}")
+                else:
+                    print("  Multiple devices found — re-run with --device <MAC>")
+                    return 0
+        if not device:
+            log.error("No device address.  Provide --device, --scan, or set [BLE] device_id in config.ini.")
+            return 1
 
     print(f"\nAlba Ble20 Probe  [script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}]")
     print(f"  Device  : {device}")
@@ -585,7 +626,16 @@ Examples:
 
   # Read all DpIds including internal ones:
   python tools/alba-ble20-probe.py --device E4:85:01:CD:6B:04 --readall --include-internal
+
+  # Scan for any Geberit device nearby (useful when MAC unknown or RPA is used):
+  python tools/alba-ble20-probe.py --scan
+  python tools/alba-ble20-probe.py --scan --readall
 """)
+    p.add_argument('--scan', action='store_true',
+                   help='Scan for Geberit devices by manufacturer data (company 0x0602); '
+                        'auto-selects address when exactly one is found')
+    p.add_argument('--scan-timeout', type=float, default=10.0, metavar='SEC',
+                   help='BLE scan duration for --scan (default: 10 s)')
     p.add_argument('--device', metavar='MAC',
                    help='BLE MAC address (default: [BLE] device_id in config.ini)')
     p.add_argument('--identify', action='store_true',
