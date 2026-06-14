@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.13.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.14.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -345,8 +345,8 @@ class _AriendiServerSide:
         # Set to True when the frame loop exits because the BLE peer closed the link.
         # False means the session ended by timeout (BLE link may still be alive).
         self.disconnected_by_peer = False
-        # Set to True by Phase 2+ short timeout: DataPointInventory complete, iOS went
-        # silent — the mock should disconnect now so iOS can start Phase 3 immediately.
+        # Set to True by Phase 2+ timeout: DataPointInventory complete but no Phase 3
+        # SABM or GetEndProduct arrived — mock should disconnect so advertising resumes.
         self.should_disconnect_after = False
 
     # -----------------------------------------------------------------------
@@ -594,21 +594,31 @@ class _AriendiServerSide:
             #                           10–20 s before sending NotifyEnable frames (async
             #                           UI rendering, possible cloud-call timeout).
             _first_frame = True
-            # Phase 2 done detection: EVENT_STORAGE_INVENTORY followed by READ = Phase 2 over.
-            # Real Alba disconnects BLE at this point; iOS then starts Phase 3 (new connection).
-            # call_disconnect() takes ~2.3 s on BlueZ; eliminating the 3 s timeout gets the mock
-            # advertising ~3 s sooner, which is the difference between Phase 3 succeeding and
-            # iOS crashing with SIGABRT (bz.IsConnected=false in GetEndProduct).
+            # Phase 2 protocol:
+            #   1. Detect end of Phase 2: EVENT_STORAGE_INVENTORY + READ DpId=8.
+            #   2. Mock sends HDLC DISC to signal "Phase 2 done".
+            #   3. iOS responds UA (discarded by loop), then either:
+            #      a. Sends Phase 3 SABM on the same BLE link → loop handles it,
+            #         restarting the handshake for Phase 3 (GetEndProduct arrives).
+            #      b. Disconnects BLE → _handshake_loop fast-disconnects, advertising
+            #         resumes immediately, Phase 3 connects as a new BLE session.
+            #
+            # Without DISC, iOS waits indefinitely on the save screen.  When the BLE
+            # link drops unexpectedly (mock call_disconnect()), iOS fires GetEndProduct
+            # 288 ms later with no Phase 3 connected → SIGABRT crash.
             _phase2_saw_storage = False
+            _disc_sent = False
             while True:
                 if _first_frame:
                     _timeout = 5.0
+                elif _ble_session_phase >= 2 and _disc_sent:
+                    # DISC sent; iOS is showing save screen waiting for user to press
+                    # Save.  Give a generous timeout so slow users aren't timed out.
+                    _timeout = 60.0
                 elif _ble_session_phase >= 2:
-                    # Fallback: real-time detection below fires immediately after
-                    # EVENT_STORAGE_INVENTORY + READ — that handles the normal end of
-                    # Phase 2.  This 3 s timeout only covers the ~2 s gap between
-                    # sub-phase A (quick KE + READ) and sub-phase B (full inventory),
-                    # plus edge cases.  Must be > 2 s or it fires mid-inventory.
+                    # Before DISC: covers the ~2 s gap between Phase 2 sub-phase A
+                    # (quick KE + READ) and sub-phase B (full inventory).
+                    # Must be > 2 s or it fires mid-inventory.
                     _timeout = 3.0
                 else:
                     # Phase 1: iOS shows the PIN dialog after this; the inter-session gap
@@ -621,8 +631,11 @@ class _AriendiServerSide:
                     )
                 except asyncio.TimeoutError:
                     if _ble_session_phase >= 2:
-                        print(f"[MockServer] Phase {_ble_session_phase} complete — no frames for "
-                              f"{_timeout:.0f} s; setting should_disconnect_after so iOS can start Phase 3")
+                        if _disc_sent:
+                            print(f"[MockServer] Phase 3 save timeout — user did not press Save in {_timeout:.0f} s")
+                        else:
+                            print(f"[MockServer] Phase {_ble_session_phase} fallback timeout — "
+                                  f"no frames for {_timeout:.0f} s")
                         self.should_disconnect_after = True
                     else:
                         # Client went silent — session is over.  Return WITHOUT setting
@@ -677,17 +690,21 @@ class _AriendiServerSide:
                         _drained += 1
                     if _drained:
                         print(f"[MockServer] drained {_drained} S-RR(s) after burst")
-                    # Real-time Phase 2 done detection: track EVENT_STORAGE_INVENTORY,
-                    # then on the following READ (always DpId=8) disconnect immediately.
-                    if _ble_session_phase >= 2:
+                    # Real-time Phase 2 done detection: EVENT_STORAGE_INVENTORY + READ DpId=8.
+                    # Send HDLC DISC to signal end of Phase 2 HDLC session.
+                    # iOS responds UA (discarded), then sends Phase 3 SABM on same BLE link
+                    # OR disconnects BLE and reconnects for Phase 3.  Keep frame loop running
+                    # so the Phase 3 SABM or GetEndProduct (0xD0) arrives here.
+                    if _ble_session_phase >= 2 and not _disc_sent:
                         _cmd = plaintext[0] if plaintext else 0
                         if _cmd == CommandId.EventStorageInventory:
                             _phase2_saw_storage = True
                         elif _phase2_saw_storage and _cmd == CommandId.ReadCmd:
-                            print("[MockServer] Phase 2 complete — EVENT_STORAGE_INVENTORY + READ; "
-                                  "disconnecting immediately so iOS can start Phase 3")
-                            self.should_disconnect_after = True
-                            return
+                            _disc_type = 8  # DISC U-frame ctrl = 0x43
+                            await send_fn(self._att_u(_disc_type))
+                            _disc_sent = True
+                            print("[MockServer] Phase 2 complete — sent DISC; "
+                                  "waiting for Phase 3 SABM or iOS disconnect")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
@@ -1207,9 +1224,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             # Timeouts (no client within 60 s) raise an exception so _session_completed
             # stays False — the sitting state is preserved until the next real poll.
             by_peer = getattr(sig_service._arendi, 'disconnected_by_peer', False)
-            # should_disconnect_after: Phase 2 short-timeout fired — DataPointInventory
-            # complete, iOS went silent.  Treat like by_peer so the next session is
-            # pre-created immediately and advertising resumes before Phase 3 connects.
+            # should_disconnect_after: Phase 2 timeout fired (no Phase 3 SABM/GetEndProduct).
+            # Treat like by_peer so the next session is pre-created immediately and
+            # advertising resumes quickly in case Phase 3 arrives as a new BLE session.
             should_disconnect = getattr(sig_service._arendi, 'should_disconnect_after', False)
             if _session_completed and _completed is not False:
                 _user_sitting = not _user_sitting
