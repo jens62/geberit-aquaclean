@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.11.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.12.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -594,17 +594,19 @@ class _AriendiServerSide:
             #                           10–20 s before sending NotifyEnable frames (async
             #                           UI rendering, possible cloud-call timeout).
             _first_frame = True
+            # Phase 2 done detection: EVENT_STORAGE_INVENTORY followed by READ = Phase 2 over.
+            # Real Alba disconnects BLE at this point; iOS then starts Phase 3 (new connection).
+            # call_disconnect() takes ~2.3 s on BlueZ; eliminating the 3 s timeout gets the mock
+            # advertising ~3 s sooner, which is the difference between Phase 3 succeeding and
+            # iOS crashing with SIGABRT (bz.IsConnected=false in GetEndProduct).
+            _phase2_saw_storage = False
             while True:
                 if _first_frame:
                     _timeout = 5.0
                 elif _ble_session_phase >= 2:
-                    # Phase 2+: iOS goes silent after DataPointInventory.  Use a short
-                    # timeout (3 s, 1 s margin over the observed 1.92 s max inter-frame
-                    # gap inside inventory) so the mock disconnects the BLE link quickly.
-                    # On real Alba hardware the device disconnects at this point; iOS then
-                    # starts Phase 3 immediately.  Without this, iOS waits ~5 s for a
-                    # disconnect that never comes, then crashes in GetEndProduct().
-                    _timeout = 3.0
+                    # Short fallback: real-time detection below handles the normal case;
+                    # this fires only if the sequence is different from expected.
+                    _timeout = 0.5
                 else:
                     # Phase 1: iOS shows the PIN dialog after this; the inter-session gap
                     # can be long if the user is slow.  Keep a generous timeout.
@@ -672,6 +674,17 @@ class _AriendiServerSide:
                         _drained += 1
                     if _drained:
                         print(f"[MockServer] drained {_drained} S-RR(s) after burst")
+                    # Real-time Phase 2 done detection: track EVENT_STORAGE_INVENTORY,
+                    # then on the following READ (always DpId=8) disconnect immediately.
+                    if _ble_session_phase >= 2:
+                        _cmd = plaintext[0] if plaintext else 0
+                        if _cmd == CommandId.EventStorageInventory:
+                            _phase2_saw_storage = True
+                        elif _phase2_saw_storage and _cmd == CommandId.ReadCmd:
+                            print("[MockServer] Phase 2 complete — EVENT_STORAGE_INVENTORY + READ; "
+                                  "disconnecting immediately so iOS can start Phase 3")
+                            self.should_disconnect_after = True
+                            return
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
@@ -1255,8 +1268,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     proxy = bus.get_proxy_object('org.bluez', _path_to_disconnect, introspect)
                     dev_iface = proxy.get_interface('org.bluez.Device1')
                     await dev_iface.call_disconnect()
-                    print("[Mock] Force-disconnect sent; waiting for BlueZ to confirm...")
-                    await asyncio.sleep(0.5)
+                    print("[Mock] Force-disconnect sent; advertising resumes immediately")
                 except Exception as _e:
                     if by_peer:
                         print(f"[Mock] Force-disconnect on already-disconnected device (expected): {_e}")
