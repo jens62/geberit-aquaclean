@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.8.0"   # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.9.0"   # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -1053,50 +1053,46 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         manufacturerData={0x0602: bytes([0x02, 0xFA] + [0x00] * 13)},
     )
 
+    # Intercept bus.export() during adv.register() to capture the advertisement D-Bus path.
+    # We need the path to unregister and re-register with a 100 ms interval (see below).
+    # Checking bus._path_exports AFTER register() fails because bluez_peripheral may
+    # export-then-unexport the adv object — BlueZ caches properties at registration time
+    # so the export is only needed transiently.  The interceptor fires during the call.
+    _captured_adv_path = [None]
+    _pre_existing_paths = set(getattr(bus, '_path_exports', {}).keys())
+    _orig_bus_export = bus.export
+
+    def _capturing_export(path, interface):
+        _orig_bus_export(path, interface)
+        if path not in _pre_existing_paths and _captured_adv_path[0] is None:
+            _captured_adv_path[0] = path
+
+    bus.export = _capturing_export
     adv_registered = False
     try:
         await adv.register(bus, adapter_wrapper)
         adv_registered = True
     except Exception as e:
         print("Advertisement registration failed:", e)
+    finally:
+        bus.export = _orig_bus_export
 
-    # Fix: re-register the advertisement with a fast advertising interval (100 ms).
+    # Fix: re-register with MinInterval/MaxInterval=100 ms so Phase 3 connects in <1 s.
     #
     # Root cause of iOS crash (2026-06-13, mock 2.5.0):
     #   After Phase 2 BLE disconnect the iOS app calls GetEndProduct() ~1.1 s later.
     #   GetEndProduct() → b.c() → FrameHandler.l() checks TunnelDataExchange.IsConnected
     #   (= bz.IsConnected).  bz.IsConnected is only restored to True when Phase 3
     #   connects and runs Ble20Product.Initialize() → bz.InitializeDataExchange().
-    #   With BlueZ's default 1280 ms advertising interval iOS takes ~15 s to find the
-    #   mock for Phase 3 — far longer than the ~1.1 s GetEndProduct() window — so
-    #   GetEndProduct() runs with bz disconnected and the app crashes (SIGABRT).
-    #   On real hardware the device advertises at ~100 ms so Phase 3 connects in <1 s.
-    #
-    # Fix: unregister and re-register the advertisement with MinInterval/MaxInterval=100 ms
-    # via LEAdvertisingManager1 options (BlueZ >= 5.58).  The @dbus_property override in
-    # _Advertisement does NOT work — BlueZ reads intervals from the RegisterAdvertisement
-    # options dict, not from the advertisement object's D-Bus properties.
-    #
-    # After this re-registration BlueZ advertises at 100 ms for all subsequent sessions
-    # (including after BLE disconnects, since BlueZ reuses the stored interval without
-    # calling LE_Set_Advertising_Parameters again on each reconnect).
+    #   With BlueZ default 1280 ms interval iOS takes ~15 s to find the mock for Phase 3
+    #   — far longer than the ~1.1 s GetEndProduct() window → SIGABRT.
+    #   Real hardware advertises at ~100 ms so Phase 3 connects in <1 s.
     if adv_registered and adapter_path:
-        try:
-            # dbus_next stores exported object paths in bus._path_exports, not on the
-            # interface object itself.  Scan the bus export table to find the path where
-            # adv was registered.  Fallback to attribute scan for older library versions.
-            _adv_path = None
-            for _p, _ifaces in getattr(bus, '_path_exports', {}).items():
-                if isinstance(_ifaces, dict):
-                    if any(_v is adv for _v in _ifaces.values()):
-                        _adv_path = _p
-                        break
-                elif _ifaces is adv:
-                    _adv_path = _p
-                    break
-            if _adv_path is None:
-                # Legacy fallback: some library versions store path on the object
-                _adv_path = getattr(adv, '_path', None)
+        _adv_path = _captured_adv_path[0]
+        if _adv_path is None:
+            # Interceptor got nothing — bluez_peripheral doesn't use bus.export() for adv.
+            # Last-resort: check if the library stores the path as an attribute.
+            _adv_path = getattr(adv, '_path', None)
             if _adv_path is None:
                 for _attr in dir(adv):
                     if 'path' in _attr.lower() and not _attr.startswith('__'):
@@ -1104,23 +1100,27 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                         if isinstance(_val, str) and _val.startswith('/'):
                             _adv_path = _val
                             break
-            if _adv_path:
+        if _adv_path:
+            try:
                 _ai = await bus.introspect('org.bluez', adapter_path)
                 _ap = bus.get_proxy_object('org.bluez', adapter_path, _ai)
                 _am = _ap.get_interface('org.bluez.LEAdvertisingManager1')
                 await _am.call_unregister_advertisement(_adv_path)
+                # Re-export adv so BlueZ can read its properties when re-registering.
+                # bluez_peripheral may have unexported it after the initial registration.
+                if _adv_path not in getattr(bus, '_path_exports', {}):
+                    bus.export(_adv_path, adv)
                 await _am.call_register_advertisement(_adv_path, {
                     'MinInterval': Variant('u', 100),
                     'MaxInterval': Variant('u', 100),
                 })
                 print(f"[Mock] Advertising interval set to 100 ms via {_adv_path} (Phase 3 connects in <1 s)")
-            else:
-                print("[Mock] Warning: adv path unknown — advertising at BlueZ default 1280 ms")
-                print(f"[Mock]   bus._path_exports keys: {list(getattr(bus, '_path_exports', {}).keys())}")
-                print("[Mock]   Phase 3 may not connect within the iOS app's ~1 s window → crash")
-        except Exception as _e:
-            print(f"[Mock] Warning: fast advertising interval not set ({_e})")
-            print("[Mock]   Needs BlueZ >= 5.58 and LEAdvertisingManager1 support")
+            except Exception as _e:
+                print(f"[Mock] Warning: fast advertising interval not set ({_e})")
+                print("[Mock]   Needs BlueZ >= 5.58 and LEAdvertisingManager1 support")
+        else:
+            print("[Mock] Warning: adv path unknown — advertising at BlueZ default 1280 ms")
+            print("[Mock]   Phase 3 may not connect within the iOS app's ~1 s window → crash")
 
     print(f"--- Mock Device Active (mode={mode}) ---")
     print(f"    mock: {_MOCK_VERSION}  script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
