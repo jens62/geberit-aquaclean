@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.10.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.11.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -1227,9 +1227,28 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             #
             # _connected_device_path is intentionally NOT cleared by on_device_disconnected
             # so it is always available here regardless of which path ended the session.
-            if _connected_device_path is not None:
-                _path_to_disconnect = _connected_device_path
-                _connected_device_path = None  # clear before attempt — not needed after
+            # Fallback: if on_device_connected never fired (BlueZ did not emit
+            # InterfacesAdded for the Device1 object), enumerate all BlueZ Device1
+            # objects with Connected=True.  This guarantees a disconnect even when
+            # the InterfacesAdded signal was missed.
+            _path_to_disconnect = _connected_device_path
+            _connected_device_path = None  # clear before attempt — not needed after
+            if _path_to_disconnect is None and objmgr is not None:
+                try:
+                    _managed = await objmgr.call_get_managed_objects()
+                    for _p, _ifaces in _managed.items():
+                        if 'org.bluez.Device1' not in _ifaces:
+                            continue
+                        _c = _ifaces['org.bluez.Device1'].get('Connected')
+                        if isinstance(_c, Variant):
+                            _c = _c.value
+                        if _c:
+                            _path_to_disconnect = _p
+                            print(f"[Mock] Found connected device via ObjectManager: {_p}")
+                            break
+                except Exception as _oe:
+                    print(f"[Mock] ObjectManager enumeration failed: {_oe}")
+            if _path_to_disconnect is not None:
                 print(f"[Mock] Forcing BlueZ disconnect to resume advertising{' (already disconnected by peer — call may fail)' if by_peer else ''}: {_path_to_disconnect}")
                 try:
                     introspect = await bus.introspect('org.bluez', _path_to_disconnect)
