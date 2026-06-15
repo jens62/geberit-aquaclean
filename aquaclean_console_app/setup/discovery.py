@@ -14,8 +14,11 @@ Internal helpers (importable by connection-test.py):
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from typing import Optional
+
+_LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -209,33 +212,45 @@ async def _discover_esphome_mdns(timeout: float = 8.0) -> list[dict]:
     if sys.platform == "darwin":
         return await _discover_esphome_mdns_macos(timeout)
 
+    _LOGGER.debug("ESPHome mDNS discovery (standalone, timeout=%.1fs)", timeout)
+
     try:
         from zeroconf import ServiceStateChange
         from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
     except ImportError:
+        _LOGGER.debug("zeroconf not available — skipping mDNS discovery")
         return []
 
     import socket as _socket
     found: list[dict] = []
     loop = asyncio.get_running_loop()
+    pending_tasks: list[asyncio.Task] = []
 
     async def _lookup(zeroconf, service_type, name):
+        _LOGGER.debug("mDNS lookup start: %s", name)
         try:
             info = AsyncServiceInfo(service_type, name)
             await info.async_request(zeroconf, 3000)
             if info.addresses:
-                found.append({
+                entry = {
                     "name": name.replace(f".{service_type}", "").rstrip("."),
                     "ip": _socket.inet_ntoa(info.addresses[0]),
                     "port": info.port,
                     "host": (info.server or "").rstrip("."),
-                })
-        except Exception:
-            pass
+                }
+                _LOGGER.debug("mDNS found: %s @ %s:%s", entry["name"], entry["ip"], entry["port"])
+                found.append(entry)
+            else:
+                _LOGGER.debug("mDNS lookup: no addresses for %s", name)
+        except Exception as exc:
+            _LOGGER.debug("mDNS lookup error for %s: %s", name, exc)
 
     def _on_service_state_change(zeroconf, service_type, name, state_change):
         if state_change is ServiceStateChange.Added:
-            loop.create_task(_lookup(zeroconf, service_type, name))
+            _LOGGER.debug("mDNS service Added: %s", name)
+            pending_tasks.append(loop.create_task(_lookup(zeroconf, service_type, name)))
+        elif state_change is ServiceStateChange.Removed:
+            _LOGGER.debug("mDNS service Removed: %s", name)
 
     azc = AsyncZeroconf()
     try:
@@ -243,9 +258,13 @@ async def _discover_esphome_mdns(timeout: float = 8.0) -> list[dict]:
             azc.zeroconf, "_esphomelib._tcp.local.", handlers=[_on_service_state_change]
         )
         await asyncio.sleep(timeout)
+        if pending_tasks:
+            _LOGGER.debug("Awaiting %d pending lookup(s)", len(pending_tasks))
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
         await browser.async_cancel()
     finally:
         await azc.async_close()
+    _LOGGER.debug("mDNS discovery done: %d proxies found", len(found))
     return found
 
 
@@ -257,42 +276,60 @@ async def _discover_esphome_mdns_ha(hass, timeout: float) -> list[dict]:
     synchronously, so we use a sync handler and schedule async lookups with
     loop.create_task() to avoid 'coroutine was never awaited' warnings.
     """
+    _LOGGER.debug("ESPHome mDNS discovery (HA, timeout=%.1fs)", timeout)
+
     try:
         from homeassistant.components.zeroconf import async_get_instance
         from zeroconf import ServiceStateChange
         from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
     except ImportError:
+        _LOGGER.debug("homeassistant.components.zeroconf not available")
         return []
 
     import socket as _socket
     found: list[dict] = []
     loop = asyncio.get_running_loop()
+    pending_tasks: list[asyncio.Task] = []
 
     async def _lookup(zeroconf, service_type, name):
+        _LOGGER.debug("mDNS lookup start: %s", name)
         try:
             info = AsyncServiceInfo(service_type, name)
             await info.async_request(zeroconf, 3000)
             if info.addresses:
-                found.append({
+                entry = {
                     "name": name.replace(f".{service_type}", "").rstrip("."),
                     "ip": _socket.inet_ntoa(info.addresses[0]),
                     "port": info.port,
                     "host": (info.server or "").rstrip("."),
-                })
-        except Exception:
-            pass
+                }
+                _LOGGER.debug("mDNS found: %s @ %s:%s", entry["name"], entry["ip"], entry["port"])
+                found.append(entry)
+            else:
+                _LOGGER.debug("mDNS lookup: no addresses for %s", name)
+        except Exception as exc:
+            _LOGGER.debug("mDNS lookup error for %s: %s", name, exc)
 
     def _on_service_state_change(zeroconf, service_type, name, state_change):
         if state_change is ServiceStateChange.Added:
-            loop.create_task(_lookup(zeroconf, service_type, name))
+            _LOGGER.debug("mDNS service Added: %s", name)
+            pending_tasks.append(loop.create_task(_lookup(zeroconf, service_type, name)))
+        elif state_change is ServiceStateChange.Removed:
+            _LOGGER.debug("mDNS service Removed: %s", name)
 
     zc = await async_get_instance(hass)
+    _LOGGER.debug("Got HA shared Zeroconf: %s", type(zc).__name__)
     browser = AsyncServiceBrowser(zc, "_esphomelib._tcp.local.", handlers=[_on_service_state_change])
+    _LOGGER.debug("AsyncServiceBrowser created, waiting %.1fs", timeout)
     try:
         await asyncio.sleep(timeout)
+        if pending_tasks:
+            _LOGGER.debug("Awaiting %d pending lookup(s)", len(pending_tasks))
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
     finally:
         await browser.async_cancel()
         # Do NOT close zc — it is HA's shared instance.
+    _LOGGER.debug("mDNS discovery done: %d proxies found", len(found))
     return found
 
 
