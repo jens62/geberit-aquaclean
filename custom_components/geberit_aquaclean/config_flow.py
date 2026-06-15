@@ -215,7 +215,9 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             options = [
                 selector.SelectOptionDict(
-                    value=f"{p['host'] or p['ip']}:{p['port']}",
+                    # Use IP as value — aioesphomeapi would create a competing Zeroconf
+                    # instance to resolve .local hostnames; passing an IP avoids that.
+                    value=f"{p['ip']}:{p['port']}",
                     label=f"{p['name']} ({p['host'] or p['ip']}:{p['port']})",
                 )
                 for p in self._found_proxies
