@@ -116,10 +116,11 @@ async def _test_connection(
         profile = connector.get_gatt_profile()
         profile.dis_info = connector.ble_dis_info
         if not profile.is_standard:
-            _LOGGER.info(
+            _LOGGER.warning(
                 "[AquaClean] Config flow: BLE connected but non-standard GATT profile "
                 "detected after init failure — svc=%s write=%s notify=%s dis=%s",
                 profile.svc_uuid, profile.write_uuids, profile.notify_uuids, profile.dis_info,
+                exc_info=True,
             )
             return profile
         raise
@@ -385,8 +386,10 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if _is_known_alba_profile(profile):
                         _LOGGER.warning(
                             "[AquaClean] Config flow wizard: known Alba GATT profile but handshake "
-                            "failed (svc=%s) — ESP32 NimBLE cache may be stale",
-                            profile.svc_uuid,
+                            "failed (svc=%s) — possible causes: stale BlueZ GATT handle cache on "
+                            "the HA machine (fix: bluetoothctl remove %s), or stale NimBLE NVS "
+                            "cache on the ESP32 proxy (fix: clear BT cache in ESPHome UI)",
+                            profile.svc_uuid, self._mac,
                         )
                         errors["base"] = "alba_handshake_failed"
                     else:
