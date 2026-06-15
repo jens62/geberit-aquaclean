@@ -388,7 +388,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             "failed (svc=%s) — ESP32 NimBLE cache may be stale",
                             profile.svc_uuid,
                         )
-                        errors["base"] = "cannot_connect"
+                        errors["base"] = "alba_handshake_failed"
                     else:
                         dis = profile.dis_info or {}
                         _LOGGER.warning(

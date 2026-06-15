@@ -64,6 +64,7 @@
       "cannot_connect": "Kan ikke koble til AquaClean-enheten. Sjekk MAC-adressen, sørg for at enheten er slått på og innenfor BLE-rekkevidde, og bekreft ESPHome-proxy-innstillingene. Sørg også for at ingen andre enheter (f.eks. Geberit Home App eller standalone-broen) er koblet til via Bluetooth — AquaClean annonserer bare når ingen BLE-tilkobling er aktiv.",
       "no_bluetooth": "Ingen lokal Bluetooth-adapter funnet på denne enheten. En ESPHome Bluetooth-proxy host er nødvendig.",
       "no_esphome_found": "Ingen ESPHome-proxy funnet på nettverket.",
+      "alba_handshake_failed": "AquaClean Alba-enhet funnet, men Arendi-handshake ble ikke fullført — ESP32 BLE-skanneren kan være midlertidig låst. Klikk på Send på nytt for å prøve igjen. Hvis feilen vedvarer, start ESPHome-proxyen på nytt via nettgrensesnittet.",
       "esphome_unreachable": "Kan ikke nå ESPHome-proxyen. Sjekk vert, port og nettverkstilkobling.",
       "invalid_mac": "Ugyldig MAC-adresseformat. Bruk XX:XX:XX:XX:XX:XX.",
       "esphome_host_required": "ESPHome-vert er påkrevd."
