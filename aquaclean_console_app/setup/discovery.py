@@ -24,9 +24,19 @@ _LOGGER = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 GEBERIT_BLE_NAME_PREFIX = "HB"
+
+# Mera Comfort / AcSela — 128-bit and 16-bit (0x3EA0)
 GEBERIT_SERVICE_UUID = "3334429d-90f3-4c41-a02d-5cb3a03e0000"
 GEBERIT_SERVICE_UUID_BYTES = bytes.fromhex("00003ea0b35c2da0414cf3909d423433")
-GEBERIT_SERVICE_UUID_16 = bytes([0xA0, 0x3E])
+GEBERIT_SERVICE_UUID_16 = bytes([0xA0, 0x3E])  # little-endian of 0x3EA0
+
+# Alba / Ble20 — 128-bit and 16-bit (0xFD48)
+ALBA_SERVICE_UUID = "0000fd48-0000-1000-8000-00805f9b34fb"
+ALBA_SERVICE_UUID_16 = bytes([0x48, 0xFD])     # little-endian of 0xFD48
+
+# Manufacturer data fingerprint — company ID 0x0602 = Geberit International AG
+GEBERIT_COMPANY_ID = bytes([0x02, 0x06])        # little-endian of 0x0602
+
 ESPHOME_DEFAULT_PORT = 6053
 
 # ---------------------------------------------------------------------------
@@ -83,7 +93,7 @@ def parse_service_uuids_128(data: bytes) -> bool:
 
 
 def parse_service_uuid_16(data: bytes) -> bool:
-    """Return True if the Geberit 16-bit service UUID (0x3EA0) is in raw BLE advertisement."""
+    """Return True if a Geberit 16-bit service UUID (Mera=0x3EA0 or Alba=0xFD48) is in raw BLE advertisement."""
     i = 0
     while i < len(data):
         length = data[i]
@@ -93,8 +103,24 @@ def parse_service_uuid_16(data: bytes) -> bool:
         if ad_type in (0x02, 0x03):
             payload = data[i + 2 : i + 1 + length]
             for start in range(0, len(payload) - 1, 2):
-                if payload[start : start + 2] == GEBERIT_SERVICE_UUID_16:
+                uuid_bytes = payload[start : start + 2]
+                if uuid_bytes in (GEBERIT_SERVICE_UUID_16, ALBA_SERVICE_UUID_16):
                     return True
+        i += 1 + length
+    return False
+
+
+def parse_manufacturer_data(data: bytes) -> bool:
+    """Return True if Geberit manufacturer data (company ID 0x0602) is in raw BLE advertisement."""
+    i = 0
+    while i < len(data):
+        length = data[i]
+        if length == 0 or i + length >= len(data):
+            break
+        ad_type = data[i + 1]
+        if ad_type == 0xFF and length >= 3:  # 0xFF = Manufacturer Specific Data
+            if data[i + 2 : i + 4] == GEBERIT_COMPANY_ID:
+                return True
         i += 1 + length
     return False
 
@@ -104,16 +130,22 @@ def is_geberit_device(
     adv_data: bytes = b"",
     service_uuids: Optional[list] = None,
 ) -> bool:
-    """Return True if name or UUID identifies a Geberit AquaClean device."""
+    """Return True if name, UUID, or manufacturer data identifies a Geberit AquaClean device."""
     by_name = name.startswith(GEBERIT_BLE_NAME_PREFIX) or "geberit" in name.lower()
     if service_uuids is not None:
         uuids_lower = [str(u).lower() for u in service_uuids]
         by_uuid = (
-            GEBERIT_SERVICE_UUID in uuids_lower
-            or any("3ea0" in u for u in uuids_lower)
+            GEBERIT_SERVICE_UUID in uuids_lower     # Mera Comfort 128-bit
+            or ALBA_SERVICE_UUID in uuids_lower      # Alba / Ble20 128-bit
+            or any("3ea0" in u for u in uuids_lower) # Mera Comfort 16-bit
+            or any("fd48" in u for u in uuids_lower) # Alba 16-bit
         )
     else:
-        by_uuid = parse_service_uuid_16(adv_data) or parse_service_uuids_128(adv_data)
+        by_uuid = (
+            parse_service_uuid_16(adv_data)      # 0x3EA0 (Mera) or 0xFD48 (Alba)
+            or parse_service_uuids_128(adv_data) # Mera Comfort 128-bit UUID
+            or parse_manufacturer_data(adv_data) # Geberit company ID 0x0602
+        )
     return by_name or by_uuid
 
 
@@ -360,15 +392,18 @@ async def async_scan_ble_via_esphome(
     Returns list of dicts with keys: mac, rssi, adv_name, adv_bytes.
     Only Geberit devices are returned.
     """
+    _LOGGER.debug("BLE scan via ESPHome %s:%s (timeout=%.1fs)", host, port, timeout)
     try:
         from aioesphomeapi import APIClient
     except ImportError:
+        _LOGGER.debug("aioesphomeapi not available")
         return []
 
     client = APIClient(address=host, port=port, password="", noise_psk=noise_psk)
     try:
         await asyncio.wait_for(client.connect(login=True), timeout=10.0)
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug("ESPHome connect failed: %s", exc)
         return []
 
     seen: dict[str, dict] = {}
@@ -404,10 +439,18 @@ async def async_scan_ble_via_esphome(
         except Exception:
             pass
 
-    return [
-        d for d in seen.values()
-        if is_geberit_device(d["adv_name"], adv_data=d["adv_bytes"])
-    ]
+    _LOGGER.debug("BLE scan done: %d unique devices seen", len(seen))
+    geberit = []
+    for d in seen.values():
+        matched = is_geberit_device(d["adv_name"], adv_data=d["adv_bytes"])
+        _LOGGER.debug(
+            "  %s rssi=%+d name=%r adv_len=%d geberit=%s",
+            d["mac"], d["rssi"], d["adv_name"], len(d["adv_bytes"]), matched,
+        )
+        if matched:
+            geberit.append(d)
+    _LOGGER.debug("BLE scan: %d Geberit device(s) identified", len(geberit))
+    return geberit
 
 
 async def async_scan_ble_local(timeout: float = 10.0) -> list[dict]:

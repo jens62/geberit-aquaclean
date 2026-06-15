@@ -293,7 +293,8 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     from aquaclean_console_app.setup.discovery import async_scan_ble_local
                     self._found_devices = await async_scan_ble_local(timeout=10.0)
-            except Exception:
+            except Exception as exc:
+                _LOGGER.debug("BLE scan exception: %s", exc, exc_info=True)
                 self._found_devices = []
 
             configured_macs = {
