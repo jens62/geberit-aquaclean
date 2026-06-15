@@ -438,6 +438,32 @@ See `tools/generate-hacs-entity-docs.py` for the pattern to follow.
 
 ---
 
+### Mock alba: autonomous `DP_USER_DETECTION_STATUS` notification to enable Remote Control
+
+After Phase 3 `Initialize()` completes, the Geberit Home App subscribes `NOTIFY_ENABLE` for
+`DpId=607` (`DP_USER_DETECTION_STATUS`).  Until a notification fires with value `b'\x01'`,
+the app's **Remote Control** section keeps all shower buttons disabled (user not sitting).
+
+**Planned behaviour:** after Phase 3 Initialize() finishes, the mock starts an asyncio task
+that toggles `DP_USER_DETECTION_STATUS` every 45 s:
+- `b'\x01'` → user sitting → Remote Control shower buttons enabled
+- `b'\x00'` → user not sitting → shower buttons disabled
+
+**Implementation:**
+- Detect Phase 3 complete: `_ble_session_phase == 3` and `_disc_sent` still False (Initialize done,
+  not yet finished).  Better anchor: watch for Phase 3 KE + Inventory complete (same signal
+  that sets `_ble_session_phase = 3`).
+- Spawn `asyncio.create_task(_user_sitting_loop())` at that point.
+- `_user_sitting_loop()`: alternates state every 45 s; on each tick sends a `NOTIFY` frame for
+  DpId=607 via `send_notify` callback; stops when BLE disconnects.
+- Also subscribe DpId=564 (`DP_ANAL_SHOWER_STATUS`) notification: push `b'\x01'` when
+  shower would "run" (value > 0 in the sitting window), `b'\x00'` when not running.
+
+**Why:** validates the full Remote Control UI path in the app — confirms the mock handles
+the entire settings + live-control flow, not just save/registration.
+
+---
+
 ### Mock server for AquaClean Sela — testing without real hardware
 
 Build `tools/mock-geberit-sela.py` analogous to the existing `tools/mock-geberit-alba.py`.
