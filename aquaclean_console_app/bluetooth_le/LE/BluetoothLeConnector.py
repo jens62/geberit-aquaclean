@@ -921,7 +921,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 # api.disconnect() closes TCP (otherwise the UnsubscribeBluetoothLEAdvertisementsRequest
                 # frame is never delivered, the ESP32 retains the subscription slot, and the next
                 # connect attempt within ~60–90 s gets "Only one API subscription is allowed at a time").
-                await self.client.disconnect(close_api=False)
+                try:
+                    await self.client.disconnect(close_api=False)
+                except Exception as e:
+                    logger.debug(f"[disconnect] BLE close error (peer may have already disconnected): {e}")
                 if self._esphome_unsub_adv is not None:
                     try:
                         self._esphome_unsub_adv()
