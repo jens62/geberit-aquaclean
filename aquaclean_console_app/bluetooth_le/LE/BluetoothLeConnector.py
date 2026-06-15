@@ -3,6 +3,7 @@ import time
 from bleak import BleakClient, BleakScanner, BleakError
 from bleak.backends.scanner import AdvertisementData
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakGATTProtocolError, BleakGATTProtocolErrorCode
 
 
 from uuid import UUID
@@ -111,10 +112,37 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self._my_generation = BluetoothLeConnector._active_generation[_key]
         self._generation_key = _key
         logger.silly("BluetoothLeConnector: connect")
-        if self.esphome_host:
-            await self._connect_via_esphome(device_id)
-        else:
-            await self._connect_local(device_id)
+        for _attempt in range(2):
+            try:
+                if self.esphome_host:
+                    await self._connect_via_esphome(device_id)
+                else:
+                    await self._connect_local(device_id)
+                return
+            except BleakGATTProtocolError as exc:
+                if (
+                    _attempt == 0
+                    and exc.args
+                    and exc.args[0] == BleakGATTProtocolErrorCode.INVALID_HANDLE
+                ):
+                    logger.warning(
+                        "BluetoothLeConnector: GATT Invalid Handle on first attempt "
+                        "(stale BlueZ handle cache) — disconnecting and retrying once"
+                    )
+                    if self.client is not None:
+                        try:
+                            await self.client.disconnect()
+                        except Exception:
+                            pass
+                        self.client = None
+                    await asyncio.sleep(1.0)
+                    # Bump generation so callbacks from the failed attempt are discarded.
+                    BluetoothLeConnector._active_generation[_key] = (
+                        BluetoothLeConnector._active_generation.get(_key, 0) + 1
+                    )
+                    self._my_generation = BluetoothLeConnector._active_generation[_key]
+                else:
+                    raise
 
 
     async def _connect_local(self, device_id):
