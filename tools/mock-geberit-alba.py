@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.15.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.16.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -140,36 +140,98 @@ class _Ble20AppLayer:
     """
 
     # (dp_id, instance, version, datatype, min_s, max_s, behavior, init_bytes)
-    # datatype: 1=Binary  8=String  9=Counter  10=Enum  11=OffOn  15=Signed
-    # behavior: 1=Status  2=Command
+    # datatype: 0=Unused  1=Binary  2=MilliSeconds  3=Seconds  8=String  9=Counter  10=Enum  11=OffOn  13=TimeStampUtc
+    # behavior: 0=Info  1=Status  2=Command  3=Nvm  4=Protected
     #
+    # Values follow kstr (E4:85:01:CD:6B:04) from kstr-dpid-readall-2026-05-08.md,
+    # with deliberate obfuscation of device-identifying fields (marked obf).
+    # DpId 236 (UNIQUE_DEVICE_NUMBER) must match 559eb110 bytes 4-7 = 0x02134CD1.
+    # PAIRING_SECRET set to "0000" instead of real kstr PIN for test convenience.
     _DEFAULT_STORE = [
-        # ── Device identification ──────────────────────────────────────────
-        # DpId=0: DEVICE_SERIES must be 250 so iOS recognises Alba product type
-        # and proceeds past the initial device-type check.
-        (0,   None, 1,  1, 0, 255,          1, b'\xFA'),                   # DEVICE_SERIES  = 250
-        (1,   None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_VARIANT = 0
-        (2,   None, 1, 15, -2147483648, 2147483647, 1,
-              struct.pack('<i', 123)),                                       # DEVICE_NUMBER  = 123 (mock)
-        (4,   None, 1,  8, 0, 0,            1, b'828.860.00.A\x00'),       # DEVICE_SAP_NUMBER
-        (8,   None, 1,  8, 0, 0,            1, b'03'),                     # FW_RS_VERSION  = "03"
-        (9,   None, 1,  9, 0, 255,          1, b'\x59'),                   # FW_TS_VERSION  = 89
-        # DpId=12: PAIRING_SECRET — returned in Phase 2 tunnelled Read; iOS shows
-        # this as the PIN for the "Jetzt verbinden" dialog.
-        (12,  None, 0,  8, 0, 4,            4, b'0000'),                   # PAIRING_SECRET = "0000"
-        (16,  None, 1,  8, 0, 0,            1, b'AcAlba\x00'),             # DP_NAME
-        (236, None, 1,  9, 0, 2147483647,   1, struct.pack('<I', 0x02134CD1)),  # UNIQUE_DEVICE_NUMBER
-        (304, None, 1,  1, 0, 255,          1, b'\x00'),                   # DEVICE_MODEL   = 0
-        (337, None, 1,  1, 0, 255,          1, b'\x00'),                   # BOOTLOADER_VARIANT = 0
-        # ── Application state ─────────────────────────────────────────────
-        (60,   None, 1, 11, 0, 1,   1, b'\x00'),                          # USER_PRESENT
-        (563,  None, 1, 11, 0, 1,   2, b'\x00'),                          # START_STOP_ANAL_SHOWER
-        (564,  None, 1, 10, 0, 5,   1, b'\x00'),                          # ANAL_SHOWER_STATUS
-        # DpId=607: USER_DETECTION_STATUS — written between sessions; missing entry
-        # caused KeyError crash in _handshake_loop after session timeout.
-        (607,  None, 0, 10, 0, 1,   1, b'\x00'),                          # USER_DETECTION_STATUS = 0
-        (1008, None, 1, 15, 0, 100, 1, b'\x00\x00\x00\x00'),              # LID_LIFTER_POSITION
-        (1009, None, 1, 11, 0, 1,   2, b'\x00'),                          # TRIGGER_LID_LIFTING
+        # ── System / device identification ────────────────────────────────
+        (0,   None,  0,  9, 0,         255,        0, struct.pack('<I', 250)),        # DEVICE_SERIES = 250
+        (1,   None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # DEVICE_VARIANT = 0
+        (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 35225)),      # DEVICE_NUMBER (obf)
+        (3,   None,  0, 13, 0,         0,          4, struct.pack('<I', 1757175271)), # DEVICE_PRODUCTION_DATE (obf)
+        (4,   None,  0,  8, 0,         12,         4, b'828.860.00.X'),               # DEVICE_SAP_NUMBER (obf)
+        (8,   None,  0,  8, 2,         2,          0, b'03'),                         # FW_RS_VERSION → RS03TS89
+        (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
+        (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
+        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (real kstr=7080; 0000 for testing)
+        (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
+        (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
+        (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf)
+        (16,  None,  0,  8, 0,         6,          4, b'AcAlba'),                     # DP_NAME
+        (62,  None,  1, 10, 0,         4,          2, b'\x00'),                       # RESET (Command, write-only)
+        (83,  None,  1, 10, 0,         1,          2, b'\x00'),                       # START_BOOTLOADER (Command, write-only)
+        (93,  None,  1,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # POWER_SUPPLY_ERROR_STATUS = 0
+        (148, None,  0,  3, 0,         0,          1, struct.pack('<I', 601643)),     # OPERATION_TIME_TOTAL (obf)
+        (149, None,  0,  3, 0,         0,          1, struct.pack('<I', 492999)),     # OPERATION_TIME_SINCE_POWER_UP (obf)
+        (153, None,  0,  0, 0,         0,          2, b''),                           # RESTART (Command, write-only)
+        # DpId 236: must match 559eb110 bytes 4-7 (DeviceUniqueId LE = 0x02134CD1)
+        (236, None,  0,  9, 0,         0,          0, struct.pack('<I', 0x02134CD1)), # UNIQUE_DEVICE_NUMBER
+        (270, None,  0, 13, 946684800, -192608896, 2, struct.pack('<I', 947286443)), # SET_RTC_TIME (Command, write-only)
+        (313, None,  0,  8, 0,         20,         4, b'245.832.00.X'),               # SALES_SAP_NUMBER (obf)
+        (337, None,  0,  9, 0,         255,        0, struct.pack('<I', 0)),          # BOOTLOADER_VARIANT = 0
+        (369, None,  0,  8, 0,         20,         4, b'SB0000EU000000'),             # SALES_PRODUCT_SERIAL_NUMBER (obf)
+        (370, None,  0, 13, 0,         0,          4, struct.pack('<I', 1774187093)), # SALES_PRODUCT_PRODUCTION_DATE (obf)
+        (371, None,  0,  8, 0,         12,         4, b'146.350.01.x'),               # SALES_PRODUCT_SAP_NUMBER
+        (431, None,  0,  3, 0,         0,          4, struct.pack('<I', 0)),          # OPERATION_TIME_OFFSET = 0
+        # ── Anal shower ───────────────────────────────────────────────────
+        (563, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_ANAL_SHOWER (Command)
+        (564, None,  0, 10, 0,         7,          1, b'\x01'),                       # ANAL_SHOWER_STATUS = 1 (Disabled)
+        (566, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_SPRAY_ARM_CLEANING (Command)
+        (567, None,  0, 10, 0,         5,          1, b'\x02'),                       # SPRAY_ARM_CLEANING_STATUS = 2 (Ready)
+        (569, None,  0, 10, 0,         0,          2, b'\x00'),                       # LOAD_PROFILE (Command)
+        (570, None,  0, 10, 0,         4,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_INTENSITY (Command)
+        (571, None,  0, 10, 0,         4,          1, b'\x04'),                       # ACTIVE_ANAL_SPRAY_INTENSITY_STATUS = 4 (Level 5)
+        (572, None,  0, 10, 0,         4,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_ARM_POSITION (Command)
+        (573, None,  0, 10, 0,         4,          1, b'\x04'),                       # ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS = 4 (Position 5)
+        (574, None,  0, 10, 0,         5,          2, b'\x00'),                       # SET_ACTIVE_SHOWER_WATER_TEMPERATURE (Command)
+        (575, None,  0, 10, 0,         5,          1, b'\x05'),                       # ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS = 5 (Level 5)
+        (576, None,  0, 11, 0,         1,          2, b'\x00'),                       # SET_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION (Command)
+        (577, None,  0, 11, 0,         1,          1, b'\x00'),                       # ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS = Off
+        (580, None,  0, 10, 0,         4,          3, b'\x04'),                       # STORED_ANAL_SPRAY_INTENSITY = 4 (Level 5)
+        (581, None,  0, 10, 0,         4,          3, b'\x04'),                       # STORED_ANAL_SPRAY_ARM_POSITION = 4 (Position 5)
+        (582, None,  0, 10, 0,         5,          3, b'\x05'),                       # STORED_SHOWER_WATER_TEMPERATURE = 5 (Level 5)
+        (583, None,  0, 11, 0,         1,          3, b'\x00'),                       # STORED_ANAL_SPRAY_ARM_OSCILLATION = Off
+        (584, None,  0, 10, 0,         1,          2, b'\x00'),                       # START_STOP_DESCALING (Command)
+        (585, None,  0, 10, 0,         4,          1, b'\x02'),                       # DESCALING_STATUS = 2 (Ready)
+        (588, None,  0,  9, 0,         0,          3, struct.pack('<I', 1)),          # UNACCOUNTED_SHOWER_CYCLES = 1
+        (589, None,  0,  9, 0,         0,          1, struct.pack('<I', 168)),        # DAYS_UNTIL_NEXT_DESCALING = 168
+        (590, None,  0, 13, 0,         0,          3, struct.pack('<I', 0)),          # TIMESTAMP_OF_LAST_DESCALING = 0 (never)
+        (591, None,  0, 13, 0,         0,          3, struct.pack('<I', 0)),          # TIMESTAMP_OF_LAST_DESCALING_REQUEST = 0
+        (592, None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # DESCALING_CYCLES = 0
+        # DpId=607: USER_DETECTION_STATUS — toggled per-session by _handshake_loop
+        (607, None,  0, 10, 0,         1,          1, b'\x00'),                       # USER_DETECTION_STATUS = 0 (User absent)
+        (711, None,  0,  9, 0,         0,          1, struct.pack('<I', 340)),        # STATISTIC_COUNTER_SINCE_POWER_UP_SUM = 340
+        (764, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # WATER_HEATER_ERROR_STATUS = 0
+        (765, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # LEVEL_CONTROL_ERROR_STATUS = 0
+        (766, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # USER_DETECTION_ERROR_STATUS = 0
+        (781, None,  0,  9, 0,         0,          3, struct.pack('<I', 33600)),      # CREDITS_UNTIL_NEXT_DESCALING = 33600 (168 d × 200)
+        (789, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # WATER_PUMP_ERROR_STATUS = 0
+        (790, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_DRIVE_ERROR_STATUS = 0
+        (795, None,  0, 11, 0,         1,          3, b'\x00'),                       # DEMO_MODE = Off
+        (796, None,  0, 10, 0,         2,          3, b'\x00'),                       # PRODUCT_REGISTRATION_LEVEL = 0 (Unregistered)
+        (802, None,  0,  0, 0,         0,          2, b''),                           # START_USER_SESSION (Command, write-only)
+        (803, None,  0, 11, 0,         1,          4, b'\x00'),                       # SHOWROOM_MODE = Off
+        (810, None,  0, 11, 0,         1,          1, b'\x00'),                       # DRY_RUN_MODE = Off
+        (820, None,  0,  1, 4,         4,          1, b'\x00\x00\x00\x00'),          # MAINTENANCE_REQUEST_STATUS = 0
+        (977, None,  0,  9, 0,         0,          3, struct.pack('<I', 14)),         # DESCALING_DEVICE_LOCK_REMAINING_DAYS = 14
+        (978, None,  0,  0, 0,         0,          2, b''),                           # DESCALING_UNLOCK_DEVICE (Command, write-only)
+        (979, None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # DESCALING_DEVICE_RELOCK_REMAINING_CYCLES = 0
+        (982, None,  0,  1, 4,         4,          0, b'\x00\x00\x00\x00'),          # DESCALING_ERROR_STATUS = 0
+        (983, None,  0, 11, 0,         1,          1, b'\x00'),                       # DESCALING_DEVICE_LOCK_STATUS = Off
+        # ── Instanced DpIds ───────────────────────────────────────────────
+        (786,  2,    0,  9, 0,         0,          0, struct.pack('<I', 0)),          # GEBERIT_LOADER_VERSION inst=2
+        (785,  3,    0,  9, 0,         0,          0, struct.pack('<I', 0)),          # FUS_VERSION inst=3
+        (787,  3,    0,  9, 0,         0,          0, struct.pack('<I', 0)),          # WIRELESS_STACK_VERSION inst=3
+        (565,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),          # ANAL_SHOWER_PROGRESS inst=4
+        (568,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),          # SPRAY_ARM_CLEANING_PROGRESS inst=4
+        (586,  4,    0,  2, 0,         0,          1, b'\x00\x00\x00\x00'),          # DESCALING_PROGRESS inst=4
+        (405, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_SINCE_POWER_UP inst=31
+        (688, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_SINCE_RESET inst=31
+        (689, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_TOTAL inst=31
     ]
 
     def __init__(self):
@@ -1203,10 +1265,33 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
 
         async def _fast_disconnect():
-            """Disconnect BLE using the pre-cached Device1 interface (< 50 ms)."""
+            """Disconnect BLE using pre-cached or freshly enumerated Device1 interface.
+
+            If InterfacesAdded never fired (unreliable on some BlueZ/adapter setups),
+            falls back to ObjectManager enumeration — ~2 s total, still within the
+            6+ s window before the user presses Save.
+            """
             iface = _connected_dev_iface
+            if iface is None and objmgr is not None:
+                print("[Mock] Fast-disconnect: no cached interface — enumerating ObjectManager")
+                try:
+                    _managed = await objmgr.call_get_managed_objects()
+                    for _p, _ifs in _managed.items():
+                        if 'org.bluez.Device1' not in _ifs:
+                            continue
+                        _c = _ifs['org.bluez.Device1'].get('Connected')
+                        if isinstance(_c, Variant):
+                            _c = _c.value
+                        if _c:
+                            _intro = await bus.introspect('org.bluez', _p)
+                            _proxy = bus.get_proxy_object('org.bluez', _p, _intro)
+                            iface = _proxy.get_interface('org.bluez.Device1')
+                            print(f"[Mock] Fast-disconnect: found device at {_p}")
+                            break
+                except Exception as e:
+                    print(f"[Mock] Fast-disconnect: ObjectManager enumeration failed: {e}")
             if iface is None:
-                print("[Mock] Fast-disconnect: no cached interface — relying on end-of-session disconnect")
+                print("[Mock] Fast-disconnect: device not found — end-of-session cleanup will disconnect")
                 return
             try:
                 await iface.call_disconnect()
