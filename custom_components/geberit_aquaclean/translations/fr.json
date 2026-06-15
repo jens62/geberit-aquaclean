@@ -3,28 +3,67 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Version {version}\n\nSaisissez l'adresse MAC BLE de votre appareil AquaClean. Laissez le champ Hôte proxy ESPHome vide pour utiliser l'adaptateur Bluetooth local. Un test de connexion est effectué lors de l'enregistrement — veuillez patienter jusqu'à 30 secondes.",
+        "description": "Version {version}\n\nChoisissez la méthode de connexion pour votre AquaClean.",
         "data": {
-          "device_id": "Adresse MAC BLE (XX:XX:XX:XX:XX:XX)",
-          "esphome_host": "Hôte proxy ESPHome (vide pour BLE local)",
-          "esphome_port": "Port proxy ESPHome",
-          "noise_psk": "Clé de chiffrement ESPHome (optionnelle, base64)",
-          "poll_interval": "Intervalle d'interrogation (secondes)",
-          "use_ha_bluetooth": "Utiliser le domaine Bluetooth de Home Assistant (Option B — activer si HA utilise déjà le même proxy ESPHome)"
+          "transport_type": "Méthode de connexion"
+        }
+      },
+      "esphome_pick": {
+        "title": "Sélectionner le proxy ESPHome",
+        "description": "Plusieurs proxies Bluetooth ESPHome ont été trouvés. Sélectionnez celui connecté à votre AquaClean.",
+        "data": {
+          "esphome_proxy": "Proxy ESPHome"
+        }
+      },
+      "esphome_host": {
+        "title": "Paramètres du proxy ESPHome",
+        "description": "Saisissez les détails de connexion de votre proxy Bluetooth ESPHome.",
+        "data": {
+          "esphome_host": "Hôte (nom d'hôte ou IP)",
+          "esphome_port": "Port",
+          "noise_psk": "Clé de chiffrement (optionnelle)"
         },
         "data_description": {
-          "device_id": "Adresse MAC Bluetooth de votre AquaClean (ex. 38:AB:41:2A:0D:67). Visible sur l'étiquette à l'intérieur des toilettes ou dans l'application Geberit Home.",
-          "esphome_host": "Nom d'hôte ou IP d'un proxy Bluetooth ESPHome. Laisser vide pour utiliser l'adaptateur Bluetooth local de cet hôte HA.",
-          "esphome_port": "Port de l'API native du proxy ESPHome. Par défaut : 6053.",
-          "noise_psk": "Clé de chiffrement API de votre fichier YAML ESPHome (api: encryption: key:). Laisser vide si le chiffrement n'est pas configuré.",
-          "poll_interval": "Fréquence d'interrogation de l'appareil via Bluetooth. Des intervalles plus courts donnent des capteurs plus réactifs, mais occupent BLE plus longtemps.",
-          "use_ha_bluetooth": "Option A (désactivée, par défaut) : connexion ESPHome directe — fournit également la puissance du signal ESP32, le tas libre et le type de transport en tant que capteurs. Option B (activée) : passe par le domaine Bluetooth de HA — à utiliser lorsque l'intégration Bluetooth de HA occupe déjà le même proxy ESPHome. Les statistiques ESP32 ne sont pas disponibles avec l'option B."
+          "esphome_host": "Nom d'hôte ou adresse IP du proxy Bluetooth ESPHome (ex. aquaclean-proxy.local ou 192.168.1.100).",
+          "esphome_port": "Port de l'API native. Par défaut : 6053.",
+          "noise_psk": "Clé de chiffrement API de votre fichier YAML ESPHome (api: encryption: key:). Laisser vide si le chiffrement n'est pas configuré."
+        }
+      },
+      "ble_scan": {
+        "title": "Sélectionner l'appareil AquaClean",
+        "description": "Sélectionnez votre AquaClean dans les résultats du scan, ou saisissez l'adresse MAC manuellement.",
+        "data": {
+          "device_mac": "Appareil"
+        }
+      },
+      "device_manual": {
+        "title": "Saisir l'adresse MAC",
+        "description": "Saisissez l'adresse MAC Bluetooth de votre appareil AquaClean. Visible sur l'étiquette à l'intérieur des toilettes ou dans l'application Geberit Home.",
+        "data": {
+          "device_id": "Adresse MAC BLE"
+        },
+        "data_description": {
+          "device_id": "Format : XX:XX:XX:XX:XX:XX (ex. 38:AB:41:2A:0D:67)"
+        }
+      },
+      "confirm": {
+        "title": "Confirmer la configuration",
+        "description": "**Appareil :** {mac}\n**Transport :** {transport}\n**Hôte ESPHome :** {esphome_host}\n\nUn test de connexion sera effectué lorsque vous cliquerez sur Envoyer. Veuillez patienter jusqu'à 30 secondes.\n\nVersion {version}",
+        "data": {
+          "poll_interval": "Intervalle d'interrogation (secondes)"
+        },
+        "data_description": {
+          "poll_interval": "Fréquence d'interrogation de l'appareil via Bluetooth. Des intervalles plus courts donnent des capteurs plus réactifs, mais occupent BLE plus longtemps."
         }
       }
     },
     "error": {
       "cannot_connect": "Impossible de se connecter à l'appareil AquaClean. Vérifiez l'adresse MAC, assurez-vous que l'appareil est allumé et à portée BLE, et vérifiez les paramètres du proxy ESPHome. Assurez-vous également qu'aucun autre appareil (par ex. l'application Geberit Home ou le pont autonome) n'est connecté via Bluetooth — l'AquaClean n'est visible que lorsqu'aucune connexion BLE n'est active.",
-      "no_bluetooth": "Aucun adaptateur Bluetooth local trouvé sur cet appareil. Un hôte proxy Bluetooth ESPHome est requis."
+      "no_bluetooth": "Aucun adaptateur Bluetooth local trouvé sur cet appareil. Un hôte proxy Bluetooth ESPHome est requis.",
+      "no_esphome_found": "Aucun proxy ESPHome trouvé sur le réseau.",
+      "esphome_unreachable": "Impossible d'atteindre le proxy ESPHome. Vérifiez l'hôte, le port et la connectivité réseau.",
+      "invalid_mac": "Format d'adresse MAC invalide. Utilisez XX:XX:XX:XX:XX:XX.",
+      "esphome_host_required": "L'hôte ESPHome est requis."
     },
     "abort": {
       "already_configured": "Cet appareil AquaClean est déjà configuré.",
@@ -63,6 +102,16 @@
     "error": {
       "cannot_connect": "Impossible de se connecter à l'appareil AquaClean. Vérifiez l'adresse MAC, assurez-vous que l'appareil est allumé et à portée BLE, et vérifiez les paramètres du proxy ESPHome. Assurez-vous également qu'aucun autre appareil (par ex. l'application Geberit Home ou le pont autonome) n'est connecté via Bluetooth — l'AquaClean n'est visible que lorsqu'aucune connexion BLE n'est active.",
       "no_bluetooth": "Aucun adaptateur Bluetooth local trouvé sur cet appareil. Un hôte proxy Bluetooth ESPHome est requis."
+    }
+  },
+  "selector": {
+    "transport_type": {
+      "options": {
+        "esphome_auto": "Proxy ESPHome (découverte auto via mDNS)",
+        "esphome_manual": "Proxy ESPHome (saisie manuelle de l'adresse)",
+        "local_ble": "Adaptateur Bluetooth local",
+        "local_ble_ha": "Domaine Bluetooth Home Assistant (Option B)"
+      }
     }
   }
 }

@@ -40,6 +40,10 @@ See docs/connection-test.md for full installation and usage guide.
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import argparse
 import asyncio
 import os
@@ -290,6 +294,27 @@ def _is_geberit(
     if identify_by == "uuid":
         return by_uuid
     return by_name or by_uuid  # "any"
+
+
+# ---------------------------------------------------------------------------
+# Use canonical package versions if the package is installed
+# ---------------------------------------------------------------------------
+try:
+    import aquaclean_console_app.setup.discovery as _disc
+    GEBERIT_BLE_NAME_PREFIX      = _disc.GEBERIT_BLE_NAME_PREFIX
+    GEBERIT_SERVICE_UUID         = _disc.GEBERIT_SERVICE_UUID
+    GEBERIT_SERVICE_UUID_BYTES   = _disc.GEBERIT_SERVICE_UUID_BYTES
+    GEBERIT_SERVICE_UUID_16      = _disc.GEBERIT_SERVICE_UUID_16
+    mac_int_to_str               = _disc.mac_int_to_str
+    mac_str_to_int               = _disc.mac_str_to_int
+    parse_local_name             = _disc.parse_local_name
+    parse_service_uuids_128      = _disc.parse_service_uuids_128
+    parse_service_uuid_16        = _disc.parse_service_uuid_16
+    _discover_esphome_mdns       = _disc._discover_esphome_mdns
+    _discover_esphome_mdns_macos = _disc._discover_esphome_mdns_macos
+except ImportError:
+    pass  # fallback to inline definitions above
+
 
 # ---------------------------------------------------------------------------
 # Step 0a — mDNS / ESPHome discovery

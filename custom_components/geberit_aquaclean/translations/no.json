@@ -3,28 +3,67 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Versjon {version}\n\nSkriv inn BLE MAC-adressen til AquaClean-enheten din. La feltet ESPHome Proxy Host stå tomt for å bruke den lokale Bluetooth-adapteren. En tilkoblingstest utføres ved lagring — vent opptil 30 sekunder.",
+        "description": "Versjon {version}\n\nVelg tilkoblingsmetode for din AquaClean-enhet.",
         "data": {
-          "device_id": "BLE MAC-adresse (XX:XX:XX:XX:XX:XX)",
-          "esphome_host": "ESPHome Proxy Host (tom for lokal BLE)",
-          "esphome_port": "ESPHome Proxy Port",
-          "noise_psk": "ESPHome Krypteringsnøkkel (valgfri, base64)",
-          "poll_interval": "Pollingintervall (sekunder)",
-          "use_ha_bluetooth": "Bruk Home Assistant Bluetooth-domenet (Alternativ B — aktiver hvis HA allerede bruker den samme ESPHome-proxyen)"
+          "transport_type": "Tilkoblingsmetode"
+        }
+      },
+      "esphome_pick": {
+        "title": "Velg ESPHome-proxy",
+        "description": "Flere ESPHome Bluetooth-proxier ble funnet. Velg den som er koblet til din AquaClean.",
+        "data": {
+          "esphome_proxy": "ESPHome-proxy"
+        }
+      },
+      "esphome_host": {
+        "title": "ESPHome-proxy-innstillinger",
+        "description": "Skriv inn tilkoblingsdetaljene for din ESPHome Bluetooth-proxy.",
+        "data": {
+          "esphome_host": "Vert (vertsnavn eller IP)",
+          "esphome_port": "Port",
+          "noise_psk": "Krypteringsnøkkel (valgfri)"
         },
         "data_description": {
-          "device_id": "Bluetooth MAC-adresse for din AquaClean (f.eks. 38:AB:41:2A:0D:67). Finnes på etiketten inne i toalettet eller i Geberit Home-appen.",
-          "esphome_host": "Vertsnavn eller IP for en ESPHome Bluetooth-proxy. La stå tomt for å bruke en lokal Bluetooth-adapter på denne HA-verten.",
-          "esphome_port": "Innebygd API-port for ESPHome-proxyen. Standard: 6053.",
-          "noise_psk": "API-krypteringsnøkkel fra din ESPHome YAML-fil (api: encryption: key:). La stå tomt hvis kryptering ikke er konfigurert.",
-          "poll_interval": "Hvor ofte enheten spørres via Bluetooth. Kortere intervaller gir mer responsive sensorer, men holder BLE opptatt lenger.",
-          "use_ha_bluetooth": "Alternativ A (av, standard): direkte ESPHome-tilkobling — gir også ESP32-signalstyrke, ledig heap og transporttype som sensorer. Alternativ B (på): rutes via HA-s Bluetooth-domene — bruk dette når HA-s Bluetooth-integrasjon allerede opptar den samme ESPHome-proxyen. ESP32-statistikk er ikke tilgjengelig med Alternativ B."
+          "esphome_host": "Vertsnavn eller IP for ESPHome Bluetooth-proxyen (f.eks. aquaclean-proxy.local eller 192.168.1.100).",
+          "esphome_port": "Innebygd API-port. Standard: 6053.",
+          "noise_psk": "API-krypteringsnøkkel fra din ESPHome YAML (api: encryption: key:). La stå tomt om kryptering ikke er konfigurert."
+        }
+      },
+      "ble_scan": {
+        "title": "Velg AquaClean-enhet",
+        "description": "Velg din AquaClean fra skanneresultatene, eller skriv inn MAC-adressen manuelt.",
+        "data": {
+          "device_mac": "Enhet"
+        }
+      },
+      "device_manual": {
+        "title": "Skriv inn MAC-adresse",
+        "description": "Skriv inn Bluetooth MAC-adressen til din AquaClean-enhet. Finnes på etiketten inne i toalettet eller i Geberit Home-appen.",
+        "data": {
+          "device_id": "BLE MAC-adresse"
+        },
+        "data_description": {
+          "device_id": "Format: XX:XX:XX:XX:XX:XX (f.eks. 38:AB:41:2A:0D:67)"
+        }
+      },
+      "confirm": {
+        "title": "Bekreft oppsett",
+        "description": "**Enhet:** {mac}\n**Transport:** {transport}\n**ESPHome-vert:** {esphome_host}\n\nEn tilkoblingstest utføres når du klikker Send. Vent opptil 30 sekunder.\n\nVersjon {version}",
+        "data": {
+          "poll_interval": "Avspørringsintervall (sekunder)"
+        },
+        "data_description": {
+          "poll_interval": "Hvor ofte enheten avspørres via Bluetooth. Kortere intervaller gir mer responsive sensorer, men holder BLE opptatt lenger."
         }
       }
     },
     "error": {
       "cannot_connect": "Kan ikke koble til AquaClean-enheten. Sjekk MAC-adressen, sørg for at enheten er slått på og innenfor BLE-rekkevidde, og bekreft ESPHome-proxy-innstillingene. Sørg også for at ingen andre enheter (f.eks. Geberit Home App eller standalone-broen) er koblet til via Bluetooth — AquaClean annonserer bare når ingen BLE-tilkobling er aktiv.",
-      "no_bluetooth": "Ingen lokal Bluetooth-adapter funnet på denne enheten. En ESPHome Bluetooth-proxy host er nødvendig."
+      "no_bluetooth": "Ingen lokal Bluetooth-adapter funnet på denne enheten. En ESPHome Bluetooth-proxy host er nødvendig.",
+      "no_esphome_found": "Ingen ESPHome-proxy funnet på nettverket.",
+      "esphome_unreachable": "Kan ikke nå ESPHome-proxyen. Sjekk vert, port og nettverkstilkobling.",
+      "invalid_mac": "Ugyldig MAC-adresseformat. Bruk XX:XX:XX:XX:XX:XX.",
+      "esphome_host_required": "ESPHome-vert er påkrevd."
     },
     "abort": {
       "already_configured": "Denne AquaClean-enheten er allerede konfigurert.",
@@ -63,6 +102,16 @@
     "error": {
       "cannot_connect": "Kan ikke koble til AquaClean-enheten. Sjekk MAC-adressen, sørg for at enheten er slått på og innenfor BLE-rekkevidde, og bekreft ESPHome-proxy-innstillingene. Sørg også for at ingen andre enheter (f.eks. Geberit Home App eller standalone-broen) er koblet til via Bluetooth — AquaClean annonserer bare når ingen BLE-tilkobling er aktiv.",
       "no_bluetooth": "Ingen lokal Bluetooth-adapter funnet på denne enheten. En ESPHome Bluetooth-proxy host er nødvendig."
+    }
+  },
+  "selector": {
+    "transport_type": {
+      "options": {
+        "esphome_auto": "ESPHome-proxy (automatisk via mDNS)",
+        "esphome_manual": "ESPHome-proxy (angi adresse manuelt)",
+        "local_ble": "Lokal Bluetooth-adapter",
+        "local_ble_ha": "Home Assistant Bluetooth-domene (Alternativ B)"
+      }
     }
   }
 }
