@@ -197,54 +197,114 @@ async def _discover_esphome_mdns_macos(timeout: float) -> list[dict]:
 
 
 async def _discover_esphome_mdns(timeout: float = 8.0) -> list[dict]:
-    """Return list of ESPHome devices found via mDNS (_esphomelib._tcp.local.).
+    """Return ESPHome devices found via mDNS (_esphomelib._tcp.local.).
 
-    On macOS uses dns-sd subprocess (avoids mDNSResponder port conflict).
-    On Linux/Windows uses Python zeroconf library.
+    On macOS uses dns-sd subprocess (avoids mDNSResponder port-5353 conflict).
+    On Linux/Windows uses AsyncZeroconf + AsyncServiceBrowser so discovery
+    runs entirely on the asyncio event loop — no background threads, no race
+    between asyncio.sleep() and zc.close().
     """
     if sys.platform == "darwin":
         return await _discover_esphome_mdns_macos(timeout)
 
     try:
-        from zeroconf import ServiceBrowser, Zeroconf
+        from zeroconf import ServiceStateChange
+        from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
     except ImportError:
         return []
 
     import socket as _socket
     found: list[dict] = []
 
-    class _Listener:
-        def add_service(self, zc, type_, name):
-            info = zc.get_service_info(type_, name)
-            if info and info.addresses:
+    async def _on_service_state_change(zeroconf, service_type, name, state_change):
+        if state_change is not ServiceStateChange.Added:
+            return
+        try:
+            info = AsyncServiceInfo(service_type, name)
+            await info.async_request(zeroconf, 3000)
+            if info.addresses:
                 found.append({
-                    "name": name.replace("._esphomelib._tcp.local.", ""),
+                    "name": name.replace(f".{service_type}", "").rstrip("."),
                     "ip": _socket.inet_ntoa(info.addresses[0]),
                     "port": info.port,
                     "host": (info.server or "").rstrip("."),
                 })
-
-        def update_service(self, *_):
+        except Exception:
             pass
 
-        def remove_service(self, *_):
+    azc = AsyncZeroconf()
+    try:
+        browser = AsyncServiceBrowser(
+            azc.zeroconf, "_esphomelib._tcp.local.", handlers=[_on_service_state_change]
+        )
+        await asyncio.sleep(timeout)
+        await browser.async_cancel()
+    finally:
+        await azc.async_close()
+    return found
+
+
+async def _discover_esphome_mdns_ha(hass, timeout: float) -> list[dict]:
+    """HA-context discovery: use HA's shared Zeroconf instance.
+
+    Avoids creating a competing mDNS stack alongside HA's own.
+    Falls back to _discover_esphome_mdns() if HA zeroconf is unavailable.
+    """
+    try:
+        from homeassistant.components.zeroconf import async_get_instance
+        from zeroconf import ServiceStateChange
+        from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+    except ImportError:
+        return await _discover_esphome_mdns(timeout)
+
+    import socket as _socket
+    found: list[dict] = []
+
+    async def _on_service_state_change(zeroconf, service_type, name, state_change):
+        if state_change is not ServiceStateChange.Added:
+            return
+        try:
+            info = AsyncServiceInfo(service_type, name)
+            await info.async_request(zeroconf, 3000)
+            if info.addresses:
+                found.append({
+                    "name": name.replace(f".{service_type}", "").rstrip("."),
+                    "ip": _socket.inet_ntoa(info.addresses[0]),
+                    "port": info.port,
+                    "host": (info.server or "").rstrip("."),
+                })
+        except Exception:
             pass
 
-    zc = Zeroconf()
-    ServiceBrowser(zc, "_esphomelib._tcp.local.", _Listener())
-    await asyncio.sleep(timeout)
-    zc.close()
+    try:
+        zc = await async_get_instance(hass)
+    except Exception:
+        return await _discover_esphome_mdns(timeout)
+
+    browser = AsyncServiceBrowser(
+        zc, "_esphomelib._tcp.local.", handlers=[_on_service_state_change]
+    )
+    try:
+        await asyncio.sleep(timeout)
+    finally:
+        await browser.async_cancel()
+        # Do NOT close zc — it is HA's shared instance.
     return found
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-async def async_discover_esphome(timeout: float = 8.0) -> list[dict]:
+async def async_discover_esphome(timeout: float = 8.0, hass=None) -> list[dict]:
     """Discover ESPHome proxies on the local network via mDNS.
+
+    Pass hass when calling from within Home Assistant so HA's shared
+    Zeroconf instance is used instead of a competing standalone one.
 
     Returns list of dicts with keys: name, host, port, ip.
     """
+    if hass is not None:
+        return await _discover_esphome_mdns_ha(hass, timeout)
     return await _discover_esphome_mdns(timeout)
 
 

@@ -190,7 +190,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._transport == "esphome_auto":
             try:
                 from aquaclean_console_app.setup.discovery import async_discover_esphome
-                self._found_proxies = await async_discover_esphome(timeout=8.0)
+                self._found_proxies = await async_discover_esphome(timeout=8.0, hass=self.hass)
             except Exception:
                 self._found_proxies = []
 
