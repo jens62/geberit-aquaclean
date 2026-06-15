@@ -55,6 +55,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     # where the mock's BlueZ advertisement can take 10–15 s to become visible.
     SCAN_TIMEOUT_S: float = 10.0
 
+    # Class-level generation counter keyed by device_id.upper().
+    # Each connect_async() increments the counter for that device.
+    # Stale callbacks from previous connectors compare their stored generation
+    # against this and silently discard notifications when they no longer match.
+    # This prevents a disconnected C1 connector from processing data that
+    # belongs to the current C2 connector (avoids duplicate ACK writes and
+    # AriendiSecurity state corruption).
+    _active_generation: dict = {}
+
     def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
         self.client = None
         self.read_characteristics = {}
@@ -86,6 +95,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.is_variant_a: bool = False       # True when a non-standard Geberit GATT profile is detected
         self._arendi_security = None          # AriendiSecurity instance for Variant A (Alba)
         self._arendi_raw_write = None         # Chunked ATT_WRITE_REQUEST sender set in _post_connect()
+        self._my_generation: int = 0          # Generation assigned at connect_async() time
+        self._generation_key: str = ""        # device_id.upper() used to look up _active_generation
 
     @property
     def arendi_handshake_done(self) -> bool:
@@ -93,6 +104,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
 
     async def connect_async(self, device_id):
+        _key = device_id.upper()
+        BluetoothLeConnector._active_generation[_key] = (
+            BluetoothLeConnector._active_generation.get(_key, 0) + 1
+        )
+        self._my_generation = BluetoothLeConnector._active_generation[_key]
+        self._generation_key = _key
         logger.silly("BluetoothLeConnector: connect")
         if self.esphome_host:
             await self._connect_via_esphome(device_id)
@@ -706,6 +723,16 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
 
     async def _on_data_received(self, sender, data):
+        if self._my_generation > 0 and self._generation_key:
+            _current_gen = BluetoothLeConnector._active_generation.get(
+                self._generation_key, self._my_generation
+            )
+            if self._my_generation != _current_gen:
+                logger.debug(
+                    f"BluetoothLeConnector: _on_data_received: stale callback discarded "
+                    f"(gen={self._my_generation} != current={_current_gen})"
+                )
+                return
         logger.silly("BluetoothLeConnector: _on_data_received")
         logger.silly(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
         _hs_done = self._arendi_security.handshake_done if self._arendi_security else None
