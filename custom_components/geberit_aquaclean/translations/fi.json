@@ -64,7 +64,7 @@
       "cannot_connect": "Yhteyden muodostaminen AquaClean-laitteeseen epäonnistui. Tarkista MAC-osoite, varmista että laite on käynnistetty ja BLE-kantaman sisällä, ja tarkista ESPHome-välityspalvelimen asetukset. Varmista myös, ettei mikään muu laite (esim. Geberit Home -sovellus tai itsenäinen silta) ole yhteydessä Bluetoothin kautta — AquaClean mainostaa vain, kun yhtään BLE-yhteyttä ei ole aktiivisena.",
       "no_bluetooth": "Tältä laitteelta ei löydy paikallista Bluetooth-sovitinta. ESPHome Bluetooth -välityspalvelimen isäntä on pakollinen.",
       "no_esphome_found": "ESPHome-välityspalvelinta ei löydy verkosta.",
-      "alba_handshake_failed": "AquaClean Alba -laite löydettiin, mutta Arendi-kättely ei onnistunut — ESP32 BLE-skanneri saattaa olla väliaikaisesti jumissa. Napsauta Lähetä uudelleen yrittääksesi uudelleen. Jos virhe jatkuu, käynnistä ESPHome-välityspalvelin uudelleen sen web-käyttöliittymän kautta.",
+      "alba_handshake_failed": "AquaClean Alba -laite löydettiin, mutta Arendi-turvallisuuskättely ei onnistunut. Napsauta Lähetä uudelleen yrittääksesi uudelleen. Jos virhe jatkuu, varmista, että mikään muu laite (esim. Geberit Home -sovellus) ei ole yhteydessä Bluetoothin kautta.",
       "esphome_unreachable": "ESPHome-välityspalvelimeen ei saada yhteyttä. Tarkista isäntä, portti ja verkkoyhteys.",
       "invalid_mac": "Virheellinen MAC-osoitemuoto. Käytä XX:XX:XX:XX:XX:XX.",
       "esphome_host_required": "ESPHome-isäntä vaaditaan."

@@ -64,7 +64,7 @@
       "cannot_connect": "No se puede conectar al dispositivo AquaClean. Compruebe la dirección MAC, asegúrese de que el dispositivo esté encendido y dentro del alcance BLE, y verifique la configuración del proxy ESPHome. Asegúrese también de que ningún otro dispositivo (p. ej., la aplicación Geberit Home o el puente independiente) esté conectado mediante Bluetooth — el AquaClean solo anuncia cuando no hay ninguna conexión BLE activa.",
       "no_bluetooth": "No se encontró ningún adaptador Bluetooth local en este dispositivo. Se requiere un host proxy Bluetooth ESPHome.",
       "no_esphome_found": "No se encontró ningún proxy ESPHome en la red.",
-      "alba_handshake_failed": "Se encontró el dispositivo AquaClean Alba, pero el protocolo de enlace Arendi no se completó — el escáner BLE del ESP32 puede estar temporalmente bloqueado. Haz clic en Enviar de nuevo para reintentar. Si el error persiste, reinicia el proxy ESPHome desde su interfaz web.",
+      "alba_handshake_failed": "Se encontró el dispositivo AquaClean Alba, pero el protocolo de enlace de seguridad Arendi no se completó. Haz clic en Enviar de nuevo para reintentar. Si el error persiste, asegúrate de que ningún otro dispositivo (p. ej. la app Geberit Home) esté conectado vía Bluetooth.",
       "esphome_unreachable": "No se puede alcanzar el proxy ESPHome. Comprueba el host, el puerto y la conectividad de red.",
       "invalid_mac": "Formato de dirección MAC no válido. Usa XX:XX:XX:XX:XX:XX.",
       "esphome_host_required": "El host ESPHome es obligatorio."

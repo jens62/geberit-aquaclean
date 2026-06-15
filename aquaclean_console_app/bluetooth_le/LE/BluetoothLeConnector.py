@@ -143,6 +143,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     device,
                     device.name or device_id,
                     disconnected_callback=self._on_disconnected,
+                    use_services_cache=False,
                 )
             except ImportError:
                 # bleak_retry_connector not available — fall back to direct connect.
