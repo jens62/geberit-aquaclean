@@ -196,12 +196,10 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if len(self._found_proxies) == 0:
                 return await self.async_step_esphome_host()
-            elif len(self._found_proxies) == 1:
-                p = self._found_proxies[0]
-                self._esphome_host = p["host"] or p["ip"]
-                self._esphome_port = p["port"]
-                return await self.async_step_ble_scan()
             else:
+                # Always show picker — even with 1 result.
+                # User may have multiple proxies and only one responded to mDNS,
+                # or they want a different proxy than the one discovered.
                 return await self.async_step_esphome_pick()
 
         elif self._transport == "esphome_manual":

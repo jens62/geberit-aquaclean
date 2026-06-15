@@ -3,14 +3,17 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Versie {version}\n\nKies de verbindingsmethode voor je AquaClean-apparaat.",
+        "description": "Versie {version}\n\nKies hoe deze integratie via Bluetooth verbinding maakt met je AquaClean.\n\nNiet zeker? Zie de [installatiehandleiding](https://github.com/jens62/geberit-aquaclean/blob/main/docs/hacs-integration.md).",
         "data": {
           "transport_type": "Verbindingsmethode"
+        },
+        "data_description": {
+          "transport_type": "**ESPHome-proxy (aanbevolen):** Een ESP32 met de `aquaclean-proxy`-firmware fungeert als Bluetooth-brug — je HA-host kan overal op het netwerk staan, geen Bluetooth-adapter nodig.\n\n**Lokale Bluetooth:** Gebruikt direct de Bluetooth-adapter van deze HA-machine. De machine moet binnen ~5 m van het toilet staan.\n\n**HA Bluetooth-domein:** Geavanceerd — voor setups waarbij HA's eigen Bluetooth-integratie dezelfde ESP32-proxy al beheert."
         }
       },
       "esphome_pick": {
         "title": "ESPHome-proxy selecteren",
-        "description": "Er zijn meerdere ESPHome Bluetooth-proxies gevonden. Selecteer de proxy die verbonden is met je AquaClean.",
+        "description": "De volgende ESPHome Bluetooth-proxies zijn gevonden op je netwerk. Selecteer de proxy die fysiek dicht bij de AquaClean staat die je wilt toevoegen, of kies **Handmatig invoeren** om een IP-adres direct in te voeren.",
         "data": {
           "esphome_proxy": "ESPHome-proxy"
         }

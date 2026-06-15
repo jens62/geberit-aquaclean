@@ -3,14 +3,17 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Versio {version}\n\nValitse yhteysmenetelmä AquaClean-laitteellesi.",
+        "description": "Versio {version}\n\nValitse, miten tämä integraatio muodostaa yhteyden AquaClean-laitteeseesi Bluetoothin kautta.\n\nEpävarma? Katso [asennusopas](https://github.com/jens62/geberit-aquaclean/blob/main/docs/hacs-integration.md).",
         "data": {
           "transport_type": "Yhteysmenetelmä"
+        },
+        "data_description": {
+          "transport_type": "**ESPHome-välityspalvelin (suositeltu):** ESP32, jossa on `aquaclean-proxy`-laiteohjelmisto, toimii Bluetooth-siltana — HA-isäntäsi voi olla missä tahansa verkossa, eikä Bluetooth-sovitinta tarvita.\n\n**Paikallinen Bluetooth:** Käyttää suoraan tämän HA-koneen Bluetooth-sovitinta. Koneen on oltava ~5 m:n etäisyydellä WC:stä.\n\n**HA Bluetooth-toimialue:** Edistynyt — konfiguraatioihin, joissa HA:n oma Bluetooth-integraatio hallitsee jo samaa ESP32-välityspalvelinta."
         }
       },
       "esphome_pick": {
         "title": "Valitse ESPHome-välityspalvelin",
-        "description": "Löydettiin useita ESPHome Bluetooth -välityspalvelimia. Valitse se, joka on yhdistetty AquaClean-laitteeseen.",
+        "description": "Seuraavat ESPHome Bluetooth -välityspalvelimet löytyivät verkostasi. Valitse se, joka on fyysisesti lähellä lisättävää AquaClean-laitetta, tai valitse **Syötä manuaalisesti** kirjoittaaksesi IP-osoitteen suoraan.",
         "data": {
           "esphome_proxy": "ESPHome-välityspalvelin"
         }
