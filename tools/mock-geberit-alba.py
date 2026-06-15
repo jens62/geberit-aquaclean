@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.16.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.17.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 try:
     from importlib.metadata import version as _pkg_ver
@@ -659,25 +659,29 @@ class _AriendiServerSide:
             # Phase 2 protocol:
             #   1. Detect end of Phase 2: EVENT_STORAGE_INVENTORY + READ DpId=8.
             #   2. Mock sends HDLC DISC to signal "Phase 2 done".
-            #   3. iOS responds UA (discarded by loop), then either:
-            #      a. Sends Phase 3 SABM on the same BLE link → loop handles it,
-            #         restarting the handshake for Phase 3 (GetEndProduct arrives).
-            #      b. Disconnects BLE → _handshake_loop fast-disconnects, advertising
-            #         resumes immediately, Phase 3 connects as a new BLE session.
+            #   3. iOS responds UA (discarded by loop), then sends Phase 2.5 reads
+            #      automatically on the same BLE link (~2.3 s total):
+            #        READ DpId=589 (DAYS_UNTIL_NEXT_DESCALING)
+            #        READ DpId=585 (DESCALING_STATUS)
+            #        READ DpId=983 (DESCALING_DEVICE_LOCK_STATUS)
+            #        WRITE DpId=802 (START_USER_SESSION) ← save screen appears
+            #   4. User presses Save → iOS sends Phase 3 SABM on the same BLE link.
+            #      Loop handles it, restarting the handshake for Phase 3.
             #
-            # Without DISC, iOS waits indefinitely on the save screen.  When the BLE
-            # link drops unexpectedly (mock call_disconnect()), iOS fires GetEndProduct
-            # 288 ms later with no Phase 3 connected → SIGABRT crash.
+            # BLE must stay alive after DISC — dropping it kills the save screen
+            # (bz.IsConnected=false → dialog closes).  No fast-disconnect here.
             _phase2_saw_storage = False
             _disc_sent = False
             while True:
                 if _first_frame:
                     _timeout = 5.0
+                elif _ble_session_phase >= 3:
+                    # Phase 3: KE + Inventory + GetEndProduct.  Give plenty of time.
+                    _timeout = 30.0
                 elif _ble_session_phase >= 2 and _disc_sent:
-                    # DISC sent + BLE disconnect scheduled.  The disconnect fires within
-                    # ~50 ms and delivers DISCONNECT to the queue; this 10 s is just a
-                    # safety net if the fast-disconnect task fails.
-                    _timeout = 10.0
+                    # DISC sent; Phase 2.5 reads land in ~2.3 s automatically, then
+                    # the save screen stays open until the user presses Save (Phase 3 SABM).
+                    _timeout = 25.0
                 elif _ble_session_phase >= 2:
                     # Before DISC: covers the ~2 s gap between Phase 2 sub-phase A
                     # (quick KE + READ) and sub-phase B (full inventory).
@@ -695,7 +699,7 @@ class _AriendiServerSide:
                 except asyncio.TimeoutError:
                     if _ble_session_phase >= 2:
                         if _disc_sent:
-                            print(f"[MockServer] Phase 3 save timeout — user did not press Save in {_timeout:.0f} s")
+                            print(f"[MockServer] save-screen timeout — user did not press Save within {_timeout:.0f} s of DISC")
                         else:
                             print(f"[MockServer] Phase {_ble_session_phase} fallback timeout — "
                                   f"no frames for {_timeout:.0f} s")
@@ -758,7 +762,7 @@ class _AriendiServerSide:
                     # iOS responds UA (discarded), then sends Phase 3 SABM on same BLE link
                     # OR disconnects BLE and reconnects for Phase 3.  Keep frame loop running
                     # so the Phase 3 SABM or GetEndProduct (0xD0) arrives here.
-                    if _ble_session_phase >= 2 and not _disc_sent:
+                    if _ble_session_phase == 2 and not _disc_sent:
                         _cmd = plaintext[0] if plaintext else 0
                         if _cmd == CommandId.EventStorageInventory:
                             _phase2_saw_storage = True
@@ -766,10 +770,8 @@ class _AriendiServerSide:
                             _disc_type = 8  # DISC U-frame ctrl = 0x43
                             await send_fn(self._att_u(_disc_type))
                             _disc_sent = True
-                            if disconnect_fn is not None:
-                                asyncio.create_task(disconnect_fn())
-                            print("[MockServer] Phase 2 complete — sent DISC + BLE disconnect scheduled; "
-                                  "Phase 3 expected as new BLE connection")
+                            print("[MockServer] Phase 2 complete — sent DISC; BLE stays alive for "
+                                  "Phase 2.5 reads (DpId=589/585/983/802) then Phase 3 SABM")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
                     fake_resp = bytes([
@@ -1322,7 +1324,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
             _completed = None
             _session_completed = False
             try:
-                _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec, disconnect_fn=_fast_disconnect)
+                _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=send_delay_sec, disconnect_fn=None)
                 _session_completed = True   # run() returned — a client connected
                 if _completed is not False:
                     print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
