@@ -125,17 +125,59 @@ def parse_manufacturer_data(data: bytes) -> bool:
     return False
 
 
+# Article number prefix → model name, from AcDeviceTypeHelper.GetDeviceType().
+# Prefix is bytes 3–7 of the manufacturer payload formatted as "XXX.YY".
+# Matching: exact first, then startswith fallback for 3-digit suffixes (e.g. "146.09" ⊂ "146.096").
+_ARTICLE_PREFIX_MODEL: dict[str, str] = {
+    "146.22": "Sela", "243.64": "Sela", "243.71": "Sela",
+    "146.21": "Mera Comfort",
+    "146.20": "Mera Classic",
+    "146.19": "Mera Floorstanding", "146.24": "Mera Floorstanding",
+    "146.07": "Tuma Classic", "146.09": "Tuma Classic",
+    "243.36": "Tuma Classic", "243.46": "Tuma Classic", "243.47": "Tuma Classic",
+    "146.27": "Tuma Comfort", "146.29": "Tuma Comfort", "146.98": "Tuma Comfort",
+    "243.29": "Tuma Comfort", "243.48": "Tuma Comfort", "243.49": "Tuma Comfort",
+    "243.67": "Tuma Comfort",
+    "146.30": "Cama Testset",
+    "146.34": "Cama",
+}
+
+
+def _lookup_model_from_prefix(prefix: str) -> str:
+    if prefix in _ARTICLE_PREFIX_MODEL:
+        return _ARTICLE_PREFIX_MODEL[prefix]
+    for key, name in _ARTICLE_PREFIX_MODEL.items():
+        if prefix.startswith(key) or key.startswith(prefix):
+            return name
+    return ""
+
+
+def _extract_article_and_model(mfr_payload: bytes, is_alba: bool) -> tuple:
+    """Return (article_number, device_type) from manufacturer payload bytes."""
+    if len(mfr_payload) < 8:
+        return None, ""
+    printable = [chr(c) for c in mfr_payload[3:8] if 0x20 <= c <= 0x7E]
+    if len(printable) < 5:
+        return None, ""
+    if is_alba:
+        return "".join(printable).strip() or None, "Alba"
+    prefix = "".join(printable[:3]) + "." + "".join(printable[3:5])
+    return prefix, _lookup_model_from_prefix(prefix) or "AquaClean"
+
+
 def parse_geberit_adv_info(data: bytes) -> dict:
     """Return article number and device type from a raw Geberit BLE advertisement.
 
-    Scans all AD structures in one pass.  Safe on malformed or empty input.
+    Two-pass over AD structures: collect service UUIDs + manufacturer payload,
+    then resolve model name via article prefix lookup.  Safe on malformed or empty input.
 
     Returns dict with keys:
-      article_number (str | None) — e.g. "AC250"; from manufacturer data payload bytes 3–7
-      device_type    (str)        — "Alba", "Mera Comfort", or "" when unknown
+      article_number (str | None) — e.g. "AC250" (Alba) or "146.22" (Sela)
+      device_type    (str)        — "Alba", "Sela", "Mera Comfort", "AquaClean", etc.
     """
-    article_number = None
-    device_type = ""
+    mfr_payload = b""
+    is_alba = False
+    is_aquaclean_old = False
     i = 0
     while i < len(data):
         length = data[i]
@@ -144,38 +186,39 @@ def parse_geberit_adv_info(data: bytes) -> dict:
         ad_type = data[i + 1]
         if ad_type == 0xFF and length >= 3:
             if data[i + 2 : i + 4] == GEBERIT_COMPANY_ID:
-                payload = data[i + 4 : i + 1 + length]
-                if len(payload) >= 8:
-                    chars = payload[3:8]
-                    text = "".join(chr(c) for c in chars if 0x20 <= c <= 0x7E)
-                    article_number = text.strip() or None
+                mfr_payload = data[i + 4 : i + 1 + length]
         elif ad_type in (0x02, 0x03):
             payload = data[i + 2 : i + 1 + length]
             for start in range(0, len(payload) - 1, 2):
                 uuid_bytes = payload[start : start + 2]
                 if uuid_bytes == ALBA_SERVICE_UUID_16:
-                    device_type = "Alba"
+                    is_alba = True
                 elif uuid_bytes == GEBERIT_SERVICE_UUID_16:
-                    device_type = "AquaClean"
+                    is_aquaclean_old = True
         i += 1 + length
+    if not (is_alba or is_aquaclean_old):
+        return {"article_number": None, "device_type": ""}
+    article_number, device_type = _extract_article_and_model(mfr_payload, is_alba)
+    if is_alba and not device_type:
+        device_type = "Alba"
+    elif is_aquaclean_old and not device_type:
+        device_type = "AquaClean"
     return {"article_number": article_number, "device_type": device_type}
 
 
 def parse_geberit_adv_info_bleak(manufacturer_data: dict, service_uuids: list) -> dict:
     """Same output as parse_geberit_adv_info but from already-parsed bleak AdvertisementData fields."""
-    mfr_payload = (manufacturer_data or {}).get(0x0602, b"")
-    article_number = None
-    if len(mfr_payload) >= 8:
-        chars = mfr_payload[3:8]
-        text = "".join(chr(c) for c in chars if 0x20 <= c <= 0x7E)
-        article_number = text.strip() or None
     uuids = service_uuids or []
-    if ALBA_SERVICE_UUID in uuids:
+    is_alba = ALBA_SERVICE_UUID in uuids
+    is_aquaclean_old = GEBERIT_SERVICE_UUID in uuids
+    if not (is_alba or is_aquaclean_old):
+        return {"article_number": None, "device_type": ""}
+    mfr_payload = (manufacturer_data or {}).get(0x0602, b"")
+    article_number, device_type = _extract_article_and_model(mfr_payload, is_alba)
+    if is_alba and not device_type:
         device_type = "Alba"
-    elif GEBERIT_SERVICE_UUID in uuids:
-        device_type = "Mera Comfort"
-    else:
-        device_type = ""
+    elif is_aquaclean_old and not device_type:
+        device_type = "AquaClean"
     return {"article_number": article_number, "device_type": device_type}
 
 
