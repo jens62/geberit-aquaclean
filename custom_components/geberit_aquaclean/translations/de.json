@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Einrichtung bestätigen",
-        "description": "**Gerät:** {mac}\n**Verbindung:** {transport}\n**ESPHome-Host:** {esphome_host}\n\nBeim Klicken auf Speichern wird ein Verbindungstest durchgeführt. Bitte bis zu 30 Sekunden warten.\n\nVersion {version}",
+        "description": "**Gerät:** {mac}\n**Verbindung:** {transport}\n**ESPHome-Host:** {esphome_host}\n\nBeim Klicken auf Speichern wird ein Verbindungstest durchgeführt. Bitte bis zu 30 Sekunden warten. Nach dem Schließen des Assistenten kann die Integration noch bis zu 60 Sekunden benötigen, um vollständig aktiv zu werden.\n\nVersion {version}",
         "data": {
           "poll_interval": "Abfrageintervall (Sekunden)"
         },

@@ -384,14 +384,42 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 if profile is not None and not profile.is_standard and not profile.arendi_handshake_done:
                     if _is_known_alba_profile(profile):
-                        _LOGGER.warning(
-                            "[AquaClean] Config flow wizard: known Alba GATT profile but handshake "
-                            "failed (svc=%s) — possible causes: stale BlueZ GATT handle cache on "
-                            "the HA machine (fix: bluetoothctl remove %s), or stale NimBLE NVS "
-                            "cache on the ESP32 proxy (fix: clear BT cache in ESPHome UI)",
-                            profile.svc_uuid, self._mac,
+                        # BLE connected and Alba GATT matched, but Arendi handshake timed out.
+                        # Common on first connect: NimBLE does fresh GATT discovery (~13 s),
+                        # exhausting a test session timer.  The cache is now warm; retry once
+                        # automatically — second connect takes ~2 s and handshake succeeds.
+                        _LOGGER.info(
+                            "[AquaClean] Config flow: Alba handshake timed out — "
+                            "auto-retrying once (NimBLE GATT cache now warm)"
                         )
-                        errors["base"] = "alba_handshake_failed"
+                        await asyncio.sleep(2.0)
+                        try:
+                            profile = await _test_connection(
+                                self._mac, test_esphome_host, self._esphome_port,
+                                self._noise_psk, hass=hass,
+                            )
+                        except Exception:
+                            _LOGGER.warning(
+                                "[AquaClean] Config flow wizard: Alba handshake retry raised exception"
+                            )
+                            errors["base"] = "cannot_connect"
+                        else:
+                            if (
+                                profile is not None
+                                and not profile.is_standard
+                                and not profile.arendi_handshake_done
+                                and _is_known_alba_profile(profile)
+                            ):
+                                _LOGGER.warning(
+                                    "[AquaClean] Config flow wizard: known Alba GATT profile but "
+                                    "handshake failed after auto-retry (svc=%s) — possible causes: "
+                                    "stale BlueZ GATT handle cache on the HA machine "
+                                    "(fix: bluetoothctl remove %s), or stale NimBLE NVS cache on "
+                                    "the ESP32 proxy (fix: clear BT cache in ESPHome UI)",
+                                    profile.svc_uuid, self._mac,
+                                )
+                                errors["base"] = "alba_handshake_failed"
+                            # else: retry succeeded — fall through to `if not errors:`
                     else:
                         dis = profile.dis_info or {}
                         _LOGGER.warning(

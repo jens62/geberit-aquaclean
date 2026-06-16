@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Confirm Setup",
-        "description": "**Device:** {mac}\n**Transport:** {transport}\n**ESPHome host:** {esphome_host}\n\nA connection test will be performed when you click Submit. Allow up to 30 seconds.\n\nVersion {version}",
+        "description": "**Device:** {mac}\n**Transport:** {transport}\n**ESPHome host:** {esphome_host}\n\nA connection test will be performed when you click Submit. Allow up to 30 seconds for this step; after the wizard closes, the integration may take an additional 60 seconds to become fully active.\n\nVersion {version}",
         "data": {
           "poll_interval": "Poll interval (seconds)"
         },

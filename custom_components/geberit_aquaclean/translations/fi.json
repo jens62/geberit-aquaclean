@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Vahvista asennus",
-        "description": "**Laite:** {mac}\n**Yhteys:** {transport}\n**ESPHome-isäntä:** {esphome_host}\n\nYhteyden testaus suoritetaan, kun napsautat Lähetä. Odota enintään 30 sekuntia.\n\nVersio {version}",
+        "description": "**Laite:** {mac}\n**Yhteys:** {transport}\n**ESPHome-isäntä:** {esphome_host}\n\nYhteyden testaus suoritetaan, kun napsautat Lähetä. Odota enintään 30 sekuntia. Ohjaimen sulkemisen jälkeen integraatio voi tarvita vielä 60 sekuntia täysin aktivoituakseen.\n\nVersio {version}",
         "data": {
           "poll_interval": "Kyselyväli (sekuntia)"
         },

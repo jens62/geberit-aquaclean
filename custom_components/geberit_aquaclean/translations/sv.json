@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Bekräfta inställning",
-        "description": "**Enhet:** {mac}\n**Transport:** {transport}\n**ESPHome-värd:** {esphome_host}\n\nEtt anslutningstest utförs när du klickar på Skicka. Vänta upp till 30 sekunder.\n\nVersion {version}",
+        "description": "**Enhet:** {mac}\n**Transport:** {transport}\n**ESPHome-värd:** {esphome_host}\n\nEtt anslutningstest utförs när du klickar på Skicka. Vänta upp till 30 sekunder. Efter att guiden stängs kan integrationen behöva ytterligare 60 sekunder för att bli fullt aktiv.\n\nVersion {version}",
         "data": {
           "poll_interval": "Avsökningsintervall (sekunder)"
         },

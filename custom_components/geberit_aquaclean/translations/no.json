@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Bekreft oppsett",
-        "description": "**Enhet:** {mac}\n**Transport:** {transport}\n**ESPHome-vert:** {esphome_host}\n\nEn tilkoblingstest utføres når du klikker Send. Vent opptil 30 sekunder.\n\nVersjon {version}",
+        "description": "**Enhet:** {mac}\n**Transport:** {transport}\n**ESPHome-vert:** {esphome_host}\n\nEn tilkoblingstest utføres når du klikker Send. Vent opptil 30 sekunder. Etter at veiviseren lukkes, kan integrasjonen trenge ytterligere 60 sekunder for å bli fullt aktiv.\n\nVersjon {version}",
         "data": {
           "poll_interval": "Avspørringsintervall (sekunder)"
         },

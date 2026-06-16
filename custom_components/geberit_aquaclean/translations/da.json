@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Bekræft opsætning",
-        "description": "**Enhed:** {mac}\n**Transport:** {transport}\n**ESPHome-vært:** {esphome_host}\n\nEn forbindelsestest udføres, når du klikker på Send. Vent op til 30 sekunder.\n\nVersion {version}",
+        "description": "**Enhed:** {mac}\n**Transport:** {transport}\n**ESPHome-vært:** {esphome_host}\n\nEn forbindelsestest udføres, når du klikker på Send. Vent op til 30 sekunder. Efter guiden lukkes, kan integrationen bruge op til 60 sekunder mere på at blive fuldt aktiv.\n\nVersion {version}",
         "data": {
           "poll_interval": "Forespørgselsinterval (sekunder)"
         },

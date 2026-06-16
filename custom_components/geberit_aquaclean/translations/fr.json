@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Confirmer la configuration",
-        "description": "**Appareil :** {mac}\n**Transport :** {transport}\n**Hôte ESPHome :** {esphome_host}\n\nUn test de connexion sera effectué lorsque vous cliquerez sur Envoyer. Veuillez patienter jusqu'à 30 secondes.\n\nVersion {version}",
+        "description": "**Appareil :** {mac}\n**Transport :** {transport}\n**Hôte ESPHome :** {esphome_host}\n\nUn test de connexion sera effectué lorsque vous cliquerez sur Envoyer. Veuillez patienter jusqu'à 30 secondes. Après la fermeture de l'assistant, l'intégration peut nécessiter jusqu'à 60 secondes supplémentaires pour devenir pleinement active.\n\nVersion {version}",
         "data": {
           "poll_interval": "Intervalle d'interrogation (secondes)"
         },

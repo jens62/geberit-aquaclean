@@ -51,7 +51,7 @@
       },
       "confirm": {
         "title": "Configuratie bevestigen",
-        "description": "**Apparaat:** {mac}\n**Transport:** {transport}\n**ESPHome-host:** {esphome_host}\n\nEr wordt een verbindingstest uitgevoerd wanneer u op Verzenden klikt. Wacht tot 30 seconden.\n\nVersie {version}",
+        "description": "**Apparaat:** {mac}\n**Transport:** {transport}\n**ESPHome-host:** {esphome_host}\n\nEr wordt een verbindingstest uitgevoerd wanneer u op Verzenden klikt. Wacht tot 30 seconden. Na het sluiten van de wizard kan de integratie nog tot 60 seconden nodig hebben om volledig actief te worden.\n\nVersie {version}",
         "data": {
           "poll_interval": "Poll-interval (seconden)"
         },
