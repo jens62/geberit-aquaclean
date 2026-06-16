@@ -938,7 +938,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         # Yield to let the event loop flush the
                         # UnsubscribeBluetoothLEAdvertisementsRequest frame to TCP before
                         # api.disconnect() closes the connection (trap 12 — flush race).
-                        await asyncio.sleep(0.1)
+                        # 1.5 s gives the ESP32 time to both receive the frame AND release
+                        # the subscription slot before TCP tears down; 0.1 s was too short
+                        # (slot remained occupied ~6 s after disconnect in practice).
+                        await asyncio.sleep(1.5)
                     except Exception:
                         pass
                     self._esphome_unsub_adv = None
@@ -960,10 +963,16 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         else:
             logger.silly(f"not self.client, no need to disconnect BLE.")
             # No BLE client means the scan timed out (device not found) before BLE connect.
-            # ESPHomeAPIClient.disconnect() would normally close the TCP connection, but
-            # since self.client was never created, we must close it explicitly here.
-            # Without this, the dangling TCP connection keeps the ESP32's advertisement
-            # subscription slot occupied, blocking ble-scan.py and other clients.
+            # Must unsubscribe from BLE advertisements BEFORE closing TCP — same ordering
+            # rule as the BLE-connected path above.  The fallback at the end of this method
+            # runs AFTER TCP close, which is too late (frame never delivered to ESP32).
+            if self.esphome_host and self._esphome_unsub_adv is not None:
+                try:
+                    self._esphome_unsub_adv()
+                    await asyncio.sleep(1.5)
+                except Exception:
+                    pass
+                self._esphome_unsub_adv = None
             if self._esphome_api is not None:
                 try:
                     await self._esphome_api.disconnect()
