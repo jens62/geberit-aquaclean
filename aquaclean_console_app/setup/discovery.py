@@ -156,7 +156,7 @@ def parse_geberit_adv_info(data: bytes) -> dict:
                 if uuid_bytes == ALBA_SERVICE_UUID_16:
                     device_type = "Alba"
                 elif uuid_bytes == GEBERIT_SERVICE_UUID_16:
-                    device_type = "Mera Comfort"
+                    device_type = "AquaClean"
         i += 1 + length
     return {"article_number": article_number, "device_type": device_type}
 
