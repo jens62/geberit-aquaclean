@@ -1,4 +1,5 @@
 import asyncio
+import math
 import time
 from bleak import BleakClient, BleakScanner, BleakError
 from bleak.backends.scanner import AdvertisementData
@@ -428,11 +429,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.esphome_wifi_rssi = round(float(captured[self._esphome_wifi_key]), 1)
                 logger.debug(f"ESP32 WiFi RSSI: {self.esphome_wifi_rssi} dBm")
             if self._esphome_free_heap_key in captured and captured[self._esphome_free_heap_key] is not None:
-                self.esphome_free_heap = int(float(captured[self._esphome_free_heap_key]))
-                logger.debug(f"ESP32 Free Heap: {self.esphome_free_heap} B")
+                _fh = float(captured[self._esphome_free_heap_key])
+                if not math.isnan(_fh):
+                    self.esphome_free_heap = int(_fh)
+                    logger.debug(f"ESP32 Free Heap: {self.esphome_free_heap} B")
             if self._esphome_max_free_block_key in captured and captured[self._esphome_max_free_block_key] is not None:
-                self.esphome_max_free_block = int(float(captured[self._esphome_max_free_block_key]))
-                logger.debug(f"ESP32 Max Free Block: {self.esphome_max_free_block} B")
+                _mb = float(captured[self._esphome_max_free_block_key])
+                if not math.isnan(_mb):
+                    self.esphome_max_free_block = int(_mb)
+                    logger.debug(f"ESP32 Max Free Block: {self.esphome_max_free_block} B")
         except Exception as e:
             logger.debug(f"Failed to read ESP32 diagnostic sensors: {e}")
 

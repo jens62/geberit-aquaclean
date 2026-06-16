@@ -417,6 +417,22 @@ class ESPHomeAPIClient:
 
         if not self._is_connected:
             logger.silly("[ESPHomeAPIClient] Already disconnected")
+            # Cancel the notification worker — it may be blocked on queue.get() even
+            # though _is_connected is False (set by on_bluetooth_connection_state when
+            # the peer disconnected).  Without this, the task is destroyed while pending
+            # and asyncio logs "Task was destroyed but it is pending".
+            if self._notify_worker_task:
+                self._notify_worker_task.cancel()
+                self._notify_worker_task = None
+            # Clean up aioesphomeapi dispatch-table entries so the next connect
+            # doesn't accumulate stale handlers (debugging trap 5 variant).
+            for _stop_notify, remove_cb in self._notify_unsubs:
+                try:
+                    remove_cb()
+                except Exception:
+                    pass
+            self._notify_unsubs.clear()
+            self._notify_callbacks.clear()
             # Still cancel the connection-state callback even when BLE is already down.
             # Skipping this leaves the callback registered; the ESP32 never learns that
             # the subscriber is gone and retains the advertisement subscription slot,
