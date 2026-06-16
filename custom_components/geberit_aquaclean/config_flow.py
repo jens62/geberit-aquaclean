@@ -155,6 +155,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._noise_psk: str | None = None
         self._found_devices: list[dict] = []
         self._mac: str | None = None
+        self._adv_bytes: bytes = b""
         self._version: str = "unknown"
 
     @staticmethod
@@ -310,13 +311,18 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not self._found_devices:
                 return await self.async_step_device_manual()
 
+            from aquaclean_console_app.setup.discovery import parse_geberit_adv_info
             options = []
             for d in self._found_devices:
-                name_part = d.get("adv_name") or ""
-                label = f"{d['mac']}"
-                if name_part:
-                    label += f" — {name_part}"
-                label += f" ({d['rssi']:+d} dBm)"
+                adv_info = parse_geberit_adv_info(d.get("adv_bytes") or b"")
+                article = adv_info["article_number"] or ""
+                device_type = adv_info["device_type"] or ""
+                label = d["mac"]
+                if article:
+                    label = f"{article}  {label}"
+                if device_type:
+                    label += f"  ({device_type})"
+                label += f"  {d['rssi']:+d} dBm"
                 options.append(selector.SelectOptionDict(value=d["mac"], label=label))
             options.append(selector.SelectOptionDict(value="__manual__", label="Enter MAC manually…"))
 
@@ -333,6 +339,8 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if chosen == "__manual__":
             return await self.async_step_device_manual()
         self._mac = chosen.upper()
+        _sel = next((d for d in self._found_devices if d["mac"].upper() == self._mac), None)
+        self._adv_bytes = (_sel or {}).get("adv_bytes") or b""
         return await self.async_step_confirm()
 
     # ------------------------------------------------------------------
@@ -474,6 +482,14 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "local_ble_ha": "HA Bluetooth domain",
         }.get(self._transport, self._transport)
 
+        from aquaclean_console_app.setup.discovery import parse_geberit_adv_info
+        adv_info = parse_geberit_adv_info(self._adv_bytes or b"")
+        mac_label = self._mac or ""
+        if adv_info["article_number"]:
+            mac_label = f"{adv_info['article_number']}  {mac_label}"
+        if adv_info["device_type"]:
+            mac_label += f"  ({adv_info['device_type']})"
+
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({
@@ -483,7 +499,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }),
             errors=errors,
             description_placeholders={
-                "mac": self._mac or "",
+                "mac": mac_label,
                 "transport": transport_label,
                 "esphome_host": self._esphome_host or "—",
                 "version": self._version,

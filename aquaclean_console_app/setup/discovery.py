@@ -7,7 +7,7 @@ Public API:
 
 Internal helpers (importable by connection-test.py):
     mac_int_to_str, mac_str_to_int
-    parse_local_name, parse_service_uuids_128, parse_service_uuid_16
+    parse_local_name, parse_service_uuids_128, parse_service_uuid_16, parse_geberit_adv_info
     is_geberit_device
     _discover_esphome_mdns, _discover_esphome_mdns_macos, _discover_esphome_mdns_ha
 """
@@ -123,6 +123,42 @@ def parse_manufacturer_data(data: bytes) -> bool:
                 return True
         i += 1 + length
     return False
+
+
+def parse_geberit_adv_info(data: bytes) -> dict:
+    """Return article number and device type from a raw Geberit BLE advertisement.
+
+    Scans all AD structures in one pass.  Safe on malformed or empty input.
+
+    Returns dict with keys:
+      article_number (str | None) — e.g. "AC250"; from manufacturer data payload bytes 3–7
+      device_type    (str)        — "Alba", "Mera Comfort", or "" when unknown
+    """
+    article_number = None
+    device_type = ""
+    i = 0
+    while i < len(data):
+        length = data[i]
+        if length == 0 or i + length >= len(data):
+            break
+        ad_type = data[i + 1]
+        if ad_type == 0xFF and length >= 3:
+            if data[i + 2 : i + 4] == GEBERIT_COMPANY_ID:
+                payload = data[i + 4 : i + 1 + length]
+                if len(payload) >= 8:
+                    chars = payload[3:8]
+                    text = "".join(chr(c) for c in chars if 0x20 <= c <= 0x7E)
+                    article_number = text.strip() or None
+        elif ad_type in (0x02, 0x03):
+            payload = data[i + 2 : i + 1 + length]
+            for start in range(0, len(payload) - 1, 2):
+                uuid_bytes = payload[start : start + 2]
+                if uuid_bytes == ALBA_SERVICE_UUID_16:
+                    device_type = "Alba"
+                elif uuid_bytes == GEBERIT_SERVICE_UUID_16:
+                    device_type = "Mera Comfort"
+        i += 1 + length
+    return {"article_number": article_number, "device_type": device_type}
 
 
 def is_geberit_device(
