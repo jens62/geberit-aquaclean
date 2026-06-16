@@ -2720,7 +2720,9 @@ class ApiMode:
             return False
         finally:
             try:
-                await api.disconnect()
+                _disc = api.disconnect()  # sync in newer aioesphomeapi
+                if asyncio.iscoroutine(_disc):
+                    await _disc
             except Exception:
                 pass
 

@@ -871,7 +871,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             logger.info(f"[BluetoothLeConnector] ESP32 restart command sent (key={restart_key})")
         finally:
             try:
-                await api.disconnect()
+                _disc = api.disconnect()  # sync in newer aioesphomeapi
+                if asyncio.iscoroutine(_disc):
+                    await _disc
             except Exception:
                 pass
 
@@ -935,19 +937,17 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 if self._esphome_unsub_adv is not None:
                     try:
                         self._esphome_unsub_adv()
-                        # Yield to let the event loop flush the
-                        # UnsubscribeBluetoothLEAdvertisementsRequest frame to TCP before
-                        # api.disconnect() closes the connection (trap 12 — flush race).
-                        # 1.5 s gives the ESP32 time to both receive the frame AND release
-                        # the subscription slot before TCP tears down; 0.1 s was too short
-                        # (slot remained occupied ~6 s after disconnect in practice).
-                        await asyncio.sleep(1.5)
+                        # No sleep needed: asyncio transport.close() flushes the write
+                        # buffer (Unsubscribe frame) before sending FIN — ordered delivery
+                        # guaranteed by the asyncio transport contract.
                     except Exception:
                         pass
                     self._esphome_unsub_adv = None
                 if self._esphome_api is not None:
                     try:
-                        await self._esphome_api.disconnect()
+                        _disc = self._esphome_api.disconnect()  # sync in newer aioesphomeapi
+                        if asyncio.iscoroutine(_disc):
+                            await _disc
                         logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection")
                     except Exception as e:
                         logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
@@ -969,13 +969,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             if self.esphome_host and self._esphome_unsub_adv is not None:
                 try:
                     self._esphome_unsub_adv()
-                    await asyncio.sleep(1.5)
                 except Exception:
                     pass
                 self._esphome_unsub_adv = None
             if self._esphome_api is not None:
                 try:
-                    await self._esphome_api.disconnect()
+                    _disc = self._esphome_api.disconnect()  # sync in newer aioesphomeapi
+                    if asyncio.iscoroutine(_disc):
+                        await _disc
                     logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection (no BLE client was established)")
                 except Exception as e:
                     logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
