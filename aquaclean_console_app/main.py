@@ -2707,7 +2707,9 @@ class ApiMode:
                     "'button: platform: restart' to your ESPHome YAML and reflash"
                 )
                 return False
-            await api.button_command(button.key)
+            _btn = api.button_command(button.key)  # sync in newer aioesphomeapi, async in older
+            if asyncio.iscoroutine(_btn):
+                await _btn
             logger.warning(
                 f"ESP32 restart triggered successfully (button: '{button.name}') — "
                 "waiting for reboot before next probe"

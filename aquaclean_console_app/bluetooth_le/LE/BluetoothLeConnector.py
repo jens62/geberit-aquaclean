@@ -865,7 +865,9 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     "Restart button not found on ESP32. "
                     "Flash the ESP32 with updated YAML that includes 'button: platform: restart'."
                 )
-            await api.button_command(restart_key)
+            _btn = api.button_command(restart_key)  # sync in newer aioesphomeapi, async in older
+            if asyncio.iscoroutine(_btn):
+                await _btn
             logger.info(f"[BluetoothLeConnector] ESP32 restart command sent (key={restart_key})")
         finally:
             try:
