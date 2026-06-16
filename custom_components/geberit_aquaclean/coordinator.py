@@ -37,6 +37,11 @@ _ESP32_RESTART_SLEEP = 30       # seconds to wait after sending ESP32 restart co
 # Slow polls (every Nth) read all 99 DpIds (~22 s) for diagnostic/static data.
 _ALBA_SLOW_POLL_EVERY = 10
 
+# Tracks entry_ids that already triggered the onboarding fast-restart in this process.
+# ConfigEntryNotReady causes HA to recreate the coordinator (fresh _consecutive_failures=0),
+# which would re-fire the restart indefinitely.  Module-level storage survives recreation.
+_onboarding_restart_fired: set = set()
+
 
 class AquaCleanCoordinator(DataUpdateCoordinator):
     """Polls the AquaClean device on a fixed interval using an on-demand BLE connection.
@@ -97,6 +102,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self.last_error_code: str | None = None
         self.last_error_hint: str | None = None
         # Circuit breaker state
+        self._entry_id: str = entry.entry_id
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
         self._ble_lock = asyncio.Lock()
@@ -268,7 +274,9 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 # The config flow test session leaves the ESP32 BLE scanner stuck.
                 # Restart immediately and retry once silently so the user never sees
                 # "Failed setup" — just a ~60-second "Setup in progress" spinner.
-                if _onboarding and "E0002" in str(exc):
+                if (_onboarding and "E0002" in str(exc)
+                        and self._entry_id not in _onboarding_restart_fired):
+                    _onboarding_restart_fired.add(self._entry_id)
                     _LOGGER.warning(
                         "AquaClean: ESPHome proxy scanner unavailable during initial setup — "
                         "restarting ESP32 and retrying. "
@@ -285,13 +293,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         self._consecutive_failures = 0
                         self._circuit_open = False
                         return result
-                    except UpdateFailed:
-                        # Restart + retry still failed — calm message, no internal detail
+                    except UpdateFailed as poll_exc:
                         self._consecutive_failures += 1
-                        raise UpdateFailed(
-                            "ESPHome proxy restarted but AquaClean device still not found — "
-                            "ensure the device is powered on and within BLE range of the ESP32 proxy"
-                        )
+                        if "E0002" in str(poll_exc):
+                            raise UpdateFailed(
+                                "ESPHome proxy restarted but AquaClean device still not found — "
+                                "ensure the device is powered on and within BLE range of the ESP32 proxy"
+                            )
+                        raise
                     except Exception as restart_exc:
                         _LOGGER.warning(
                             "ESP32 restart failed: %s — HA will retry via normal path", restart_exc
@@ -337,6 +346,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     )
                 self._consecutive_failures = 0
                 self._circuit_open = False
+                _onboarding_restart_fired.discard(self._entry_id)
                 return result
 
     async def _do_poll(self) -> dict:
