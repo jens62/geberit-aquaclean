@@ -916,11 +916,13 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             is_connected = self.client.is_connected
             logger.debug(f"[disconnect] is_connected={is_connected}, subscribed chars={len(self._subscribed_characteristics)}")
             for char in self._subscribed_characteristics:
+                if not hasattr(self.client, 'stop_notify'):
+                    break  # ESPHome path: ESPHomeAPIClient.disconnect() handles notify cleanup internally
                 try:
                     await self.client.stop_notify(char)
-                    logger.debug(f"[disconnect] stop_notify OK: {char.uuid}")
+                    logger.debug(f"[disconnect] stop_notify OK: {getattr(char, 'uuid', char)}")
                 except Exception as e:
-                    logger.debug(f"[disconnect] stop_notify FAILED: {char.uuid}: {type(e).__name__}: {e}")
+                    logger.debug(f"[disconnect] stop_notify FAILED: {getattr(char, 'uuid', char)}: {type(e).__name__}: {e}")
             self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             if self.esphome_host:
