@@ -300,6 +300,8 @@ which updates the in-memory interval and reschedules the next update.
 - **Integration version sensor** — read from `manifest.json`, expose as DIAGNOSTIC entity. Also log the version as INFO in the HA log at integration startup (alongside firmware version).
 - **Multilingual support (EN/DE/FR/IT)** — `strings.json` + translation files; replace `_attr_name` with `_attr_translation_key`. ~1 session.
 - **Download button for Performance Statistics panel** — Option 1 (quickest): `custom:button-card` + inline JS.
+- **Timestamp in "Failed setup, will retry" UI card** — HA's `config_entries` UI displays the `ConfigEntryNotReady` message string without a timestamp. Embedding `(at HH:MM:SS)` into each `UpdateFailed` raise in `coordinator.py` would propagate to the card. 6 E0003 raise sites; only the initial onboarding path surfaces as `ConfigEntryNotReady`.
+- **Suppress onboarding E0003 ConfigEntryNotReady traceback (optional)** — the full exception traceback logged by HA during `async_config_entry_first_refresh` retry (E0003 / inventory timeout) is HA-internal and cannot be suppressed directly. Alternative: add an internal retry loop in `_async_update_data` for E0003 during onboarding (retry 2–3× with short sleep), so HA never sees `ConfigEntryNotReady` for transient BLE timeouts. Trade-off: cleaner logs vs longer first-boot time (~35 s × retries before surfacing). Only visible to users with DEBUG logging enabled.
 
 ---
 
