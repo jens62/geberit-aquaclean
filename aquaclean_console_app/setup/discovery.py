@@ -161,6 +161,24 @@ def parse_geberit_adv_info(data: bytes) -> dict:
     return {"article_number": article_number, "device_type": device_type}
 
 
+def parse_geberit_adv_info_bleak(manufacturer_data: dict, service_uuids: list) -> dict:
+    """Same output as parse_geberit_adv_info but from already-parsed bleak AdvertisementData fields."""
+    mfr_payload = (manufacturer_data or {}).get(0x0602, b"")
+    article_number = None
+    if len(mfr_payload) >= 8:
+        chars = mfr_payload[3:8]
+        text = "".join(chr(c) for c in chars if 0x20 <= c <= 0x7E)
+        article_number = text.strip() or None
+    uuids = service_uuids or []
+    if ALBA_SERVICE_UUID in uuids:
+        device_type = "Alba"
+    elif GEBERIT_SERVICE_UUID in uuids:
+        device_type = "Mera Comfort"
+    else:
+        device_type = ""
+    return {"article_number": article_number, "device_type": device_type}
+
+
 def is_geberit_device(
     name: str,
     adv_data: bytes = b"",
@@ -505,11 +523,18 @@ async def async_scan_ble_local(timeout: float = 10.0) -> list[dict]:
     def _on_detection(device, advertisement_data) -> None:
         name = advertisement_data.local_name or device.name or ""
         rssi = getattr(advertisement_data, "rssi", None) or getattr(device, "rssi", 0) or 0
+        uuids = list(advertisement_data.service_uuids or [])
+        adv_info = parse_geberit_adv_info_bleak(
+            dict(advertisement_data.manufacturer_data or {}),
+            uuids,
+        )
         seen[device.address.upper()] = {
             "mac": device.address.upper(),
             "rssi": rssi,
             "adv_name": name,
-            "service_uuids": list(advertisement_data.service_uuids or []),
+            "service_uuids": uuids,
+            "article_number": adv_info["article_number"],
+            "device_type": adv_info["device_type"],
         }
 
     scanner = BleakScanner(detection_callback=_on_detection)

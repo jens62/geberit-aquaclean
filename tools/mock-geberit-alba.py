@@ -1211,7 +1211,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         ["0000fd48-0000-1000-8000-00805f9b34fb"],   # fd48 only; 559eb100 stays in GATT
         appearance=0,
         timeout=0,
-        manufacturerData={0x0602: bytes([0x02, 0xFA] + [0x00] * 13)},
+        manufacturerData={0x0602: bytes([0x02, 0xFA, 0x00] + list(b'AC250') + [0x00] * 7)},
     )
 
     # Intercept bus.export() during adv.register() to capture the advertisement D-Bus path.

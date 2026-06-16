@@ -315,8 +315,8 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options = []
             for d in self._found_devices:
                 adv_info = parse_geberit_adv_info(d.get("adv_bytes") or b"")
-                article = adv_info["article_number"] or ""
-                device_type = adv_info["device_type"] or ""
+                article = d.get("article_number") or adv_info["article_number"] or d.get("adv_name") or ""
+                device_type = d.get("device_type") or adv_info["device_type"] or ""
                 label = d["mac"]
                 if article:
                     label = f"{article}  {label}"
