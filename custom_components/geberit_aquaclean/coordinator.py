@@ -232,10 +232,25 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             self._ble_connected_sensor.async_write_ha_state()
 
     async def _async_update_data(self) -> dict:
-        """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
+        """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart.
+
+        Onboarding fast-restart: if this is the very first poll attempt (_device_type is
+        None) and the ESPHome scanner returns E0002, the ESP32 is restarted immediately
+        and the poll is retried once silently.  If the retry succeeds the user sees no
+        "Failed setup" message — only a ~60-second "Setup in progress" delay in the HA UI.
+        """
         if self._unsupported_device:
             from aquaclean_console_app.ErrorCodes import E0010
             raise UpdateFailed(f"{E0010.code} — {E0010.message}")
+
+        # Detect onboarding phase: no successful poll yet, ESPHome path active.
+        # consecutive_failures == 0 ensures the fast-restart fires at most once.
+        _onboarding = (
+            self._device_type is None
+            and self._esphome_host is not None
+            and not self._use_ha_bluetooth
+            and self._consecutive_failures == 0
+        )
 
         if self._circuit_open and self._esphome_host and not self._use_ha_bluetooth:
             _LOGGER.debug(
@@ -248,7 +263,43 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         async with self._ble_lock:
             try:
                 result = await self._do_poll()
-            except UpdateFailed:
+            except UpdateFailed as exc:
+                # ── Onboarding fast-restart ───────────────────────────────────────
+                # The config flow test session leaves the ESP32 BLE scanner stuck.
+                # Restart immediately and retry once silently so the user never sees
+                # "Failed setup" — just a ~60-second "Setup in progress" spinner.
+                if _onboarding and "E0002" in str(exc):
+                    _LOGGER.warning(
+                        "AquaClean: ESPHome proxy scanner unavailable during initial setup — "
+                        "restarting ESP32 and retrying. "
+                        "Initial setup will complete in approximately 60 seconds."
+                    )
+                    try:
+                        await self.async_restart_esp32()
+                        _LOGGER.info(
+                            "ESP32 reboot command sent; waiting %d s", _ESP32_RESTART_SLEEP
+                        )
+                        await asyncio.sleep(_ESP32_RESTART_SLEEP)
+                        result = await self._do_poll()
+                        # Retry succeeded — no error surfaced to HA
+                        self._consecutive_failures = 0
+                        self._circuit_open = False
+                        return result
+                    except UpdateFailed:
+                        # Restart + retry still failed — calm message, no internal detail
+                        self._consecutive_failures += 1
+                        raise UpdateFailed(
+                            "ESPHome proxy restarted but AquaClean device still not found — "
+                            "ensure the device is powered on and within BLE range of the ESP32 proxy"
+                        )
+                    except Exception as restart_exc:
+                        _LOGGER.warning(
+                            "ESP32 restart failed: %s — HA will retry via normal path", restart_exc
+                        )
+                        self._consecutive_failures += 1
+                        raise exc  # re-raise original UpdateFailed
+
+                # ── Normal circuit-breaker path ───────────────────────────────────
                 self._consecutive_failures += 1
 
                 if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host and not self._use_ha_bluetooth:
