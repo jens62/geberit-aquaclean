@@ -131,17 +131,17 @@ def parse_manufacturer_data(data: bytes) -> bool:
 # Prefix is bytes 3–7 of the manufacturer payload formatted as "XXX.YY".
 # Matching: exact first, then startswith fallback for 3-digit suffixes (e.g. "146.09" ⊂ "146.096").
 _ARTICLE_PREFIX_MODEL: dict[str, str] = {
-    "146.22": "Sela", "243.64": "Sela", "243.71": "Sela",
-    "146.21": "Mera Comfort",
-    "146.20": "Mera Classic",
-    "146.19": "Mera Floorstanding", "146.24": "Mera Floorstanding",
-    "146.07": "Tuma Classic", "146.09": "Tuma Classic",
-    "243.36": "Tuma Classic", "243.46": "Tuma Classic", "243.47": "Tuma Classic",
-    "146.27": "Tuma Comfort", "146.29": "Tuma Comfort", "146.98": "Tuma Comfort",
-    "243.29": "Tuma Comfort", "243.48": "Tuma Comfort", "243.49": "Tuma Comfort",
-    "243.67": "Tuma Comfort",
-    "146.30": "Cama Testset",
-    "146.34": "Cama",
+    "146.22": "Geberit Sela", "243.64": "Geberit Sela", "243.71": "Geberit Sela",
+    "146.21": "Geberit Mera Comfort",
+    "146.20": "Geberit Mera Classic",
+    "146.19": "Geberit Mera Floorstanding", "146.24": "Geberit Mera Floorstanding",
+    "146.07": "Geberit Tuma Classic", "146.09": "Geberit Tuma Classic",
+    "243.36": "Geberit Tuma Classic", "243.46": "Geberit Tuma Classic", "243.47": "Geberit Tuma Classic",
+    "146.27": "Geberit Tuma Comfort", "146.29": "Geberit Tuma Comfort", "146.98": "Geberit Tuma Comfort",
+    "243.29": "Geberit Tuma Comfort", "243.48": "Geberit Tuma Comfort", "243.49": "Geberit Tuma Comfort",
+    "243.67": "Geberit Tuma Comfort",
+    "146.30": "Geberit Cama Testset",
+    "146.34": "Geberit Cama",
 }
 
 
@@ -162,11 +162,11 @@ def _extract_article_and_model(mfr_payload: bytes, is_alba: bool) -> tuple:
     """
     if is_alba:
         if len(mfr_payload) < 8:
-            return None, "Alba"
+            return None, "Geberit Alba"
         printable = [chr(c) for c in mfr_payload[3:8] if 0x20 <= c <= 0x7E]
         if len(printable) < 5:
-            return None, "Alba"
-        return "".join(printable).strip() or None, "Alba"
+            return None, "Geberit Alba"
+        return "".join(printable).strip() or None, "Geberit Alba"
     else:
         if len(mfr_payload) < 6:
             return None, ""
@@ -174,7 +174,7 @@ def _extract_article_and_model(mfr_payload: bytes, is_alba: bool) -> tuple:
         if len(printable) < 5:
             return None, ""
         prefix = "".join(printable[:3]) + "." + "".join(printable[3:5])
-        return prefix, _lookup_model_from_prefix(prefix) or "AquaClean"
+        return prefix, _lookup_model_from_prefix(prefix) or "Geberit AquaClean"
 
 
 def parse_geberit_adv_info(data: bytes) -> dict:
@@ -212,9 +212,9 @@ def parse_geberit_adv_info(data: bytes) -> dict:
         return {"article_number": None, "device_type": ""}
     article_number, device_type = _extract_article_and_model(mfr_payload, is_alba)
     if is_alba and not device_type:
-        device_type = "Alba"
+        device_type = "Geberit Alba"
     elif is_aquaclean_old and not device_type:
-        device_type = "AquaClean"
+        device_type = "Geberit AquaClean"
     return {"article_number": article_number, "device_type": device_type}
 
 
@@ -229,9 +229,9 @@ def parse_geberit_adv_info_bleak(manufacturer_data: dict, service_uuids: list) -
     mfr_payload = mfr_data.get(0x0602) or mfr_data.get(0x0100) or b""
     article_number, device_type = _extract_article_and_model(mfr_payload, is_alba)
     if is_alba and not device_type:
-        device_type = "Alba"
+        device_type = "Geberit Alba"
     elif is_aquaclean_old and not device_type:
-        device_type = "AquaClean"
+        device_type = "Geberit AquaClean"
     return {"article_number": article_number, "device_type": device_type}
 
 
