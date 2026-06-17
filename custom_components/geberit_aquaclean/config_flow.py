@@ -152,10 +152,13 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._found_proxies: list[dict] = []
         self._esphome_host: str | None = None
         self._esphome_port: int = DEFAULT_ESPHOME_PORT
+        self._esphome_auto_selected: bool = False
+        self._esphome_label: str = ""
         self._noise_psk: str | None = None
         self._found_devices: list[dict] = []
         self._mac: str | None = None
         self._adv_bytes: bytes = b""
+        self._device_label: str = ""
         self._version: str = "unknown"
 
     @staticmethod
@@ -245,6 +248,10 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:
             self._esphome_host = chosen
             self._esphome_port = DEFAULT_ESPHOME_PORT
+        _sel_proxy = next((p for p in self._found_proxies if f"{p['ip']}:{p['port']}" == chosen), None)
+        if _sel_proxy:
+            self._esphome_auto_selected = True
+            self._esphome_label = f"{_sel_proxy['name']} ({_sel_proxy['host'] or _sel_proxy['ip']}:{_sel_proxy['port']})"
         return await self.async_step_ble_scan()
 
     # ------------------------------------------------------------------
@@ -349,6 +356,19 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._mac = chosen.upper()
         _sel = next((d for d in self._found_devices if d["mac"].upper() == self._mac), None)
         self._adv_bytes = (_sel or {}).get("adv_bytes") or b""
+        if _sel:
+            from aquaclean_console_app.setup.discovery import parse_geberit_adv_info
+            _ai = parse_geberit_adv_info(self._adv_bytes)
+            _a = _sel.get("article_number") or _ai["article_number"] or _sel.get("adv_name") or ""
+            _dt = _sel.get("device_type") or _ai["device_type"] or ""
+            _lbl = self._mac
+            if _a:
+                _lbl = f"{_a}  {_lbl}"
+            if _dt:
+                _lbl += f"  ({_dt})"
+            self._device_label = _lbl
+        else:
+            self._device_label = self._mac or ""
         return await self.async_step_confirm()
 
     # ------------------------------------------------------------------
@@ -362,6 +382,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["device_id"] = "invalid_mac"
             else:
                 self._mac = raw
+                self._device_label = raw
                 return await self.async_step_confirm()
 
         return self.async_show_form(
@@ -483,20 +504,20 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         data=data,
                     )
 
-        transport_label = {
-            "esphome_auto": "ESPHome (auto-discovered)",
-            "esphome_manual": "ESPHome (manual)",
-            "local_ble": "Local Bluetooth",
-            "local_ble_ha": "HA Bluetooth domain",
-        }.get(self._transport, self._transport)
+        if self._transport in ("esphome_auto", "esphome_manual"):
+            if self._esphome_auto_selected and self._esphome_label:
+                transport_label = f"ESPHome {self._esphome_label} (auto-discovered)"
+            else:
+                host_str = f"{self._esphome_host}:{self._esphome_port}" if self._esphome_host else "—"
+                transport_label = f"ESPHome {host_str} (manual)"
+        elif self._transport == "local_ble":
+            transport_label = "Local Bluetooth"
+        elif self._transport == "local_ble_ha":
+            transport_label = "HA Bluetooth domain"
+        else:
+            transport_label = self._transport
 
-        from aquaclean_console_app.setup.discovery import parse_geberit_adv_info
-        adv_info = parse_geberit_adv_info(self._adv_bytes or b"")
-        mac_label = self._mac or ""
-        if adv_info["article_number"]:
-            mac_label = f"{adv_info['article_number']}  {mac_label}"
-        if adv_info["device_type"]:
-            mac_label += f"  ({adv_info['device_type']})"
+        mac_label = self._device_label or self._mac or ""
 
         return self.async_show_form(
             step_id="confirm",

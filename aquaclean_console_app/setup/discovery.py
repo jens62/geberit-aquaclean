@@ -34,8 +34,10 @@ GEBERIT_SERVICE_UUID_16 = bytes([0xA0, 0x3E])  # little-endian of 0x3EA0
 ALBA_SERVICE_UUID = "0000fd48-0000-1000-8000-00805f9b34fb"
 ALBA_SERVICE_UUID_16 = bytes([0x48, 0xFD])     # little-endian of 0xFD48
 
-# Manufacturer data fingerprint — company ID 0x0602 = Geberit International AG
+# Manufacturer data fingerprint — company ID 0x0602 = Geberit International AG (Alba/Ble20)
 GEBERIT_COMPANY_ID = bytes([0x02, 0x06])        # little-endian of 0x0602
+# AquacleanOld devices (Mera Comfort, Sela, Tuma, Cama) use company ID 0x0100
+GEBERIT_COMPANY_ID_OLD = bytes([0x00, 0x01])    # little-endian of 0x0100
 
 ESPHOME_DEFAULT_PORT = 6053
 
@@ -153,16 +155,26 @@ def _lookup_model_from_prefix(prefix: str) -> str:
 
 
 def _extract_article_and_model(mfr_payload: bytes, is_alba: bool) -> tuple:
-    """Return (article_number, device_type) from manufacturer payload bytes."""
-    if len(mfr_payload) < 8:
-        return None, ""
-    printable = [chr(c) for c in mfr_payload[3:8] if 0x20 <= c <= 0x7E]
-    if len(printable) < 5:
-        return None, ""
+    """Return (article_number, device_type) from manufacturer payload bytes.
+
+    Alba (company 0x0602): article at payload bytes 3–7, min 8 bytes.
+    AquacleanOld (company 0x0100): article at payload bytes 1–5, min 6 bytes.
+    """
     if is_alba:
+        if len(mfr_payload) < 8:
+            return None, "Alba"
+        printable = [chr(c) for c in mfr_payload[3:8] if 0x20 <= c <= 0x7E]
+        if len(printable) < 5:
+            return None, "Alba"
         return "".join(printable).strip() or None, "Alba"
-    prefix = "".join(printable[:3]) + "." + "".join(printable[3:5])
-    return prefix, _lookup_model_from_prefix(prefix) or "AquaClean"
+    else:
+        if len(mfr_payload) < 6:
+            return None, ""
+        printable = [chr(c) for c in mfr_payload[1:6] if 0x20 <= c <= 0x7E]
+        if len(printable) < 5:
+            return None, ""
+        prefix = "".join(printable[:3]) + "." + "".join(printable[3:5])
+        return prefix, _lookup_model_from_prefix(prefix) or "AquaClean"
 
 
 def parse_geberit_adv_info(data: bytes) -> dict:
@@ -185,7 +197,7 @@ def parse_geberit_adv_info(data: bytes) -> dict:
             break
         ad_type = data[i + 1]
         if ad_type == 0xFF and length >= 3:
-            if data[i + 2 : i + 4] == GEBERIT_COMPANY_ID:
+            if data[i + 2 : i + 4] in (GEBERIT_COMPANY_ID, GEBERIT_COMPANY_ID_OLD):
                 mfr_payload = data[i + 4 : i + 1 + length]
         elif ad_type in (0x02, 0x03):
             payload = data[i + 2 : i + 1 + length]
@@ -213,7 +225,8 @@ def parse_geberit_adv_info_bleak(manufacturer_data: dict, service_uuids: list) -
     is_aquaclean_old = GEBERIT_SERVICE_UUID in uuids
     if not (is_alba or is_aquaclean_old):
         return {"article_number": None, "device_type": ""}
-    mfr_payload = (manufacturer_data or {}).get(0x0602, b"")
+    mfr_data = manufacturer_data or {}
+    mfr_payload = mfr_data.get(0x0602) or mfr_data.get(0x0100) or b""
     article_number, device_type = _extract_article_and_model(mfr_payload, is_alba)
     if is_alba and not device_type:
         device_type = "Alba"
