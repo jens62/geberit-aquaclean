@@ -359,6 +359,62 @@ custom_components.geberit_aquaclean: debug
 aquaclean_console_app: debug
 ```
 
+### Record logs to a file
+
+Useful when reporting a bug — attach the saved log file to the GitHub issue.
+
+#### HA core log
+
+**Windows PowerShell:**
+
+```powershell
+$date = Get-Date -Format "yyyy-MM-dd_HH-mm"
+ssh root@192.168.0.198 "ha core logs --follow" | Tee-Object -FilePath "C:\Users\jens\Downloads\ha_core_$date.log"
+```
+
+Replace `root@192.168.0.198` with your HA user and IP.
+
+**Mac / Linux:**
+
+```bash
+sshpass -p 'PASSWORD' ssh USER@IP_ADDRESS "ha core logs --follow" | tee "$HOME/Downloads/ha_core_$(date +%F_%H-%M).log"
+```
+
+#### ESPHome proxy log
+
+The proxy exposes a live event stream at `http://<proxy-IP>/events`.
+
+**Mac:**
+
+```bash
+curl -sN http://IP_ADDRESS/events \
+  | grep --line-buffered "data:" \
+  | perl -MPOSIX -pe '$|=1; print strftime("[%H:%M:%S] ", localtime)' \
+  | tee "$HOME/Downloads/esp_proxy_$(date +%F_%H-%M).log"
+```
+
+**Linux:**
+
+```bash
+curl -sN http://IP_ADDRESS/events \
+  | grep --line-buffered "data:" \
+  | awk '{print strftime("[%H:%M:%S]"), $0; fflush()}' \
+  | tee "$HOME/Downloads/esp_proxy_$(date +%F_%H-%M).log"
+```
+
+**Windows PowerShell:**
+
+```powershell
+$date = Get-Date -Format "yyyy-MM-dd_HH-mm"
+curl.exe -sN "http://IP_ADDRESS/events" | ForEach-Object {
+    if ($_ -match "data:") { "$(Get-Date -Format '[HH:mm:ss] ')$_" }
+} | Tee-Object -FilePath "$env:USERPROFILE\Downloads\esp_proxy_$date.log"
+```
+
+Replace `IP_ADDRESS` with your ESP32 proxy IP (e.g. `192.168.0.114`). Use `Ctrl+C` to stop.
+
+---
+
 ### Enable trace / silly logging
 
 `trace` and `silly` work via `logger.set_level` once the integration is loaded, but not in
