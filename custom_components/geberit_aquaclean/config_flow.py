@@ -314,7 +314,14 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             from aquaclean_console_app.setup.discovery import parse_geberit_adv_info
             options = []
             for d in self._found_devices:
-                adv_info = parse_geberit_adv_info(d.get("adv_bytes") or b"")
+                adv_bytes = d.get("adv_bytes") or b""
+                adv_info = parse_geberit_adv_info(adv_bytes)
+                _LOGGER.debug(
+                    "ble_scan label: mac=%s keys=%s adv_bytes=%dB hex=%s pre_article=%r pre_type=%r parsed=%s",
+                    d["mac"], list(d.keys()), len(adv_bytes),
+                    adv_bytes[:32].hex() if adv_bytes else "(none)",
+                    d.get("article_number"), d.get("device_type"), adv_info,
+                )
                 article = d.get("article_number") or adv_info["article_number"] or d.get("adv_name") or ""
                 device_type = d.get("device_type") or adv_info["device_type"] or ""
                 label = d["mac"]
@@ -323,6 +330,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if device_type:
                     label += f"  ({device_type})"
                 label += f"  {d['rssi']:+d} dBm"
+                _LOGGER.debug("ble_scan label result: %r", label)
                 options.append(selector.SelectOptionDict(value=d["mac"], label=label))
             options.append(selector.SelectOptionDict(value="__manual__", label="Enter MAC manually…"))
 
