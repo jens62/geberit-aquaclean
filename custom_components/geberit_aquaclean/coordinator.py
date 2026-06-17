@@ -561,6 +561,13 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         _LOGGER.info(
                             "Device model identified via proc 0x82: %s → %s", desc, self._device_model
                         )
+                # Persist discovered model back to config entry so entity sets are correct
+                # on the next HA restart (avoids the full-entity fallback for manual-MAC installs).
+                if self._device_model:
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        data={**self.config_entry.data, CONF_DEVICE_TYPE: self._device_model},
+                    )
 
             # Firmware cloud check: inline on first poll (result is None) and every 3600 s.
             fw = result_data.get("firmware_version")
