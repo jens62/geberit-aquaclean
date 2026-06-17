@@ -6,6 +6,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -16,13 +17,14 @@ from .const import (
 from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
-# (data_key, friendly_name, device_class, icon_on, icon_off, feature_set)
+# (data_key, friendly_name, device_class, icon_on, icon_off, feature_set, wired)
+# wired=False: entity disabled by default — feature exists on device but not yet exposed by bridge.
 BINARY_SENSORS: list[tuple] = [
-    ("is_user_sitting",           "User Sitting",              BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on", "geberit:is_user_sitting-off", FS_ALL),
-    ("is_anal_shower_running",    "Anal Shower Running",       None,                              "geberit:analshower",         "geberit:analshower",          FS_ALL),
-    ("firmware_update_available", "Firmware Update Available", BinarySensorDeviceClass.UPDATE,    "mdi:update",                 "mdi:check-circle",            FS_ALL),
-    ("is_lady_shower_running",    "Lady Shower Running",       None,                              "geberit:ladywash",           "geberit:ladywash",            FS_WITH_LADY_SHOWER),
-    ("is_dryer_running",          "Dryer Running",             None,                              "geberit:dryer-on",           "geberit:dryer-off",           FS_WITH_DRYER),
+    ("is_user_sitting",           "User Sitting",              BinarySensorDeviceClass.OCCUPANCY, "geberit:is_user_sitting-on", "geberit:is_user_sitting-off", FS_ALL,          True),
+    ("is_anal_shower_running",    "Anal Shower Running",       None,                              "geberit:analshower",         "geberit:analshower",          FS_ALL,          True),
+    ("firmware_update_available", "Firmware Update Available", BinarySensorDeviceClass.UPDATE,    "mdi:update",                 "mdi:check-circle",            FS_ALL,          True),
+    ("is_lady_shower_running",    "Lady Shower Running",       None,                              "geberit:ladywash",           "geberit:ladywash",            FS_WITH_LADY_SHOWER, True),
+    ("is_dryer_running",          "Dryer Running",             None,                              "geberit:dryer-on",           "geberit:dryer-off",           FS_WITH_DRYER,   True),
 ]
 
 # (data_key, friendly_name, device_class, icon)
@@ -55,8 +57,8 @@ async def async_setup_entry(
     coordinator: AquaCleanCoordinator = hass.data[DOMAIN][entry.entry_id]
     feature_sets = get_feature_sets(coordinator._device_model)
     entities: list = [
-        AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off, fs)
-        for key, name, device_class, icon_on, icon_off, fs in BINARY_SENSORS
+        AquaCleanBinarySensor(coordinator, entry, key, name, device_class, icon_on, icon_off, fs, wired)
+        for key, name, device_class, icon_on, icon_off, fs, wired in BINARY_SENSORS
         if fs in feature_sets
     ]
     entities.append(AquaCleanBleConnectedSensor(coordinator, entry))
@@ -73,7 +75,8 @@ async def async_setup_entry(
 
 class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
     def __init__(
-        self, coordinator, entry, key, name, device_class, icon_on, icon_off, feature_set: str = FS_ALL
+        self, coordinator, entry, key, name, device_class, icon_on, icon_off,
+        feature_set: str = FS_ALL, wired: bool = True,
     ) -> None:
         super().__init__(coordinator, entry)
         self._key = key
@@ -85,6 +88,9 @@ class AquaCleanBinarySensor(AquaCleanEntity, BinarySensorEntity):
         # Fallback guard: when model is unknown (all entities created), treat non-FS_ALL
         # entities as unavailable for Alba so state doesn't show as Unknown/True.
         self._mera_only = feature_set != FS_ALL
+        if not wired:
+            self._attr_entity_registry_enabled_default = False
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def available(self) -> bool:

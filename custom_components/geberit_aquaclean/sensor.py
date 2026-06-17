@@ -19,42 +19,44 @@ from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity, AquaCleanProxyEntity
 
 # (data_key, friendly_name, unit, device_class, state_class, icon, feature_set)
+# (data_key, friendly_name, unit, device_class, state_class, icon, feature_set, wired)
+# wired=False: entity disabled by default — feature exists on device but not yet exposed by bridge.
 SENSORS: list[tuple] = [
     # Identification — static, present on all models including Alba
-    ("serial_number",           "Serial Number",              None,  None,                          None,                              "mdi:identifier",        FS_ALL),
-    ("sap_number",              "SAP Number",                 None,  None,                          None,                              "mdi:barcode",           FS_ALL),
-    ("description",             "Model",                      None,  None,                          None,                              "mdi:toilet",            FS_ALL),
-    ("production_date",         "Production Date",            None,  None,                          None,                              "mdi:calendar-badge",    FS_ALL),
-    ("initial_operation_date",  "Initial Operation Date",     None,  None,                          None,                              "mdi:calendar-check",    FS_ALL),
-    ("soc_versions",            "SOC Versions",               None,  None,                          None,                              "mdi:chip",              FS_ALL),
-    ("firmware_version",        "Firmware Version",           None,  None,                          None,                              "mdi:chip",              FS_ALL),
-    ("firmware_version_date",   "Firmware Release Date",      None,  None,                          None,                              "mdi:calendar-chip",     FS_ALL),
-    ("cloud_firmware_version",  "Cloud Firmware Version",     None,  None,                          None,                              "mdi:cloud-upload",      FS_ALL),
-    ("cloud_firmware_date",     "Cloud Firmware Release Date", None, None,                          None,                              "mdi:calendar-clock",    FS_ALL),
+    ("serial_number",           "Serial Number",              None,  None,                          None,                              "mdi:identifier",        FS_ALL,          True),
+    ("sap_number",              "SAP Number",                 None,  None,                          None,                              "mdi:barcode",           FS_ALL,          True),
+    ("description",             "Model",                      None,  None,                          None,                              "mdi:toilet",            FS_ALL,          True),
+    ("production_date",         "Production Date",            None,  None,                          None,                              "mdi:calendar-badge",    FS_ALL,          True),
+    ("initial_operation_date",  "Initial Operation Date",     None,  None,                          None,                              "mdi:calendar-check",    FS_ALL,          True),
+    ("soc_versions",            "SOC Versions",               None,  None,                          None,                              "mdi:chip",              FS_ALL,          True),
+    ("firmware_version",        "Firmware Version",           None,  None,                          None,                              "mdi:chip",              FS_ALL,          True),
+    ("firmware_version_date",   "Firmware Release Date",      None,  None,                          None,                              "mdi:calendar-chip",     FS_ALL,          True),
+    ("cloud_firmware_version",  "Cloud Firmware Version",     None,  None,                          None,                              "mdi:cloud-upload",      FS_ALL,          True),
+    ("cloud_firmware_date",     "Cloud Firmware Release Date", None, None,                          None,                              "mdi:calendar-clock",    FS_ALL,          True),
     # Poll timing — all models
-    ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check",    FS_ALL),
-    ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline",  FS_ALL),
-    ("next_poll",     "Next Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:calendar-clock", FS_ALL),
+    ("poll_epoch",    "Last Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:clock-check",    FS_ALL,          True),
+    ("poll_interval", "Poll Interval",  "s",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,      "mdi:timer-outline",  FS_ALL,          True),
+    ("next_poll",     "Next Poll",      None, SensorDeviceClass.TIMESTAMP, None,                              "mdi:calendar-clock", FS_ALL,          True),
     # Signal strength — all models
-    ("ble_rssi",      "BLE Signal",     "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, "mdi:signal",         FS_ALL),
+    ("ble_rssi",      "BLE Signal",     "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, "mdi:signal",         FS_ALL,          True),
     # Descale statistics — AquacleanOld protocol only (proc 0x59 / SPL params)
-    ("days_until_next_descale",          "Days Until Next Descale",          "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-remove",    FS_AQUACLEAN_OLD),
-    ("days_until_shower_restricted",     "Days Until Shower Restricted",     "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-alert",     FS_AQUACLEAN_OLD),
-    ("shower_cycles_until_confirmation", "Shower Cycles Until Confirmation", None, None,                       SensorStateClass.MEASUREMENT,       "mdi:counter",         FS_AQUACLEAN_OLD),
-    ("number_of_descale_cycles",         "Number of Descale Cycles",         None, None,                       SensorStateClass.TOTAL_INCREASING,  "mdi:counter",         FS_AQUACLEAN_OLD),
-    ("unposted_shower_cycles",           "Unposted Shower Cycles",           None, None,                       SensorStateClass.MEASUREMENT,       "mdi:counter",         FS_AQUACLEAN_OLD),
-    ("date_time_at_last_descale",        "Last Descale",                     None, None,                       None,                               "mdi:calendar-clock",  FS_AQUACLEAN_OLD),
+    ("days_until_next_descale",          "Days Until Next Descale",          "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-remove",    FS_AQUACLEAN_OLD, True),
+    ("days_until_shower_restricted",     "Days Until Shower Restricted",     "d",  SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT,       "mdi:water-alert",     FS_AQUACLEAN_OLD, True),
+    ("shower_cycles_until_confirmation", "Shower Cycles Until Confirmation", None, None,                       SensorStateClass.MEASUREMENT,       "mdi:counter",         FS_AQUACLEAN_OLD, True),
+    ("number_of_descale_cycles",         "Number of Descale Cycles",         None, None,                       SensorStateClass.TOTAL_INCREASING,  "mdi:counter",         FS_AQUACLEAN_OLD, True),
+    ("unposted_shower_cycles",           "Unposted Shower Cycles",           None, None,                       SensorStateClass.MEASUREMENT,       "mdi:counter",         FS_AQUACLEAN_OLD, True),
+    ("date_time_at_last_descale",        "Last Descale",                     None, None,                       None,                               "mdi:calendar-clock",  FS_AQUACLEAN_OLD, True),
     # Descaling live state (from SPL params 4 and 5) — AquacleanOld only
-    ("descaling_state",        "Descaling State",        None, None, SensorStateClass.MEASUREMENT, "geberit:descaling",               FS_AQUACLEAN_OLD),
-    ("descaling_duration_min", "Descaling Duration",     "min", SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT, "mdi:timer-outline",  FS_AQUACLEAN_OLD),
+    ("descaling_state",        "Descaling State",        None, None, SensorStateClass.MEASUREMENT, "geberit:descaling",               FS_AQUACLEAN_OLD, True),
+    ("descaling_duration_min", "Descaling Duration",     "min", SensorDeviceClass.DURATION, SensorStateClass.MEASUREMENT, "mdi:timer-outline",  FS_AQUACLEAN_OLD, True),
     # Filter / honeycomb maintenance — AquacleanOld only
-    ("filter_days_remaining", "Days Until Filter Change",       "d",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,       "mdi:water-check",     FS_AQUACLEAN_OLD),
-    ("filter_last_reset",     "Last Filter Reset",              None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:calendar-clock",  FS_AQUACLEAN_OLD),
-    ("filter_reset_count",    "Filter Reset Count",             None, None,                        SensorStateClass.TOTAL_INCREASING,  "mdi:counter",         FS_AQUACLEAN_OLD),
-    ("filter_next_change",    "Next Filter Change",             None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:filter-plus",     FS_AQUACLEAN_OLD),
+    ("filter_days_remaining", "Days Until Filter Change",       "d",  SensorDeviceClass.DURATION,  SensorStateClass.MEASUREMENT,       "mdi:water-check",     FS_AQUACLEAN_OLD, True),
+    ("filter_last_reset",     "Last Filter Reset",              None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:calendar-clock",  FS_AQUACLEAN_OLD, True),
+    ("filter_reset_count",    "Filter Reset Count",             None, None,                        SensorStateClass.TOTAL_INCREASING,  "mdi:counter",         FS_AQUACLEAN_OLD, True),
+    ("filter_next_change",    "Next Filter Change",             None, SensorDeviceClass.TIMESTAMP, None,                               "mdi:filter-plus",     FS_AQUACLEAN_OLD, True),
     # Calibration offsets (SPL indices 12/13) — AquacleanOld only
-    ("lid_offset_position",        "Lid Offset Position",        None, None, SensorStateClass.MEASUREMENT, "geberit:adjustabletoiletseat",  FS_AQUACLEAN_OLD),
-    ("shower_arm_offset_position", "Spray Arm Offset Position",  None, None, SensorStateClass.MEASUREMENT, "geberit:showerarm-forward",     FS_AQUACLEAN_OLD),
+    ("lid_offset_position",        "Lid Offset Position",        None, None, SensorStateClass.MEASUREMENT, "geberit:adjustabletoiletseat",  FS_AQUACLEAN_OLD, True),
+    ("shower_arm_offset_position", "Spray Arm Offset Position",  None, None, SensorStateClass.MEASUREMENT, "geberit:showerarm-forward",     FS_AQUACLEAN_OLD, True),
 ]
 
 # (data_key, friendly_name, unit, device_class, state_class, icon)
@@ -105,8 +107,8 @@ async def async_setup_entry(
     coordinator: AquaCleanCoordinator = hass.data[DOMAIN][entry.entry_id]
     feature_sets = get_feature_sets(coordinator._device_model)
     entities: list = [
-        AquaCleanSensor(coordinator, entry, key, name, unit, device_class, state_class, icon)
-        for key, name, unit, device_class, state_class, icon, fs in SENSORS
+        AquaCleanSensor(coordinator, entry, key, name, unit, device_class, state_class, icon, wired)
+        for key, name, unit, device_class, state_class, icon, fs, wired in SENSORS
         if fs in feature_sets
     ]
     entities.append(AquaCleanBleConnectionSensor(coordinator, entry))
@@ -148,7 +150,7 @@ async def async_setup_entry(
 
 class AquaCleanSensor(AquaCleanEntity, SensorEntity):
     def __init__(
-        self, coordinator, entry, key, name, unit, device_class, state_class, icon
+        self, coordinator, entry, key, name, unit, device_class, state_class, icon, wired: bool = True
     ) -> None:
         super().__init__(coordinator, entry)
         self._key = key
@@ -158,6 +160,9 @@ class AquaCleanSensor(AquaCleanEntity, SensorEntity):
         self._attr_device_class = device_class
         self._attr_state_class = state_class
         self._attr_icon = icon
+        if not wired:
+            self._attr_entity_registry_enabled_default = False
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
