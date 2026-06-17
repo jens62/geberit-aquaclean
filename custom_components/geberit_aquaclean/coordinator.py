@@ -16,6 +16,7 @@ from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import BLE
 from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
+    CONF_DEVICE_TYPE,
     CONF_ESPHOME_HOST,
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
@@ -23,6 +24,7 @@ from .const import (
     CONF_USE_HA_BLUETOOTH,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
+    PROC82_DESCRIPTION_TO_MODEL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,8 +77,18 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self.ble_connected_at: datetime | None = None
         self.ble_state: str = "disconnected"
         self._ble_connected_sensor = None  # AquaCleanBleConnectedSensor; set in async_added_to_hass
-        # Detected device type: "mera" | "alba" | None (unknown, detected on first poll)
-        self._device_type: str | None = None
+        # Canonical model key: "mera_comfort" | "mera_classic" | "sela" | "alba" | … | None
+        # Seeded from CONF_DEVICE_TYPE (stored at config-flow time from BLE advertisement).
+        # Refined on first poll via proc 0x82 description for manual-MAC-entry installs.
+        self._device_model: str | None = conf.get(CONF_DEVICE_TYPE)
+        # Protocol routing: "mera" | "alba" | None (detected on first poll when None)
+        # Seeded from _device_model so detection is skipped when model is already known.
+        if self._device_model == "alba":
+            self._device_type: str | None = "alba"
+        elif self._device_model is not None:
+            self._device_type = "mera"
+        else:
+            self._device_type = None
         # Performance statistics
         self._last_connect_ms: int | None = None
         self._last_poll_ms: int | None = None
@@ -536,6 +548,19 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     result_data.get("firmware_version") or "?", soc,
                     result_data.get("initial_operation_date", "?"),
                 )
+
+            # Refine _device_model from proc 0x82 description on first successful poll.
+            # Needed for manual-MAC-entry installs where no BLE advertisement was captured.
+            if self._device_model is None:
+                desc = result_data.get("description") or ""
+                if self._device_type == "alba":
+                    self._device_model = "alba"
+                elif desc:
+                    self._device_model = PROC82_DESCRIPTION_TO_MODEL.get(desc)
+                    if self._device_model:
+                        _LOGGER.info(
+                            "Device model identified via proc 0x82: %s → %s", desc, self._device_model
+                        )
 
             # Firmware cloud check: inline on first poll (result is None) and every 3600 s.
             fw = result_data.get("firmware_version")

@@ -18,7 +18,9 @@ from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
+    ADV_DEVICE_TYPE_TO_MODEL,
     CONF_DEVICE_ID,
+    CONF_DEVICE_TYPE,
     CONF_ESPHOME_HOST,
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
@@ -158,6 +160,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._found_devices: list[dict] = []
         self._mac: str | None = None
         self._adv_bytes: bytes = b""
+        self._adv_device_type_str: str = ""
         self._device_label: str = ""
         self._version: str = "unknown"
 
@@ -361,6 +364,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _ai = parse_geberit_adv_info(self._adv_bytes)
             _a = _sel.get("article_number") or _ai["article_number"] or _sel.get("adv_name") or ""
             _dt = _sel.get("device_type") or _ai["device_type"] or ""
+            self._adv_device_type_str = _dt
             _lbl = self._mac
             if _a:
                 _lbl = f"{_a}  {_lbl}"
@@ -493,6 +497,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
                     data = {
                         CONF_DEVICE_ID: self._mac,
+                        CONF_DEVICE_TYPE: ADV_DEVICE_TYPE_TO_MODEL.get(self._adv_device_type_str),
                         CONF_ESPHOME_HOST: self._esphome_host,
                         CONF_ESPHOME_PORT: self._esphome_port,
                         CONF_NOISE_PSK: self._noise_psk,
