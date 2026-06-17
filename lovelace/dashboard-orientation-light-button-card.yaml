@@ -1,0 +1,264 @@
+views:
+  - title: AquaClean
+    path: aquaclean
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: ORIENTATION LIGHT
+            show_header_toggle: false
+            entities:
+              - type: buttons
+                entities:
+                  - entity: button.geberit_aquaclean_orientation_light_off
+                    name: "Off"
+                  - entity: button.geberit_aquaclean_orientation_light_on
+                    name: "On"
+                  - entity: button.geberit_aquaclean_orientation_light_when_approached
+                    name: Approached
+              - entity: number.geberit_aquaclean_orientation_light_activation
+                name: Current Activation
+                icon: mdi:motion-sensor
+              - entity: number.geberit_aquaclean_orientation_light_brightness
+                name: Brightness
+                icon: mdi:brightness-6
+              - entity: number.geberit_aquaclean_orientation_light_color
+                name: Current Colour
+                icon: mdi:palette
+
+          - type: grid
+            title: Colour
+            columns: 7
+            square: true
+            cards:
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Warm White
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 5
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#fff1d8"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 5
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 5
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Yellow
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 4
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#ffee7c"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 4
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 4
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Orange
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 3
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#ffad3f"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 3
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 3
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Magenta
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 2
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#eb4994"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 2
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 2
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Cold White
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 6
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#e4efff"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 6
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 6
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Turquoise
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 1
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#96f3f3"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 1
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 1
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]
+              - type: custom:button-card
+                entity: number.geberit_aquaclean_orientation_light_color
+                aspect_ratio: 1/1
+                show_name: false
+                show_icon: false
+                tooltip: Blue
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  target:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                  data:
+                    value: 0
+                styles:
+                  card:
+                    - width: 42px
+                    - height: 42px
+                    - margin: 8px auto
+                    - padding: 0
+                    - border-radius: 50%
+                    - background: "#117aff"
+                    - border: |
+                        [[[
+                          return Number(entity.state) === 0
+                            ? '3px solid var(--primary-color)'
+                            : '2px solid transparent';
+                        ]]]
+                    - box-shadow: |
+                        [[[
+                          return Number(entity.state) === 0
+                            ? '0 0 0 2px var(--card-background-color), 0 0 0 5px var(--primary-color)'
+                            : '0 1px 3px rgba(0,0,0,0.2)';
+                        ]]]

@@ -1,0 +1,88 @@
+views:
+  - title: AquaClean
+    path: aquaclean
+    cards:
+      - type: entities
+        title: ORIENTATION LIGHT
+        show_header_toggle: false
+        entities:
+          - entity: number.geberit_aquaclean_orientation_light_activation
+            name: Activation
+          - type: custom:numberbox-card
+            entity: number.geberit_aquaclean_orientation_light_brightness
+            name: Brightness
+            icon: mdi:brightness-7
+          - entity: number.geberit_aquaclean_orientation_light_color
+            name: Current Color Index
+          - type: custom:paper-buttons-row
+            buttons:
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#FFF4E0"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 1
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#FEEB75"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 2
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#FFB347"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 3
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#E23E57"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 4
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#EAF2F8"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 5
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#A3E4D7"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 6
+              - icon: mdi:circle
+                style:
+                  button:
+                    background: "#2E86C1"
+                tap_action:
+                  action: call-service
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 7

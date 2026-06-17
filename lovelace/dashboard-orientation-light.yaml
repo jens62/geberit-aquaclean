@@ -1,0 +1,93 @@
+views:
+  - title: AquaClean
+    path: aquaclean
+    cards:
+      # Wrap the entire card container so both state value and CSS update reactively
+      - type: custom:config-template-card
+        entities:
+          - number.geberit_aquaclean_orientation_light_color
+        card:
+          type: entities
+          title: ORIENTATION LIGHT
+          show_header_toggle: false
+          entities:
+            # ROW 1: Activation Mode
+            - entity: number.geberit_aquaclean_orientation_light_activation
+              name: Activation
+
+            # ROW 2: Brightness Control (1-4)
+            - type: custom:numberbox-card
+              entity: number.geberit_aquaclean_orientation_light_brightness
+              name: Brightness
+              icon: mdi:brightness-6
+              min: 1
+              max: 4
+              step: 1
+
+            # ROW 3: Native Output of the Current Index Value
+            - entity: number.geberit_aquaclean_orientation_light_color
+              name: Current Color Index
+              icon: mdi:palette-swatch
+
+            # ROW 4: Color Palette Row with Card-Mod Highlight Target
+            - type: custom:rgb-light-card
+              entity: light.built_in_item_or_dummy
+              name: "Selection"
+              justify: flex-end
+              card_mod:
+                style:
+                  .: |
+                    /* 1. Strip the factory default dark borders from all color circles */
+                    div.wrapper div.color-circle {
+                      border: none !important;
+                      box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+                      transition: all 0.2s ease-in-out;
+                    }
+                    
+                    /* 2. Extract the live index integer value from the template context */
+                    {% set active_idx = states('number.geberit_aquaclean_orientation_light_color') | int(0) %}
+                    
+                    /* 3. Apply a single, crisp selection ring exclusively to the active circle */
+                    {% if active_idx > 0 %}
+                    div.wrapper:nth-child({{ active_idx }}) div.color-circle {
+                      outline: 3px solid var(--primary-color, #03a9f4) !important;
+                      outline-offset: 2px;
+                      transform: scale(1.15);
+                    }
+                    {% endif %}
+              colors:
+                - icon_color: "#FFF4E0"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 1
+                - icon_color: "#FEEB75"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 2
+                - icon_color: "#FFB347"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 3
+                - icon_color: "#E23E57"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 4
+                - icon_color: "#EAF2F8"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 5
+                - icon_color: "#A3E4D7"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 6
+                - icon_color: "#2E86C1"
+                  service: number.set_value
+                  service_data:
+                    entity_id: number.geberit_aquaclean_orientation_light_color
+                    value: 7

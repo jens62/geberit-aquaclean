@@ -1134,7 +1134,7 @@ def main():
         epilog=__doc__,
     )
     ap.add_argument("btsnoop",  help="btmon btsnoop file (binary, datalink 0x7d1)")
-    ap.add_argument("mock_log", help="mock-geberit-alba text log")
+    ap.add_argument("mock_log", nargs="?", default=None, help="mock-geberit-alba text log (optional)")
     ap.add_argument("--no-srr", action="store_true", default=True,
                     help="suppress [HDLC←] S-RR lines from mock log (default: on)")
     ap.add_argument("--keep-srr", action="store_true",
@@ -1164,14 +1164,18 @@ def main():
     no_srr = not args.keep_srr
 
     btsnoop_path = Path(args.btsnoop)
-    mock_path = Path(args.mock_log)
+    mock_path = Path(args.mock_log) if args.mock_log else None
 
-    for p in (btsnoop_path, mock_path):
-        if not p.exists():
-            sys.exit(f"File not found: {p}")
+    if not btsnoop_path.exists():
+        sys.exit(f"File not found: {btsnoop_path}")
+    if mock_path and not mock_path.exists():
+        sys.exit(f"File not found: {mock_path}")
 
     print(f"btsnoop : {btsnoop_path.name}  ({btsnoop_path.stat().st_size:,} bytes)")
-    print(f"mock log: {mock_path.name}  ({mock_path.stat().st_size:,} bytes)")
+    if mock_path:
+        print(f"mock log: {mock_path.name}  ({mock_path.stat().st_size:,} bytes)")
+    else:
+        print("mock log: (none)")
 
     # Infer date for mock log timestamps
     date_hint = _infer_date(btsnoop_path)
@@ -1189,21 +1193,26 @@ def main():
     decode_btsnoop_events(raw_records)
     print(f"{len(raw_records)} records")
 
-    print("Parsing mock log...", end=" ", flush=True)
-    mock_events = parse_mock_log(mock_path, date_hint)
-    print(f"{len(mock_events)} events")
+    if mock_path:
+        print("Parsing mock log...", end=" ", flush=True)
+        mock_events = parse_mock_log(mock_path, date_hint)
+        print(f"{len(mock_events)} events")
+    else:
+        mock_events = []
 
     # Time offset
     if args.offset_ms is not None:
         offset_us = int(args.offset_ms * 1000)
         print(f"Time offset: {args.offset_ms:.1f} ms (manual)")
-    else:
+    elif mock_events:
         offset_us = find_time_offset_us(raw_records, mock_events)
         if offset_us is not None:
             print(f"Time offset: {offset_us / 1000:.1f} ms (auto-detected)")
         else:
             offset_us = 0
             print("Time offset: 0 (auto-detect failed — timestamps may not align)")
+    else:
+        offset_us = 0
 
     print()
 
