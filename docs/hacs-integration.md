@@ -143,10 +143,14 @@ Go to **Settings → Devices & Services → + Add Integration**, search for **Ge
 | **Local Bluetooth adapter** | The HA host has a Bluetooth adapter and is within ~5 m of the toilet. |
 | **Home Assistant Bluetooth domain** | Advanced — for setups where HA's own Bluetooth integration already manages the same ESP32 proxy. |
 
+![Step 5a — Connection method selection](hacs-setup-step5a-connection-method.png)
+
 ### Step 5b — ESPHome proxy *(ESPHome path only)*
 
 - **Auto-discover:** pick your proxy from the dropdown (shows name and address), or choose *Enter manually*.
 - **Manual:** enter the IP or hostname, port (default `6053`), and optional noise encryption key (base64 PSK from your ESPHome YAML — leave blank if not configured).
+
+![Step 5b — Select ESPHome proxy](hacs-setup-step5b-esphome-proxy.png)
 
 ### Step 5c — Select AquaClean device
 
@@ -160,9 +164,13 @@ Example: `146.21  38:AB:41:2A:0D:67  (Geberit Mera Comfort)  −70 dBm`
 
 Select your device. If the scan finds nothing, choose *Enter MAC manually* and type the address (format `XX:XX:XX:XX:XX:XX`).
 
+![Step 5c — Select AquaClean device](hacs-setup-step5c-device-scan.png)
+
 ### Step 5d — Confirm Setup
 
 Review the device and transport summary, set the **poll interval** (default `30 s`), then click **Submit**. A live BLE connection test runs automatically — allow up to 30 seconds. After the wizard closes, the integration may take an additional 60 seconds to become fully active.
+
+![Step 5d — Confirm Setup](hacs-setup-step5d-confirm.jpg)
 
 ---
 
