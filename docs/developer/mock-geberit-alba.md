@@ -30,6 +30,85 @@ sudo /home/jens/venv/bin/python tools/mock-geberit-alba.py --mode handshake
 
 ---
 
+## Test session setup
+
+Run these steps in order before every test session. Steps 2 and 4 run on the
+**mock machine** (Linux/BlueZ); step 3 runs on the **dev machine** (Mac/Windows).
+
+### Placeholders
+
+| Placeholder | Example | Meaning |
+|-------------|---------|---------|
+| `MOCK_VENV` | `/home/jens/venv/bin/python` | Python interpreter on mock machine |
+| `MOCK_LOG_DIR` | `/home/jens` | Directory for mock + btmon logs on mock machine |
+| `HA_IP` | `192.168.0.198` | Home Assistant host IP |
+| `HA_USER` | `root` | HA SSH user |
+| `HA_PASSWORD` | `your-password` | HA SSH password (for `sshpass`) |
+| `DEV_LOG_DIR` | `/Users/jens/develop/geberit-aquaclean/local-assets/Bluetooth-Logs/nRF52840/jens62` | Local directory on dev machine for captured logs |
+
+### Step 1 — Clear ESP32 Bluetooth cache (ESPHome proxy only)
+
+The ESP32 caches the mock's GATT handle table in NVS flash. After any BlueZ restart
+on the mock machine the handles change; the cached values become stale and writes fail
+with `ATT Error: Invalid Handle`. Clear the cache before each session:
+
+- **ESPHome web UI** (simplest): open `http://<ESP32-IP>` → **"Clear Bluetooth Cache"** button.
+- **ESPHome YAML** (if the button is absent): see `docs/developer/test-infrastructure.md`
+  for the `esp32.clear_nvs` OTA approach.
+
+Skip this step if testing over **local BLE** (no ESP32 proxy involved).
+
+### Step 2 — Start btmon (mock machine)
+
+Captures all BLE HCI events to a timestamped btsnoop file for post-session analysis.
+Run in a dedicated terminal **before** starting the mock:
+
+```bash
+sudo btmon -w MOCK_LOG_DIR/hacs_zero-conf_esp__btmon_$(date +%F_%H-%M).btsnoop
+```
+
+Example:
+```bash
+sudo btmon -w /home/jens/hacs_zero-conf_esp__btmon_$(date +%F_%H-%M).btsnoop
+```
+
+### Step 3 — Stream HA core log (dev machine)
+
+Captures Home Assistant core log to a local file for the duration of the session.
+Run in a dedicated terminal on the dev machine:
+
+```bash
+sshpass -p 'HA_PASSWORD' ssh HA_USER@HA_IP "ha core logs --follow" \
+  | tee DEV_LOG_DIR/ha_core_$(date +%F_%H-%M).log
+```
+
+Example:
+```bash
+sshpass -p 'your-password' ssh root@192.168.0.198 "ha core logs --follow" \
+  | tee /Users/jens/develop/geberit-aquaclean/local-assets/Bluetooth-Logs/nRF52840/jens62/ha_core_$(date +%F_%H-%M).log
+```
+
+For **Windows PowerShell** and additional options see
+`docs/hacs-integration.md` → "HA core log" section.
+
+### Step 4 — Start the mock (mock machine)
+
+```bash
+sudo MOCK_VENV -u ./mock-geberit-alba.py --mode ble20 2>&1 \
+  | tee MOCK_LOG_DIR/hacs_zero-conf_esp_$(date +%F_%H-%M).log
+```
+
+Example:
+```bash
+sudo /home/jens/venv/bin/python -u ./mock-geberit-alba.py --mode ble20 2>&1 \
+  | tee /home/jens/hacs_zero-conf_esp_$(date +%F_%H-%M).log
+```
+
+Wait for `--- Mock Device Active (mode=ble20) ---` and note the printed adapter MAC
+address before proceeding with the test.
+
+---
+
 ## GATT profile advertised
 
 The mock exposes two services that match the real Alba device profile
