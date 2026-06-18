@@ -46,9 +46,9 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.18.2"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.18.6"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
-_ui_notify_state: dict = {"607": False, "564": False}  # web UI toggle state for NOTIFY pushes
+_ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
     from importlib.metadata import version as _pkg_ver
     _BRIDGE_VERSION = _pkg_ver("geberit-aquaclean")
@@ -242,9 +242,10 @@ class _Ble20AppLayer:
         (689, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_TOTAL inst=31
     ]
 
-    def __init__(self):
+    def __init__(self, notify_queue=None):
         self._store: dict = {}
         self._notify_subscribed: set = set()
+        self._notify_queue = notify_queue
         for dp_id, inst, ver, dt, mn, mx, beh, val in self._DEFAULT_STORE:
             self._store[(dp_id, inst)] = {
                 'version': ver, 'datatype': dt,
@@ -252,6 +253,16 @@ class _Ble20AppLayer:
                 'behavior': beh,
                 'value': bytearray(val),
             }
+
+    async def _stop_sequence(self):
+        """Simulate realistic shower wind-down: 5→6(Retracting)→7(Postrinsing)→2(Ready)."""
+        for delay, state, label in [(0.5, 0x06, "Retracting"), (1.5, 0x07, "Postrinsing"), (3.0, 0x02, "Ready")]:
+            await asyncio.sleep(delay)
+            entry = self._store.get((564, None))
+            if entry is not None:
+                entry['value'] = bytearray([state])
+            if 564 in self._notify_subscribed and self._notify_queue is not None:
+                await self._notify_queue.put((564, bytes([state])))
 
     async def dispatch(self, plaintext: bytes) -> list:
         """Dispatch one decrypted Ble20 frame; return list of response payloads."""
@@ -354,6 +365,28 @@ class _Ble20AppLayer:
         if dp_id in self._notify_subscribed:
             responses.append(bytes([CommandId.NotifyData]) + encode_address(dp_id) + value)
             print(f"[MockBle20] → NOTIFY_DATA DpId={dp_id} value={value.hex()}")
+        # DpId 563 = START_STOP_ANAL_SHOWER: mirror into DpId 564 (ANAL_SHOWER_STATUS)
+        # Start (01): immediately → 5 (Shower running); enables STOP button in app.
+        # Stop  (00): async wind-down 5→6(Retracting)→7(Postrinsing)→2(Ready).
+        if dp_id == 563:
+            if value[:1] == b'\x01':
+                entry_564 = self._store.get((564, None))
+                if entry_564 is not None:
+                    entry_564['value'] = bytearray(b'\x05')
+                if 564 in self._notify_subscribed:
+                    responses.append(bytes([CommandId.NotifyData]) + encode_address(564) + b'\x05')
+                    print(f"[MockBle20] → NOTIFY_DATA DpId=564 value=05 (Shower (running))")
+            else:
+                try:
+                    asyncio.get_running_loop().create_task(self._stop_sequence())
+                    print(f"[MockBle20] → scheduled stop sequence 5→6(0.5s)→7(1.5s)→2(3s)")
+                except RuntimeError:
+                    entry_564 = self._store.get((564, None))
+                    if entry_564 is not None:
+                        entry_564['value'] = bytearray(b'\x02')
+                    if 564 in self._notify_subscribed:
+                        responses.append(bytes([CommandId.NotifyData]) + encode_address(564) + b'\x02')
+                        print(f"[MockBle20] → NOTIFY_DATA DpId=564 value=02 (Ready) [fallback]")
         return responses
 
     def _notify_enable(self, frame: bytes) -> list:
@@ -1310,7 +1343,7 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
 
     async def _handshake_loop():
         nonlocal _connected_device_path, _connected_dev_iface
-        app_handler = _Ble20AppLayer().dispatch if mode == "ble20" else None
+        app_handler = _Ble20AppLayer(notify_queue=_notify_push_queue).dispatch if mode == "ble20" else None
 
         async def _fast_disconnect():
             """Disconnect BLE using pre-cached or freshly enumerated Device1 interface.
@@ -1355,14 +1388,14 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
             if not _session_pre_created:
                 sig_service._arendi = _AriendiServerSide()
                 if mode == "ble20":
-                    _ble20_app = _Ble20AppLayer()  # fresh store per session
+                    _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue)  # fresh store per session
                     if _user_sitting:
                         _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
-                        _ble20_app._store[(564, None)]['value'] = bytearray(b'\x00')  # idle/ready
+                        _ble20_app._store[(564, None)]['value'] = bytearray(b'\x02')  # Ready (app source: 0=Err,1=Disabled,2=Ready,3=Prerinsing,4=Extending,5=Shower,6=Retracting,7=Postrinsing)
                     app_handler = _ble20_app.dispatch
                     _ble20_app_ref[0] = _ble20_app
                     _ui_notify_state["607"] = _user_sitting
-                    _ui_notify_state["564"] = not _user_sitting  # sitting→False(00), absent→True(01)
+                    _ui_notify_state["564"] = 2 if _user_sitting else 1  # 2=ready, 1=disabled
                 # Reset notify subscription state so the next BLE client can subscribe.
                 # bluez_peripheral sets _notifying=True in StartNotify() and never resets
                 # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
@@ -1407,14 +1440,14 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
             if by_peer or should_disconnect:
                 sig_service._arendi = _AriendiServerSide()
                 if mode == "ble20":
-                    _ble20_app = _Ble20AppLayer()
+                    _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue)
                     if _user_sitting:
                         _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
-                        _ble20_app._store[(564, None)]['value'] = bytearray(b'\x00')  # idle/ready
+                        _ble20_app._store[(564, None)]['value'] = bytearray(b'\x02')  # Ready (app source: 0=Err,1=Disabled,2=Ready,3=Prerinsing,4=Extending,5=Shower,6=Retracting,7=Postrinsing)
                     app_handler = _ble20_app.dispatch
                     _ble20_app_ref[0] = _ble20_app
                     _ui_notify_state["607"] = _user_sitting
-                    _ui_notify_state["564"] = not _user_sitting
+                    _ui_notify_state["564"] = 2 if _user_sitting else 1  # 2=ready, 1=disabled
                 if notify_char is not None and hasattr(notify_char, '_notifying'):
                     notify_char._notifying = False
                 _session_pre_created = True
@@ -1480,6 +1513,10 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
     # Mutable ref to the current session's _Ble20AppLayer.  Set by _handshake_loop each
     # time a new session is created; read by the web-UI pusher to check subscriptions.
     _ble20_app_ref: list = [None]
+    # Queue shared between _Ble20AppLayer (producer: stop-sequence) and web-UI pusher
+    # (producer: manual toggles) and the pusher coroutine (consumer: encrypts + sends).
+    # Always created so _Ble20AppLayer can use it even when web UI is disabled.
+    _notify_push_queue: asyncio.Queue = asyncio.Queue()
 
     _web_task = None
     _pusher_task = None
@@ -1487,20 +1524,26 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
         if not _WEB_AVAILABLE:
             print("[MockWeb] WARNING: FastAPI/uvicorn not installed — --web-port ignored")
         else:
-            _notify_push_queue: asyncio.Queue = asyncio.Queue()
 
             _web_app = _FastAPI()
 
             @_web_app.get("/", response_class=_HTMLResponse)
             async def _web_get_index():
                 s607 = _ui_notify_state["607"]
-                s564 = _ui_notify_state["564"]
+                # Read DpId 564 from live store when available; fall back to ui state
+                _cur_app = _ble20_app_ref[0]
+                if _cur_app:
+                    _v564 = bytes(_cur_app._store.get((564, None), {}).get('value', b'\x01'))
+                    s564 = int.from_bytes(_v564, 'little') if _v564 else 1
+                else:
+                    s564 = _ui_notify_state["564"]
                 b607 = "ON (sitting)" if s607 else "OFF (absent)"
-                b564 = "ON" if s564 else "OFF"
+                b564 = {1: "1 (disabled)", 2: "2 (ready)", 5: "5 (running)"}.get(s564, f"{s564} (?)")
                 c607 = "#2a9" if s607 else "#999"
-                c564 = "#2a9" if s564 else "#999"
+                c564 = {"1": "#999", "2": "#2a9", "5": "#e50"}.get(str(s564), "#666")
                 return (
                     "<!DOCTYPE html><html><head><title>Mock Alba NOTIFY</title>"
+                    "<meta http-equiv='refresh' content='2'>"
                     "<style>"
                     "body{font-family:monospace;max-width:540px;margin:40px auto;padding:0 20px}"
                     ".row{display:flex;align-items:center;gap:16px;margin:16px 0}"
@@ -1514,14 +1557,15 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
                     f'<div class="row">'
                     f'<span class="lbl">DpId 607 — USER_DETECTION_STATUS'
                     f'<br><span class="note">0=absent &nbsp; 1=sitting'
-                    f'<br>also pushes DpId 564: 0=idle/ready, 1=disabled</span></span>'
+                    f'<br>also pushes DpId 564: 2=ready/startable, 1=disabled</span></span>'
                     f'<form method="POST" action="/notify/607/toggle">'
                     f'<button style="background:{c607}">{b607} &rarr; Toggle</button></form></div>'
                     f'<div class="row">'
-                    f'<span class="lbl">DpId 564 — ANAL_SHOWER_STATUS'
-                    f'<br><span class="note">0=idle/ready &nbsp; 1=disabled &nbsp; (standalone)</span></span>'
+                    f'<span class="lbl">DpId 564 — ANAL_SHOWER_STATUS (live)'
+                    f'<br><span class="note">1=disabled &nbsp; 2=ready &nbsp; 5=running'
+                    f'<br>standalone toggle cycles 1→2→5→1</span></span>'
                     f'<form method="POST" action="/notify/564/toggle">'
-                    f'<button style="background:{c564}">{b564} &rarr; Toggle</button></form></div>'
+                    f'<button style="background:{c564}">{b564} &rarr; Cycle</button></form></div>'
                     "</body></html>"
                 )
 
@@ -1529,18 +1573,21 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
             async def _web_post_toggle(dp_id: str):
                 if dp_id not in ("607", "564"):
                     return _HTMLResponse("Unknown DpId", status_code=400)
-                new_val = not _ui_notify_state[dp_id]
-                _ui_notify_state[dp_id] = new_val
-                value_bytes = b'\x01' if new_val else b'\x00'
-                await _notify_push_queue.put((int(dp_id), value_bytes))
                 if dp_id == "607":
-                    # Real device changes ANAL_SHOWER_STATUS (564) together with
-                    # USER_DETECTION_STATUS (607): sitting → 0x00 (idle/ready),
-                    # absent → 0x01 (disabled).  Without this the app keeps the
-                    # shower locked even after receiving NOTIFY 607=01.
-                    shower_val = b'\x00' if new_val else b'\x01'
-                    _ui_notify_state["564"] = not new_val  # False when sitting (val=00)
-                    await _notify_push_queue.put((564, shower_val))
+                    new_607 = not _ui_notify_state["607"]
+                    _ui_notify_state["607"] = new_607
+                    await _notify_push_queue.put((607, b'\x01' if new_607 else b'\x00'))
+                    # Real device changes ANAL_SHOWER_STATUS (564) atomically:
+                    # sitting → 2 (Ready/startable), absent → 1 (Disabled).
+                    shower_val = 2 if new_607 else 1
+                    _ui_notify_state["564"] = shower_val
+                    await _notify_push_queue.put((564, bytes([shower_val])))
+                else:
+                    # Standalone DpId 564 cycle: 1→2→5→1
+                    cur = _ui_notify_state["564"]
+                    new_564 = {1: 2, 2: 5, 5: 1}.get(cur, 2)
+                    _ui_notify_state["564"] = new_564
+                    await _notify_push_queue.put((564, bytes([new_564])))
                 return _RedirectResponse("/", status_code=303)
 
             async def _pusher():

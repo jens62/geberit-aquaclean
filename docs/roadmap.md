@@ -568,6 +568,25 @@ See `tools/generate-hacs-entity-docs.py` for the pattern to follow.
 
 ---
 
+### Mock alba web UI: SSE push for live state display
+
+The control web UI (`--web-port`) currently uses a 2 s `<meta http-equiv="refresh">` to
+show live DpId 564/607 values. Replace with SSE so the browser updates in real time without
+page flicker.
+
+**Implementation:**
+- Add `_sse_clients: list[asyncio.Queue]` (one queue per connected browser tab).
+- `GET /events` → `EventSourceResponse` generator that streams from the client queue.
+- `_broadcast_sse(state: dict)` helper: puts `{"564": v564, "607": v607}` into every queue.
+- Call `_broadcast_sse` from: toggle POST handler, `_stop_sequence`, `_write` DpId 563 path.
+- Pass a `broadcast_fn` callback into `_Ble20AppLayer.__init__` (same pattern as `notify_queue`).
+- JS: `const es = new EventSource('/events'); es.onmessage = e => updateStatus(JSON.parse(e.data))`.
+- Remove `<meta http-equiv="refresh">`.
+
+**Effort:** ~50 lines. No new dependencies (`sse-starlette` already available).
+
+---
+
 ### Mock alba: autonomous `DP_USER_DETECTION_STATUS` notification to enable Remote Control
 
 After Phase 3 `Initialize()` completes, the Geberit Home App subscribes `NOTIFY_ENABLE` for
