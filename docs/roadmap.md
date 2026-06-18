@@ -587,6 +587,43 @@ page flicker.
 
 ---
 
+### Mock alba: SQLite persistence for DpId store
+
+**Requirement:** Replace the in-code `_DEFAULT_STORE` list with a SQLite database so
+mock state survives restarts and reflects all changes made via the Geberit Home App or
+HACS integration.
+
+- On startup: load DpId store from DB; seed with `_DEFAULT_STORE` defaults if the DB
+  is empty or missing.
+- All `_write` calls persist `entry['value']` changes to the DB immediately.
+- Restart resumes with last-written values — app/HACS changes are durable.
+- Web UI: full table of all 78 DpIds with current value, datatype, behavior, min/max;
+  inline per-row edit (HTML form); **Reset to factory defaults** button (truncates + reseeds
+  from hardcoded defaults).
+
+**Effort:** ~3–4 hours, ~150–200 lines.
+
+| Piece | Effort |
+|-------|--------|
+| SQLite schema — one table mirroring `_DEFAULT_STORE` columns | small |
+| Startup: load from DB, seed defaults if empty | small |
+| `_write` hook: persist every `entry['value']` change | small |
+| Web UI: full 78-DpId table with current values | medium |
+| Web UI: inline per-row edit (one `<form>` per row) | medium |
+| Web UI: "Reset to factory defaults" button | small |
+| Wiring into `_stop_sequence` and per-session store setup | small |
+
+**Main decision:** per-row POSTs (simple, composable with existing toggle pattern) vs
+bulk-edit form. Per-row is the natural fit.
+
+**Dependency:** `sqlite3` is stdlib — no new packages.
+
+**Complication:** `_DEFAULT_STORE` carries typed metadata (datatype, behavior, min, max).
+The DB must store these columns so "Reset to factory" can truncate + reseed without
+a code lookup, and so the web UI can render appropriate input controls per datatype.
+
+---
+
 ### Mock alba: autonomous `DP_USER_DETECTION_STATUS` notification to enable Remote Control
 
 After Phase 3 `Initialize()` completes, the Geberit Home App subscribes `NOTIFY_ENABLE` for

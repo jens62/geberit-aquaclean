@@ -400,24 +400,101 @@ before raising E0010 — so a successful handshake falls through to normal polli
 
 ---
 
-## Current status — mock 2.1.0 (2026-06-13)
+## Web UI — NOTIFY Control (`--mode ble20`)
+
+When `--mode ble20` is used, the mock starts a local HTTP control panel on
+`http://0.0.0.0:8765/` (configurable via `--web-port`).
+
+![Mock Alba web UI — NOTIFY Control](images/mock-alba-web-ui.png)
+
+The panel lets you manually push encrypted `NOTIFY_DATA` frames to the connected
+BLE client without restarting the mock:
+
+| Control | What it does |
+|---------|-------------|
+| **DpId 607 — USER_DETECTION_STATUS** toggle | Switches between `0=absent` and `1=sitting`; simultaneously pushes a coupled DpId 564 update (`2=ready` when sitting, `1=disabled` when absent) |
+| **DpId 564 — ANAL_SHOWER_STATUS** cycle | Standalone toggle cycling `1=disabled → 2=ready → 5=running → 1`; overrides the value without touching DpId 607 |
+
+Notifications are silently discarded when no BLE client is connected or the DpId
+is not subscribed. The page auto-refreshes every 2 seconds to show the live value
+read from the mock's internal store.
+
+To disable the web UI: `--web-port 0`.
+
+---
+
+## Implemented behavior examples
+
+> **Not all Alba functionality is implemented.** The mock's DpId store covers all
+> 78 DpIds returned by the real kstr Alba device (series 250) and handles generic
+> Read/Write/Notify correctly for all of them. However, only the shower control flow
+> below has specific behaviour logic wired up. All other DpIds are stored in memory,
+> readable, and writable, but produce no side effects.
+
+### User sitting + shower start/stop (fully wired)
+
+This end-to-end flow is implemented as a working example of the mock's notification
+architecture:
+
+**1 — User sits down (web UI or app write to DpId 607)**
+
+Pushing the toggle in the web UI sends:
+- `NOTIFY_DATA DpId=607 value=0x01` (USER_DETECTION_STATUS = sitting)
+- `NOTIFY_DATA DpId=564 value=0x02` (ANAL_SHOWER_STATUS = Ready/startable)
+
+The Geberit Home App reacts by enabling the **Start shower** button in Remote Control.
+
+**2 — App writes DpId 563 = 0x01 (start shower)**
+
+The mock's `_write` handler detects `dp_id=563 value=\x01` and immediately:
+- Sets the internal DpId 564 store to `0x05` (ANAL_SHOWER_STATUS = Shower running)
+- Sends `NOTIFY_DATA DpId=564 value=0x05`
+
+The app reacts by enabling the **Stop shower** button.
+
+**3 — App writes DpId 563 = 0x00 (stop shower)**
+
+The mock schedules an async wind-down sequence that simulates the real device's
+retraction and post-rinsing phases:
+
+| Delay | DpId 564 value | State name |
+|-------|---------------|------------|
+| 0.5 s | 0x06 | Retracting |
+| 1.5 s | 0x07 | Postrinsing |
+| 3.0 s | 0x02 | Ready |
+
+Each step sends a `NOTIFY_DATA` so the app's progress indicator updates in real
+time. After the sequence completes the shower can be started again.
+
+### DpId 564 enum reference
+
+| Value | Name | Remote Control state |
+|-------|------|---------------------|
+| 0 | Error | — |
+| 1 | Disabled | Start disabled (no user detected) |
+| 2 | Ready | **Start enabled** (user sitting) |
+| 3 | Prerinsing | — |
+| 4 | Extending | — |
+| 5 | Shower | **Stop enabled** |
+| 6 | Retracting | — |
+| 7 | Postrinsing | — |
+
+Source: decompiled iOS app v2.14.1; confirmed against kstr device probe
+(`local-assets/Android-BLE-Logs/kstr/`).
+
+---
+
+## Current status — mock 2.18.6 (2026-06-18)
 
 | Fact | Detail |
 |------|--------|
 | Phase 1 | ✅ completes correctly |
-| App response after Phase 1 | "cannot connect" shown immediately after final `S-RR N(R)=4` |
-| PIN dialog | Never appears |
-| 30-second wait | Does NOT occur — failure is instant |
-| Phase 2 SABM | Never arrives — zero ATT writes after Phase 1 S-RR ACK |
-| Root cause | **OPEN** — unknown why app aborts immediately |
+| Phase 2 (TunnelDataExchange 0xD0) | ✅ implemented and tested |
+| Phase 3 ("Jetzt verbinden" SABM) | ✅ implemented — mid-session SABM on same BLE connection |
+| Shower start/stop flow | ✅ DpId 563→564 mirroring with async wind-down |
+| Web UI NOTIFY control | ✅ HTTP control panel on port 8765 |
 | 559eb110 data | Correct — `05 06 FA 00 D1 4C 13 02 95 04 03 20 01 0E 01 01 02 00` confirmed by `GeberitFirstconnection.decoded.txt` |
 | Device name "AC250" | Correct for all Alba 250 devices; uniqueness via BLE MAC, not name |
-
-**Key confirmed facts (btmon + mock log correlation via `tools/analyze-btmon-mock.py`):**
-- `_E008() = false` because bytes 0-1 of 559eb110 = `05 06` → DeviceSeries=1541, not recognized
-- With `_E008() = false`, no `_E004()` firmware check, no HTTP call — so HTTP timeout theory is wrong
-- btsnoop confirms: BLE connection stays alive, only 1 ATT write after Phase 1 (the S-RR ACK), then 6.85 s silence before user dismissed the "cannot connect" screen
-- The app makes the failure decision based on Phase 1 data alone — cause not yet identified
 
 **Authoritative reference for 559eb110 value:**
 `local-assets/Android-BLE-Logs/kstr/GeberitFirstconnection.decoded.txt` — GATT handle `att_handle=0x0010`, read before Phase 1 SABM.
