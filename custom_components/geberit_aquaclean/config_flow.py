@@ -225,6 +225,14 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            if user_input.get("rescan"):
+                try:
+                    from aquaclean_console_app.setup.discovery import async_discover_esphome
+                    self._found_proxies = await async_discover_esphome(timeout=12.0, hass=self.hass)
+                except Exception:
+                    self._found_proxies = []
+                return await self.async_step_esphome_pick()
+
             chosen_proxy = (user_input.get("esphome_proxy") or "").strip()
             manual_host = (user_input.get("esphome_host") or "").strip()
 
@@ -284,6 +292,9 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         schema_fields[vol.Optional("noise_psk", default="")] = selector.selector(
             {"text": {"type": "password"}}
+        )
+        schema_fields[vol.Optional("rescan", default=False)] = selector.selector(
+            {"boolean": {}}
         )
 
         return self.async_show_form(

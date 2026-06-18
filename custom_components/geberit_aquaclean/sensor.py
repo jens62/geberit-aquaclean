@@ -656,7 +656,6 @@ class AquaCleanAlbaDpIdCoverageSensor(AquaCleanEntity, SensorEntity):
     _attr_name = "DpId Coverage"
     _attr_icon = "mdi:identifier"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
