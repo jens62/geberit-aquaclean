@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.18.1"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.18.2"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 _ui_notify_state: dict = {"607": False, "564": False}  # web UI toggle state for NOTIFY pushes
 try:
@@ -1358,9 +1358,11 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
                     _ble20_app = _Ble20AppLayer()  # fresh store per session
                     if _user_sitting:
                         _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
+                        _ble20_app._store[(564, None)]['value'] = bytearray(b'\x00')  # idle/ready
                     app_handler = _ble20_app.dispatch
                     _ble20_app_ref[0] = _ble20_app
                     _ui_notify_state["607"] = _user_sitting
+                    _ui_notify_state["564"] = not _user_sitting  # sitting→False(00), absent→True(01)
                 # Reset notify subscription state so the next BLE client can subscribe.
                 # bluez_peripheral sets _notifying=True in StartNotify() and never resets
                 # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
@@ -1408,9 +1410,11 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
                     _ble20_app = _Ble20AppLayer()
                     if _user_sitting:
                         _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
+                        _ble20_app._store[(564, None)]['value'] = bytearray(b'\x00')  # idle/ready
                     app_handler = _ble20_app.dispatch
                     _ble20_app_ref[0] = _ble20_app
                     _ui_notify_state["607"] = _user_sitting
+                    _ui_notify_state["564"] = not _user_sitting
                 if notify_char is not None and hasattr(notify_char, '_notifying'):
                     notify_char._notifying = False
                 _session_pre_created = True
@@ -1509,12 +1513,13 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
                     "Discarded when no client is connected or the DpId is not subscribed.</p>"
                     f'<div class="row">'
                     f'<span class="lbl">DpId 607 — USER_DETECTION_STATUS'
-                    f'<br><span class="note">0=absent &nbsp; 1=sitting</span></span>'
+                    f'<br><span class="note">0=absent &nbsp; 1=sitting'
+                    f'<br>also pushes DpId 564: 0=idle/ready, 1=disabled</span></span>'
                     f'<form method="POST" action="/notify/607/toggle">'
                     f'<button style="background:{c607}">{b607} &rarr; Toggle</button></form></div>'
                     f'<div class="row">'
                     f'<span class="lbl">DpId 564 — ANAL_SHOWER_STATUS'
-                    f'<br><span class="note">0=off &nbsp; 1=on</span></span>'
+                    f'<br><span class="note">0=idle/ready &nbsp; 1=disabled &nbsp; (standalone)</span></span>'
                     f'<form method="POST" action="/notify/564/toggle">'
                     f'<button style="background:{c564}">{b564} &rarr; Toggle</button></form></div>'
                     "</body></html>"
@@ -1528,6 +1533,14 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
                 _ui_notify_state[dp_id] = new_val
                 value_bytes = b'\x01' if new_val else b'\x00'
                 await _notify_push_queue.put((int(dp_id), value_bytes))
+                if dp_id == "607":
+                    # Real device changes ANAL_SHOWER_STATUS (564) together with
+                    # USER_DETECTION_STATUS (607): sitting → 0x00 (idle/ready),
+                    # absent → 0x01 (disabled).  Without this the app keeps the
+                    # shower locked even after receiving NOTIFY 607=01.
+                    shower_val = b'\x00' if new_val else b'\x01'
+                    _ui_notify_state["564"] = not new_val  # False when sitting (val=00)
+                    await _notify_push_queue.put((564, shower_val))
                 return _RedirectResponse("/", status_code=303)
 
             async def _pusher():
