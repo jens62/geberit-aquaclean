@@ -39,8 +39,9 @@ PROFILE_NUMBERS: list[tuple] = [
     # Models with odour extraction
     ("ps_odour_extraction",     0, "Odour Extraction",      0, 1, "mdi:air-filter",       FS_WITH_ODOUR_EXTRACTION, True),
     # Not yet wired — disabled by default, visible to users as "not yet in bridge"
-    ("ps_lady_oscillation",     14, "Lady Oscillation",     0, 1, "mdi:rotate-360",       FS_WITH_LADY_SHOWER,  False),
-    ("ps_water_heating",        12, "Water Heating",        0, 1, "mdi:water-thermometer", FS_WITH_WATER_HEATER, False),
+    ("ps_lady_oscillation",     14, "Lady Oscillation",     0, 1, "mdi:rotate-360",        FS_WITH_LADY_SHOWER,  False),
+    ("ps_water_heating",        12, "Water Heating",        0, 1, "mdi:water-thermometer",  FS_WITH_WATER_HEATER, False),
+    ("ps_seat_heating",         11, "Seat Heating",         0, 1, "mdi:heat-wave",          FS_AQUACLEAN_OLD,     False),  # Tuma Comfort only
 ]
 
 # (data_key, command, friendly_name, min_value, max_value, icon)
@@ -68,10 +69,12 @@ COMMON_NUMBERS: list[tuple] = [
     ("cs_wc_lid_open_automatically",    6, "WC Lid Open Automatically",    0, 1, "mdi:door-open",      FS_MERA_COMFORT_ONLY,     True),
     ("cs_wc_lid_close_automatically",   7, "WC Lid Close Automatically",   0, 1, "mdi:door-closed",    FS_MERA_COMFORT_ONLY,     True),
     # Not yet wired — disabled by default, visible to users as "not yet in bridge"
-    ("cs_auto_flush",                8, "Auto Flush",                0, 1, "mdi:toilet",          FS_AQUACLEAN_OLD, False),
-    ("cs_demo_mode",                 9, "Demo Mode",                 0, 1, "mdi:presentation",    FS_AQUACLEAN_OLD, False),
-    ("cs_language",                 12, "Language",                  0, 5, "mdi:translate",       FS_AQUACLEAN_OLD, False),
-    ("cs_light_sensor_sensitivity", 10, "Light Sensor Sensitivity",  0, 4, "mdi:brightness-auto", FS_SELA_ONLY,     False),
+    ("cs_auto_flush",                8, "Auto Flush",                0, 1, "mdi:toilet",          FS_AQUACLEAN_OLD,         False),
+    ("cs_demo_mode",                 9, "Demo Mode",                 0, 1, "mdi:presentation",    FS_AQUACLEAN_OLD,         False),
+    ("cs_language",                 12, "Language",                  0, 5, "mdi:translate",       FS_AQUACLEAN_OLD,         False),
+    ("cs_light_sensor_sensitivity", 10, "Light Sensor Sensitivity",  0, 4, "mdi:brightness-auto", FS_SELA_ONLY,             False),
+    ("cs_odour_run_on",              5, "Odour Extraction Run-On",   0, 1, "mdi:air-purifier",    FS_WITH_ODOUR_EXTRACTION, False),
+    ("cs_care_mode",                11, "Care Mode",                 0, 1, "mdi:spray-bottle",    FS_AQUACLEAN_OLD,         False),  # Mera Floorstanding only
 ]
 
 
