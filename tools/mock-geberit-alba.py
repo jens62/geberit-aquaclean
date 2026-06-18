@@ -663,7 +663,13 @@ class _AriendiServerSide:
             #                           After Initialize() returns, the iOS app may take
             #                           10–20 s before sending NotifyEnable frames (async
             #                           UI rendering, possible cloud-call timeout).
+            #   _in_notify_mode (True) — 120 s: app has subscribed at least one DpId and
+            #                            entered passive monitoring mode.  It sends no more
+            #                            I-frames; it only responds with S-RR ACKs to our
+            #                            NOTIFY_DATA pushes.  30 s fires long before the app
+            #                            would naturally disconnect.
             _first_frame = True
+            _in_notify_mode = False  # set True on first NotifyAck; extends receive timeout
             # Phase 2 protocol:
             #   1. Detect end of Phase 2: EVENT_STORAGE_INVENTORY + READ DpId=8.
             #   2. Mock sends HDLC DISC to signal "Phase 2 done".
@@ -695,6 +701,11 @@ class _AriendiServerSide:
                     # (quick KE + READ) and sub-phase B (full inventory).
                     # Must be > 2 s or it fires mid-inventory.
                     _timeout = 3.0
+                elif _in_notify_mode:
+                    # App is in passive NOTIFY monitoring — no more I-frames expected until
+                    # it disconnects or sends a NotifyDisable.  The session must stay alive
+                    # so the app can receive server-initiated NOTIFY_DATA pushes.
+                    _timeout = 120.0
                 else:
                     # Phase 1: iOS shows the PIN dialog after this; the inter-session gap
                     # can be long if the user is slow.  Keep a generous timeout.
@@ -747,6 +758,8 @@ class _AriendiServerSide:
                 if app_handler is not None:
                     responses = await app_handler(plaintext)
                     for resp in responses:
+                        if resp and resp[0] == CommandId.NotifyAck:
+                            _in_notify_mode = True
                         encrypted_resp = self._tx_cipher.process(_inner_cobs_encode(resp))
                         att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
                         try:
