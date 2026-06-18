@@ -46,8 +46,9 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.17.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.18.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
+_ui_notify_state: dict = {"607": False, "564": False}  # web UI toggle state for NOTIFY pushes
 try:
     from importlib.metadata import version as _pkg_ver
     _BRIDGE_VERSION = _pkg_ver("geberit-aquaclean")
@@ -107,6 +108,13 @@ from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
 )
+try:
+    from fastapi import FastAPI as _FastAPI
+    from fastapi.responses import HTMLResponse as _HTMLResponse, RedirectResponse as _RedirectResponse
+    import uvicorn as _uvicorn
+    _WEB_AVAILABLE = True
+except ImportError:
+    _WEB_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -1007,7 +1015,7 @@ async def safe_call(obj, method_name, *args, **kwargs):
 # Main
 # ---------------------------------------------------------------------------
 
-async def main(mode: str, send_delay_sec: float = 0.0):
+async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     # Suppress the noisy "does not have property TxPower" error from dbus_next.
@@ -1338,6 +1346,8 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     if _user_sitting:
                         _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
                     app_handler = _ble20_app.dispatch
+                    _ble20_app_ref[0] = _ble20_app
+                    _ui_notify_state["607"] = _user_sitting
                 # Reset notify subscription state so the next BLE client can subscribe.
                 # bluez_peripheral sets _notifying=True in StartNotify() and never resets
                 # it on an abrupt BLE disconnect (no StopNotify() is called).  On the
@@ -1386,6 +1396,8 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                     if _user_sitting:
                         _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
                     app_handler = _ble20_app.dispatch
+                    _ble20_app_ref[0] = _ble20_app
+                    _ui_notify_state["607"] = _user_sitting
                 if notify_char is not None and hasattr(notify_char, '_notifying'):
                     notify_char._notifying = False
                 _session_pre_created = True
@@ -1448,6 +1460,94 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 await asyncio.sleep(0.3)
             print("[Mock] Ready for next client")
 
+    # Mutable ref to the current session's _Ble20AppLayer.  Set by _handshake_loop each
+    # time a new session is created; read by the web-UI pusher to check subscriptions.
+    _ble20_app_ref: list = [None]
+
+    _web_task = None
+    _pusher_task = None
+    if web_port > 0 and mode == "ble20":
+        if not _WEB_AVAILABLE:
+            print("[MockWeb] WARNING: FastAPI/uvicorn not installed — --web-port ignored")
+        else:
+            _notify_push_queue: asyncio.Queue = asyncio.Queue()
+
+            _web_app = _FastAPI()
+
+            @_web_app.get("/", response_class=_HTMLResponse)
+            async def _web_get_index():
+                s607 = _ui_notify_state["607"]
+                s564 = _ui_notify_state["564"]
+                b607 = "ON (sitting)" if s607 else "OFF (absent)"
+                b564 = "ON" if s564 else "OFF"
+                c607 = "#2a9" if s607 else "#999"
+                c564 = "#2a9" if s564 else "#999"
+                return (
+                    "<!DOCTYPE html><html><head><title>Mock Alba NOTIFY</title>"
+                    "<style>"
+                    "body{font-family:monospace;max-width:540px;margin:40px auto;padding:0 20px}"
+                    ".row{display:flex;align-items:center;gap:16px;margin:16px 0}"
+                    ".lbl{width:290px}.note{font-size:.85em;color:#666}"
+                    "button{padding:6px 18px;border:1px solid #888;border-radius:4px;"
+                    "cursor:pointer;color:#fff;font-family:monospace}"
+                    "</style></head><body>"
+                    "<h2>Mock Alba — NOTIFY Control</h2>"
+                    "<p>Pushes encrypted NOTIFY_DATA to the active BLE client.<br>"
+                    "Discarded when no client is connected or the DpId is not subscribed.</p>"
+                    f'<div class="row">'
+                    f'<span class="lbl">DpId 607 — USER_DETECTION_STATUS'
+                    f'<br><span class="note">0=absent &nbsp; 1=sitting</span></span>'
+                    f'<form method="POST" action="/notify/607/toggle">'
+                    f'<button style="background:{c607}">{b607} &rarr; Toggle</button></form></div>'
+                    f'<div class="row">'
+                    f'<span class="lbl">DpId 564 — ANAL_SHOWER_STATUS'
+                    f'<br><span class="note">0=off &nbsp; 1=on</span></span>'
+                    f'<form method="POST" action="/notify/564/toggle">'
+                    f'<button style="background:{c564}">{b564} &rarr; Toggle</button></form></div>'
+                    "</body></html>"
+                )
+
+            @_web_app.post("/notify/{dp_id}/toggle")
+            async def _web_post_toggle(dp_id: str):
+                if dp_id not in ("607", "564"):
+                    return _HTMLResponse("Unknown DpId", status_code=400)
+                new_val = not _ui_notify_state[dp_id]
+                _ui_notify_state[dp_id] = new_val
+                value_bytes = b'\x01' if new_val else b'\x00'
+                await _notify_push_queue.put((int(dp_id), value_bytes))
+                return _RedirectResponse("/", status_code=303)
+
+            async def _pusher():
+                while True:
+                    dp_id, value_bytes = await _notify_push_queue.get()
+                    arendi = sig_service._arendi
+                    ble20_app = _ble20_app_ref[0]
+                    if arendi is None or not getattr(arendi, 'handshake_done', False):
+                        print(f"[MockWeb] NOTIFY DpId={dp_id} discarded — no active session")
+                        continue
+                    if ble20_app is None or dp_id not in ble20_app._notify_subscribed:
+                        subs = ble20_app._notify_subscribed if ble20_app else set()
+                        print(f"[MockWeb] NOTIFY DpId={dp_id} discarded — not subscribed (subscribed: {subs})")
+                        continue
+                    entry = ble20_app._store.get((dp_id, None))
+                    if entry is not None:
+                        entry['value'] = bytearray(value_bytes)
+                    payload = bytes([CommandId.NotifyData]) + encode_address(dp_id) + value_bytes
+                    encrypted = arendi._tx_cipher.process(_inner_cobs_encode(payload))
+                    att_frame = arendi._att_i(bytes([_SEC_ENCRYPTED]) + encrypted)
+                    await sig_service.send_notify(att_frame)
+                    print(f"[MockWeb] → NOTIFY_DATA DpId={dp_id} value={value_bytes.hex()}")
+
+            _pusher_task = asyncio.create_task(_pusher())
+            _web_cfg = _uvicorn.Config(
+                _web_app, host="0.0.0.0", port=web_port,
+                log_level="warning", loop="none", lifespan="off",
+            )
+            _web_srv = _uvicorn.Server(_web_cfg)
+            _web_srv.install_signal_handlers = lambda: None
+            _web_task = asyncio.create_task(_web_srv.serve())
+            print(f"[MockWeb] Control UI: http://0.0.0.0:{web_port}/  (DpId 607 + 564)")
+
     server_task = None
     if mode in ("handshake", "ble20"):
         print("Waiting for bridge to connect and start handshake (60 s timeout)...")
@@ -1468,6 +1568,10 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         pass
     finally:
         print("\nShutting down...")
+        if _pusher_task and not _pusher_task.done():
+            _pusher_task.cancel()
+        if _web_task and not _web_task.done():
+            _web_task.cancel()
         if server_task and not server_task.done():
             server_task.cancel()
         if _agent_mgr is not None:
@@ -1573,6 +1677,14 @@ Test sequence:
              "ATT notification drops caused by BLE link congestion.",
     )
     parser.add_argument(
+        "--web-port",
+        type=int,
+        default=8765,
+        metavar="PORT",
+        help="TCP port for the NOTIFY control web UI (default: 8765). "
+             "Only active in --mode ble20. Use --web-port 0 to disable.",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         default=False,
@@ -1584,6 +1696,6 @@ Test sequence:
     _VERBOSE = args.verbose
 
     try:
-        asyncio.run(main(args.mode, send_delay_sec=args.send_delay / 1000.0))
+        asyncio.run(main(args.mode, send_delay_sec=args.send_delay / 1000.0, web_port=args.web_port))
     except KeyboardInterrupt:
         print("\nInterrupted by user. Exiting.")
