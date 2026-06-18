@@ -394,6 +394,11 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                         self._device_id,
                         inventory=self._alba_inventory or None,
                     )
+                    # Populate inventory cache when empty (e.g. coordinator restarted while
+                    # device_type was already known from config entry — the detection block
+                    # that normally sets _alba_inventory is skipped in that case).
+                    if not self._alba_inventory and client._inventory:
+                        self._alba_inventory = client._inventory
 
                 elif self._device_type == "mera":
                     if self._esphome_host and not self._use_ha_bluetooth:
