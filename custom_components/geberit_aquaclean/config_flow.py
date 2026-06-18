@@ -198,17 +198,13 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._transport == "esphome_auto":
             try:
                 from aquaclean_console_app.setup.discovery import async_discover_esphome
-                self._found_proxies = await async_discover_esphome(timeout=8.0, hass=self.hass)
+                self._found_proxies = await async_discover_esphome(timeout=12.0, hass=self.hass)
             except Exception:
                 self._found_proxies = []
 
-            if len(self._found_proxies) == 0:
-                return await self.async_step_esphome_host()
-            else:
-                # Always show picker — even with 1 result.
-                # User may have multiple proxies and only one responded to mDNS,
-                # or they want a different proxy than the one discovered.
-                return await self.async_step_esphome_pick()
+            # Always show the combined pick/manual step: proxy dropdown (if any found)
+            # alongside always-visible manual IP fields so mDNS misses don't block setup.
+            return await self.async_step_esphome_pick()
 
         elif self._transport == "esphome_manual":
             return await self.async_step_esphome_host()
@@ -217,10 +213,55 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_ble_scan()
 
     # ------------------------------------------------------------------
-    # Step 2a — Pick from multiple discovered ESPHome proxies
+    # Step 2a — ESPHome proxy: discovered dropdown + always-visible manual fields
     # ------------------------------------------------------------------
     async def async_step_esphome_pick(self, user_input=None) -> FlowResult:
-        if user_input is None:
+        """Combined proxy picker + manual IP entry.
+
+        Proxy dropdown (when proxies were found) and manual host/port/psk fields
+        are shown simultaneously.  If a proxy is selected from the dropdown it takes
+        precedence over anything typed in the manual host field.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            chosen_proxy = (user_input.get("esphome_proxy") or "").strip()
+            manual_host = (user_input.get("esphome_host") or "").strip()
+
+            if chosen_proxy and chosen_proxy != "__none__":
+                # Proxy selected from dropdown — use its IP:port.
+                try:
+                    host_part, port_part = chosen_proxy.rsplit(":", 1)
+                    self._esphome_host = host_part
+                    self._esphome_port = int(port_part)
+                except Exception:
+                    self._esphome_host = chosen_proxy
+                    self._esphome_port = DEFAULT_ESPHOME_PORT
+                _sel_proxy = next(
+                    (p for p in self._found_proxies if f"{p['ip']}:{p['port']}" == chosen_proxy),
+                    None,
+                )
+                if _sel_proxy:
+                    self._esphome_auto_selected = True
+                    self._esphome_label = (
+                        f"{_sel_proxy['name']} "
+                        f"({_sel_proxy['host'] or _sel_proxy['ip']}:{_sel_proxy['port']})"
+                    )
+            elif manual_host:
+                self._esphome_host = manual_host
+                self._esphome_port = int(user_input.get("esphome_port") or DEFAULT_ESPHOME_PORT)
+                psk = (user_input.get("noise_psk") or "").strip()
+                self._noise_psk = psk or None
+            else:
+                errors["esphome_host"] = "esphome_host_required"
+
+            if not errors:
+                return await self.async_step_ble_scan()
+
+        # Build schema — proxy dropdown only present when proxies were discovered.
+        schema_fields: dict = {}
+        if self._found_proxies:
+            _default_proxy = f"{self._found_proxies[0]['ip']}:{self._found_proxies[0]['port']}"
             options = [
                 selector.SelectOptionDict(
                     # Use IP as value — aioesphomeapi would create a competing Zeroconf
@@ -230,32 +271,26 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 for p in self._found_proxies
             ]
-            options.append(selector.SelectOptionDict(value="__manual__", label="Enter manually…"))
-            return self.async_show_form(
-                step_id="esphome_pick",
-                data_schema=vol.Schema({
-                    vol.Required("esphome_proxy"): selector.selector({
-                        "select": {"options": options}
-                    }),
-                }),
-            )
+            options.append(selector.SelectOptionDict(value="__none__", label="Enter IP manually below"))
+            schema_fields[vol.Optional("esphome_proxy", default=_default_proxy)] = selector.selector({
+                "select": {"options": options}
+            })
 
-        chosen = user_input["esphome_proxy"]
-        if chosen == "__manual__":
-            return await self.async_step_esphome_host()
+        schema_fields[vol.Optional("esphome_host", default=self._esphome_host or "")] = selector.selector(
+            {"text": {}}
+        )
+        schema_fields[vol.Optional("esphome_port", default=self._esphome_port)] = selector.selector(
+            {"number": {"min": 1, "max": 65535, "mode": "box"}}
+        )
+        schema_fields[vol.Optional("noise_psk", default="")] = selector.selector(
+            {"text": {"type": "password"}}
+        )
 
-        try:
-            host_part, port_part = chosen.rsplit(":", 1)
-            self._esphome_host = host_part
-            self._esphome_port = int(port_part)
-        except Exception:
-            self._esphome_host = chosen
-            self._esphome_port = DEFAULT_ESPHOME_PORT
-        _sel_proxy = next((p for p in self._found_proxies if f"{p['ip']}:{p['port']}" == chosen), None)
-        if _sel_proxy:
-            self._esphome_auto_selected = True
-            self._esphome_label = f"{_sel_proxy['name']} ({_sel_proxy['host'] or _sel_proxy['ip']}:{_sel_proxy['port']})"
-        return await self.async_step_ble_scan()
+        return self.async_show_form(
+            step_id="esphome_pick",
+            data_schema=vol.Schema(schema_fields),
+            errors=errors,
+        )
 
     # ------------------------------------------------------------------
     # Step 2b — Manual ESPHome host entry

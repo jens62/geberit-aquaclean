@@ -13,9 +13,18 @@
       },
       "esphome_pick": {
         "title": "Select ESPHome Proxy",
-        "description": "The following ESPHome Bluetooth proxies were found on your network. Select the one that is physically close to the AquaClean you want to add, or choose **Enter manually** to type an IP address directly.",
+        "description": "Proxies discovered via mDNS are shown in the dropdown. You can also enter an IP address directly in the fields below — useful if a proxy is reachable but did not respond to mDNS.",
         "data": {
-          "esphome_proxy": "ESPHome proxy"
+          "esphome_proxy": "Discovered proxy",
+          "esphome_host": "Host (hostname or IP) — manual fallback",
+          "esphome_port": "Port",
+          "noise_psk": "Encryption key (optional)"
+        },
+        "data_description": {
+          "esphome_proxy": "Select a proxy discovered on your network. If the proxy you want is missing, enter its address in the manual fields below.",
+          "esphome_host": "Hostname or IP address (e.g. 192.168.1.100 or aquaclean-proxy.local). Fill this in only if your proxy is not listed above.",
+          "esphome_port": "Native API port. Default: 6053.",
+          "noise_psk": "API encryption key from your ESPHome YAML (api: encryption: key:). Leave empty if encryption is not configured."
         }
       },
       "esphome_host": {
