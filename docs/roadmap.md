@@ -170,20 +170,68 @@ Expose as a **"Stay connected" toggle in the HACS options flow** — off by defa
 
 ---
 
+### Alba: persistent BLE connection + real-time NOTIFY (behave like the Geberit Home App)
+
+**Root insight from mock development**: The Geberit Home App does one KE per user session and
+stays connected. It never disconnects between polls. It subscribes `NOTIFY_ENABLE` for
+`DpId=607` (`USER_DETECTION_STATUS`) and `DpId=564` (`ANAL_SHOWER_STATUS`) immediately after
+inventory and receives real-time push events — it never polls those two DpIds via SPL.
+
+The bridge currently connect → KE → Inventory → reads → **disconnect** on every poll (every 30 s).
+This means:
+- A new ECDH KE handshake runs on every single poll.
+- NOTIFY frames sent between polls are missed entirely.
+- The device is occupied for ~14 s out of every 30 s interval.
+
+**The correct approach — match the app:**
+
+1. **Persistent BLE connection** for the Alba coordinator path: connect once, keep the BLE link
+   alive, reconnect (with full KE) only on drop. Fast/slow reads still run on the poll schedule;
+   the connection is not torn down between them. This is analogous to the existing
+   `ble_connection = persistent` mode for Mera (`ServiceMode`), applied to the HACS coordinator.
+
+2. **NOTIFY subscriptions** on that connection: subscribe to `DpId=607` and `DpId=564`
+   immediately after inventory. Incoming notifications trigger `async_write_ha_state()`
+   immediately — independent of the poll schedule. User-sitting and shower-running become
+   real-time sensors rather than 30-second-lag sensors.
+
+**Why NOTIFY alone is not enough**: if the connection is torn down after each poll, all
+NOTIFY frames sent by the device between polls are lost. Persistent connection and NOTIFY
+are inseparable — implementing NOTIFY on the current on-demand model adds no real value.
+
+**With persistent connection, session key caching becomes irrelevant**: one KE per device boot,
+exactly like the app. The separate session-caching item below can be de-prioritised.
+
+**Mock validation**: the autonomous `DP_USER_DETECTION_STATUS` NOTIFY loop (see mock roadmap
+item below) is the correct test for this feature — it sends real NOTIFY frames to a
+persistently-connected client, validating the coordinator's push-update path end-to-end.
+
+**Implementation pieces:**
+- `coordinator.py`: background task maintains the BLE connection; reconnect with circuit breaker
+  on drop; reuse `_alba_inventory` cache so only fast/slow DpId reads run each poll.
+- After connect: `ble20.enable_notification([607, 564])`; register callback that calls
+  `async_write_ha_state()` on the relevant binary sensors without waiting for the next poll.
+- `BluetoothLeConnector`: expose a `keep_connected` mode (do not call `disconnect()` between
+  BLE operations; only disconnect on explicit teardown or error).
+
+---
+
 ### Alba: session caching — skip KE handshake on every poll
 
+> **Superseded by the persistent-connection item above** if that is implemented first.
+> Session caching only makes sense in the on-demand connection model.
+
 The bridge currently does a full Arendi handshake on every poll.
-The Geberit Home App does one KE per user session and stays connected.
+**Important caveat**: the Geberit Home App never does session resumption — it stays connected
+and never reconnects mid-session. We have no evidence the device accepts a reconnect that
+skips the KE step. Implementing session caching means teaching the bridge something the app
+does not do, and validating it against the real device (not the mock, which was built from
+observed app behaviour).
 
-**Benefits:**
-1. **Performance**: skips 5 round trips of cryptographic operations per poll.
-2. **Remote displacement fix**: reduces keyset-0 KE count from 1-per-poll to 1-per-device-boot (Hypothesis A).
+**Diagnostic prerequisite before coding**: set poll interval to 3600s. If displacement moves
+from ~2.5 min to ~5 hours, session caching is the right fix. See `memory/alba-session-caching-fix.md`.
 
-**Implementation**: after a successful KE, persist session keys and counters on the coordinator
-between polls. Invalidate cache when `nonce2` in EP Response changes (= device power-cycle).
-
-**Diagnostic prerequisite before coding**: set poll interval to 3600s. If displacement moves from
-~2.5 min to ~5 hours, session caching is the right fix. See `memory/alba-session-caching-fix.md`.
+**Only pursue if persistent connection (above) is not implemented first.**
 
 ---
 
