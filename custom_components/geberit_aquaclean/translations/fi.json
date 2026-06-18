@@ -3,28 +3,71 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Versio {version}\n\nSyötä AquaClean-laitteesi BLE MAC-osoite. Jätä ESPHome-välityspalvelimen isäntä -kenttä tyhjäksi käyttääksesi paikallista Bluetooth-sovitinta. Yhteystesti suoritetaan tallennettaessa — odota enintään 30 sekuntia.",
+        "description": "Versio {version}\n\nValitse, miten tämä integraatio muodostaa yhteyden AquaClean-laitteeseesi Bluetoothin kautta.\n\nEpävarma? Katso [asennusopas](https://github.com/jens62/geberit-aquaclean/blob/main/docs/hacs-integration.md).",
         "data": {
-          "device_id": "BLE MAC-osoite (XX:XX:XX:XX:XX:XX)",
-          "esphome_host": "ESPHome-välityspalvelimen isäntä (tyhjä paikalliselle BLE:lle)",
-          "esphome_port": "ESPHome-välityspalvelimen portti",
-          "noise_psk": "ESPHome-salausavain (valinnainen, base64)",
-          "poll_interval": "Kyselyväli (sekuntia)",
-          "use_ha_bluetooth": "Käytä Home Assistantin Bluetooth-toimialuetta (Vaihtoehto B — ota käyttöön, jos HA käyttää jo samaa ESPHome-proxyä)"
+          "transport_type": "Yhteysmenetelmä"
         },
         "data_description": {
-          "device_id": "AquaClean-laitteesi Bluetooth MAC-osoite (esim. 38:AB:41:2A:0D:67). Löytyy laitteen sisällä olevasta tarrasta tai Geberit Home -sovelluksesta.",
-          "esphome_host": "ESPHome Bluetooth -proxyn isäntänimi tai IP. Jätä tyhjäksi käyttääksesi tämän HA-isännän paikallista Bluetooth-sovitinta.",
-          "esphome_port": "ESPHome-proxyn natiivi API-portti. Oletus: 6053.",
-          "noise_psk": "API-salausavain ESPHome YAML-tiedostostasi (api: encryption: key:). Jätä tyhjäksi, jos salausta ei ole määritetty.",
-          "poll_interval": "Kuinka usein laitetta kysytään Bluetoothin kautta. Lyhyemmät välit antavat nopeammin reagoivia antureita, mutta pitävät BLE:n varattuna pidempään.",
-          "use_ha_bluetooth": "Vaihtoehto A (pois, oletus): suora ESPHome-yhteys — tarjoaa myös ESP32-signaalivoimakkuuden, vapaan muistin ja kuljetustyypin antureina. Vaihtoehto B (päällä): reititetään HA:n Bluetooth-toimialueen kautta — käytä tätä, kun HA:n oma Bluetooth-integraatio jo varaa saman ESPHome-proxyn. ESP32-tilastot eivät ole saatavilla Vaihtoehto B:llä."
+          "transport_type": "**ESPHome-välityspalvelin (suositeltu):** ESP32, jossa on `aquaclean-proxy`-laiteohjelmisto, toimii Bluetooth-siltana — HA-isäntäsi voi olla missä tahansa verkossa, eikä Bluetooth-sovitinta tarvita.\n\n**Paikallinen Bluetooth:** Käyttää suoraan tämän HA-koneen Bluetooth-sovitinta. Koneen on oltava ~5 m:n etäisyydellä WC:stä.\n\n**HA Bluetooth-toimialue:** Edistynyt — konfiguraatioihin, joissa HA:n oma Bluetooth-integraatio hallitsee jo samaa ESP32-välityspalvelinta."
+        }
+      },
+      "esphome_pick": {
+        "title": "Valitse ESPHome-välityspalvelin",
+        "description": "Seuraavat ESPHome Bluetooth -välityspalvelimet löytyivät verkostasi. Valitse se, joka on fyysisesti lähellä lisättävää AquaClean-laitetta, tai valitse **Syötä manuaalisesti** kirjoittaaksesi IP-osoitteen suoraan.",
+        "data": {
+          "esphome_proxy": "ESPHome-välityspalvelin"
+        }
+      },
+      "esphome_host": {
+        "title": "ESPHome-välityspalvelimen asetukset",
+        "description": "Anna ESPHome Bluetooth -välityspalvelimen yhteystiedot.",
+        "data": {
+          "esphome_host": "Isäntä (nimi tai IP)",
+          "esphome_port": "Portti",
+          "noise_psk": "Salausavain (valinnainen)"
+        },
+        "data_description": {
+          "esphome_host": "ESPHome Bluetooth -välityspalvelimen isäntänimi tai IP (esim. aquaclean-proxy.local tai 192.168.1.100).",
+          "esphome_port": "Natiivin API:n portti. Oletus: 6053.",
+          "noise_psk": "API-salausavain ESPHome YAML -tiedostostasi (api: encryption: key:). Jätä tyhjäksi, jos salausta ei ole määritetty."
+        }
+      },
+      "ble_scan": {
+        "title": "Valitse AquaClean-laite",
+        "description": "Valitse AquaClean-laitteesi hakutuloksista tai syötä MAC-osoite manuaalisesti.",
+        "data": {
+          "device_mac": "Laite"
+        }
+      },
+      "device_manual": {
+        "title": "Syötä MAC-osoite",
+        "description": "Syötä AquaClean-laitteesi Bluetooth MAC-osoite. Se löytyy WC-istuimen sisäpuolella olevasta tarrasta tai Geberit Home -sovelluksesta.",
+        "data": {
+          "device_id": "BLE MAC-osoite"
+        },
+        "data_description": {
+          "device_id": "Muoto: XX:XX:XX:XX:XX:XX (esim. 38:AB:41:2A:0D:67)"
+        }
+      },
+      "confirm": {
+        "title": "Vahvista asennus",
+        "description": "**Laite:** {mac}\n**Yhteys:** {transport}\n**ESPHome-isäntä:** {esphome_host}\n\nYhteyden testaus suoritetaan, kun napsautat Lähetä. Odota enintään 30 sekuntia. Ohjaimen sulkemisen jälkeen integraatio voi tarvita vielä 60 sekuntia täysin aktivoituakseen.\n\nVersio {version}",
+        "data": {
+          "poll_interval": "Kyselyväli (sekuntia)"
+        },
+        "data_description": {
+          "poll_interval": "Kuinka usein laitetta kyselläään Bluetoothin kautta. Lyhyemmät välit tekevät sensoreista reagoivampia, mutta pitävät BLE:n varattuna pidempään."
         }
       }
     },
     "error": {
       "cannot_connect": "Yhteyden muodostaminen AquaClean-laitteeseen epäonnistui. Tarkista MAC-osoite, varmista että laite on käynnistetty ja BLE-kantaman sisällä, ja tarkista ESPHome-välityspalvelimen asetukset. Varmista myös, ettei mikään muu laite (esim. Geberit Home -sovellus tai itsenäinen silta) ole yhteydessä Bluetoothin kautta — AquaClean mainostaa vain, kun yhtään BLE-yhteyttä ei ole aktiivisena.",
-      "no_bluetooth": "Tältä laitteelta ei löydy paikallista Bluetooth-sovitinta. ESPHome Bluetooth -välityspalvelimen isäntä on pakollinen."
+      "no_bluetooth": "Tältä laitteelta ei löydy paikallista Bluetooth-sovitinta. ESPHome Bluetooth -välityspalvelimen isäntä on pakollinen.",
+      "no_esphome_found": "ESPHome-välityspalvelinta ei löydy verkosta.",
+      "alba_handshake_failed": "AquaClean Alba -laite löydettiin, mutta Arendi-turvallisuuskättely ei onnistunut. Napsauta Lähetä uudelleen yrittääksesi uudelleen. Jos virhe jatkuu, varmista, että mikään muu laite (esim. Geberit Home -sovellus) ei ole yhteydessä Bluetoothin kautta.",
+      "esphome_unreachable": "ESPHome-välityspalvelimeen ei saada yhteyttä. Tarkista isäntä, portti ja verkkoyhteys.",
+      "invalid_mac": "Virheellinen MAC-osoitemuoto. Käytä XX:XX:XX:XX:XX:XX.",
+      "esphome_host_required": "ESPHome-isäntä vaaditaan."
     },
     "abort": {
       "already_configured": "Tämä AquaClean-laite on jo määritetty.",
@@ -63,6 +106,16 @@
     "error": {
       "cannot_connect": "Yhteyden muodostaminen AquaClean-laitteeseen epäonnistui. Tarkista MAC-osoite, varmista että laite on käynnistetty ja BLE-kantaman sisällä, ja tarkista ESPHome-välityspalvelimen asetukset. Varmista myös, ettei mikään muu laite (esim. Geberit Home -sovellus tai itsenäinen silta) ole yhteydessä Bluetoothin kautta — AquaClean mainostaa vain, kun yhtään BLE-yhteyttä ei ole aktiivisena.",
       "no_bluetooth": "Tältä laitteelta ei löydy paikallista Bluetooth-sovitinta. ESPHome Bluetooth -välityspalvelimen isäntä on pakollinen."
+    }
+  },
+  "selector": {
+    "transport_type": {
+      "options": {
+        "esphome_auto": "ESPHome-välityspalvelin (automaattinen mDNS-etsintä)",
+        "esphome_manual": "ESPHome-välityspalvelin (anna osoite manuaalisesti)",
+        "local_ble": "Paikallinen Bluetooth-sovitin",
+        "local_ble_ha": "Home Assistantin Bluetooth-toimialue (Vaihtoehto B)"
+      }
     }
   }
 }

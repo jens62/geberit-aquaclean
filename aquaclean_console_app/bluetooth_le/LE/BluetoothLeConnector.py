@@ -1,8 +1,10 @@
 import asyncio
+import math
 import time
 from bleak import BleakClient, BleakScanner, BleakError
 from bleak.backends.scanner import AdvertisementData
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakGATTProtocolError, BleakGATTProtocolErrorCode
 
 
 from uuid import UUID
@@ -55,6 +57,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     # where the mock's BlueZ advertisement can take 10–15 s to become visible.
     SCAN_TIMEOUT_S: float = 10.0
 
+    # Class-level generation counter keyed by device_id.upper().
+    # Each connect_async() increments the counter for that device.
+    # Stale callbacks from previous connectors compare their stored generation
+    # against this and silently discard notifications when they no longer match.
+    # This prevents a disconnected C1 connector from processing data that
+    # belongs to the current C2 connector (avoids duplicate ACK writes and
+    # AriendiSecurity state corruption).
+    _active_generation: dict = {}
+
     def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
         self.client = None
         self.read_characteristics = {}
@@ -86,6 +97,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.is_variant_a: bool = False       # True when a non-standard Geberit GATT profile is detected
         self._arendi_security = None          # AriendiSecurity instance for Variant A (Alba)
         self._arendi_raw_write = None         # Chunked ATT_WRITE_REQUEST sender set in _post_connect()
+        self._my_generation: int = 0          # Generation assigned at connect_async() time
+        self._generation_key: str = ""        # device_id.upper() used to look up _active_generation
 
     @property
     def arendi_handshake_done(self) -> bool:
@@ -93,11 +106,44 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
 
     async def connect_async(self, device_id):
+        _key = device_id.upper()
+        BluetoothLeConnector._active_generation[_key] = (
+            BluetoothLeConnector._active_generation.get(_key, 0) + 1
+        )
+        self._my_generation = BluetoothLeConnector._active_generation[_key]
+        self._generation_key = _key
         logger.silly("BluetoothLeConnector: connect")
-        if self.esphome_host:
-            await self._connect_via_esphome(device_id)
-        else:
-            await self._connect_local(device_id)
+        for _attempt in range(2):
+            try:
+                if self.esphome_host:
+                    await self._connect_via_esphome(device_id)
+                else:
+                    await self._connect_local(device_id)
+                return
+            except BleakGATTProtocolError as exc:
+                if (
+                    _attempt == 0
+                    and exc.args
+                    and exc.args[0] == BleakGATTProtocolErrorCode.INVALID_HANDLE
+                ):
+                    logger.warning(
+                        "BluetoothLeConnector: GATT Invalid Handle on first attempt "
+                        "(stale BlueZ handle cache) — disconnecting and retrying once"
+                    )
+                    if self.client is not None:
+                        try:
+                            await self.client.disconnect()
+                        except Exception:
+                            pass
+                        self.client = None
+                    await asyncio.sleep(1.0)
+                    # Bump generation so callbacks from the failed attempt are discarded.
+                    BluetoothLeConnector._active_generation[_key] = (
+                        BluetoothLeConnector._active_generation.get(_key, 0) + 1
+                    )
+                    self._my_generation = BluetoothLeConnector._active_generation[_key]
+                else:
+                    raise
 
 
     async def _connect_local(self, device_id):
@@ -126,6 +172,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     device,
                     device.name or device_id,
                     disconnected_callback=self._on_disconnected,
+                    use_services_cache=False,
                 )
             except ImportError:
                 # bleak_retry_connector not available — fall back to direct connect.
@@ -382,11 +429,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self.esphome_wifi_rssi = round(float(captured[self._esphome_wifi_key]), 1)
                 logger.debug(f"ESP32 WiFi RSSI: {self.esphome_wifi_rssi} dBm")
             if self._esphome_free_heap_key in captured and captured[self._esphome_free_heap_key] is not None:
-                self.esphome_free_heap = int(float(captured[self._esphome_free_heap_key]))
-                logger.debug(f"ESP32 Free Heap: {self.esphome_free_heap} B")
+                _fh = float(captured[self._esphome_free_heap_key])
+                if not math.isnan(_fh):
+                    self.esphome_free_heap = int(_fh)
+                    logger.debug(f"ESP32 Free Heap: {self.esphome_free_heap} B")
             if self._esphome_max_free_block_key in captured and captured[self._esphome_max_free_block_key] is not None:
-                self.esphome_max_free_block = int(float(captured[self._esphome_max_free_block_key]))
-                logger.debug(f"ESP32 Max Free Block: {self.esphome_max_free_block} B")
+                _mb = float(captured[self._esphome_max_free_block_key])
+                if not math.isnan(_mb):
+                    self.esphome_max_free_block = int(_mb)
+                    logger.debug(f"ESP32 Max Free Block: {self.esphome_max_free_block} B")
         except Exception as e:
             logger.debug(f"Failed to read ESP32 diagnostic sensors: {e}")
 
@@ -706,6 +757,16 @@ class BluetoothLeConnector(IBluetoothLeConnector):
 
 
     async def _on_data_received(self, sender, data):
+        if self._my_generation > 0 and self._generation_key:
+            _current_gen = BluetoothLeConnector._active_generation.get(
+                self._generation_key, self._my_generation
+            )
+            if self._my_generation != _current_gen:
+                logger.debug(
+                    f"BluetoothLeConnector: _on_data_received: stale callback discarded "
+                    f"(gen={self._my_generation} != current={_current_gen})"
+                )
+                return
         logger.silly("BluetoothLeConnector: _on_data_received")
         logger.silly(f"Received data from characteristic {sender.uuid} data: {''.join(f'{b:02X}' for b in data)}")
         _hs_done = self._arendi_security.handshake_done if self._arendi_security else None
@@ -804,11 +865,15 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     "Restart button not found on ESP32. "
                     "Flash the ESP32 with updated YAML that includes 'button: platform: restart'."
                 )
-            await api.button_command(restart_key)
+            _btn = api.button_command(restart_key)  # sync in newer aioesphomeapi, async in older
+            if asyncio.iscoroutine(_btn):
+                await _btn
             logger.info(f"[BluetoothLeConnector] ESP32 restart command sent (key={restart_key})")
         finally:
             try:
-                await api.disconnect()
+                _disc = api.disconnect()  # sync in newer aioesphomeapi
+                if asyncio.iscoroutine(_disc):
+                    await _disc
             except Exception:
                 pass
 
@@ -851,11 +916,13 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             is_connected = self.client.is_connected
             logger.debug(f"[disconnect] is_connected={is_connected}, subscribed chars={len(self._subscribed_characteristics)}")
             for char in self._subscribed_characteristics:
+                if not hasattr(self.client, 'stop_notify'):
+                    break  # ESPHome path: ESPHomeAPIClient.disconnect() handles notify cleanup internally
                 try:
                     await self.client.stop_notify(char)
-                    logger.debug(f"[disconnect] stop_notify OK: {char.uuid}")
+                    logger.debug(f"[disconnect] stop_notify OK: {getattr(char, 'uuid', char)}")
                 except Exception as e:
-                    logger.debug(f"[disconnect] stop_notify FAILED: {char.uuid}: {type(e).__name__}: {e}")
+                    logger.debug(f"[disconnect] stop_notify FAILED: {getattr(char, 'uuid', char)}: {type(e).__name__}: {e}")
             self._subscribed_characteristics = []
             logger.silly(f"before asyncio.create_task(self.client.disconnect())")
             if self.esphome_host:
@@ -865,20 +932,24 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 # api.disconnect() closes TCP (otherwise the UnsubscribeBluetoothLEAdvertisementsRequest
                 # frame is never delivered, the ESP32 retains the subscription slot, and the next
                 # connect attempt within ~60–90 s gets "Only one API subscription is allowed at a time").
-                await self.client.disconnect(close_api=False)
+                try:
+                    await self.client.disconnect(close_api=False)
+                except Exception as e:
+                    logger.debug(f"[disconnect] BLE close error (peer may have already disconnected): {e}")
                 if self._esphome_unsub_adv is not None:
                     try:
                         self._esphome_unsub_adv()
-                        # Yield to let the event loop flush the
-                        # UnsubscribeBluetoothLEAdvertisementsRequest frame to TCP before
-                        # api.disconnect() closes the connection (trap 12 — flush race).
-                        await asyncio.sleep(0.1)
+                        # No sleep needed: asyncio transport.close() flushes the write
+                        # buffer (Unsubscribe frame) before sending FIN — ordered delivery
+                        # guaranteed by the asyncio transport contract.
                     except Exception:
                         pass
                     self._esphome_unsub_adv = None
                 if self._esphome_api is not None:
                     try:
-                        await self._esphome_api.disconnect()
+                        _disc = self._esphome_api.disconnect()  # sync in newer aioesphomeapi
+                        if asyncio.iscoroutine(_disc):
+                            await _disc
                         logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection")
                     except Exception as e:
                         logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")
@@ -894,13 +965,20 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         else:
             logger.silly(f"not self.client, no need to disconnect BLE.")
             # No BLE client means the scan timed out (device not found) before BLE connect.
-            # ESPHomeAPIClient.disconnect() would normally close the TCP connection, but
-            # since self.client was never created, we must close it explicitly here.
-            # Without this, the dangling TCP connection keeps the ESP32's advertisement
-            # subscription slot occupied, blocking ble-scan.py and other clients.
+            # Must unsubscribe from BLE advertisements BEFORE closing TCP — same ordering
+            # rule as the BLE-connected path above.  The fallback at the end of this method
+            # runs AFTER TCP close, which is too late (frame never delivered to ESP32).
+            if self.esphome_host and self._esphome_unsub_adv is not None:
+                try:
+                    self._esphome_unsub_adv()
+                except Exception:
+                    pass
+                self._esphome_unsub_adv = None
             if self._esphome_api is not None:
                 try:
-                    await self._esphome_api.disconnect()
+                    _disc = self._esphome_api.disconnect()  # sync in newer aioesphomeapi
+                    if asyncio.iscoroutine(_disc):
+                        await _disc
                     logger.debug("[BluetoothLeConnector] Closed ESP32 API TCP connection (no BLE client was established)")
                 except Exception as e:
                     logger.debug(f"[BluetoothLeConnector] ESP32 API TCP close: {e}")

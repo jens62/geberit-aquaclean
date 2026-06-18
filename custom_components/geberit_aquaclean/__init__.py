@@ -65,14 +65,25 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("geberit_aquaclean %s", _VERSION)
+
+    # HA retries ConfigEntryNotReady by calling async_setup_entry again WITHOUT first
+    # calling async_unload_entry.  Any coordinator left over from a prior failed attempt
+    # must be closed before the new one connects — otherwise both hold the ESPHome BLE
+    # advertisement subscription simultaneously → "Only one API subscription" on ESP32.
+    old_coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    if old_coordinator is not None:
+        _LOGGER.debug("Closing stale coordinator from a prior failed setup attempt")
+        await old_coordinator.async_close()
+
     coordinator = AquaCleanCoordinator(hass, entry)
-    # Give the ESP32 time to fully release its BLE advertisement subscription slot
-    # from the config-flow connection test before the coordinator fires its first poll.
-    # Without this, the ESP32 may still hold the slot (~100–200 ms after TCP close),
-    # causing "Only one API subscription is allowed at a time" on the first poll.
+    # Store before first_refresh so the NEXT retry (above) can find and close this
+    # coordinator if first_refresh raises ConfigEntryNotReady.
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    # Give the ESP32 time to process the subscription release from the config-flow
+    # connection test (or the stale coordinator closed above) before the first poll.
     await asyncio.sleep(3.0)
     await coordinator.async_config_entry_first_refresh()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # Reload the entry when the user saves new options — picks up changed settings.
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))

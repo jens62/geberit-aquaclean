@@ -255,20 +255,77 @@ without waiting for a first-poll `GetDeviceIdentification` round-trip.
 
 ---
 
-### HACS: model-aware entity visibility
+### HACS: model-aware entity creation via positive feature sets
 
 Only register entities that apply to the connected device model. Currently all entities
-are registered at setup regardless of which model is connected, so Mera Comfort users see
-Alba-only entities (and vice versa) as unavailable clutter.
+are registered unconditionally at setup, so every install carries every model's entities
+as unavailable clutter.
 
-**Approach:**
-- Detect the connected model from coordinator data (SAP number / device series / `is_variant_a` flag)
-- Split entity lists into model-specific subsets: `ENTITIES_MERA_COMFORT`, `ENTITIES_ALBA`, `ENTITIES_ALL`
-- Register only the matching subset in `async_setup_entry`; skip entities whose model
-  requirement does not match the detected device
+**Design: positive feature sets (additive, not exclusion lists)**
 
-This removes grey/unavailable entities from the HA dashboard without requiring the user
-to manually hide them.
+Each set groups entities by capability. A model's entity list is the union of exactly
+the sets that match its hardware:
+
+| Set | Contents |
+|-----|----------|
+| `ALL` | Anal shower, descaling (full), filter status, identification sensors, firmware versions, initial op date, flush/stop/reset-filter buttons, connection diagnostics |
+| `WITH_LADY_SHOWER` | Lady shower toggle, status, progress, profile settings |
+| `WITH_DRYER` | Dryer toggle, status, progress, temperature + state profile settings |
+| `WITH_DRYER_FAN` | Dryer fan power/intensity — *sub-set of WITH_DRYER, fw ≥ 20 only — `available` gated at runtime* |
+| `WITH_ODOUR_EXTRACTION` | OE toggle, status, run-on setting |
+| `WITH_SEAT_HEATER` | Seat heater setting |
+| `WITH_WATER_HEATER` | Water heater setting |
+| `MERA_COMFORT_ONLY` | Orientation light via proc 0x0B (mode/brightness/colour), lid sensor range, lid auto-open/close |
+| `SELA_ONLY` | Orientation light via SetCommand 20, SPL index 9 state sensor, LightSensorSensitivity |
+| `CAMA_ONLY` | Draining command + status (SPL index 10) |
+| `ALBA_ONLY` | All existing Alba DpId-based entities |
+
+**Per-model composition:**
+
+| Model | Sets |
+|-------|------|
+| Mera Comfort | ALL + WITH_LADY_SHOWER + WITH_DRYER + WITH_DRYER_FAN + WITH_ODOUR_EXTRACTION + WITH_SEAT_HEATER + WITH_WATER_HEATER + MERA_COMFORT_ONLY |
+| Mera Classic | ALL + WITH_LADY_SHOWER + WITH_DRYER + WITH_DRYER_FAN + WITH_ODOUR_EXTRACTION |
+| Mera Floorstanding | ALL + WITH_LADY_SHOWER + WITH_DRYER + WITH_DRYER_FAN + WITH_ODOUR_EXTRACTION |
+| Tuma Comfort | ALL + WITH_LADY_SHOWER + WITH_DRYER + WITH_DRYER_FAN + WITH_ODOUR_EXTRACTION + WITH_SEAT_HEATER + WITH_WATER_HEATER |
+| Tuma Classic | ALL |
+| Sela | ALL + WITH_LADY_SHOWER + SELA_ONLY |
+| Cama | ALL + CAMA_ONLY |
+| Alba | ALL + ALBA_ONLY |
+
+**Firmware-gated entities (`WITH_DRYER_FAN`):**
+Dryer fan power/intensity entities (`DP_STORED_DRYER_FAN_INTENSITY`, fw ≥ 20, Mera Series +
+Tuma Comfort) are created at setup time (model says the device may have the feature), but
+their `available` property gates on the firmware version delivered by the first poll.
+Model → determines entity creation; firmware version → determines availability at runtime.
+See `docs/developer/model-feature-matrix.md` for the full feature-per-model reference.
+
+**Implementation steps:**
+
+1. `const.py` — add `CONF_DEVICE_TYPE = "device_type"` (~15 min)
+2. `config_flow.py` — store the detected model string in `data` at `async_create_entry`;
+   also update on options-flow save so re-scanning updates the stored value (~30 min)
+3. `coordinator.py` — seed `self._device_type` from `entry.data[CONF_DEVICE_TYPE]` at
+   `__init__` instead of starting as `None`; keep first-poll detection as a correction
+   path; expose firmware version in coordinator data for the fw ≥ 20 gate (~1 h)
+4. `sensor.py` / `button.py` / `number.py` / `binary_sensor.py` — classify every entity
+   into the correct set; rewrite `async_setup_entry` to build the entity list from the
+   model's composition (~3–4 h, guided by `docs/developer/model-feature-matrix.md`)
+5. `WITH_DRYER_FAN` — add `available` property reading firmware version from coordinator
+   data (~1 h)
+6. Smoke test against mock Alba + Mera Comfort; verify entity count per model (~1–2 h)
+
+**Total effort: ~6–10 hours.**
+
+**Risk: low.**
+- Existing config entries have no `CONF_DEVICE_TYPE` → `entry.data.get(CONF_DEVICE_TYPE)`
+  returns `None` → fall back to creating all entities (current behaviour, zero regression).
+- Stale entity registry on upgrade (old installs have entries for entities no longer
+  created): **mitigated by asking users to delete and recreate the config entry** on
+  upgrade. Document in release notes, `homeassistant/SETUP_GUIDE.md` upgrading section,
+  and bump the minor version to signal a breaking change. No cleanup code needed.
+- Classification errors (entity in wrong set): mitigated by `docs/developer/model-feature-matrix.md`
+  and immediate smoke-test coverage on the two primary test devices.
 
 ---
 
@@ -300,6 +357,124 @@ which updates the in-memory interval and reschedules the next update.
 - **Integration version sensor** — read from `manifest.json`, expose as DIAGNOSTIC entity. Also log the version as INFO in the HA log at integration startup (alongside firmware version).
 - **Multilingual support (EN/DE/FR/IT)** — `strings.json` + translation files; replace `_attr_name` with `_attr_translation_key`. ~1 session.
 - **Download button for Performance Statistics panel** — Option 1 (quickest): `custom:button-card` + inline JS.
+- **Timestamp in "Failed setup, will retry" UI card** — HA's `config_entries` UI displays the `ConfigEntryNotReady` message string without a timestamp. Embedding `(at HH:MM:SS)` into each `UpdateFailed` raise in `coordinator.py` would propagate to the card. 6 E0003 raise sites; only the initial onboarding path surfaces as `ConfigEntryNotReady`.
+- **Suppress onboarding E0003 ConfigEntryNotReady traceback (optional)** — the full exception traceback logged by HA during `async_config_entry_first_refresh` retry (E0003 / inventory timeout) is HA-internal and cannot be suppressed directly. Alternative: add an internal retry loop in `_async_update_data` for E0003 during onboarding (retry 2–3× with short sleep), so HA never sees `ConfigEntryNotReady` for transient BLE timeouts. Trade-off: cleaner logs vs longer first-boot time (~35 s × retries before surfacing). Only visible to users with DEBUG logging enabled.
+
+---
+
+### HACS / Lovelace: modular card-based dashboards per device model
+
+Provide ready-made Lovelace dashboards composed from modular card files, one card file
+per feature set, one dashboard file per device model as pure `!include` composition.
+
+**Design goals:**
+- Zero duplication: every card is defined once; model dashboards are pure assembly files.
+- Matches 1:1 with the entity feature sets defined above — if an entity set exists, a card
+  file exists for it.
+- Users pick the dashboard for their model and drop it into HA; no manual editing required
+  beyond optional entity prefix substitution.
+
+**Card file → feature set mapping:**
+
+| Card file | Feature set | Contents |
+|-----------|-------------|----------|
+| `card-all.yaml` | ALL | Status sensors, descaling actions, filter status, identification panel |
+| `card-with-lady-shower.yaml` | WITH_LADY_SHOWER | Lady shower toggle + settings |
+| `card-with-dryer.yaml` | WITH_DRYER | Dryer toggle + settings |
+| `card-with-dryer-fan.yaml` | WITH_DRYER_FAN | Dryer fan power/intensity |
+| `card-with-odour-extraction.yaml` | WITH_ODOUR_EXTRACTION | OE toggle + run-on setting |
+| `card-with-seat-heater.yaml` | WITH_SEAT_HEATER | Seat heater setting |
+| `card-with-water-heater.yaml` | WITH_WATER_HEATER | Water heater setting |
+| `card-mera-comfort-only.yaml` | MERA_COMFORT_ONLY | Orientation light (proc 0x0B), lid sensor/auto-open/close |
+| `card-sela-only.yaml` | SELA_ONLY | Orientation light (SetCommand 20), SPL 9 state, LightSensorSensitivity |
+| `card-cama-only.yaml` | CAMA_ONLY | Draining command + status |
+| `card-alba-only.yaml` | ALBA_ONLY | Alba DpId entities (all current Alba cards) |
+
+**Per-model dashboard files (pure `!include` composition):**
+
+```yaml
+# dashboard-mera-comfort.yaml
+title: Geberit Mera Comfort
+views:
+  - title: Status
+    cards:
+      - !include cards/card-all.yaml
+      - !include cards/card-with-lady-shower.yaml
+      - !include cards/card-with-dryer.yaml
+      - !include cards/card-with-dryer-fan.yaml
+      - !include cards/card-with-odour-extraction.yaml
+      - !include cards/card-with-seat-heater.yaml
+      - !include cards/card-with-water-heater.yaml
+      - !include cards/card-mera-comfort-only.yaml
+```
+
+Dashboard files in the repo: `lovelace/cards/card-*.yaml` + `lovelace/dashboard-*.yaml`.
+
+**`!include` path resolution — mandatory caveat:**
+
+HA resolves `!include` paths **relative to `/config/`** (the HA config root), NOT relative
+to the dashboard file. If the dashboard file is at
+`/config/lovelace/dashboard-mera-comfort.yaml`, every `!include` in it must be written as:
+
+```yaml
+!include lovelace/cards/card-all.yaml   # ✅ relative to /config/ root
+!include cards/card-all.yaml             # ❌ would look in /config/cards/ — not found
+```
+
+Document this in a comment at the top of every dashboard file and in
+`homeassistant/SETUP_GUIDE.md`.
+
+**YAML mode requirement:**
+
+`!include` only works in [YAML mode](https://www.home-assistant.io/dashboards/dashboards/#using-yaml-for-your-dashboards).
+Add the dashboard declaration to `configuration.yaml`:
+
+```yaml
+lovelace:
+  mode: yaml
+  dashboards:
+    geberit-mera-comfort:
+      mode: yaml
+      filename: lovelace/dashboard-mera-comfort.yaml
+      title: Geberit Mera Comfort
+      icon: mdi:toilet
+      show_in_sidebar: true
+      require_admin: false
+```
+
+**Python installer with entity prefix substitution:**
+
+The default entity ID prefix (`geberit_aquaclean`) changes when the user renamed the
+integration entry. The installer script handles this:
+
+```bash
+python tools/install-lovelace.py \
+  --model mera-comfort \
+  --ha-config /config \
+  --entity-prefix my_toilet        # optional, default: geberit_aquaclean
+```
+
+What the script does:
+1. Creates `/config/lovelace/` and `/config/lovelace/cards/` if absent.
+2. Copies all `card-*.yaml` files, rewriting `geberit_aquaclean_` → `<prefix>_` in entity IDs.
+3. Copies the model dashboard file, rewriting the same prefix in entity references.
+4. Prints the `configuration.yaml` snippet to paste.
+
+**Packaging approach:**
+
+- The card and dashboard YAML files live in `lovelace/` in the repo — checked in as examples,
+  not auto-installed.
+- The installer script lives in `tools/install-lovelace.py`.
+- Users run the installer once at setup; on upgrade they re-run it to pick up new cards.
+- Do NOT auto-install via HACS — `!include` requires YAML mode (a deliberate user choice)
+  and the entity prefix may differ from the default.
+- `homeassistant/SETUP_GUIDE.md` covers both YAML-mode manual setup and the installer path.
+
+**Effort: ~1 day** (card files for all sets + model dashboard files + installer script +
+docs update).
+
+**Risk: low.** Card files are YAML only — no Python changes. The installer is a standalone
+`tools/` script. Existing users are unaffected until they opt in.
 
 ---
 

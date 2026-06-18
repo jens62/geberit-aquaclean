@@ -16,6 +16,7 @@ from aquaclean_console_app.aquaclean_core.Clients.AquaCleanBaseClient import BLE
 from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
+    CONF_DEVICE_TYPE,
     CONF_ESPHOME_HOST,
     CONF_ESPHOME_PORT,
     CONF_NOISE_PSK,
@@ -23,6 +24,7 @@ from .const import (
     CONF_USE_HA_BLUETOOTH,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
+    PROC82_DESCRIPTION_TO_MODEL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +38,11 @@ _ESP32_RESTART_SLEEP = 30       # seconds to wait after sending ESP32 restart co
 # Fast polls (every cycle) read 13 DpIds (~4.6 s incl. connect) — BLE occupied ~15 % of 30 s.
 # Slow polls (every Nth) read all 99 DpIds (~22 s) for diagnostic/static data.
 _ALBA_SLOW_POLL_EVERY = 10
+
+# Tracks entry_ids that already triggered the onboarding fast-restart in this process.
+# ConfigEntryNotReady causes HA to recreate the coordinator (fresh _consecutive_failures=0),
+# which would re-fire the restart indefinitely.  Module-level storage survives recreation.
+_onboarding_restart_fired: set = set()
 
 
 class AquaCleanCoordinator(DataUpdateCoordinator):
@@ -70,8 +77,18 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self.ble_connected_at: datetime | None = None
         self.ble_state: str = "disconnected"
         self._ble_connected_sensor = None  # AquaCleanBleConnectedSensor; set in async_added_to_hass
-        # Detected device type: "mera" | "alba" | None (unknown, detected on first poll)
-        self._device_type: str | None = None
+        # Canonical model key: "mera_comfort" | "mera_classic" | "sela" | "alba" | … | None
+        # Seeded from CONF_DEVICE_TYPE (stored at config-flow time from BLE advertisement).
+        # Refined on first poll via proc 0x82 description for manual-MAC-entry installs.
+        self._device_model: str | None = conf.get(CONF_DEVICE_TYPE)
+        # Protocol routing: "mera" | "alba" | None (detected on first poll when None)
+        # Seeded from _device_model so detection is skipped when model is already known.
+        if self._device_model == "alba":
+            self._device_type: str | None = "alba"
+        elif self._device_model is not None:
+            self._device_type = "mera"
+        else:
+            self._device_type = None
         # Performance statistics
         self._last_connect_ms: int | None = None
         self._last_poll_ms: int | None = None
@@ -97,6 +114,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         self.last_error_code: str | None = None
         self.last_error_hint: str | None = None
         # Circuit breaker state
+        self._entry_id: str = entry.entry_id
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
         self._ble_lock = asyncio.Lock()
@@ -232,10 +250,25 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             self._ble_connected_sensor.async_write_ha_state()
 
     async def _async_update_data(self) -> dict:
-        """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart."""
+        """Circuit-breaker wrapper: tracks consecutive failures, triggers ESP32 restart.
+
+        Onboarding fast-restart: if this is the very first poll attempt (_device_type is
+        None) and the ESPHome scanner returns E0002, the ESP32 is restarted immediately
+        and the poll is retried once silently.  If the retry succeeds the user sees no
+        "Failed setup" message — only a ~60-second "Setup in progress" delay in the HA UI.
+        """
         if self._unsupported_device:
             from aquaclean_console_app.ErrorCodes import E0010
             raise UpdateFailed(f"{E0010.code} — {E0010.message}")
+
+        # Detect onboarding phase: no successful poll yet, ESPHome path active.
+        # consecutive_failures == 0 ensures the fast-restart fires at most once.
+        _onboarding = (
+            self._device_type is None
+            and self._esphome_host is not None
+            and not self._use_ha_bluetooth
+            and self._consecutive_failures == 0
+        )
 
         if self._circuit_open and self._esphome_host and not self._use_ha_bluetooth:
             _LOGGER.debug(
@@ -248,7 +281,46 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         async with self._ble_lock:
             try:
                 result = await self._do_poll()
-            except UpdateFailed:
+            except UpdateFailed as exc:
+                # ── Onboarding fast-restart ───────────────────────────────────────
+                # The config flow test session leaves the ESP32 BLE scanner stuck.
+                # Restart immediately and retry once silently so the user never sees
+                # "Failed setup" — just a ~60-second "Setup in progress" spinner.
+                if (_onboarding and "E0002" in str(exc)
+                        and self._entry_id not in _onboarding_restart_fired):
+                    _onboarding_restart_fired.add(self._entry_id)
+                    _LOGGER.warning(
+                        "AquaClean: ESPHome proxy scanner unavailable during initial setup — "
+                        "restarting ESP32 and retrying. "
+                        "Initial setup will complete in approximately 60 seconds."
+                    )
+                    try:
+                        await self.async_restart_esp32()
+                        _LOGGER.info(
+                            "ESP32 reboot command sent; waiting %d s", _ESP32_RESTART_SLEEP
+                        )
+                        await asyncio.sleep(_ESP32_RESTART_SLEEP)
+                        result = await self._do_poll()
+                        # Retry succeeded — no error surfaced to HA
+                        self._consecutive_failures = 0
+                        self._circuit_open = False
+                        return result
+                    except UpdateFailed as poll_exc:
+                        self._consecutive_failures += 1
+                        if "E0002" in str(poll_exc):
+                            raise UpdateFailed(
+                                "ESPHome proxy restarted but AquaClean device still not found — "
+                                "ensure the device is powered on and within BLE range of the ESP32 proxy"
+                            )
+                        raise
+                    except Exception as restart_exc:
+                        _LOGGER.warning(
+                            "ESP32 restart failed: %s — HA will retry via normal path", restart_exc
+                        )
+                        self._consecutive_failures += 1
+                        raise exc  # re-raise original UpdateFailed
+
+                # ── Normal circuit-breaker path ───────────────────────────────────
                 self._consecutive_failures += 1
 
                 if self._consecutive_failures == _CIRCUIT_OPEN_THRESHOLD and self._esphome_host and not self._use_ha_bluetooth:
@@ -286,6 +358,7 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     )
                 self._consecutive_failures = 0
                 self._circuit_open = False
+                _onboarding_restart_fired.discard(self._entry_id)
                 return result
 
     async def _do_poll(self) -> dict:
@@ -475,6 +548,26 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                     result_data.get("firmware_version") or "?", soc,
                     result_data.get("initial_operation_date", "?"),
                 )
+
+            # Refine _device_model from proc 0x82 description on first successful poll.
+            # Needed for manual-MAC-entry installs where no BLE advertisement was captured.
+            if self._device_model is None:
+                desc = result_data.get("description") or ""
+                if self._device_type == "alba":
+                    self._device_model = "alba"
+                elif desc:
+                    self._device_model = PROC82_DESCRIPTION_TO_MODEL.get(desc)
+                    if self._device_model:
+                        _LOGGER.info(
+                            "Device model identified via proc 0x82: %s → %s", desc, self._device_model
+                        )
+                # Persist discovered model back to config entry so entity sets are correct
+                # on the next HA restart (avoids the full-entity fallback for manual-MAC installs).
+                if self._device_model:
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        data={**self.config_entry.data, CONF_DEVICE_TYPE: self._device_model},
+                    )
 
             # Firmware cloud check: inline on first poll (result is None) and every 3600 s.
             fw = result_data.get("firmware_version")

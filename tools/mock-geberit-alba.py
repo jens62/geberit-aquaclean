@@ -1084,6 +1084,28 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         except Exception as e:
             print(f"[Mock] Pre-introspect failed (fast disconnect unavailable): {e}")
 
+    # Sent once per mock session to force the BLE client (HAOS) to re-discover GATT handles.
+    # HAOS BlueZ caches handles from prior sessions (via Database Hash); those cached handles
+    # become stale when the Ubuntu VM's BlueZ assigns different handles (due to system GATT
+    # services registered before the mock).  Unregister + re-register triggers Service Changed
+    # on the client, which invalidates its cache.  Only fires once to avoid disrupting ongoing
+    # Arendi handshakes on subsequent connections.
+    _service_changed_sent = [False]
+
+    async def _send_service_changed():
+        if adapter_path is None:
+            return
+        try:
+            _ai = await bus.introspect('org.bluez', adapter_path)
+            _ap = bus.get_proxy_object('org.bluez', adapter_path, _ai)
+            _gm = _ap.get_interface('org.bluez.GattManager1')
+            _app = "/org/bluez/example/sigdata"
+            await _gm.call_unregister_application(_app)
+            await _gm.call_register_application(_app, {})
+            print("[Mock] [GATT] Service Changed sent — client will re-discover GATT handles")
+        except Exception as _e:
+            print(f"[Mock] [GATT] Service Changed trigger failed (non-fatal): {_e}")
+
     if objmgr is not None:
         def on_device_connected(path, interfaces):
             nonlocal _connected_device_path, _connected_device_addr, _connected_dev_iface
@@ -1095,6 +1117,9 @@ async def main(mode: str, send_delay_sec: float = 0.0):
                 _connected_device_path = path
                 _connected_dev_iface = None  # clear stale cache; new one coming
                 asyncio.ensure_future(_cache_dev_iface(path))
+                if not _service_changed_sent[0]:
+                    _service_changed_sent[0] = True
+                    asyncio.ensure_future(_send_service_changed())
                 print(f"[Mock] BLE client connected:    {addr or path}")
 
         def on_device_disconnected(path, interfaces):
@@ -1186,7 +1211,7 @@ async def main(mode: str, send_delay_sec: float = 0.0):
         ["0000fd48-0000-1000-8000-00805f9b34fb"],   # fd48 only; 559eb100 stays in GATT
         appearance=0,
         timeout=0,
-        manufacturerData={0x0602: bytes([0x02, 0xFA] + [0x00] * 13)},
+        manufacturerData={0x0602: bytes([0x02, 0xFA, 0x00] + list(b'AC250') + [0x00] * 7)},
     )
 
     # Intercept bus.export() during adv.register() to capture the advertisement D-Bus path.

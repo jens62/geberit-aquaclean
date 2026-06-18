@@ -195,6 +195,12 @@ You have **two options** for configuring the entities in Home Assistant:
 
 > **Using the HACS integration instead?** Upgrade through HACS → Integrations →
 > Geberit AquaClean → ⋮ → Redownload.  Then restart Home Assistant.
+>
+> **Upgrading to v3.1.2 specifically:** a delete-and-recreate is required once to
+> remove orphaned entities from the previous full-entity registration.
+> Settings → Devices & Services → Geberit AquaClean → ⋮ → **Delete**, then add the
+> integration again. Only entities supported by your device model will be registered.
+> See [docs/hacs-integration.md — Updating](docs/hacs-integration.md#updating) for details.
 
 **Upgrade the bridge** (preserves your `config.ini`):
 

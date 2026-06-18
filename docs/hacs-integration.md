@@ -130,24 +130,47 @@ After downloading, Home Assistant must be restarted before the integration appea
 
 ## Step 5 — Configure the integration
 
-1. Go to **Settings → Devices & Services**
-2. Click **+ Add Integration** (bottom right)
-3. Search for **Geberit AquaClean** and select it
-4. Fill in the configuration form:
+The integration uses a multi-step wizard:
 
-| Field | Description |
-|-------|-------------|
-| **BLE MAC Address** | MAC address of your AquaClean, e.g. `38:AB:41:2A:0D:67` — find it in the Geberit app or via `ble-scan.py` |
-| **ESPHome Proxy Host** | IP address of your ESP32, e.g. `192.168.0.160` — **leave empty to use the local BLE adapter** |
-| **ESPHome Proxy Port** | Default: `6053` — only change if you customised the ESPHome port |
-| **ESPHome Encryption Key** | Base64 noise PSK from your ESPHome YAML — leave blank if not set |
-| **Poll Interval (seconds)** | How often to fetch data; default `30` |
+### Step 5a — Connection method
 
-5. Click **OK** — behaviour depends on the transport:
-   - **ESPHome proxy configured:** a live BLE connection test is performed (connects to the toilet and disconnects). Requires the toilet to be on and the ESP32 reachable. Allow up to 30 seconds.
-   - **ESPHome Proxy Host left empty (local BLE):** only the presence of a local Bluetooth adapter is checked. No live BLE test is performed — the first poll after setup verifies actual connectivity.
+Go to **Settings → Devices & Services → + Add Integration**, search for **Geberit AquaClean** and select it. Choose how to reach the toilet over Bluetooth:
 
-> **No local Bluetooth adapter?** If you leave the ESPHome Proxy Host empty and your HA host has no BLE adapter, setup will fail with "No local Bluetooth adapter found". Either add a USB BT dongle or fill in the ESPHome Proxy Host.
+| Option | When to use |
+|--------|-------------|
+| **ESPHome proxy (auto-discover via mDNS)** *(recommended)* | Your ESP32 runs the `aquaclean-proxy` firmware and is on the same network as HA. The wizard finds it automatically. |
+| **ESPHome proxy (enter address manually)** | Same as above, but you type the IP/hostname yourself. |
+| **Local Bluetooth adapter** | The HA host has a Bluetooth adapter and is within ~5 m of the toilet. |
+| **Home Assistant Bluetooth domain** | Advanced — for setups where HA's own Bluetooth integration already manages the same ESP32 proxy. |
+
+![Step 5a — Connection method selection](hacs-setup-step5a-connection-method.png)
+
+### Step 5b — ESPHome proxy *(ESPHome path only)*
+
+- **Auto-discover:** pick your proxy from the dropdown (shows name and address), or choose *Enter manually*.
+- **Manual:** enter the IP or hostname, port (default `6053`), and optional noise encryption key (base64 PSK from your ESPHome YAML — leave blank if not configured).
+
+![Step 5b — Select ESPHome proxy](hacs-setup-step5b-esphome-proxy.png)
+
+### Step 5c — Select AquaClean device
+
+The wizard scans for Geberit devices and lists them as:
+
+```
+<article prefix>  <MAC>  (<model>)  <RSSI> dBm
+```
+
+Example: `146.21  38:AB:41:2A:0D:67  (Geberit Mera Comfort)  −70 dBm`
+
+Select your device. If the scan finds nothing, choose *Enter MAC manually* and type the address (format `XX:XX:XX:XX:XX:XX`).
+
+![Step 5c — Select AquaClean device](hacs-setup-step5c-device-scan.png)
+
+### Step 5d — Confirm Setup
+
+Review the device and transport summary, set the **poll interval** (default `30 s`), then click **Submit**. A live BLE connection test runs automatically — allow up to 30 seconds. After the wizard closes, the integration may take an additional 60 seconds to become fully active.
+
+![Step 5d — Confirm Setup](hacs-setup-step5d-confirm.jpg)
 
 ---
 
@@ -298,6 +321,18 @@ To update:
 1. Open HACS → find Geberit AquaClean → **Update** (or three dots → **Redownload**)
 2. Restart Home Assistant
 
+### Upgrading to v3.1.2 — model-specific entity sets (delete-and-recreate required)
+
+v3.1.2 introduces model-specific entity registration: only the entities your device actually supports are created. Entities for unsupported features (e.g. orientation light on a Mera Classic) are no longer registered by default.
+
+Because Home Assistant cannot automatically remove entities that already exist in the registry, you need to **delete and recreate the integration once** to get a clean entity set:
+
+1. Settings → Devices & Services → Geberit AquaClean → ⋮ → **Delete**
+2. Add integration again (HACS → Geberit AquaClean or Settings → Add Integration)
+3. Complete the setup wizard — your device model is detected automatically
+
+After recreating, only the entities relevant to your device are registered. The correct model is detected from the BLE advertisement (wizard) or from the first poll via proc 0x82 (manual MAC entry — applied from the second HA restart onwards).
+
 > **HACS only sees GitHub Releases, not bare git tags.** If a new version does not appear after clicking the three dots → **Update information**, the release was likely only tagged but not published as a GitHub Release.
 
 ---
@@ -335,6 +370,62 @@ Or use the dynamic approach (no restart required):
 custom_components.geberit_aquaclean: debug
 aquaclean_console_app: debug
 ```
+
+### Record logs to a file
+
+Useful when reporting a bug — attach the saved log file to the GitHub issue.
+
+#### HA core log
+
+**Windows PowerShell:**
+
+```powershell
+$date = Get-Date -Format "yyyy-MM-dd_HH-mm"
+ssh root@192.168.0.198 "ha core logs --follow" | Tee-Object -FilePath "C:\Users\jens\Downloads\ha_core_$date.log"
+```
+
+Replace `root@192.168.0.198` with your HA user and IP.
+
+**Mac / Linux:**
+
+```bash
+sshpass -p 'PASSWORD' ssh USER@IP_ADDRESS "ha core logs --follow" | tee "$HOME/Downloads/ha_core_$(date +%F_%H-%M).log"
+```
+
+#### ESPHome proxy log
+
+The proxy exposes a live event stream at `http://<proxy-IP>/events`.
+
+**Mac:**
+
+```bash
+curl -sN http://IP_ADDRESS/events \
+  | grep --line-buffered "data:" \
+  | perl -MPOSIX -pe '$|=1; print strftime("[%H:%M:%S] ", localtime)' \
+  | tee "$HOME/Downloads/esp_proxy_$(date +%F_%H-%M).log"
+```
+
+**Linux:**
+
+```bash
+curl -sN http://IP_ADDRESS/events \
+  | grep --line-buffered "data:" \
+  | awk '{print strftime("[%H:%M:%S]"), $0; fflush()}' \
+  | tee "$HOME/Downloads/esp_proxy_$(date +%F_%H-%M).log"
+```
+
+**Windows PowerShell:**
+
+```powershell
+$date = Get-Date -Format "yyyy-MM-dd_HH-mm"
+curl.exe -sN "http://IP_ADDRESS/events" | ForEach-Object {
+    if ($_ -match "data:") { "$(Get-Date -Format '[HH:mm:ss] ')$_" }
+} | Tee-Object -FilePath "$env:USERPROFILE\Downloads\esp_proxy_$date.log"
+```
+
+Replace `IP_ADDRESS` with your ESP32 proxy IP (e.g. `192.168.0.114`). Use `Ctrl+C` to stop.
+
+---
 
 ### Enable trace / silly logging
 

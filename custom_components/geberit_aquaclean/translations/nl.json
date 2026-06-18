@@ -3,28 +3,71 @@
     "step": {
       "user": {
         "title": "Geberit AquaClean",
-        "description": "Versie {version}\n\nVoer het BLE MAC-adres van uw AquaClean-apparaat in. Laat het veld ESPHome Proxy Host leeg om de lokale Bluetooth-adapter te gebruiken. Bij het opslaan wordt een verbindingstest uitgevoerd — wacht tot 30 seconden.",
+        "description": "Versie {version}\n\nKies hoe deze integratie via Bluetooth verbinding maakt met je AquaClean.\n\nNiet zeker? Zie de [installatiehandleiding](https://github.com/jens62/geberit-aquaclean/blob/main/docs/hacs-integration.md).",
         "data": {
-          "device_id": "BLE MAC-adres (XX:XX:XX:XX:XX:XX)",
-          "esphome_host": "ESPHome Proxy Host (leeg laten voor lokale BLE)",
-          "esphome_port": "ESPHome Proxy Poort",
-          "noise_psk": "ESPHome Versleutelingssleutel (optioneel, base64)",
-          "poll_interval": "Polling-interval (seconden)",
-          "use_ha_bluetooth": "Home Assistant Bluetooth-domein gebruiken (Optie B — inschakelen als HA dezelfde ESPHome-proxy al gebruikt)"
+          "transport_type": "Verbindingsmethode"
         },
         "data_description": {
-          "device_id": "Bluetooth MAC-adres van uw AquaClean (bijv. 38:AB:41:2A:0D:67). Te vinden op het label binnenin het toilet of in de Geberit Home-app.",
-          "esphome_host": "Hostnaam of IP van een ESPHome Bluetooth-proxy. Laat leeg om een lokale Bluetooth-adapter op deze HA-host te gebruiken.",
-          "esphome_port": "Native API-poort van de ESPHome-proxy. Standaard: 6053.",
-          "noise_psk": "API-versleutelingssleutel uit uw ESPHome YAML (api: encryption: key:). Laat leeg als versleuteling niet is geconfigureerd.",
-          "poll_interval": "Hoe vaak het apparaat via Bluetooth wordt bevraagd. Kortere intervallen geven meer responsieve sensoren, maar houden BLE langer bezet.",
-          "use_ha_bluetooth": "Optie A (uit, standaard): directe ESPHome-verbinding — biedt ook ESP32-signaalsterkte, vrij heap en transporttype als sensoren. Optie B (aan): verloopt via het Bluetooth-domein van HA — gebruik dit wanneer HA's Bluetooth-integratie dezelfde ESPHome-proxy al bezet. ESP32-statistieken zijn niet beschikbaar met Optie B."
+          "transport_type": "**ESPHome-proxy (aanbevolen):** Een ESP32 met de `aquaclean-proxy`-firmware fungeert als Bluetooth-brug — je HA-host kan overal op het netwerk staan, geen Bluetooth-adapter nodig.\n\n**Lokale Bluetooth:** Gebruikt direct de Bluetooth-adapter van deze HA-machine. De machine moet binnen ~5 m van het toilet staan.\n\n**HA Bluetooth-domein:** Geavanceerd — voor setups waarbij HA's eigen Bluetooth-integratie dezelfde ESP32-proxy al beheert."
+        }
+      },
+      "esphome_pick": {
+        "title": "ESPHome-proxy selecteren",
+        "description": "De volgende ESPHome Bluetooth-proxies zijn gevonden op je netwerk. Selecteer de proxy die fysiek dicht bij de AquaClean staat die je wilt toevoegen, of kies **Handmatig invoeren** om een IP-adres direct in te voeren.",
+        "data": {
+          "esphome_proxy": "ESPHome-proxy"
+        }
+      },
+      "esphome_host": {
+        "title": "ESPHome-proxy-instellingen",
+        "description": "Voer de verbindingsgegevens in voor je ESPHome Bluetooth-proxy.",
+        "data": {
+          "esphome_host": "Host (hostnaam of IP)",
+          "esphome_port": "Poort",
+          "noise_psk": "Versleutelingssleutel (optioneel)"
+        },
+        "data_description": {
+          "esphome_host": "Hostnaam of IP-adres van de ESPHome Bluetooth-proxy (bijv. aquaclean-proxy.local of 192.168.1.100).",
+          "esphome_port": "Native API-poort. Standaard: 6053.",
+          "noise_psk": "API-versleutelingssleutel uit uw ESPHome YAML (api: encryption: key:). Laat leeg als versleuteling niet is geconfigureerd."
+        }
+      },
+      "ble_scan": {
+        "title": "AquaClean-apparaat selecteren",
+        "description": "Selecteer uw AquaClean uit de scanresultaten, of voer het MAC-adres handmatig in.",
+        "data": {
+          "device_mac": "Apparaat"
+        }
+      },
+      "device_manual": {
+        "title": "MAC-adres invoeren",
+        "description": "Voer het Bluetooth MAC-adres van uw AquaClean-apparaat in. Te vinden op het label binnenin het toilet of in de Geberit Home-app.",
+        "data": {
+          "device_id": "BLE MAC-adres"
+        },
+        "data_description": {
+          "device_id": "Formaat: XX:XX:XX:XX:XX:XX (bijv. 38:AB:41:2A:0D:67)"
+        }
+      },
+      "confirm": {
+        "title": "Configuratie bevestigen",
+        "description": "**Apparaat:** {mac}\n**Transport:** {transport}\n**ESPHome-host:** {esphome_host}\n\nEr wordt een verbindingstest uitgevoerd wanneer u op Verzenden klikt. Wacht tot 30 seconden. Na het sluiten van de wizard kan de integratie nog tot 60 seconden nodig hebben om volledig actief te worden.\n\nVersie {version}",
+        "data": {
+          "poll_interval": "Poll-interval (seconden)"
+        },
+        "data_description": {
+          "poll_interval": "Hoe vaak het apparaat via Bluetooth wordt bevraagd. Kortere intervallen geven meer responsieve sensoren, maar houden BLE langer bezet."
         }
       }
     },
     "error": {
       "cannot_connect": "Kan geen verbinding maken met het AquaClean-apparaat. Controleer het MAC-adres, zorg dat het apparaat is ingeschakeld en binnen BLE-bereik is, en verifieer de ESPHome-proxy-instellingen. Zorg er ook voor dat geen ander apparaat (bijv. de Geberit Home App of de standalone bridge) via Bluetooth is verbonden — de AquaClean is alleen zichtbaar wanneer er geen actieve BLE-verbinding is.",
-      "no_bluetooth": "Geen lokale Bluetooth-adapter gevonden op dit apparaat. Een ESPHome Bluetooth-proxy host is vereist."
+      "no_bluetooth": "Geen lokale Bluetooth-adapter gevonden op dit apparaat. Een ESPHome Bluetooth-proxy host is vereist.",
+      "no_esphome_found": "Geen ESPHome-proxy gevonden op het netwerk.",
+      "alba_handshake_failed": "AquaClean Alba-apparaat gevonden, maar de Arendi-beveiligingshandshake is niet voltooid. Klik nogmaals op Verzenden om het opnieuw te proberen. Als de fout aanhoudt, zorg ervoor dat geen ander apparaat (bijv. de Geberit Home-app) verbonden is via Bluetooth.",
+      "esphome_unreachable": "Kan de ESPHome-proxy niet bereiken. Controleer host, poort en netwerkverbinding.",
+      "invalid_mac": "Ongeldig MAC-adresformaat. Gebruik XX:XX:XX:XX:XX:XX.",
+      "esphome_host_required": "ESPHome-host is vereist."
     },
     "abort": {
       "already_configured": "Dit AquaClean-apparaat is al geconfigureerd.",
@@ -63,6 +106,16 @@
     "error": {
       "cannot_connect": "Kan geen verbinding maken met het AquaClean-apparaat. Controleer het MAC-adres, zorg dat het apparaat is ingeschakeld en binnen BLE-bereik is, en verifieer de ESPHome-proxy-instellingen. Zorg er ook voor dat geen ander apparaat (bijv. de Geberit Home App of de standalone bridge) via Bluetooth is verbonden — de AquaClean is alleen zichtbaar wanneer er geen actieve BLE-verbinding is.",
       "no_bluetooth": "Geen lokale Bluetooth-adapter gevonden op dit apparaat. Een ESPHome Bluetooth-proxy host is vereist."
+    }
+  },
+  "selector": {
+    "transport_type": {
+      "options": {
+        "esphome_auto": "ESPHome-proxy (automatisch via mDNS)",
+        "esphome_manual": "ESPHome-proxy (adres handmatig invoeren)",
+        "local_ble": "Lokale Bluetooth-adapter",
+        "local_ble_ha": "Home Assistant Bluetooth-domein (Optie B)"
+      }
     }
   }
 }

@@ -42,3 +42,12 @@ Active memory entries: 69  |  Pruned: 2 (`feedback_update_sh_not_install_sh.md`,
 
 ## Memory snapshot 2026-06-10
 Active memory entries: 31  |  Pruned: 0 (all linked entries load-bearing; no duplicates of rules files found)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-13
+Active memory entries: 41  |  Pruned: 0 (10 new entries added since Jun 10; all load-bearing; no verbatim duplicates of rules files found)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-15
+Active memory entries: 42  |  Pruned: 0 (all linked entries load-bearing; no verbatim duplicates of rules files found)  |  MEMORY.md index corrected: `alba-tunnel-data-exchange.md` entry updated — Phase 3 confirmed as mid-session SABM on same BLE conn (not new conn), GetEndProduct NOT called in "Jetzt verbinden" flow (2026-06-15 testing)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-17
+Active memory entries: 44  |  Pruned: 0 (1 updated: `hacs-todos.md` — marked RSSI tracking as DONE, was stale)  |  Added: `hacs-model-entity-feature-sets.md` (feature sets architecture, wired flag, stubs), `hacs-pre-release-checklist.md` (version bump, migration note, merge, known limitations)  |  Snapshot taken by /compress-memory

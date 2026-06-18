@@ -1,0 +1,58 @@
+views:
+  - title: AquaClean
+    path: aquaclean
+    cards:
+      - type: entities
+        title: ORIENTATION LIGHT
+        show_header_toggle: false
+        entities:
+          # ROW 1: Activation Modes
+          - type: buttons
+            entities:
+              - entity: button.geberit_aquaclean_orientation_light_off
+                name: "Off"
+              - entity: button.geberit_aquaclean_orientation_light_on
+                name: "On"
+              - entity: button.geberit_aquaclean_orientation_light_when_approached
+                name: "Approached"
+
+          # ROW 2: Brightness Control
+          - type: custom:number-box-card
+            entity: number.geberit_aquaclean_orientation_light_brightness
+            name: Brightness
+            icon: mdi:brightness-6
+
+          # ROW 3: Color Palette Mapping
+          - type: custom:rgb-light-card
+            entity: number.geberit_aquaclean_orientation_light_color
+            name: Colour
+            justify: flex-end
+            colors:
+              - icon_color: "#FFF4E0"
+                service: number.set_value
+                service_data:
+                  value: 1
+              - icon_color: "#FEEB75"
+                service: number.set_value
+                service_data:
+                  value: 2
+              - icon_color: "#FFB347"
+                service: number.set_value
+                service_data:
+                  value: 3
+              - icon_color: "#E23E57"
+                service: number.set_value
+                service_data:
+                  value: 4
+              - icon_color: "#EAF2F8"
+                service: number.set_value
+                service_data:
+                  value: 5
+              - icon_color: "#A3E4D7"
+                service: number.set_value
+                service_data:
+                  value: 6
+              - icon_color: "#2E86C1"
+                service: number.set_value
+                service_data:
+                  value: 7
