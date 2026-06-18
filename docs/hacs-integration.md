@@ -321,6 +321,18 @@ To update:
 1. Open HACS → find Geberit AquaClean → **Update** (or three dots → **Redownload**)
 2. Restart Home Assistant
 
+### Upgrading to v3.1.2 — model-specific entity sets (delete-and-recreate required)
+
+v3.1.2 introduces model-specific entity registration: only the entities your device actually supports are created. Entities for unsupported features (e.g. orientation light on a Mera Classic) are no longer registered by default.
+
+Because Home Assistant cannot automatically remove entities that already exist in the registry, you need to **delete and recreate the integration once** to get a clean entity set:
+
+1. Settings → Devices & Services → Geberit AquaClean → ⋮ → **Delete**
+2. Add integration again (HACS → Geberit AquaClean or Settings → Add Integration)
+3. Complete the setup wizard — your device model is detected automatically
+
+After recreating, only the entities relevant to your device are registered. The correct model is detected from the BLE advertisement (wizard) or from the first poll via proc 0x82 (manual MAC entry — applied from the second HA restart onwards).
+
 > **HACS only sees GitHub Releases, not bare git tags.** If a new version does not appear after clicking the three dots → **Update information**, the release was likely only tagged but not published as a GitHub Release.
 
 ---
