@@ -11,9 +11,11 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from aquaclean_console_app.bluetooth_le.LE.dp_ids import dp_name
+
 from .const import (
     DOMAIN, CONF_DEVICE_ID, CONF_ESPHOME_HOST, CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT,
-    get_feature_sets, FS_ALL, FS_AQUACLEAN_OLD, FS_ALBA_ONLY,
+    get_feature_sets, FS_ALL, FS_AQUACLEAN_OLD, FS_ALBA_ONLY, ALBA_WIRED_DPIDS,
 )
 from .coordinator import AquaCleanCoordinator
 from .entity import AquaCleanEntity, AquaCleanProxyEntity
@@ -119,6 +121,7 @@ async def async_setup_entry(
             AquaCleanAlbaSensor(coordinator, entry, key, name, unit, device_class, state_class, icon)
             for key, name, unit, device_class, state_class, icon in ALBA_SENSORS
         ]
+        entities.append(AquaCleanAlbaDpIdCoverageSensor(coordinator, entry))
 
     # Performance/timing/BLE RSSI stats — always added regardless of transport.
     # Valid for both local BLE and ESP32 proxy modes; live on the main toilet device.
@@ -640,3 +643,43 @@ class AquaCleanProxyMaxWifiRssiSensor(AquaCleanProxyEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("max_wifi_rssi")
+
+
+class AquaCleanAlbaDpIdCoverageSensor(AquaCleanEntity, SensorEntity):
+    """Diagnostic sensor listing every DpId from the live inventory as wired or not.
+
+    State: 'N / M wired' — updates after each poll as the inventory may grow
+    with firmware updates.  Extra state attributes contain one entry per DpId.
+    Disabled by default; visible in the Diagnostics download.
+    """
+
+    _attr_name = "DpId Coverage"
+    _attr_icon = "mdi:identifier"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: AquaCleanCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_alba_dpid_coverage"
+
+    @property
+    def native_value(self) -> str | None:
+        inv = self.coordinator._alba_inventory
+        if not inv:
+            return None
+        total = len(inv)
+        wired = sum(1 for dpid in inv if dpid in ALBA_WIRED_DPIDS)
+        return f"{wired} / {total} wired"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        inv = self.coordinator._alba_inventory
+        if not inv:
+            return {}
+        return {
+            str(dpid): {
+                "name": dp_name(dpid) or str(dpid),
+                "wired": dpid in ALBA_WIRED_DPIDS,
+            }
+            for dpid in sorted(inv)
+        }

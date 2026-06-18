@@ -77,6 +77,60 @@ PROC82_DESCRIPTION_TO_MODEL: dict = {
 }
 
 
+# ── Alba DpId coverage ────────────────────────────────────────────────────────
+# DpIds that have at least one wired HA entity (sensor, binary_sensor, number,
+# or button).  Used by AquaCleanAlbaDpIdCoverageSensor to mark each inventory
+# DpId as "wired" or "not wired".  Update this set whenever a new Alba entity
+# is added to any entity file.
+ALBA_WIRED_DPIDS: frozenset[int] = frozenset({
+    15,   # RTC_TIME                            → sensor
+    93,   # POWER_SUPPLY_ERROR_STATUS           → binary_sensor
+    148,  # OPERATION_TIME_TOTAL                → sensor
+    149,  # OPERATION_TIME_SINCE_POWER_UP       → sensor
+    153,  # RESTART                             → button
+    270,  # SET_RTC_TIME                        → button
+    563,  # START_STOP_ANAL_SHOWER              → button
+    565,  # ANAL_SHOWER_PROGRESS                → sensor (instanced)
+    566,  # START_STOP_SPRAY_ARM_CLEANING       → button
+    567,  # SPRAY_ARM_CLEANING_STATUS           → sensor
+    568,  # SPRAY_ARM_CLEANING_PROGRESS         → sensor (instanced)
+    570,  # SET_ACTIVE_ANAL_SPRAY_INTENSITY     → number (write)
+    571,  # ACTIVE_ANAL_SPRAY_INTENSITY_STATUS  → number (read) + sensor
+    572,  # SET_ACTIVE_ANAL_SPRAY_ARM_POSITION  → number (write)
+    573,  # ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS → number (read) + sensor
+    574,  # SET_ACTIVE_SHOWER_WATER_TEMPERATURE → number (write)
+    575,  # ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS → number (read) + sensor
+    576,  # SET_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION → number (write)
+    577,  # ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS → binary_sensor + number
+    585,  # DESCALING_STATUS                    → sensor
+    586,  # DESCALING_PROGRESS                  → sensor (instanced)
+    588,  # UNACCOUNTED_SHOWER_CYCLES           → sensor
+    589,  # DAYS_UNTIL_NEXT_DESCALING           → sensor
+    590,  # TIMESTAMP_OF_LAST_DESCALING         → sensor
+    591,  # TIMESTAMP_OF_LAST_DESCALING_REQUEST → sensor
+    592,  # DESCALING_CYCLES                    → sensor
+    689,  # STATISTIC_COUNTER_TOTAL             → sensor (instanced)
+    764,  # WATER_HEATER_ERROR_STATUS           → binary_sensor
+    765,  # LEVEL_CONTROL_ERROR_STATUS          → binary_sensor
+    766,  # USER_DETECTION_ERROR_STATUS         → binary_sensor
+    781,  # CREDITS_UNTIL_NEXT_DESCALING        → sensor
+    785,  # FUS_VERSION                         → sensor (instanced)
+    786,  # GEBERIT_LOADER_VERSION              → sensor (instanced)
+    787,  # WIRELESS_STACK_VERSION              → sensor (instanced)
+    789,  # WATER_PUMP_ERROR_STATUS             → binary_sensor
+    790,  # SPRAY_ARM_DRIVE_ERROR_STATUS        → binary_sensor
+    795,  # DEMO_MODE                           → binary_sensor
+    796,  # PRODUCT_REGISTRATION_LEVEL          → sensor
+    803,  # SHOWROOM_MODE                       → binary_sensor
+    810,  # DRY_RUN_MODE                        → binary_sensor
+    820,  # MAINTENANCE_REQUEST_STATUS          → binary_sensor
+    977,  # DESCALING_DEVICE_LOCK_REMAINING_DAYS     → sensor
+    979,  # DESCALING_DEVICE_RELOCK_REMAINING_CYCLES → sensor
+    982,  # DESCALING_ERROR_STATUS              → binary_sensor
+    983,  # DESCALING_DEVICE_LOCK_STATUS        → sensor
+})
+
+
 def get_feature_sets(device_model: str | None) -> frozenset:
     """Return the feature sets for a model key.
 
