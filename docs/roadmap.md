@@ -35,6 +35,61 @@ not currently queried. The correctly-labeled data is already available via `GetS
 
 ## Protocol / BLE
 
+### Geberit AquaClean application-layer BLE relay to overcome "BLE Coexistence" issues
+
+The real Alba (and Mera Comfort) only accept **one BLE connection at a time**. This causes
+the displacement/coexistence problem: when the bridge polls, the Geberit Home App gets
+disconnected; when the remote control is used, the bridge gets displaced.
+
+**Proposed architecture — "Alba-Hub":**
+
+Combine the two existing components (bridge central + mock peripheral) into a relay:
+
+- **Central side**: maintains a permanent BLE connection to the real Alba device
+  (reuses existing `AlbaClient` / `AquaCleanClient`)
+- **Peripheral side**: impersonates the Alba to multiple clients simultaneously —
+  Geberit Home App, Geberit Remote Control, standalone bridge (reuses mock peripheral
+  GATT server and `_AriendiServerSide`)
+- **Relay logic** (new): decrypt incoming DpId operations from each client → re-encrypt
+  for the real device → forward; decrypt response → re-encrypt per-client → fan out
+
+The relay cannot be transparent at the BLE link layer because Arendi uses ECDH with
+fresh ephemeral keys per session — each client has its own session key. The hub must
+operate at the application (DpId) layer: decrypt, re-encrypt, forward.
+
+**What this solves:**
+
+| Problem | Solved? |
+|---------|---------|
+| App displaced during bridge polls | ✅ App connects to hub; hub never disconnects from real device |
+| Multiple clients coexist | ✅ Hub serializes writes, fans out notifications |
+| Remote control displacement (issue #21) | ⚠️ Only once remote PSK (keyset_id=1) is known |
+
+**Existing code that maps directly:**
+
+| Hub component | Existing code |
+|---------------|---------------|
+| Central (real device) | `AlbaClient` / `AquaCleanClient` + `BluetoothLeConnector` |
+| Peripheral GATT server | `mock-geberit-alba.py` `_BlePeripheral` |
+| Arendi KE + crypto | `_AriendiServerSide` in mock |
+| DpId relay + notification fan-out | **New** — ~300–500 lines |
+
+**Key implementation notes:**
+
+- Hub peripheral must advertise with the real device's MAC (MAC spoof via
+  `btmgmt public-addr`) so existing App and Remote pairings remain valid
+- DataPointInventory (78 DpIds, ~15 s) — run once on first central connection,
+  cache, serve instantly to all clients without hitting the real device
+- Subscribe to all notifications on real device → fan out to all connected clients
+- Write serialisation: queue writes from concurrent clients, apply in order
+- For the Remote (keyset_id=1): hub needs the remote PSK to decrypt/re-encrypt;
+  PSK currently unknown — see
+  `docs/developer/mock-geberit-alba.md#blocker-2--keyset_id1-psk-unknown`
+
+**Status:** design only — not yet started.
+
+---
+
 ### Add SPL indices 14–22 to bridge
 
 All confirmed safe from firmware analysis (node 0x01 dispatcher handles 0–21) and iOS app DpId.cs.
