@@ -90,6 +90,7 @@ ALBA_WIRED_DPIDS: frozenset[int] = frozenset({
     153,  # RESTART                             → button
     270,  # SET_RTC_TIME                        → button
     563,  # START_STOP_ANAL_SHOWER              → button
+    564,  # ANAL_SHOWER_STATUS                  → binary_sensor (fast SPL poll, data_array[3])
     565,  # ANAL_SHOWER_PROGRESS                → sensor (instanced)
     566,  # START_STOP_SPRAY_ARM_CLEANING       → button
     567,  # SPRAY_ARM_CLEANING_STATUS           → sensor
@@ -109,6 +110,7 @@ ALBA_WIRED_DPIDS: frozenset[int] = frozenset({
     590,  # TIMESTAMP_OF_LAST_DESCALING         → sensor
     591,  # TIMESTAMP_OF_LAST_DESCALING_REQUEST → sensor
     592,  # DESCALING_CYCLES                    → sensor
+    607,  # USER_DETECTION_STATUS               → binary_sensor (fast SPL poll, data_array[0])
     689,  # STATISTIC_COUNTER_TOTAL             → sensor (instanced)
     764,  # WATER_HEATER_ERROR_STATUS           → binary_sensor
     765,  # LEVEL_CONTROL_ERROR_STATUS          → binary_sensor

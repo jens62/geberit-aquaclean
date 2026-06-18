@@ -30,7 +30,7 @@ SENSORS: list[tuple] = [
     ("description",             "Model",                      None,  None,                          None,                              "mdi:toilet",            FS_ALL,          True),
     ("production_date",         "Production Date",            None,  None,                          None,                              "mdi:calendar-badge",    FS_ALL,          True),
     ("initial_operation_date",  "Initial Operation Date",     None,  None,                          None,                              "mdi:calendar-check",    FS_ALL,          True),
-    ("soc_versions",            "SOC Versions",               None,  None,                          None,                              "mdi:chip",              FS_ALL,          True),
+    ("soc_versions",            "SOC Versions",               None,  None,                          None,                              "mdi:chip",              FS_AQUACLEAN_OLD, True),
     ("firmware_version",        "Firmware Version",           None,  None,                          None,                              "mdi:chip",              FS_ALL,          True),
     ("firmware_version_date",   "Firmware Release Date",      None,  None,                          None,                              "mdi:calendar-chip",     FS_ALL,          True),
     ("cloud_firmware_version",  "Cloud Firmware Version",     None,  None,                          None,                              "mdi:cloud-upload",      FS_ALL,          True),

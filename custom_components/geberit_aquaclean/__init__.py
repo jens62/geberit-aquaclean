@@ -83,8 +83,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Give the ESP32 time to process the subscription release from the config-flow
     # connection test (or the stale coordinator closed above) before the first poll.
     await asyncio.sleep(3.0)
-    await coordinator.async_config_entry_first_refresh()
+    # Register entities immediately so HA shows the "Name and assign" dialog without
+    # waiting for the first BLE poll to succeed.  The non-blocking refresh below
+    # populates the entities in the background; they show "Unknown" until it completes.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await coordinator.async_request_refresh()
     # Reload the entry when the user saves new options — picks up changed settings.
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
