@@ -595,12 +595,57 @@ The remote is **explicitly deactivated** at the device level whenever an app
 or bridge holds an active BLE session — this is the user-visible description
 of the conflict documented in `docs/developer/alba-remote-control-conflict.md`.
 
+### BLE security model — SMP is NOT used
+
+The Alba BLE link layer is **unencrypted with zero SMP**. There is no "Just Works"
+pairing, no LTK/IRK/CSRK key exchange, no BLE bonding. The remote's security is
+entirely at the Arendi application layer (ECDH KE + AES-CTR), identical to the
+app/bridge path but using `keyset_id=1` instead of `keyset_id=0`.
+
+`keyset: 0300` (seen in every EP Response) = bitmask `0x0003` = slots 0 and 1
+both registered. Slot 0 = app/bridge. Slot 1 = remote.
+
 ### What is needed to support the remote in the mock
 
 | Requirement | Status |
 |-------------|--------|
 | Mock advertises with the real Alba's MAC (remote connects to mock, not real device) | ❌ mock uses adapter MAC |
 | Mock handles KE_REQ on `keyset_id=1` — same Arendi crypto, separate keyset slot | ❌ not implemented |
+
+### Blocker 1 — MAC address (solvable)
+
+The remote stores the toilet's MAC from its last pairing. Two options:
+
+- **Re-pair (recommended):** with the mock running, hold `<+>` ≈ 20 s. The remote
+  re-pairs to whichever device responds — the mock's adapter MAC
+  (`A0:AD:9F:72:C4:0F`). No spoofing needed. After this the remote connects to
+  the adapter MAC on all future connections.
+- **MAC spoof:** `sudo btmgmt public-addr E4:85:01:CD:C4:1E` before starting the
+  mock, if the ASUS USB-BT500 adapter supports public address override.
+
+### Blocker 2 — keyset_id=1 PSK (unknown)
+
+The Arendi KE_REQ includes a `client_CMAC` verified against the PSK for that
+keyset slot. The remote's PSK for slot 1 is hardcoded in its firmware and unknown.
+Three hypotheses (in order of ease):
+
+1. **Same PSK as keyset_id=0** — try first, costs nothing.
+2. **Pairing-window bypass** — during the 20 s window the toilet may accept any
+   KE_REQ for slot 1 without PSK verification (logical: the device cannot know
+   the new remote's PSK in advance). If true, the mock can respond unconditionally
+   during pairing and observe what the remote sends.
+3. **Firmware extraction** — not practical.
+
+### Decisive experiment
+
+Add keyset_id=1 handling to the mock that:
+1. Logs the remote's full KE_REQ (client_pub + client_CMAC) without verifying
+2. Checks if client_CMAC verifies with the keyset_id=0 PSK (same-key hypothesis)
+3. During the pairing window, accepts unconditionally and completes the KE
+
+Run the mock, put the remote into pairing mode (hold `<+>`), observe the log.
+If a keyset_id=1 KE_REQ appears, the MAC blocker is resolved and PSK hypothesis
+can be tested immediately from the captured CMAC value.
 
 The boot-time pairing window behaviour (what the device accepts during those
 20 s vs. normal operation) is not yet understood at the protocol level — no
