@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.18.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.18.1"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 _ui_notify_state: dict = {"607": False, "564": False}  # web UI toggle state for NOTIFY pushes
 try:
