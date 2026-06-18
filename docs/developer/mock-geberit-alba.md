@@ -580,6 +580,34 @@ Source: decompiled iOS app v2.14.1; confirmed against kstr device probe
 
 ---
 
+## Remote control — pairing and protocol
+
+**Reference:** Geberit AquaClean Alba User Manual 971.833.00.0(01),
+chapters "Operating concept" (p. 10), "Re-assigning the remote control" (p. 40–41),
+and "The remote control is not functioning" (p. 38).
+
+The device stores **exactly one** assigned remote (art. no. 245.368.01.1,
+battery CR2032). Re-assignment is user-triggered at boot (hold `<+>` ≈ 20 s
+while the device initialises — no button on the toilet required). Pairing
+is confirmed by the remote's LED turning green for 3 s.
+
+The remote is **explicitly deactivated** at the device level whenever an app
+or bridge holds an active BLE session — this is the user-visible description
+of the conflict documented in `docs/developer/alba-remote-control-conflict.md`.
+
+### What is needed to support the remote in the mock
+
+| Requirement | Status |
+|-------------|--------|
+| Mock advertises with the real Alba's MAC (remote connects to mock, not real device) | ❌ mock uses adapter MAC |
+| Mock handles KE_REQ on `keyset_id=1` — same Arendi crypto, separate keyset slot | ❌ not implemented |
+
+The boot-time pairing window behaviour (what the device accepts during those
+20 s vs. normal operation) is not yet understood at the protocol level — no
+clean sniffer capture of a remote re-assignment session exists.
+
+---
+
 ## btmon correlation tool
 
 `tools/analyze-btmon-mock.py` correlates a btmon btsnoop binary capture with a mock server log

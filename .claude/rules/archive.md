@@ -1,3 +1,6 @@
+## Memory snapshot 2026-06-18 (session 2)
+Active memory entries: 45  |  Pruned: 0 (mock version inline updated: 2.17.0 → 2.18.6 + shower flow note)  |  Snapshot taken by /compress-memory
+
 ## Archived 2026-06-18
 
 - ~~HACS: Config flow wizard with mDNS/zeroconf ESPHome proxy discovery~~ — **Done in v3.1.2** — multi-step wizard, mDNS auto-discover, manual IP fallback on same screen, rescan button
@@ -57,3 +60,6 @@ Active memory entries: 42  |  Pruned: 0 (all linked entries load-bearing; no ver
 
 ## Memory snapshot 2026-06-17
 Active memory entries: 44  |  Pruned: 0 (1 updated: `hacs-todos.md` — marked RSSI tracking as DONE, was stale)  |  Added: `hacs-model-entity-feature-sets.md` (feature sets architecture, wired flag, stubs), `hacs-pre-release-checklist.md` (version bump, migration note, merge, known limitations)  |  Snapshot taken by /compress-memory
+
+## Memory snapshot 2026-06-18
+Active memory entries: 45  |  Pruned: 1 (`hacs-pre-release-checklist.md` — v3.1.2 released, all items completed, removed from index)  |  Snapshot taken by /compress-memory
