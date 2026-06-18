@@ -1,3 +1,9 @@
+## Archived 2026-06-18
+
+- ~~HACS: Config flow wizard with mDNS/zeroconf ESPHome proxy discovery~~ — **Done in v3.1.2** — multi-step wizard, mDNS auto-discover, manual IP fallback on same screen, rescan button
+- ~~HACS: detect model from BLE advertisement before first poll~~ — **Done in v3.1.2** — BLE advertisement article prefix → model string stored in config entry; proc 0x82 used as fallback refinement on first poll
+- ~~HACS: model-aware entity creation via positive feature sets~~ — **Done in v3.1.2** — 11 `FS_*` constants, per-model frozenset composition in `DEVICE_TYPE_FEATURE_SETS`, entity lists filtered at `async_setup_entry`; `wired=False` stubs for unwired features
+
 ## Archived 2026-06-03
 
 - ~~Investigate E0002/E0003 after iPhone app closes~~ — **RESOLVED 2026-04-16, commit 36844ec**
