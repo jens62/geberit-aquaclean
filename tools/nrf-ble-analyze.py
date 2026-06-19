@@ -389,6 +389,79 @@ def _detect_device(tshark: str, pcapng: Path, addr_field: str) -> tuple:
 
     return None, None
 
+
+# ---------------------------------------------------------------------------
+# GATT handle → UUID mapping
+# ---------------------------------------------------------------------------
+
+def _extract_gatt_handles(tshark: str, pcapng: Path) -> dict:
+    """Extract handle→UUID map from GATT discovery frames in a capture.
+
+    Parses three ATT discovery response opcodes:
+      0x11 READ_BY_GROUP_TYPE_RSP  — service declarations (start handle, UUID)
+      0x09 READ_BY_TYPE_RSP        — characteristic declarations (decl+value handles, UUID)
+      0x05 FIND_INFO_RSP            — descriptor handles (handle, UUID — 1:1 mapping)
+
+    Returns dict[int handle → str uuid].  Called from --gatt-map and included
+    in markdown output so future captures can be explored without ad-hoc tshark.
+    """
+    handle_map: dict = {}
+
+    for opcode in ("0x11", "0x09", "0x05"):
+        rows = _run_tshark(
+            tshark, pcapng,
+            f"btatt.opcode == {opcode}",
+            ["btatt.handle", "btatt.uuid128", "btatt.uuid16"],
+        )
+        for row in rows:
+            if not row or not row[0].strip():
+                continue
+            handles_raw = row[0].strip()
+            uuid128_raw = row[1].strip() if len(row) > 1 else ""
+            uuid16_raw  = row[2].strip() if len(row) > 2 else ""
+
+            handles = []
+            for h in handles_raw.split(","):
+                h = h.strip()
+                if h:
+                    try:
+                        handles.append(_parse_int(h))
+                    except ValueError:
+                        pass
+
+            # Collect UUIDs: 128-bit first, then 16-bit promoted to 0xXXXX strings
+            uuids: list = []
+            for u in uuid128_raw.split(","):
+                u = u.strip()
+                if u:
+                    uuids.append(u)
+            for u in uuid16_raw.split(","):
+                u = u.strip()
+                if u:
+                    try:
+                        uuids.append(f"0x{int(u, 16):04X}")
+                    except ValueError:
+                        pass
+
+            # Pair handles with UUIDs (best-effort; tshark may not align 1:1)
+            for i, handle in enumerate(handles):
+                if handle not in handle_map and i < len(uuids):
+                    handle_map[handle] = uuids[i]
+
+    return handle_map
+
+
+def _format_gatt_map(handle_map: dict) -> str:
+    """Format handle→UUID map as a readable table."""
+    if not handle_map:
+        return "  (no GATT discovery frames found)\n"
+    lines = ["  Handle  UUID"]
+    lines.append("  " + "-" * 40)
+    for handle in sorted(handle_map):
+        lines.append(f"  0x{handle:04X}   {handle_map[handle]}")
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # BLE LL encryption detection
 # ---------------------------------------------------------------------------
@@ -834,6 +907,8 @@ Examples:
                     help="Write markdown to FILE instead of stdout (requires --markdown)")
     ap.add_argument("--raw", action="store_true",
                     help="Print raw ATT bytes without decoding")
+    ap.add_argument("--gatt-map", action="store_true",
+                    help="Extract and print GATT handle→UUID map from discovery frames, then exit")
     args = ap.parse_args()
 
     if not args.pcapng.exists():
@@ -842,6 +917,12 @@ Examples:
 
     tshark    = _find_tshark()
     addr_field = _peripheral_addr_field(tshark, args.pcapng)
+
+    if args.gatt_map:
+        handle_map = _extract_gatt_handles(tshark, args.pcapng)
+        print(f"GATT handle map ({args.pcapng.name}):")
+        print(_format_gatt_map(handle_map))
+        sys.exit(0)
 
     mac, device_type = _detect_device(tshark, args.pcapng, addr_field)
     if args.mac:
