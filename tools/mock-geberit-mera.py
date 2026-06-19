@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.11.0
+mock-geberit-mera.py v1.12.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -65,7 +65,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.11.0"
+_MOCK_VERSION = "1.12.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -222,7 +222,11 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = _proc_05()
     elif proc == 0x81:            # GetSOCApplicationVersions
         result = _proc_81()
-    elif proc in (0x0D, 0x0E):   # GetSystemParameterList
+    elif proc == 0x0E:            # GetFirmwareVersionList
+        result = _proc_0e(args)
+    elif proc == 0x86:            # GetDeviceInitialOperationDate
+        result = _proc_86()
+    elif proc == 0x0D:            # GetSystemParameterList
         result = _proc_0d(args)
     elif proc == 0x09:            # SetCommand (shower/lid/flush toggle)
         result = b""
@@ -278,6 +282,28 @@ def _proc_0d(args: bytes) -> bytes:
         return b""
     count = args[0]
     return bytes([count]) + bytes(count * 4)
+
+
+def _proc_0e(args: bytes) -> bytes:
+    """GetFirmwareVersionList: 5-byte records per requested component.
+
+    Format: [count] + per component: [comp_id, v1, v2, build, reserved]
+    Bridge parses: version=chr(v1)+chr(v2), main="RS{version}.0 TS{build}"
+    Returning "RS30.0 TS206" for all components (consistent with _proc_81).
+    """
+    if not args:
+        return b""
+    count = min(args[0], len(args) - 1)
+    comp_ids = list(args[1:1 + count])
+    records = bytes([len(comp_ids)])
+    for cid in comp_ids:
+        records += bytes([cid, 0x33, 0x30, 206, 0])  # version="30", build=206
+    return records
+
+
+def _proc_86() -> bytes:
+    """GetDeviceInitialOperationDate: UTF-8 date string."""
+    return b"2023-01-01\x00"
 
 
 # ---- GATT Service ----
