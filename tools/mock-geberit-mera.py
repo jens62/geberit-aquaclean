@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.8.0
+mock-geberit-mera.py v1.9.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -568,8 +568,22 @@ async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
     _FLAG_MANAGED_FLAGS = 0x00000008
 
     try:
+        import ctypes as _ct
+        libc = _ct.CDLL("libc.so.6", use_errno=True)
+
         sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
-        sock.bind((0xFFFF,))   # HCI_DEV_NONE → MGMT interface
+
+        # Python socket.bind() for BTPROTO_HCI always sets hci_channel=0 (RAW).
+        # Binding HCI_DEV_NONE (0xFFFF) with channel 0 → EBADFD.
+        # MGMT requires hci_channel=3 (CONTROL) — use ctypes to pass the full struct.
+        # struct sockaddr_hci { uint16 hci_family; uint16 hci_dev; uint16 hci_channel; }
+        sa = struct.pack('<HHH', socket.AF_BLUETOOTH, 0xFFFF, 3)  # AF_BT, NONE, CONTROL
+        sa_buf = _ct.create_string_buffer(sa)
+        ret = libc.bind(sock.fileno(), sa_buf, len(sa))
+        if ret != 0:
+            err = _ct.get_errno()
+            sock.close()
+            raise OSError(err, f"MGMT bind: errno {err}")
         sock.settimeout(2.0)
 
         def _mgmt(opcode: int, params: bytes) -> int:
