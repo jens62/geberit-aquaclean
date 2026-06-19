@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.9.0
+mock-geberit-mera.py v1.10.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -599,23 +599,32 @@ async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
         except Exception:
             pass
 
-        # Add legacy advertising instance (no SEC_* flags → legacy ADV_IND)
+        # Add legacy advertising instance (no SEC_* flags → legacy ADV_IND).
+        # Duration=0 / timeout=0 → never expire.
         flags = _FLAG_CONNECTABLE | _FLAG_DISCOV | _FLAG_MANAGED_FLAGS
         cp = struct.pack('<BIHHBB', 1, flags, 0, 0, len(adv_data), 0) + adv_data
         status = _mgmt(_MGMT_OP_ADD_ADVERTISING, cp)
+        sock.close()
         if status != 0:
             print(f"Warning: MGMT ADD_ADVERTISING failed (status=0x{status:02x})")
-            sock.close()
             return False
 
-        # Set advertising interval: 160 × 0.625 ms = 100 ms
-        try:
-            _mgmt(_MGMT_OP_SET_ADV_PARAMS, struct.pack('<BHHb', 1, 160, 160, 0x7F))
-        except Exception:
-            pass  # interval step optional; legacy at 1280 ms is still discoverable
-
-        sock.close()
-        return True
+        # MGMT_OP_ADD_ADVERTISING default interval = 1280 ms.
+        # Override via btmgmt subprocess which exposes -m/-M interval flags directly.
+        import shutil as _sh, subprocess as _sp
+        btmgmt = _sh.which('btmgmt')
+        if btmgmt:
+            idx_arg = f'--index={adapter_idx}'
+            # Try with interval; fall back silently without it (older btmgmt versions)
+            for cmd in [
+                [btmgmt, idx_arg, 'adv-params', '--instance', '1', '-m', '160', '-M', '160'],
+                [btmgmt, idx_arg, 'add-adv', '-c', '-g', '-m', '100', '-M', '100',
+                 '-a', adv_data.hex(), '1'],
+            ]:
+                r = _sp.run(cmd, capture_output=True, text=True, timeout=5)
+                if r.returncode == 0 and 'fail' not in (r.stdout + r.stderr).lower():
+                    return True  # interval updated
+        return True  # advertising is up at 1280 ms (still discoverable)
 
     except PermissionError:
         print("Warning: MGMT advertising needs CAP_NET_ADMIN — run with sudo")
@@ -695,7 +704,7 @@ async def main(web_port: int = 8765) -> None:
     # extended PDUs are invisible to iOS when it scans without a UUID filter (Mera path).
     adv_ok = await _mgmt_start_legacy_advertising(adapter_path or "")
     if adv_ok:
-        print(f"Advertising: legacy ADV_IND  company=0x0100 article={_ARTICLE} UUID=0x3EA0  interval=100ms")
+        print(f"Advertising: legacy ADV_IND  company=0x0100 article={_ARTICLE} UUID=0x3EA0")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed

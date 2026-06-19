@@ -122,6 +122,18 @@ _HCI_CMD_LE_CREATE_CONN            = 0x200D
 _HCI_CMD_LE_EXT_CREATE_CONN        = 0x2043
 _HCI_CMD_DISCONNECT                = 0x0406
 
+# HCI LE advertising commands — legacy (ADV_IND) path
+_HCI_CMD_LE_SET_ADV_PARAMS         = 0x2006
+_HCI_CMD_LE_SET_ADV_DATA           = 0x2008
+_HCI_CMD_LE_SET_SCAN_RSP_DATA      = 0x2009
+_HCI_CMD_LE_SET_ADV_ENABLE         = 0x200A  # ← legacy
+
+# HCI LE advertising commands — extended (ADV_EXT_IND / BT5) path
+_HCI_CMD_LE_SET_EXT_ADV_PARAMS     = 0x2036
+_HCI_CMD_LE_SET_EXT_ADV_DATA       = 0x2037
+_HCI_CMD_LE_SET_EXT_SCAN_RSP_DATA  = 0x2038
+_HCI_CMD_LE_SET_EXT_ADV_ENABLE     = 0x2039  # ← extended / BT5
+
 # ATT opcodes
 _ATT_MTU_REQ       = 0x02
 _ATT_MTU_RESP      = 0x03
@@ -533,7 +545,67 @@ def decode_btsnoop_events(records: list[BtsnoopEvent]):
                 ev.kind = "connect_cmd"
                 ev.summary = "HCI_CMD LE_Extended_Create_Connection"
 
+            # ── Legacy advertising commands ──────────────────────────────
+            elif opcode == _HCI_CMD_LE_SET_ADV_ENABLE and len(ev.data) >= 4:
+                enable = ev.data[3]
+                ev.kind = "adv_enable"
+                ev.summary = (f"HCI_CMD LE_Set_Advertise_Enable  enable={enable}  "
+                              f"← LEGACY ADV_IND (iOS can see this)")
+
+            elif opcode == _HCI_CMD_LE_SET_ADV_DATA and len(ev.data) >= 4:
+                adv_len = ev.data[3]
+                adv_bytes = ev.data[4:4 + adv_len]
+                ev.kind = "adv_data"
+                ev.summary = (f"HCI_CMD LE_Set_Advertising_Data  "
+                              f"len={adv_len}  data={adv_bytes.hex()}")
+
+            elif opcode == _HCI_CMD_LE_SET_ADV_PARAMS and len(ev.data) >= 10:
+                min_iv = struct.unpack_from("<H", ev.data, 3)[0]
+                max_iv = struct.unpack_from("<H", ev.data, 5)[0]
+                adv_type = ev.data[7]
+                _ADV_TYPES = {0: "ADV_IND", 1: "ADV_DIRECT_IND", 2: "ADV_SCAN_IND",
+                              3: "ADV_NONCONN_IND", 4: "ADV_DIRECT_IND_LOW"}
+                ev.kind = "adv_params"
+                ev.summary = (f"HCI_CMD LE_Set_Advertising_Parameters  "
+                              f"type={_ADV_TYPES.get(adv_type, hex(adv_type))}  "
+                              f"min={min_iv * 0.625:.1f}ms  max={max_iv * 0.625:.1f}ms")
+
+            # ── Extended (BT5) advertising commands ──────────────────────
+            elif opcode == _HCI_CMD_LE_SET_EXT_ADV_ENABLE and len(ev.data) >= 4:
+                enable = ev.data[3]
+                num_sets = ev.data[4] if len(ev.data) >= 5 else 0
+                ev.kind = "adv_enable_ext"
+                ev.summary = (f"HCI_CMD LE_Set_Extended_Advertising_Enable  enable={enable}  "
+                              f"num_sets={num_sets}  "
+                              f"← EXTENDED ADV_EXT_IND (iOS CANNOT see this in scan-all mode!)")
+
+            elif opcode == _HCI_CMD_LE_SET_EXT_ADV_DATA and len(ev.data) >= 5:
+                adv_len = ev.data[4]
+                adv_bytes = ev.data[5:5 + adv_len]
+                ev.kind = "adv_data_ext"
+                ev.summary = (f"HCI_CMD LE_Set_Extended_Advertising_Data  "
+                              f"len={adv_len}  data={adv_bytes.hex()}")
+
+            elif opcode == _HCI_CMD_LE_SET_EXT_ADV_PARAMS and len(ev.data) >= 6:
+                # struct: opcode(2B) + param_len(1B) + adv_handle(1B) + properties(2B LE) + ...
+                adv_handle = ev.data[3]
+                props = struct.unpack_from("<H", ev.data, 4)[0]
+                _ADV_PROP = {0x0001:"connectable", 0x0002:"scannable", 0x0004:"directed",
+                             0x0010:"LEGACY-PDU", 0x0020:"anonymous"}
+                set_bits = [name for bit, name in _ADV_PROP.items() if props & bit]
+                is_legacy = bool(props & 0x0010)
+                ev.kind = "adv_params_ext" if not is_legacy else "adv_params"
+                ev.summary = (
+                    f"HCI_CMD LE_Set_Extended_Advertising_Parameters  "
+                    f"handle={adv_handle}  properties=0x{props:04X}  bits={set_bits}  "
+                    f"← {'LEGACY PDU (ADV_IND on air) ✓' if is_legacy else 'EXTENDED PDU (ADV_EXT_IND) — iOS scan-all BLIND'}"
+                )
+
     return records
+
+
+_ADV_KINDS = frozenset(("adv_enable", "adv_enable_ext", "adv_data", "adv_data_ext",
+                        "adv_params", "adv_params_ext"))
 
 
 def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
@@ -728,17 +800,23 @@ def normalize_and_build_ref_entries(ref_events: list, ref_tsv_path: str,
 # Mock log parser
 # ---------------------------------------------------------------------------
 
-# Timestamp prefix: "HH:MM:SS.mmm "
-_TS_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}\.\d{3})\s+(.*)")
+# Timestamp prefix — two formats:
+#   Alba mock:  "HH:MM:SS.mmm rest"      (no brackets, has ms)
+#   Mera mock:  "[HH:MM:SS] rest"         (brackets, no ms)
+_TS_RE = re.compile(r"^\[?(\d{2}:\d{2}:\d{2})(?:\.\d{3})?\]?\s+(.*)")
 # [BLE←] N B  <hex>
 _BLE_RX_RE = re.compile(r"\[BLE←\]\s+(\d+)\s+B\s+([0-9a-fA-F]+)")
 
 
 def _parse_mock_ts(ts_str: str, date: datetime.date) -> datetime.datetime:
-    h, m, s_ms = ts_str.split(":")
-    s, ms = s_ms.split(".")
+    h, m, s_part = ts_str.split(":")
+    if "." in s_part:
+        s, ms_str = s_part.split(".")
+        us = int(ms_str) * 1000
+    else:
+        s, us = s_part, 0
     return datetime.datetime(date.year, date.month, date.day,
-                             int(h), int(m), int(s), int(ms) * 1000)
+                             int(h), int(m), int(s), us)
 
 
 def _mock_event_kind(line: str) -> str:
@@ -846,6 +924,9 @@ _COL_BTSNOOP_MTU        = "33"     # yellow
 _COL_BTSNOOP_NOTE       = "2"      # dim
 _COL_BTSNOOP_CCC_ENABLE  = "1;36"  # bold cyan
 _COL_BTSNOOP_CCC_DISABLE = "1;31"  # bold red (Phase 2 disconnect trigger)
+_COL_ADV_LEGACY         = "1;32"   # bold green — legacy ADV_IND (good)
+_COL_ADV_EXTENDED       = "1;31"   # bold red   — extended ADV_EXT_IND (iOS scan-all blind)
+_COL_ADV_DATA           = "2;32"   # dim green
 _COL_MOCK_BLE_RX        = "36"     # cyan
 _COL_MOCK_PROTO         = "37"     # white
 _COL_MOCK_PHASE         = "1;33"   # bold yellow
@@ -918,6 +999,12 @@ def print_timeline(
             col = _COL_BTSNOOP_ATT_NOTIF
         elif bev.kind == "mtu":
             col = _COL_BTSNOOP_MTU
+        elif bev.kind == "adv_enable":
+            col = _COL_ADV_LEGACY
+        elif bev.kind == "adv_enable_ext":
+            col = _COL_ADV_EXTENDED
+        elif bev.kind in ("adv_data", "adv_data_ext", "adv_params", "adv_params_ext"):
+            col = _COL_ADV_DATA
         else:
             col = _COL_BTSNOOP_NOTE
         entries.append((bev.ts_dt, "BT", bev.summary, col))
@@ -964,6 +1051,33 @@ def print_summary(btsnoop_events: list[BtsnoopEvent],
     print("=" * 72)
     print("SUMMARY")
     print("=" * 72)
+
+    # ── Advertising type analysis ────────────────────────────────────────────
+    print()
+    print("=" * 72)
+    print("ADVERTISING TYPE (determines iOS discoverability)")
+    print("=" * 72)
+    legacy_enables   = [e for e in btsnoop_events if e.kind == "adv_enable"]
+    extended_enables = [e for e in btsnoop_events if e.kind == "adv_enable_ext"]
+    adv_data_legacy  = [e for e in btsnoop_events if e.kind == "adv_data"]
+    adv_data_ext     = [e for e in btsnoop_events if e.kind == "adv_data_ext"]
+    if legacy_enables:
+        print(f"\n✓ LEGACY advertising (ADV_IND): {len(legacy_enables)} enable command(s)")
+        print("  → iOS CAN see this when scanning without UUID filter (Mera path)")
+        for e in legacy_enables:
+            print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
+        for e in adv_data_legacy:
+            print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
+    if extended_enables:
+        print(f"\n✗ EXTENDED advertising (ADV_EXT_IND): {len(extended_enables)} enable command(s)")
+        print("  → iOS CANNOT see this in scan-all mode (Mera app path uses legacy scan only)")
+        for e in extended_enables:
+            print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
+        for e in adv_data_ext:
+            print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
+    if not legacy_enables and not extended_enables:
+        print("\nNo advertising enable/disable commands found in capture.")
+        print("  (btmon may have started after advertising was already active, or MGMT was used)")
 
     # Connection events
     connects = [e for e in btsnoop_events if e.kind == "connect"]
