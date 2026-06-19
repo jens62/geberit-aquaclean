@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.0.0
+mock-geberit-mera.py v1.4.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.3.0"
+_MOCK_VERSION = "1.4.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -363,22 +363,25 @@ class MeraService(Service):
 
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
-    """Manufacturer-specific advertisement matching real Mera Comfort payload.
+    """Advertisement matching the real Mera Comfort BLE payload.
 
-    Real device: AD type 0xFF, company 0x0100 (TomTom BV), data=[state_byte, article_chars]
-    Example: 00 31 34 36 32 31  (state=0x00, article="14621")
-    Confirmed from on-board-geberit-Home-app-to-mera.pcapng (company_id=0x0100).
-
-    16-bit UUID 0x3EA0 (incomplete list) used by the app to filter Geberit devices.
+    Confirmed from SILLY log (ManufacturerData BlueZ D-Bus) and pcapng capture:
+    - company 0x0100 (TomTom BV), data = state_byte + article ("14621")
+    - company 0x3200, data = b'8'  — present in real device scan response
+    - local_name "Geberit AC PRO" — advertised by real device (visible in BlueZ scan)
+    - 16-bit UUID 0x3EA0 — used by app to filter Geberit devices
     """
 
     def __init__(self, state_byte: int = 0):
         super().__init__(
-            "",                                            # local_name (positional)
+            "Geberit AC PRO",                             # local_name (positional)
             ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
             appearance=0,
             timeout=0,
-            manufacturerData={0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii")},
+            manufacturerData={
+                0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii"),
+                0x3200: b"8",    # present in real device scan response
+            },
         )
 
 
@@ -591,7 +594,7 @@ async def main(web_port: int = 8765) -> None:
     try:
         await adv.register(bus, adapter_wrapper)
         adv_registered = True
-        print(f"Advertising: company=0x0100 article={_ARTICLE} UUID=0x3EA0")
+        print(f"Advertising: name='Geberit AC PRO' company=0x0100 article={_ARTICLE} company=0x3200 data=0x38 UUID=0x3EA0")
     except Exception as e:
         print(f"Advertisement registration failed: {e}")
     finally:
