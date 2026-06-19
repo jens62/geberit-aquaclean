@@ -17,14 +17,17 @@ The toilet advertises manufacturer-specific data only — no local name.
 
 | AD type | Value | Notes |
 |---------|-------|-------|
-| `0xFF` | Company `0x0001`, data `00 31 34 36 32 31` | State byte + article chars |
+| `0xFF` | Company `0x0100`, data `00 31 34 36 32 31` | State byte + article chars |
 | `0x02` | `0x3EA0` | 16-bit UUID (incomplete list) |
+
+Company `0x0100` = TomTom International BV (Bluetooth SIG assigned).
+Confirmed from `on-board-geberit-Home-app-to-mera.pcapng` (tshark: `company_id=0x0100`).
 
 Manufacturer-specific payload layout:
 - Byte 0: state byte (`0x00` = idle, `0xAA` = emergency connect permitted, `0x01` = button pressed)
 - Bytes 1–5: article number ASCII prefix (e.g. `"14621"`)
 
-The app identifies the toilet exclusively by manufacturer-specific data, not by local name.
+The app identifies the toilet exclusively by company ID `0x0100` in manufacturer-specific data, not by local name or UUID alone.
 
 ---
 

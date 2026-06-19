@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.2.0"
+_MOCK_VERSION = "1.3.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -365,8 +365,9 @@ class MeraService(Service):
 class _MeraAdvertisement(Advertisement):
     """Manufacturer-specific advertisement matching real Mera Comfort payload.
 
-    Real device: AD type 0xFF, company 0x0001, data=[state_byte, article_chars]
+    Real device: AD type 0xFF, company 0x0100 (TomTom BV), data=[state_byte, article_chars]
     Example: 00 31 34 36 32 31  (state=0x00, article="14621")
+    Confirmed from on-board-geberit-Home-app-to-mera.pcapng (company_id=0x0100).
 
     16-bit UUID 0x3EA0 (incomplete list) used by the app to filter Geberit devices.
     """
@@ -377,7 +378,7 @@ class _MeraAdvertisement(Advertisement):
             ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
             appearance=0,
             timeout=0,
-            manufacturerData={0x0001: bytes([state_byte]) + _ARTICLE.encode("ascii")},
+            manufacturerData={0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii")},
         )
 
 
@@ -590,7 +591,7 @@ async def main(web_port: int = 8765) -> None:
     try:
         await adv.register(bus, adapter_wrapper)
         adv_registered = True
-        print(f"Advertising: company=0x0001 article={_ARTICLE} UUID=0x3EA0")
+        print(f"Advertising: company=0x0100 article={_ARTICLE} UUID=0x3EA0")
     except Exception as e:
         print(f"Advertisement registration failed: {e}")
     finally:
