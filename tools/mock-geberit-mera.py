@@ -65,7 +65,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.8.0"
+_MOCK_VERSION = "1.10.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -551,13 +551,27 @@ async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
     m = _re.search(r'hci(\d+)', adapter_path or '')
     adapter_idx = int(m.group(1)) if m else 0
 
-    # Advertisement data passed to MGMT (Flags excluded — MANAGED_FLAGS adds 02 01 06)
-    # Incomplete 16-bit UUID list: 0x3EA0
+    # ADV_IND payload (Flags excluded — MANAGED_FLAGS adds 02 01 06):
+    #   UUID list: 0x3EA0 (triggers CheckDiscovered UUID path in Geberit app)
+    #   Manufacturer: company=0x0100 (TomTom, LE bytes 00 01), state_A, article, state_B, RS fw chars
+    #   11-byte manufacturer variant matches real Mera Comfort HB2304EU298413 (RS28.0)
     _uuid_el = bytes([0x03, 0x02, 0xA0, 0x3E])
-    # Manufacturer specific: company=0x0100 (LE=00 01), state=0x00, article "14621"
-    _mfr_payload = bytes([0x00, 0x01, 0x00]) + _ARTICLE.encode('ascii')   # 8 B
-    _mfr_el      = bytes([1 + len(_mfr_payload), 0xFF]) + _mfr_payload    # 10 B
-    adv_data = _uuid_el + _mfr_el                                         # 14 B
+    _mfr_payload = (bytes([0x00, 0x01,           # company 0x0100 (LE)
+                            0x00])               # state_A
+                    + _ARTICLE.encode('ascii')   # "14621" (5 B)
+                    + bytes([0x00, 0x32, 0x38])) # state_B + RS fw chars "28" (3 B) → 11 B total
+    _mfr_el  = bytes([1 + len(_mfr_payload), 0xFF]) + _mfr_payload        # 13 B
+    adv_data = _uuid_el + _mfr_el                                         # 17 B
+
+    # SCAN_RSP payload (response to active SCAN_REQ — contains device name and metadata):
+    #   Matches real device capture: name "Geberit AC PRO", conn interval 37.5 ms, 0 dBm
+    _srsp_name = b'Geberit AC PRO'
+    scan_rsp = (
+        bytes([len(_srsp_name) + 1, 0x09]) + _srsp_name +  # Complete Local Name (16 B)
+        bytes([0x05, 0x12, 0x1E, 0x00, 0x1E, 0x00]) +      # Conn Interval Range 37.5 ms (6 B)
+        bytes([0x02, 0x0A, 0x00]) +                         # Tx Power Level: 0 dBm (3 B)
+        bytes([0x04, 0xFF, 0x00, 0x32, 0x38])               # Mfr Specific: co=0x3200, "8" (5 B)
+    )  # total 30 B — within 31-byte SCAN_RSP limit
 
     _MGMT_OP_REMOVE_ADVERTISING = 0x003F
     _MGMT_OP_ADD_ADVERTISING    = 0x003E
@@ -601,8 +615,11 @@ async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
 
         # Add legacy advertising instance (no SEC_* flags → legacy ADV_IND).
         # Duration=0 / timeout=0 → never expire.
+        # struct mgmt_cp_add_advertising: instance, flags, duration, timeout,
+        #   adv_data_len, scan_rsp_len, data[] (adv_data then scan_rsp).
         flags = _FLAG_CONNECTABLE | _FLAG_DISCOV | _FLAG_MANAGED_FLAGS
-        cp = struct.pack('<BIHHBB', 1, flags, 0, 0, len(adv_data), 0) + adv_data
+        cp = (struct.pack('<BIHHBB', 1, flags, 0, 0, len(adv_data), len(scan_rsp))
+              + adv_data + scan_rsp)
         status = _mgmt(_MGMT_OP_ADD_ADVERTISING, cp)
         sock.close()
         if status != 0:
@@ -619,7 +636,7 @@ async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
             for cmd in [
                 [btmgmt, idx_arg, 'adv-params', '--instance', '1', '-m', '160', '-M', '160'],
                 [btmgmt, idx_arg, 'add-adv', '-c', '-g', '-m', '100', '-M', '100',
-                 '-a', adv_data.hex(), '1'],
+                 '-a', adv_data.hex(), '-s', scan_rsp.hex(), '1'],
             ]:
                 r = _sp.run(cmd, capture_output=True, text=True, timeout=5)
                 if r.returncode == 0 and 'fail' not in (r.stdout + r.stderr).lower():
@@ -704,7 +721,7 @@ async def main(web_port: int = 8765) -> None:
     # extended PDUs are invisible to iOS when it scans without a UUID filter (Mera path).
     adv_ok = await _mgmt_start_legacy_advertising(adapter_path or "")
     if adv_ok:
-        print(f"Advertising: legacy ADV_IND  company=0x0100 article={_ARTICLE} UUID=0x3EA0")
+        print(f"Advertising: legacy ADV_IND  UUID=0x3EA0  company=0x0100  article={_ARTICLE}  +SCAN_RSP name='Geberit AC PRO'")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed

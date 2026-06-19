@@ -602,6 +602,137 @@ def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
 # Mera Comfort — reuse android-ble-analyze.py decode pipeline
 # ---------------------------------------------------------------------------
 
+def _get_adv_packets(tshark: str, pcapng: Path, mac: str) -> list:
+    """Extract ADV_IND and SCAN_RSP advertising packets for the target MAC.
+
+    Issues two separate _run_tshark queries (one per PDU type) and filters
+    by MAC address in Python — mirrors the pattern used in _get_connection_events.
+    Returns list of dicts: {ts, pdu, uuids16, company, name}
+    """
+    mac_lower = mac.lower()
+    packets = []
+
+    def _norm_uuid(raw: str) -> str:
+        """Strip tshark's 0x prefix so we can format consistently."""
+        s = raw.strip()
+        return s[2:] if s.lower().startswith("0x") else s
+
+    def _addr_matches(addr_field: str) -> bool:
+        """Accept row when address matches mac or when tshark left the field empty."""
+        a = addr_field.strip().lower()
+        return a == mac_lower or a == ""
+
+    # ADV_IND (pdu_type=0): primary advertisement — contains UUID16, manufacturer data
+    for row in _run_tshark(tshark, pcapng,
+                           "btle.advertising_header.pdu_type == 0x00",
+                           ["frame.time_relative", "btle.advertising_address",
+                            "btcommon.eir_ad.entry.uuid_16",
+                            "btcommon.eir_ad.entry.company_id"]):
+        if len(row) < 4:
+            continue
+        ts_s, addr, uuid_raw, company_raw = row[0], row[1], row[2], row[3]
+        if addr.strip().lower() != mac_lower:
+            continue
+        try:
+            ts = float(ts_s.strip())
+        except ValueError:
+            continue
+        uuids = [_norm_uuid(u) for u in uuid_raw.split(",") if u.strip()]
+        packets.append({
+            "ts": ts, "pdu": "ADV_IND",
+            "uuids16": uuids,
+            "company": company_raw.strip() or None,
+            "name": None,
+        })
+
+    # SCAN_RSP (pdu_type=4): Wireshark 4.x exposes raw payload in btle.scan_response_data
+    # (colon-separated hex bytes).  Parse the AD structure ourselves — more reliable than
+    # btcommon.eir_ad field extraction which tshark sometimes skips for SCAN_RSP.
+    _SCAN_RSP_FILTER = "btle.advertising_header.pdu_type == 0x04"
+
+    def _parse_ad_bytes(raw_hex: str) -> tuple:
+        """Parse BLE AD structure from colon-separated hex.  Returns (uuids16, name)."""
+        uuids16: list = []
+        name_str = None
+        data = bytes.fromhex(raw_hex.replace(":", ""))
+        i = 0
+        while i < len(data):
+            length = data[i]
+            if length == 0 or i + length >= len(data):
+                break
+            ad_type = data[i + 1]
+            payload = data[i + 2: i + 1 + length]
+            if ad_type in (0x02, 0x03):
+                for j in range(0, len(payload) - 1, 2):
+                    uuid_val = payload[j] | (payload[j + 1] << 8)
+                    uuids16.append(f"{uuid_val:04x}")
+            elif ad_type in (0x08, 0x09):
+                name_str = payload.decode("utf-8", errors="replace")
+            i += 1 + length
+        return uuids16, name_str
+
+    srsp_rows = _run_tshark(tshark, pcapng, _SCAN_RSP_FILTER,
+                             ["frame.time_relative", "btle.advertising_address",
+                              "btle.scan_response_data"])
+    seen_srsp: set = set()
+    for row in srsp_rows:
+        if len(row) < 2:
+            continue
+        ts_s, addr = row[0], row[1]
+        if not _addr_matches(addr):
+            continue
+        try:
+            ts = float(ts_s.strip())
+        except ValueError:
+            continue
+        raw_hex = row[2].strip() if len(row) >= 3 else ""
+        uuids16, name_str = [], None
+        if raw_hex:
+            try:
+                uuids16, name_str = _parse_ad_bytes(raw_hex)
+            except Exception:
+                pass
+        key = (tuple(sorted(uuids16)), name_str)
+        if key in seen_srsp:
+            continue
+        seen_srsp.add(key)
+        packets.append({"ts": ts, "pdu": "SCAN_RSP",
+                         "uuids16": uuids16, "company": None, "name": name_str})
+
+    packets.sort(key=lambda p: p["ts"])
+    return packets
+
+
+def _print_adv_packets(packets: list, mac: str, pcapng_name: str) -> None:
+    """Print advertising packet summary — unique combinations only."""
+    print(f"\nAdvertising packets from {mac}  ({pcapng_name})")
+    print("-" * 72)
+    if not packets:
+        print("  No ADV_IND or SCAN_RSP found for this MAC.")
+        return
+
+    seen: set = set()
+    for p in packets:
+        key = (p["pdu"], tuple(sorted(p["uuids16"])), p["company"], p["name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        uuids_str = ", ".join(f"0x{u.upper()}" for u in p["uuids16"]) if p["uuids16"] else "(none)"
+        print(f"  t={p['ts']:>8.1f}s  {p['pdu']:<16}  UUIDs={uuids_str}")
+        if p["company"]:
+            print(f"              {'':16}  company={p['company']}")
+        if p["name"]:
+            print(f"              {'':16}  name={p['name']!r}")
+
+    print()
+    print(f"  Total captured:  {len(packets)}")
+    has_scan_rsp = any(p["pdu"] == "SCAN_RSP" for p in packets)
+    print(f"  SCAN_RSP frames: {'yes ← active scan received by sniffer' if has_scan_rsp else 'no (passive capture or device does not respond to SCAN_REQ)'}")
+    all_uuids = sorted({u for p in packets for u in p["uuids16"]})
+    if all_uuids:
+        print(f"  All 16-bit UUIDs seen: {', '.join(f'0x{u.upper()}' for u in all_uuids)}")
+
+
 def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
                          addr_field: str) -> tuple:
     """
@@ -909,6 +1040,8 @@ Examples:
                     help="Print raw ATT bytes without decoding")
     ap.add_argument("--gatt-map", action="store_true",
                     help="Extract and print GATT handle→UUID map from discovery frames, then exit")
+    ap.add_argument("--adv", action="store_true",
+                    help="Show advertising packets (ADV_IND + SCAN_RSP) for the target MAC, then exit")
     args = ap.parse_args()
 
     if not args.pcapng.exists():
@@ -927,6 +1060,14 @@ Examples:
     mac, device_type = _detect_device(tshark, args.pcapng, addr_field)
     if args.mac:
         mac = args.mac.upper()
+
+    if args.adv:
+        _print_adv_packets(
+            _get_adv_packets(tshark, args.pcapng, mac or DEFAULT_MAC),
+            mac or DEFAULT_MAC,
+            args.pcapng.name,
+        )
+        sys.exit(0)
 
     # Infer alba from MAC OUI when auto-detection fails (e.g. no CONNECT_IND in file)
     if device_type is None and mac and mac[:8].lower() in _ALBA_DEVICE_OUIS:
