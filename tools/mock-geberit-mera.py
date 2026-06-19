@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.10.0
+mock-geberit-mera.py v1.11.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -65,7 +65,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.10.0"
+_MOCK_VERSION = "1.11.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -327,7 +327,7 @@ class MeraService(Service):
             _log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
             for frame in _dispatch(ctx, proc, args):
                 await self.push_notify(frame)
-                await asyncio.sleep(0.01)    # small gap between FIRST and CONS frames
+                await asyncio.sleep(0.05)    # 50 ms between frames — D-Bus→BlueZ→ESP32→TCP pipeline needs time
         else:
             # IsSubFrameCount=0: CONS continuation frame — accumulate if needed later
             _log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
@@ -383,8 +383,9 @@ class _MeraAdvertisement(Advertisement):
     (ADV_EXT_IND). iOS legacy scan (used by the Geberit app) cannot receive extended
     advertising PDUs → the mock becomes invisible to the app.
 
-    company 0x0100 (TomTom BV assigned), data = state_byte + article ("14621")
-    UUID 0x3EA0 — primary Geberit discovery filter in BleProductManager.CheckDiscovered
+    company 0x0602 (Geberit International AG) — required by BleProductManager.CheckDiscovered
+    (j=false path: company identifier must equal 1538 = 0x0602).
+    UUID 0x3EA0 — Geberit AquaClean discovery UUID.
     """
 
     def __init__(self, state_byte: int = 0):
@@ -393,7 +394,7 @@ class _MeraAdvertisement(Advertisement):
             ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
             appearance=0,
             timeout=0,
-            manufacturerData={0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii")},
+            manufacturerData={0x0602: bytes([state_byte]) + _ARTICLE.encode("ascii")},
         )
 
 
@@ -553,10 +554,10 @@ async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
 
     # ADV_IND payload (Flags excluded — MANAGED_FLAGS adds 02 01 06):
     #   UUID list: 0x3EA0 (triggers CheckDiscovered UUID path in Geberit app)
-    #   Manufacturer: company=0x0100 (TomTom, LE bytes 00 01), state_A, article, state_B, RS fw chars
-    #   11-byte manufacturer variant matches real Mera Comfort HB2304EU298413 (RS28.0)
+    #   Manufacturer: company=0x0602 (Geberit International AG, LE bytes 02 06), state_A, article, state_B, RS fw chars
+    #   Required: CheckDiscovered j=false path checks company==1538 (0x0602)
     _uuid_el = bytes([0x03, 0x02, 0xA0, 0x3E])
-    _mfr_payload = (bytes([0x00, 0x01,           # company 0x0100 (LE)
+    _mfr_payload = (bytes([0x02, 0x06,           # company 0x0602 (Geberit International AG, LE)
                             0x00])               # state_A
                     + _ARTICLE.encode('ascii')   # "14621" (5 B)
                     + bytes([0x00, 0x32, 0x38])) # state_B + RS fw chars "28" (3 B) → 11 B total
@@ -721,7 +722,7 @@ async def main(web_port: int = 8765) -> None:
     # extended PDUs are invisible to iOS when it scans without a UUID filter (Mera path).
     adv_ok = await _mgmt_start_legacy_advertising(adapter_path or "")
     if adv_ok:
-        print(f"Advertising: legacy ADV_IND  UUID=0x3EA0  company=0x0100  article={_ARTICLE}  +SCAN_RSP name='Geberit AC PRO'")
+        print(f"Advertising: legacy ADV_IND  UUID=0x3EA0  company=0x0602  article={_ARTICLE}  +SCAN_RSP name='Geberit AC PRO'")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
