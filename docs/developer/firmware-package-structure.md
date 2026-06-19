@@ -430,6 +430,40 @@ See `docs/developer/aquaclean-application-layer-relay.md` § 8.5.
 
 ---
 
+## Remote control — series 253 (Fernbedienung)
+
+**Source:** Geberit firmware cloud API — `https://prod.firmwarev1.services.geberit.com/api/firmwares`
+(all series returned by a single GET; use `tools/geberit-firmware-download.py --list` to enumerate).
+
+Series 253 (`BOB_FD_01_RS_05_TS_39`) is the **physical remote control** firmware.
+"FD" = *Fernbedienung* (German: remote control). "BOB" appears to be Geberit's internal
+project name for the remote.
+
+| Property | Value |
+|----------|-------|
+| Series | 253 |
+| Variants | 1, 2, 3, 6, 7, 8, 23 (different remote models/colours) |
+| Latest version | RS05.0 TS39 (2026-02-03) |
+| Deploy contract | `Ble2V1` (same as Alba) |
+| Node count | 1 node (`0x01`) |
+| Node format | SFUM container (AES-encrypted) |
+| Package filename | `FwPkg_FD01-02-03-06-07-08-17_V5.0.39.260203_abacb9b8_BOB_FD_01_RS_05_TS_39.bin` |
+
+**Key finding — MCU is nRF52, not TI CC254x.**
+The OUI `b0:10:a0` (TI) belongs to the BLE radio chip only. The application MCU is nRF52
+(confirmed by `Ble2V1` / SFUM deploy contract — same OTA format as the Alba nRF52 device).
+The CC254x OUI assumption was wrong; the TI chip is the radio, nRF52 is the host.
+
+**Firmware is unreadable.** The single `.sfb` payload is AES-encrypted (SFUM format).
+Decryption requires the bootloader key burned into the nRF52 on the remote — not available.
+Static analysis is therefore not possible from the downloaded package.
+
+**Practical implication:** remote control protocol analysis cannot come from firmware inspection.
+The only viable route is the BlueZ peripheral pairing + btmon approach (§ 8.5 of
+`docs/developer/aquaclean-application-layer-relay.md`).
+
+---
+
 ## Related files
 
 | File | Role |
