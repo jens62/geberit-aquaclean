@@ -373,8 +373,8 @@ class _MeraAdvertisement(Advertisement):
 
     def __init__(self, state_byte: int = 0):
         super().__init__(
-            local_name="",
-            service_uuids=["00003ea0-0000-1000-8000-00805f9b34fb"],
+            "",                                            # local_name (positional)
+            ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
             appearance=0,
             timeout=0,
             manufacturerData={0x0001: bytes([state_byte]) + _ARTICLE.encode("ascii")},
