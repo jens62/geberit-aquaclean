@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.5.0
+mock-geberit-mera.py v1.6.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.5.0"
+_MOCK_VERSION = "1.6.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -298,6 +298,7 @@ class MeraService(Service):
 
     async def push_notify(self, frame: bytes) -> None:
         """Send an ATT notification on A5."""
+        _log("→", f"NOTIFY A5 ({len(frame)}B): {frame.hex()}")
         self._notify_value = frame
         if self._notify_iface is None:
             _log("·", "WARNING: notify interface not wired — cannot push frame")
@@ -321,6 +322,7 @@ class MeraService(Service):
             # IsSubFrameCount=1: SINGLE (SubFrameCount=0) or FIRST[N] (N>0)
             # For onboarding all app requests are SINGLE — multi-frame not yet assembled
             ctx, proc, args = _parse_request(raw)
+            _log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
             for frame in _dispatch(ctx, proc, args):
                 await self.push_notify(frame)
                 await asyncio.sleep(0.01)    # small gap between FIRST and CONS frames
@@ -334,7 +336,9 @@ class MeraService(Service):
 
     @write_0.setter
     def write_0(self, value, options):
-        asyncio.ensure_future(self._handle_request(bytes(value)))
+        raw = bytes(value)
+        _log("←", f"WRITE_0 ({len(raw)}B): {raw.hex()}")
+        asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_WRITE_1_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
     def write_1(self, options):
@@ -342,7 +346,9 @@ class MeraService(Service):
 
     @write_1.setter
     def write_1(self, value, options):
-        asyncio.ensure_future(self._handle_request(bytes(value)))
+        raw = bytes(value)
+        _log("←", f"WRITE_1 ({len(raw)}B): {raw.hex()}")
+        asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_NOTIFY_A5_UUID, CharFlags.NOTIFY)
     def notify_a5(self, options):
