@@ -476,6 +476,7 @@ registered when the action runs.
 | All entities unavailable after setup | Coordinator poll failed | Check logs for the actual error; most likely ESP32 or BLE issue |
 | `AttributeError: 'HassLogger' has no attribute 'trace'` | Outdated version (< 2.4.18) | Update to latest via HACS |
 | Duplicate subscription error (`Only one API subscription`) | Previous TCP connection not released | Restart HA; covered by v2.4.15+ fix |
+| Config flow: "0 BLE advertisement packets" / BLE scan always times out | The **ESPHome integration** in HA is managing the same ESP32 and permanently holds the API subscription slot | In HA → Settings → Integrations, **disable** (not delete) the ESPHome integration that manages your proxy ESP32. See [ESPHome integration conflict](#esphome-integration-conflict) below. |
 | E0003 every poll, times out at 36 s, then "not in cache" | Raspberry Pi built-in BT (BCM4345) + bleak 2.1.1 hardware limitation | Use a USB BT dongle or ESPHome proxy — see [Known hardware limitations](#known-hardware-limitations--local-ble-adapter) |
 | E0002 after Toggle Lid or button press (ESPHome proxy) | On-demand TCP: cold BLE scanner misses device briefly pausing advertising after a command | Fixed in v2.4.62 — update via HACS |
 
@@ -505,6 +506,18 @@ These are not code bugs. They are hardware and driver constraints that cannot be
 
 - **USB Bluetooth dongle** — a dedicated adapter avoids the scan/connect scheduler conflict. Tested adapters: *unknown, community reports welcome*.
 - **ESPHome proxy** — the recommended path; an ESP32 (~€5–15) eliminates the problem entirely.
+
+### ESPHome integration conflict
+
+The ESP32 firmware allows **only one API client to hold the BLE advertisement subscription at a time**. If you have already registered your ESP32 as an ESPHome device in HA (via the ESPHome integration), that integration holds the subscription slot permanently — the geberit_aquaclean integration cannot connect and the BLE scanner returns 0 packets.
+
+**Symptom:** Config flow wizard shows "device not found" or "0 BLE advertisement packets during 10 s scan" despite the ESP32 being reachable.
+
+**Fix:** In HA → Settings → Integrations, find the ESPHome integration entry for your proxy ESP32 and **disable** it (three dots → Disable). Do not delete it — disabling is reversible.
+
+After disabling, retry the config flow. The geberit_aquaclean integration will then manage the ESP32 directly.
+
+> **Note:** This only applies to users who previously added the same ESP32 to HA via the built-in ESPHome integration. If you flashed your ESP32 specifically for use as an AquaClean proxy and never added it to the ESPHome integration, this does not apply.
 
 ### ESPHome proxy troubleshooting
 
