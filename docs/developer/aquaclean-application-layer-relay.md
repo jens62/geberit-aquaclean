@@ -354,14 +354,24 @@ advertise with that MAC. Two options:
 
 ## 8 Mera Comfort Considerations
 
-### 8.1 Simpler Than Alba
+### 8.1 App/Bridge Path — Unencrypted
 
-The Mera Comfort BLE link layer is **unencrypted** (zero SMP). The Hub relay for Mera
-does not need to decrypt or re-encrypt any frames — it can forward Geberit procedure
-bytes (proc 0x09, 0x0D, etc.) almost transparently at the GATT layer. No keyset_id,
-no ECDH, no PSK problem.
+The app and bridge connect to the Mera Comfort without BLE LL encryption (zero SMP, no
+LTK). The Hub relay for app/bridge clients does not need to decrypt or re-encrypt any
+frames — it can forward Geberit procedure bytes (proc 0x09, 0x0D, etc.) nearly
+transparently. No keyset_id, no Arendi ECDH.
 
-### 8.2 Remote Pairing Protocol (Mera)
+### 8.2 Remote Path — BLE LL Encrypted (SMP)
+
+**The Mera remote control uses BLE LL encryption.** This was confirmed by sniffer capture
+on 2026-06-19 (`toogle-lid-with-remote-without-running-bridge.pcapng`). The remote
+sends `LL_ENC_REQ` immediately after connecting — before any ATT frame — and all
+subsequent application data is AES-CCM encrypted.
+
+This is a completely different security model from the app/bridge path and from the Alba
+remote (which uses Arendi application-layer crypto, not BLE LL encryption).
+
+### 8.3 Remote Pairing Protocol (Mera)
 
 The Mera remote pairing requires a **two-party ceremony** (unlike Alba's remote-only
 flow):
@@ -371,32 +381,69 @@ flow):
 > display."
 > — Mera Comfort service documentation
 
-The toilet's side-panel button is physical proof-of-presence — both sides must participate.
-The "Pairing ok" on the display confirms the toilet firmware actively stores the remote
-registration. The protocol for this registration exchange is **not yet captured**.
+The toilet's side-panel button is physical proof-of-presence. The "Pairing ok" on the
+display confirms the toilet firmware actively stores the remote registration (SMP bonding:
+LTK + EDIV distributed from toilet to remote).
 
-### 8.3 Mera Remote Sniffer Capture
+### 8.4 Sniffer Capture Findings (2026-06-19)
 
-Since Mera is unencrypted, a single nRF52840 sniffer capture gives complete plaintext.
-Recommended capture procedure:
+**File:** `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/toogle-lid-with-remote-without-running-bridge.pcapng`
 
-1. Sniffer running and **following the toilet** (peripheral, advertises) — not the remote
-   (central, never advertises)
-2. Simultaneously hold `<+>` on the remote and `<up>` on the toilet side panel
-3. Wait for "Pairing ok" on the toilet display
-4. Release both buttons
-5. Press **lid toggle** on the remote (a normal command that works without `userSitting`)
-6. Stop capture, save pcapng
+**Capture conditions:** bridge stopped, Geberit Home App closed, nRF52840 following
+toilet MAC `38:AB:41:2A:0D:67`.
 
-The capture covers both phases:
-- Pairing exchange — likely proc 0x44 or 0x64 (registration/PIN path)
-- Normal command — confirms post-pairing command flow
+**Decoded LL frame sequence** (BLE frame starts at nRF header offset 17; AA at 17–20,
+PDU header at 21, length at 22, payload at 23+):
 
-Post-process with:
-```bash
-python tools/find-geberit-remote.py capture.pcapng  # find remote MAC (b0:10:a0:68:5c:8b)
-python tools/nrf-ble-analyze.py capture.pcapng --mac <mera_mac>  # decode procedures
-```
+| Frame | t (s) | Ch | Dir | LL Type | Decoded |
+|-------|-------|----|-----|---------|---------|
+| CONNECT_IND | 17.859 | 37 | R→T | Link setup | Remote `b0:10:a0:68:5c:8b` → toilet |
+| 1905–06 | | | | Empty ACK | Connection established |
+| 1907 | 17.912 | 12 | R→T | **LL_ENC_REQ** (opcode 0x03) | EDIV=`0x0c14`, Rand=`a386b1bb54349 23c`, SKDm, IVm |
+| 1910 | 17.949 | 18 | T→R | **LL_ENC_RSP** (opcode 0x04) | SKDs=`b07623ff7b7c7408`, IVs=`a04d1806` |
+| 1914 | 18.024 | 30 | T→R | **LL_START_ENC_REQ** (opcode 0x05) | Unencrypted — toilet ready |
+| 1915 | 18.062 | 36 | R→T | **LL_START_ENC_RSP** (opcode 0x06) | Encrypted (1 byte + 4-byte MIC) |
+| 1918 | 18.099 | 5  | T→R | **LL_START_ENC_RSP** (opcode 0x06) | Encrypted — **encryption active** |
+| 1920 | 18.137 | 11 | R→T | Encrypted L2CAP | 9 bytes payload + 4 MIC — first GATT write |
+| 1921–22 | 18.175 | 17 | T→R | Encrypted L2CAP | 5 bytes + MIC — response/notification |
+| 1924 | 18.212 | 23 | R→T | Encrypted L2CAP | 9 bytes + MIC |
+| 1927 | 18.249 | 29 | T→R | Encrypted L2CAP | 7 bytes + MIC |
+| 1928 | 18.287 | 35 | R→T | Encrypted L2CAP | 23 bytes + MIC — larger write |
+| 1961 | 18.962 | 32 | R→T | Encrypted L2CAP | 5 bytes + MIC |
+| 1993 | 19.562 | 17 | R→T | Encrypted L2CAP | 9 bytes + MIC |
+
+**Key findings:**
+
+- Remote MAC `b0:10:a0:68:5c:8b` confirmed (TI OUI, public address)
+- EDIV=`0x0c14` — the key reference distributed by the toilet during the original SMP
+  bonding session; the remote sends it back so the toilet can look up the matching LTK
+- Zero unencrypted ATT frames — sniffer alone cannot reveal the application protocol
+- `nrf-ble-analyze.py` reports "No Geberit ATT frames found" because tshark cannot
+  decode encrypted data channel PDUs without the session key
+
+**Why nrf-ble-analyze.py found nothing:** the script relies on tshark's ATT dissector,
+which requires the BLE access address to be registered. For encrypted connections
+tshark also requires the LTK to be present. Neither condition is met for remote captures.
+The data channel frames ARE in the pcapng — they just decode as raw `btle` without
+higher-layer protocol.
+
+### 8.5 Path Forward — BlueZ Pairing Gives Free Decryption
+
+When a BLE central (remote) bonds with a Linux BlueZ peripheral, BlueZ negotiates SMP
+automatically and **stores the LTK in its key database** (`/var/lib/bluetooth/`). All
+subsequent connections are automatically decrypted at the BlueZ kernel level. `btmon`
+then shows fully decrypted ATT frames — the application protocol becomes visible in
+plaintext without any manual key extraction.
+
+**Procedure:**
+
+1. Run the Hub peripheral on the UTM VM (ASUS USB-BT500 adapter)
+2. Put the remote into pairing mode (hold `<+>` + `<up>` on toilet side panel ~30 s)
+3. BlueZ performs SMP bonding, stores LTK automatically
+4. Press lid button on remote — `btmon` shows decrypted GATT write handle + value
+
+This replaces the sniffer approach entirely for protocol discovery: one bonding session
+on the Linux mock reveals what the remote actually sends.
 
 ---
 
@@ -474,8 +521,9 @@ real-device round-trip. Cache is updated by:
 
 | Step | Action | Outcome |
 |------|--------|---------|
-| 11.1.1 | Sniffer capture of Mera remote pairing (section 8.3) | Reveals Mera registration protocol |
-| 11.1.2 | keyset_id=1 experiment in mock (section 7.2.3) | Tests remote PSK hypotheses |
+| ~~11.1.1~~ | ~~Sniffer capture of Mera remote~~ | **Done 2026-06-19** — remote uses BLE LL encryption; sniffer cannot reveal ATT. See section 8.4. |
+| 11.1.2 | keyset_id=1 experiment in mock (section 7.2.3) | Tests Alba remote PSK hypotheses |
+| 11.1.3 | Mera: pair remote with Hub peripheral on UTM VM, capture via btmon (section 8.5) | Reveals Mera remote application protocol in plaintext |
 
 ### 11.2 Implementation Order (Once Unblocked)
 
