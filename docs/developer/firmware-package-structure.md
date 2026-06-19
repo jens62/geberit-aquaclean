@@ -383,6 +383,53 @@ that the bridge communicates with via the AquaClean protocol:
 
 ---
 
+## BLE SMP / LTK and remote-control encryption — negative finding
+
+**Question investigated (2026-06-19):** can the Mera Comfort firmware package help
+decode BLE LL-encrypted traffic from the physical remote control?
+
+**Answer: No.** Do not re-investigate this.
+
+### Background
+
+The Mera physical remote (`b0:10:a0:68:5c:8b`, TI OUI) uses BLE SMP bonding.
+After `CONNECT_IND` it immediately sends `LL_ENC_REQ` (opcode `0x03`) with
+EDIV=`0x0c14`, Rand=`a3 86 b1 bb 54 34 92 3c`.  All subsequent ATT frames are
+AES-CCM encrypted.  tshark cannot decode them without the Long Term Key (LTK).
+
+### Why the firmware cannot help
+
+| Layer | Where it lives | Accessible? |
+|-------|---------------|-------------|
+| BLE SMP stack (key exchange, LTK derivation) | TI CC254x **ROM** — burned at manufacture, not in OTA update | ❌ No |
+| LTK storage (EDIV-indexed key lookup) | TI CC254x **NVM** (internal flash) on the toilet | ❌ Physical JTAG only |
+| Application firmware (node 0x00, 8051) | OTA-updatable, available in package | ✅ But irrelevant |
+
+Searching all static analysis output across every node for `ltk`, `bond`, `smp`,
+`irk`, `ediv`, `pairing`, `encrypt` returns **zero hits**.  This is expected:
+the TI CC254x integrates the full BLE stack (including SMP) in on-chip ROM.
+The application layer in node 0x00 calls ROM APIs — it does not implement
+security primitives itself and none appear in the application binary.
+
+### Second firmware directory
+
+`FwPkg_F801-02-03_V30.0.206.250722_c8ec36cd_Mera_F8_01_RS_30_00_TS_206_extracted/`
+is the **same RS30 TS206 package** as `mera_comfort_RS30_TS206_extracted/`.
+The size differences (~30 bytes per node) are from annotation differences only —
+the new directory has raw Ghidra output; the existing directory has human-renamed
+functions added during prior analysis.  There is no new information in the new directory.
+
+### Path forward for remote protocol analysis
+
+The only practical route to decrypted ATT frames from the Mera remote is:
+pair the remote with a Linux BlueZ peripheral acting as the toilet.
+BlueZ negotiates SMP automatically, stores the LTK in `/var/lib/bluetooth/`,
+and `btmon` shows decrypted ATT frames at the kernel level.
+
+See `docs/developer/aquaclean-application-layer-relay.md` § 8.5.
+
+---
+
 ## Related files
 
 | File | Role |
