@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.6.0
+mock-geberit-mera.py v1.7.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.6.0"
+_MOCK_VERSION = "1.7.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -371,19 +371,23 @@ class MeraService(Service):
 class _MeraAdvertisement(Advertisement):
     """Advertisement matching the real Mera Comfort BLE payload.
 
-    Confirmed from SILLY log (ManufacturerData BlueZ D-Bus) and pcapng capture:
-    - local_name "Geberit AC PRO" — advertised by real device (BlueZ scan shows Name field)
-    - company 0x0100 (TomTom BV), data = state_byte + article ("14621")
-    - 16-bit UUID 0x3EA0 — used by app to filter Geberit devices
+    Real device ADV_IND contains: flags(3B) + UUID 0x3EA0(4B) + mfr data(10B) = 17B.
+    NO local name in ADV_IND — "Geberit AC PRO" only appears in SCAN_RSP (active scan).
+    nRF Connect shows the name because it does active scanning; the Geberit app does
+    passive (legacy) scanning and never sends SCAN_REQ.
 
-    Note: real device also has a second manufacturer entry {0x3200: b'8'} in its
-    scan response, but bluez_peripheral only supports one manufacturer data entry
-    at a time — adding 0x3200 silently drops 0x0100. The app filters on 0x0100.
+    CRITICAL: keeping local_name="" is required. With the name included, the payload
+    exceeds the 31-byte ADV_IND limit and BlueZ switches to BT5 extended advertising
+    (ADV_EXT_IND). iOS legacy scan (used by the Geberit app) cannot receive extended
+    advertising PDUs → the mock becomes invisible to the app.
+
+    company 0x0100 (TomTom BV assigned), data = state_byte + article ("14621")
+    UUID 0x3EA0 — primary Geberit discovery filter in BleProductManager.CheckDiscovered
     """
 
     def __init__(self, state_byte: int = 0):
         super().__init__(
-            "Geberit AC PRO",                             # local_name (positional)
+            "",                                           # no local name — matches real device
             ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
             appearance=0,
             timeout=0,
