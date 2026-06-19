@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.1.0"
+_MOCK_VERSION = "1.2.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -506,7 +506,7 @@ async def _handle_clear_log(request):
 
 
 # ---- Main ----
-async def main(web_port: int = 8766) -> None:
+async def main(web_port: int = 8765) -> None:
     from aiohttp import web
 
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -684,8 +684,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="mock-geberit-mera.py — BLE peripheral mock for Geberit AquaClean Mera Comfort"
     )
-    parser.add_argument("--port", type=int, default=8766, metavar="PORT",
-                        help="Web UI port (default: 8766)")
+    parser.add_argument("--port", type=int, default=8765, metavar="PORT",
+                        help="Web UI port (default: 8765)")
     parser.add_argument("--version", action="version",
                         version=f"mock-geberit-mera {_MOCK_VERSION}")
     parsed = parser.parse_args()
