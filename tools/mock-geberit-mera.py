@@ -403,14 +403,24 @@ async def _find_adapter(bus):
     proxy = bus.get_proxy_object("org.bluez", "/", intro)
     objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
     objects = await objmgr.call_get_managed_objects()
+    found = []
     for path, ifaces in objects.items():
         if "org.bluez.Adapter1" in ifaces:
             props = ifaces["org.bluez.Adapter1"]
-            addr = props.get("Address")
+            addr = props.get("Address", "??:??:??:??:??:??")
+            name = props.get("Name", "")
             if hasattr(addr, "value"):
                 addr = addr.value
-            return str(path), str(addr)
-    raise RuntimeError("No BlueZ adapter found")
+            if hasattr(name, "value"):
+                name = name.value
+            found.append((str(path), str(addr), str(name)))
+    if not found:
+        raise RuntimeError("No BlueZ adapter found")
+    if len(found) > 1:
+        print(f"WARNING: {len(found)} Bluetooth adapters found — using first:")
+        for p, a, n in found:
+            print(f"  {p}  {a}  {n}")
+    return found[0]   # (path, addr, name)
 
 
 # ---- Web UI ----
@@ -622,8 +632,8 @@ async def main(web_port: int = 8765) -> None:
 
     adapter_path = None
     try:
-        adapter_path, adapter_addr = await _find_adapter(bus)
-        print(f"Adapter: {adapter_addr}  path: {adapter_path}")
+        adapter_path, adapter_addr, adapter_name = await _find_adapter(bus)
+        print(f"Adapter: {adapter_addr}  ({adapter_name})  path: {adapter_path}")
     except Exception as e:
         print(f"Warning: could not enumerate adapter: {e}")
 
