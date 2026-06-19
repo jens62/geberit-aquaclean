@@ -79,6 +79,9 @@ _OP_TO_EVENT = {
     _OP_NOTIF:     "ATT_HANDLE_VALUE_NOTIF",
 }
 
+# LL Control PDU opcodes (pre-encryption, visible to sniffer)
+_LL_ENC_REQ_OPCODE = 0x03   # LL_ENC_REQ — central requests link-layer encryption
+
 # GATT handles by device type
 _MERA_WRITE_HANDLE  = 0x0003   # Mera Comfort: outgoing procedure requests
 _ALBA_WRITE_HANDLE  = 0x001E   # Alba: Arendi Security channel (write)
@@ -387,6 +390,142 @@ def _detect_device(tshark: str, pcapng: Path, addr_field: str) -> tuple:
     return None, None
 
 # ---------------------------------------------------------------------------
+# BLE LL encryption detection
+# ---------------------------------------------------------------------------
+
+def _detect_ll_encryption(tshark: str, pcapng: Path) -> dict | None:
+    """
+    Scan for LL_ENC_REQ (opcode 0x03) in data channel frames.
+
+    LL Control PDUs are sent in plaintext before encryption starts, so the
+    nRF52840 sniffer captures them even when all subsequent ATT frames are
+    AES-CCM encrypted.  Returns {ts, ediv, rand_hex} when found, else None.
+
+    Called when no ATT frames are decoded for a Mera connection — replaces
+    the misleading "No Geberit ATT frames found" message with an actionable
+    diagnostic pointing to the BlueZ/btmon alternative.
+
+    tshark field notes:
+      btle.control.random_number       — Rand as decimal uint64, LE-packed on wire
+      btle.control.encrypted_diversifier — EDIV as decimal uint16
+    """
+    rows = _run_tshark(tshark, pcapng,
+                       "btle.control_opcode == 0x03",
+                       ["frame.time_relative",
+                        "btle.control.random_number",
+                        "btle.control.encrypted_diversifier"])
+    if not rows:
+        return None
+    for row in rows:
+        ts_raw   = row[0].strip() if len(row) > 0 else ""
+        rand_raw = row[1].strip() if len(row) > 1 else ""
+        ediv_raw = row[2].strip() if len(row) > 2 else ""
+        try:
+            ediv = int(ediv_raw) if ediv_raw else None
+        except ValueError:
+            ediv = None
+        try:
+            # tshark returns Rand as a big-endian uint64; recover the 8 wire bytes
+            # in little-endian order (as transmitted on air)
+            rand_bytes = int(rand_raw).to_bytes(8, "big")[::-1]
+            rand_hex = rand_bytes.hex()
+        except (ValueError, OverflowError):
+            rand_hex = ""
+        return {
+            "ts":       _ts_display(ts_raw),
+            "ediv":     ediv,
+            "rand_hex": rand_hex,
+        }
+    return None
+
+
+def _report_ll_encryption(enc: dict, mac: str) -> None:
+    """Print a diagnostic when LL_ENC_REQ is detected instead of ATT frames."""
+    ediv_str = f"0x{enc['ediv']:04x}" if enc["ediv"] is not None else "unknown"
+    rand_str  = (
+        " ".join(enc["rand_hex"][i:i+2] for i in range(0, len(enc["rand_hex"]), 2))
+        if enc["rand_hex"] else "unknown"
+    )
+    target = f" for {mac}" if mac else ""
+    print(
+        f"\n[!] BLE LL encryption detected{target} — ATT frames are AES-CCM encrypted.\n"
+        f"    LL_ENC_REQ at {enc['ts']}  EDIV={ediv_str}  Rand={rand_str}\n\n"
+        f"    The remote uses BLE SMP bonding; tshark cannot decode the payload\n"
+        f"    without the Long Term Key (LTK) stored on the peripheral.\n\n"
+        f"    Alternative: pair the remote with a Linux BlueZ peripheral hub and\n"
+        f"    use btmon to capture decrypted ATT frames (BlueZ stores LTK automatically).\n"
+        f"    See docs/developer/aquaclean-application-layer-relay.md § 8.5.\n",
+        file=sys.stderr,
+    )
+
+
+def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
+                                    connect_inds: list,
+                                    directed_advs: list) -> str:
+    """Build a markdown analysis document for a capture with LL encryption."""
+    ediv_str = f"0x{enc['ediv']:04x}" if enc["ediv"] is not None else "unknown"
+    rand_str  = (
+        " ".join(enc["rand_hex"][i:i+2] for i in range(0, len(enc["rand_hex"]), 2))
+        if enc["rand_hex"] else "unknown"
+    )
+    conn_events_md = _format_connection_events(
+        connect_inds, directed_advs, mac, markdown=True)
+
+    lines = [
+        f"# BLE Capture Analysis — {pcapng.name}",
+        "",
+        f"**Device:** `{mac}` (Geberit AquaClean Mera Comfort)",
+        f"**Source:** nRF52840 pcapng",
+        "",
+        "---",
+        "",
+        conn_events_md,
+        "## BLE Link-Layer Encryption",
+        "",
+        "ATT application frames are **AES-CCM encrypted** — tshark cannot decode",
+        "the payload without the Long Term Key (LTK) stored on the peripheral.",
+        "",
+        "### LL_ENC_REQ parameters",
+        "",
+        "| Field | Value |",
+        "|-------|-------|",
+        f"| Timestamp | `{enc['ts']}` |",
+        f"| EDIV | `{ediv_str}` |",
+        f"| Rand | `{rand_str}` |",
+        "",
+        "### Protocol sequence",
+        "",
+        "```",
+        "CONNECT_IND        remote → toilet     (connection established)",
+        "LL_ENC_REQ         remote → toilet     (central requests encryption, plaintext)",
+        "LL_ENC_RSP         toilet → remote     (peripheral acknowledges, plaintext)",
+        "LL_START_ENC_REQ   remote → toilet     (plaintext — signals encryption start)",
+        "LL_START_ENC_RSP   toilet → remote     (first encrypted frame)",
+        "LL_START_ENC_RSP   remote → toilet     (encryption active on both sides)",
+        "<all subsequent L2CAP/ATT frames are AES-CCM encrypted>",
+        "```",
+        "",
+        "### Why tshark cannot decode",
+        "",
+        "The nRF52840 sniffer captures raw radio frames including all LL Control PDUs.",
+        "Once `LL_START_ENC_RSP` confirms encryption, the sniffer sees only ciphertext.",
+        "tshark requires the session key (derived from LTK + SKD + IV) to decrypt.",
+        "The LTK is stored in the toilet's non-volatile memory — not extractable from",
+        "a passive sniffer capture without prior bonding knowledge.",
+        "",
+        "### Path forward — BlueZ pairing",
+        "",
+        "Pair the remote with a Linux BlueZ peripheral hub (acting as the toilet).",
+        "BlueZ negotiates SMP automatically and stores the LTK.",
+        "`btmon` then shows decrypted ATT frames at the kernel level — no manual",
+        "key extraction needed.",
+        "",
+        "See `docs/developer/aquaclean-application-layer-relay.md` § 8.5.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Mera Comfort — reuse android-ble-analyze.py decode pipeline
 # ---------------------------------------------------------------------------
 
@@ -446,8 +585,25 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     events, att_count = _extract_mera_events(tshark, pcapng, mac, addr_field)
 
     if not events:
-        print(f"No Geberit ATT frames found"
-              + (f" for {mac}" if mac else "") + ".", file=sys.stderr)
+        enc = _detect_ll_encryption(tshark, pcapng)
+        connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
+        if enc:
+            if args.markdown:
+                md = _render_ll_encryption_markdown(
+                    enc, pcapng, mac, connect_inds, directed_advs)
+                if args.output:
+                    Path(args.output).write_text(md, encoding="utf-8")
+                    print(f"[+] Markdown written to {args.output}", file=sys.stderr)
+                else:
+                    print(md)
+            else:
+                if connect_inds or directed_advs:
+                    print(_format_connection_events(
+                        connect_inds, directed_advs, mac, markdown=False))
+                _report_ll_encryption(enc, mac)
+        else:
+            print(f"No Geberit ATT frames found"
+                  + (f" for {mac}" if mac else "") + ".", file=sys.stderr)
         return
 
     print(f"[+] {att_count:,} ATT frames, {len(events):,} matching events",
