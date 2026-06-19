@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.4.0
+mock-geberit-mera.py v1.5.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.4.0"
+_MOCK_VERSION = "1.5.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -366,10 +366,13 @@ class _MeraAdvertisement(Advertisement):
     """Advertisement matching the real Mera Comfort BLE payload.
 
     Confirmed from SILLY log (ManufacturerData BlueZ D-Bus) and pcapng capture:
+    - local_name "Geberit AC PRO" — advertised by real device (BlueZ scan shows Name field)
     - company 0x0100 (TomTom BV), data = state_byte + article ("14621")
-    - company 0x3200, data = b'8'  — present in real device scan response
-    - local_name "Geberit AC PRO" — advertised by real device (visible in BlueZ scan)
     - 16-bit UUID 0x3EA0 — used by app to filter Geberit devices
+
+    Note: real device also has a second manufacturer entry {0x3200: b'8'} in its
+    scan response, but bluez_peripheral only supports one manufacturer data entry
+    at a time — adding 0x3200 silently drops 0x0100. The app filters on 0x0100.
     """
 
     def __init__(self, state_byte: int = 0):
@@ -378,10 +381,7 @@ class _MeraAdvertisement(Advertisement):
             ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
             appearance=0,
             timeout=0,
-            manufacturerData={
-                0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii"),
-                0x3200: b"8",    # present in real device scan response
-            },
+            manufacturerData={0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii")},
         )
 
 
@@ -594,7 +594,7 @@ async def main(web_port: int = 8765) -> None:
     try:
         await adv.register(bus, adapter_wrapper)
         adv_registered = True
-        print(f"Advertising: name='Geberit AC PRO' company=0x0100 article={_ARTICLE} company=0x3200 data=0x38 UUID=0x3EA0")
+        print(f"Advertising: name='Geberit AC PRO' company=0x0100 article={_ARTICLE} UUID=0x3EA0")
     except Exception as e:
         print(f"Advertisement registration failed: {e}")
     finally:
