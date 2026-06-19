@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.7.0
+mock-geberit-mera.py v1.8.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -26,6 +26,8 @@ import sys
 import asyncio
 import argparse
 import hashlib
+import socket
+import struct
 import time
 import json
 from pathlib import Path
@@ -63,7 +65,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.7.0"
+_MOCK_VERSION = "1.8.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -519,6 +521,86 @@ async def _handle_clear_log(request):
     raise web.HTTPFound("/")
 
 
+# ---- MGMT legacy advertising ----
+async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
+    """Register a legacy ADV_IND advertising instance via BlueZ MGMT socket.
+
+    Bypasses LEAdvertisingManager1 D-Bus which, on BT5 adapters, always chooses
+    extended advertising (ADV_EXT_IND) regardless of payload size.
+
+    Root cause of Mera mock invisibility to Geberit Home App:
+      - Alba path: ScanForPeripherals([FD48, ...]) → iOS enables extended scan →
+        finds extended advertising → Alba mock works.
+      - Mera path: ScanForPeripherals([]) (scan all) → iOS uses legacy scan only →
+        extended ADV_EXT_IND is invisible → Mera mock never found.
+
+    Fix: MGMT_OP_ADD_ADVERTISING without SEC_1M/SEC_2M/SEC_CODED flags forces BlueZ
+    to use legacy ADV_IND which iOS legacy scan can receive.
+    """
+    import re as _re
+    m = _re.search(r'hci(\d+)', adapter_path or '')
+    adapter_idx = int(m.group(1)) if m else 0
+
+    # Advertisement data passed to MGMT (Flags excluded — MANAGED_FLAGS adds 02 01 06)
+    # Incomplete 16-bit UUID list: 0x3EA0
+    _uuid_el = bytes([0x03, 0x02, 0xA0, 0x3E])
+    # Manufacturer specific: company=0x0100 (LE=00 01), state=0x00, article "14621"
+    _mfr_payload = bytes([0x00, 0x01, 0x00]) + _ARTICLE.encode('ascii')   # 8 B
+    _mfr_el      = bytes([1 + len(_mfr_payload), 0xFF]) + _mfr_payload    # 10 B
+    adv_data = _uuid_el + _mfr_el                                         # 14 B
+
+    _MGMT_OP_REMOVE_ADVERTISING = 0x003F
+    _MGMT_OP_ADD_ADVERTISING    = 0x003E
+    _MGMT_OP_SET_ADV_PARAMS     = 0x0042  # BlueZ >= 5.52
+
+    _FLAG_CONNECTABLE   = 0x00000001
+    _FLAG_DISCOV        = 0x00000002
+    _FLAG_MANAGED_FLAGS = 0x00000008
+
+    try:
+        sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
+        sock.bind((0xFFFF,))   # HCI_DEV_NONE → MGMT interface
+        sock.settimeout(2.0)
+
+        def _mgmt(opcode: int, params: bytes) -> int:
+            hdr = struct.pack('<HHH', opcode, adapter_idx, len(params))
+            sock.sendall(hdr + params)
+            resp = sock.recv(512)
+            # Command Complete: Event(2B) + Index(2B) + Len(2B) + Opcode(2B) + Status(1B)
+            return resp[8] if len(resp) >= 9 else 0xFF
+
+        # Remove existing instance 1 (ignore errors — may not exist)
+        try:
+            _mgmt(_MGMT_OP_REMOVE_ADVERTISING, bytes([1]))
+        except Exception:
+            pass
+
+        # Add legacy advertising instance (no SEC_* flags → legacy ADV_IND)
+        flags = _FLAG_CONNECTABLE | _FLAG_DISCOV | _FLAG_MANAGED_FLAGS
+        cp = struct.pack('<BIHHBB', 1, flags, 0, 0, len(adv_data), 0) + adv_data
+        status = _mgmt(_MGMT_OP_ADD_ADVERTISING, cp)
+        if status != 0:
+            print(f"Warning: MGMT ADD_ADVERTISING failed (status=0x{status:02x})")
+            sock.close()
+            return False
+
+        # Set advertising interval: 160 × 0.625 ms = 100 ms
+        try:
+            _mgmt(_MGMT_OP_SET_ADV_PARAMS, struct.pack('<BHHb', 1, 160, 160, 0x7F))
+        except Exception:
+            pass  # interval step optional; legacy at 1280 ms is still discoverable
+
+        sock.close()
+        return True
+
+    except PermissionError:
+        print("Warning: MGMT advertising needs CAP_NET_ADMIN — run with sudo")
+        return False
+    except Exception as e:
+        print(f"Warning: MGMT legacy advertising failed: {e}")
+        return False
+
+
 # ---- Main ----
 async def main(web_port: int = 8765) -> None:
     from aiohttp import web
@@ -584,64 +666,12 @@ async def main(web_port: int = 8765) -> None:
     else:
         print("WARNING: notify characteristic not found — push notifications disabled")
 
-    # Register advertisement
-    adv = _MeraAdvertisement(state_byte=0x00)
-
-    # Intercept bus.export() during adv.register() to capture the advertisement D-Bus path.
-    # Needed to unregister + re-register with a 100 ms interval so iOS finds the device
-    # quickly (BlueZ default is 1280 ms — too slow for CoreBluetooth scan windows).
-    _captured_adv_path = [None]
-    _pre_existing_paths = set(getattr(bus, "_path_exports", {}).keys())
-    _orig_bus_export = bus.export
-
-    def _capturing_export(path, interface):
-        _orig_bus_export(path, interface)
-        if path not in _pre_existing_paths and _captured_adv_path[0] is None:
-            _captured_adv_path[0] = path
-
-    bus.export = _capturing_export
-    adv_registered = False
-    try:
-        await adv.register(bus, adapter_wrapper)
-        adv_registered = True
-        print(f"Advertising: name='Geberit AC PRO' company=0x0100 article={_ARTICLE} UUID=0x3EA0")
-    except Exception as e:
-        print(f"Advertisement registration failed: {e}")
-    finally:
-        bus.export = _orig_bus_export
-
-    # Re-register with MinInterval/MaxInterval=100 ms so iOS finds the device in <1 s.
-    # BlueZ default is 1280 ms; at that rate iOS CoreBluetooth (~30 ms scan window every
-    # 300 ms) needs ~13 s on average to catch a single advertisement — often past the
-    # app's scan timeout.
-    if adv_registered and adapter_path:
-        _adv_path = _captured_adv_path[0]
-        if _adv_path is None:
-            _adv_path = getattr(adv, "_path", None)
-            if _adv_path is None:
-                for _attr in dir(adv):
-                    if "path" in _attr.lower() and not _attr.startswith("__"):
-                        _val = getattr(adv, _attr, None)
-                        if isinstance(_val, str) and _val.startswith("/"):
-                            _adv_path = _val
-                            break
-        if _adv_path:
-            try:
-                _ai = await bus.introspect("org.bluez", adapter_path)
-                _ap = bus.get_proxy_object("org.bluez", adapter_path, _ai)
-                _am = _ap.get_interface("org.bluez.LEAdvertisingManager1")
-                await _am.call_unregister_advertisement(_adv_path)
-                if _adv_path not in getattr(bus, "_path_exports", {}):
-                    bus.export(_adv_path, adv)
-                await _am.call_register_advertisement(_adv_path, {
-                    "MinInterval": Variant("u", 100),
-                    "MaxInterval": Variant("u", 100),
-                })
-                print(f"Advertising interval: 100 ms (iOS-compatible)")
-            except Exception as _e:
-                print(f"Warning: fast advertising interval not set ({_e})")
-        else:
-            print("Warning: adv D-Bus path unknown — advertising at BlueZ default 1280 ms")
+    # Advertise via MGMT socket (forces legacy ADV_IND — required for iOS "scan all" path).
+    # D-Bus LEAdvertisingManager1 always uses BT5 extended advertising on this adapter;
+    # extended PDUs are invisible to iOS when it scans without a UUID filter (Mera path).
+    adv_ok = await _mgmt_start_legacy_advertising(adapter_path or "")
+    if adv_ok:
+        print(f"Advertising: legacy ADV_IND  company=0x0100 article={_ARTICLE} UUID=0x3EA0  interval=100ms")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
