@@ -572,11 +572,62 @@ async def main(web_port: int = 8766) -> None:
 
     # Register advertisement
     adv = _MeraAdvertisement(state_byte=0x00)
+
+    # Intercept bus.export() during adv.register() to capture the advertisement D-Bus path.
+    # Needed to unregister + re-register with a 100 ms interval so iOS finds the device
+    # quickly (BlueZ default is 1280 ms — too slow for CoreBluetooth scan windows).
+    _captured_adv_path = [None]
+    _pre_existing_paths = set(getattr(bus, "_path_exports", {}).keys())
+    _orig_bus_export = bus.export
+
+    def _capturing_export(path, interface):
+        _orig_bus_export(path, interface)
+        if path not in _pre_existing_paths and _captured_adv_path[0] is None:
+            _captured_adv_path[0] = path
+
+    bus.export = _capturing_export
+    adv_registered = False
     try:
         await adv.register(bus, adapter_wrapper)
+        adv_registered = True
         print(f"Advertising: company=0x0001 article={_ARTICLE} UUID=0x3EA0")
     except Exception as e:
         print(f"Advertisement registration failed: {e}")
+    finally:
+        bus.export = _orig_bus_export
+
+    # Re-register with MinInterval/MaxInterval=100 ms so iOS finds the device in <1 s.
+    # BlueZ default is 1280 ms; at that rate iOS CoreBluetooth (~30 ms scan window every
+    # 300 ms) needs ~13 s on average to catch a single advertisement — often past the
+    # app's scan timeout.
+    if adv_registered and adapter_path:
+        _adv_path = _captured_adv_path[0]
+        if _adv_path is None:
+            _adv_path = getattr(adv, "_path", None)
+            if _adv_path is None:
+                for _attr in dir(adv):
+                    if "path" in _attr.lower() and not _attr.startswith("__"):
+                        _val = getattr(adv, _attr, None)
+                        if isinstance(_val, str) and _val.startswith("/"):
+                            _adv_path = _val
+                            break
+        if _adv_path:
+            try:
+                _ai = await bus.introspect("org.bluez", adapter_path)
+                _ap = bus.get_proxy_object("org.bluez", adapter_path, _ai)
+                _am = _ap.get_interface("org.bluez.LEAdvertisingManager1")
+                await _am.call_unregister_advertisement(_adv_path)
+                if _adv_path not in getattr(bus, "_path_exports", {}):
+                    bus.export(_adv_path, adv)
+                await _am.call_register_advertisement(_adv_path, {
+                    "MinInterval": Variant("u", 100),
+                    "MaxInterval": Variant("u", 100),
+                })
+                print(f"Advertising interval: 100 ms (iOS-compatible)")
+            except Exception as _e:
+                print(f"Warning: fast advertising interval not set ({_e})")
+        else:
+            print("Warning: adv D-Bus path unknown — advertising at BlueZ default 1280 ms")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
