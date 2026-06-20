@@ -73,7 +73,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.22.0"
+_MOCK_VERSION = "1.23.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -357,6 +357,7 @@ class MeraService(Service):
             logger.info("GATT re-register skipped — already fired once (cache cleared on first connect)")
             return
         await asyncio.sleep(delay_s)
+        await asyncio.sleep(0)  # flush D-Bus events so _connected reflects actual state
         if not _connected:
             logger.info("GATT re-register skipped — client disconnected before %.1fs delay", delay_s)
             return
