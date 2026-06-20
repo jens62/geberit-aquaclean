@@ -210,6 +210,14 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 
 | UUID / handle | Observed | Status |
 |---------------|----------|--------|
-| UUID 0x3A2B (16-bit) | App probes before service discovery; Not Found on mock | Unknown purpose; real device may also return Not Found (nRF capture starts 200 ms late) |
+| UUID 0x3A2B (16-bit) | Probe fires ~95ms after connect, before app code runs; Not Found on mock | **CoreBluetooth OS-level probe** — not in app source (confirmed: 0 matches across all app files). iOS fires this internally for GATT cache fingerprinting. Not Found is correct; app never sees the result. Mock does not need to implement it. |
 | Handle 0x0020 (READ) / UUID 0x2A00 | App reads Device Name via Read By Type 0x2A00 at t=29.7s; expects `b"ro"` | Mock sets adapter alias to `"ro"` ✓ — this is the standard Device Name char, not a custom Geberit UUID |
 | Handle 0x002C (CCCD) | App enables notify; non-data service (OTA?) | Missing from mock |
+
+## Write characteristics — real device has 4 (mock has 2)
+
+The app's connection code discovers characteristics **a1, a2, a3, a4** (all WRITE_WITHOUT_RESPONSE).
+The mock only registers a1 (`5cb3a13e`) and a2 (`5cb3a23e`).
+The nRF52840 capture shows only handles 0x0003 and 0x0006 actively used during onboarding,
+so a3/a4 appear to be optional or used post-onboarding. Worth adding to the mock if the app
+fails after the identification phase.
