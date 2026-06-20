@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.16.0
+mock-geberit-mera.py v1.17.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -57,13 +57,23 @@ def _add_logging_level(level_name: str, level_num: int) -> None:
 _add_logging_level("TRACE", 5)
 _add_logging_level("SILLY", 1)
 
+# ---- Logger ----
+logger = _logging.getLogger("mera_mock")
+logger.setLevel(_logging.DEBUG)
+logger.propagate = False   # don't bubble to root logger
+
+_log_fmt = _logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
+_console_h = _logging.StreamHandler(sys.stdout)
+_console_h.setFormatter(_log_fmt)
+logger.addHandler(_console_h)
+
 # ---- import CrcMessage from bridge — avoids duplicating the proprietary CRC16 ----
 from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  # noqa: E402
 
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.16.0"
+_MOCK_VERSION = "1.17.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -71,16 +81,6 @@ try:
     _BRIDGE_VERSION = _pkg_ver("geberit-aquaclean")
 except Exception:
     _BRIDGE_VERSION = "unknown"
-
-# ---- redirect print to add timestamps ----
-import builtins as _builtins
-_real_print = _builtins.print
-
-
-def print(*args, **kwargs):  # noqa: A001
-    ts = time.strftime("%H:%M:%S")
-    _real_print(f"[{ts}]", *args, **kwargs)
-
 
 # ---- D-Bus / bluez_peripheral (mirror Alba mock import pattern) ----
 from bluez_peripheral.gatt.service import Service
@@ -126,7 +126,7 @@ def _log(direction: str, msg: str) -> None:
     _session_log.append(entry)
     if len(_session_log) > 200:
         _session_log.pop(0)
-    print(f"  {direction} {msg}")
+    logger.info("  %s %s", direction, msg)
 
 
 # ---- Request parsing ----
@@ -447,9 +447,9 @@ async def _find_adapter(bus):
     if not found:
         raise RuntimeError("No BlueZ adapter found")
     if len(found) > 1:
-        print(f"WARNING: {len(found)} Bluetooth adapters found — using first:")
+        logger.warning("%d Bluetooth adapters found — using first", len(found))
         for p, a, n in found:
-            print(f"  {p}  {a}  {n}")
+            logger.info("  %s  %s  %s", p, a, n)
     return found[0]   # (path, addr, name)
 
 
@@ -563,6 +563,13 @@ async def _handle_clear_log(request):
 
 # ---- Main ----
 async def main(web_port: int = 8765) -> None:
+    # Auto-named log file alongside this script
+    _log_path = Path(__file__).parent / f"mock-geberit-mera_{time.strftime('%Y-%m-%d_%H-%M')}.log"
+    _file_h = _logging.FileHandler(_log_path, encoding="utf-8")
+    _file_h.setFormatter(_log_fmt)
+    logger.addHandler(_file_h)
+    logger.info("Log: %s", _log_path.name)
+
     from aiohttp import web
 
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -576,16 +583,16 @@ async def main(web_port: int = 8765) -> None:
 
     adapter_wrapper = await Adapter.get_first(bus)
     if not adapter_wrapper:
-        print("ERROR: no Bluetooth adapter found")
+        logger.error("no Bluetooth adapter found")
         await bus.disconnect()
         return
 
     adapter_path = None
     try:
         adapter_path, adapter_addr, adapter_name = await _find_adapter(bus)
-        print(f"Adapter: {adapter_addr}  ({adapter_name})  path: {adapter_path}")
+        logger.info("Adapter: %s  (%s)  path: %s", adapter_addr, adapter_name, adapter_path)
     except Exception as e:
-        print(f"Warning: could not enumerate adapter: {e}")
+        logger.warning("could not enumerate adapter: %s", e)
 
     # Set Device Name (GATT 0x2a00) to "ro" — cosmetic, matches real Mera Comfort.
     # The App's actual button-state gating check reads the READ characteristic
@@ -596,26 +603,26 @@ async def main(web_port: int = 8765) -> None:
             ap = bus.get_proxy_object("org.bluez", adapter_path, ai)
             props = ap.get_interface("org.freedesktop.DBus.Properties")
             await props.call_set("org.bluez.Adapter1", "Alias", Variant("s", "ro"))
-            print("Adapter alias set to 'ro'  (GATT 0x2a00 Device Name)")
+            logger.info("Adapter alias set to 'ro'  (GATT 0x2a00 Device Name)")
         except Exception as e:
-            print(f"Warning: could not set adapter alias: {e}")
+            logger.warning("could not set adapter alias: %s", e)
 
     # Register GATT service
     service = MeraService()
     try:
         await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
-        print("GATT service registered")
+        logger.info("GATT service registered")
         for _attr in ("_characteristics", "_chars"):
             _chars_list = getattr(service, _attr, None)
             if _chars_list:
-                print(f"GATT characteristics ({len(_chars_list)}):")
+                logger.info("GATT characteristics (%d):", len(_chars_list))
                 for _c in _chars_list:
                     _uuid  = getattr(_c, "uuid",  getattr(_c, "_uuid",  "?"))
                     _flags = getattr(_c, "flags", getattr(_c, "_flags", "?"))
-                    print(f"  UUID={_uuid}  flags={_flags}")
+                    logger.info("  UUID=%s  flags=%s", _uuid, _flags)
                 break
     except Exception as e:
-        print(f"GATT registration failed: {e}")
+        logger.error("GATT registration failed: %s", e)
         await bus.disconnect()
         return
 
@@ -632,16 +639,16 @@ async def main(web_port: int = 8765) -> None:
             break
     if notify_char:
         service.wire_notify(notify_char)
-        print("Notify characteristic wired (A5)")
+        logger.info("Notify characteristic wired (A5)")
     else:
-        print("WARNING: notify characteristic not found — push notifications disabled")
+        logger.warning("notify characteristic not found — push notifications disabled")
 
     # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
     # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
     # the local name is placed in SCAN_RSP automatically.
     advert = _MeraAdvertisement()
     await advert.register(bus, adapter_wrapper)
-    print(f"Advertising: UUID=0x3EA0  company=0x0100  article={_ARTICLE}  rs_fw=30  name='Geberit AC PRO'")
+    logger.info("Advertising: UUID=0x3EA0  company=0x0100  article=%s  rs_fw=30  name='Geberit AC PRO'", _ARTICLE)
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
@@ -668,9 +675,9 @@ async def main(web_port: int = 8765) -> None:
 
         objmgr.on_interfaces_added(_on_added)
         objmgr.on_interfaces_removed(_on_removed)
-        print("Connection tracking active")
+        logger.info("Connection tracking active")
     except Exception as e:
-        print(f"Warning: connection tracking unavailable: {e}")
+        logger.warning("connection tracking unavailable: %s", e)
 
     # aiohttp web server
     app = web.Application()
@@ -683,13 +690,14 @@ async def main(web_port: int = 8765) -> None:
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", web_port).start()
 
-    print()
-    print(f"--- Mera Comfort Mock Active ---")
-    print(f"    mock: {_MOCK_VERSION}  script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
-    print(f"    SAP: {_SAP_NUMBER}  article: {_ARTICLE}")
-    print(f"    Device Name (0x2a00): 'ro'")
-    print(f"    Web UI: http://0.0.0.0:{web_port}/")
-    print()
+    logger.info("")
+    logger.info("--- Mera Comfort Mock Active ---")
+    logger.info("    mock: %s  script: %s  bridge: %s", _MOCK_VERSION, _SCRIPT_HASH, _BRIDGE_VERSION)
+    logger.info("    SAP: %s  article: %s", _SAP_NUMBER, _ARTICLE)
+    logger.info("    Device Name (0x2a00): 'ro'")
+    logger.info("    Web UI: http://0.0.0.0:%d/", web_port)
+    logger.info("    Log file: %s", _log_path.name)
+    logger.info("")
 
     await asyncio.get_event_loop().create_future()   # run forever
 
@@ -707,4 +715,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main(web_port=parsed.port))
     except KeyboardInterrupt:
-        print("\nMock stopped.")
+        logger.info("Mock stopped.")
