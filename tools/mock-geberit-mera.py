@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.18.0
+mock-geberit-mera.py v1.19.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -73,7 +73,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.18.0"
+_MOCK_VERSION = "1.19.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -367,6 +367,28 @@ class MeraService(Service):
             _log("→", f"Service Changed indication sent [{payload.hex()}] — client will redo GATT discovery")
         except Exception as e:
             logger.warning("Service Changed indication failed: %s", e)
+
+    async def trigger_bluez_service_changed(
+        self, bus, adapter_wrapper, path: str, delay_s: float = 0.6
+    ) -> None:
+        """Re-register GATT application to trigger BlueZ's built-in Service Changed.
+
+        iOS subscribes to the Service Changed CCCD at handle 0x0004 (BlueZ built-in Generic
+        Attribute service) roughly 400 ms after connect. Re-registering at 600 ms causes BlueZ
+        to detect a GATT database change and send the indication on handle 0x0003 to iOS.
+        iOS then discards its stale handle cache and redoes full GATT discovery.
+        """
+        await asyncio.sleep(delay_s)
+        if not _connected:
+            logger.info("GATT re-register skipped — client disconnected before %.1fs delay", delay_s)
+            return
+        try:
+            _log("→", f"Re-registering GATT app (delay={delay_s:.1f}s) to trigger BlueZ Service Changed…")
+            await self.unregister()
+            await self.register(bus, path, adapter_wrapper)
+            _log("→", "GATT re-registered — BlueZ sent Service Changed to subscribed client")
+        except Exception as e:
+            logger.warning("GATT re-register failed: %s", e)
 
     async def _handle_request(self, raw: bytes) -> None:
         if len(raw) < 11:
@@ -716,6 +738,7 @@ async def main(web_port: int = 8765) -> None:
                 _connected = True
                 _log("·", f"BLE client connected: {addr}")
                 asyncio.ensure_future(service.send_service_changed())
+                asyncio.ensure_future(service.trigger_bluez_service_changed(bus, adapter_wrapper, "/org/bluez/example/mera"))
 
         def _on_removed(path, ifaces):
             global _connected, _button_pressed
