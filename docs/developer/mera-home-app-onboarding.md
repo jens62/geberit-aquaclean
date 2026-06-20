@@ -94,21 +94,82 @@ No PIN entry, no BLE SMP pairing — the physical button press IS the authentica
 
 ---
 
+## iOS vs Android discovery (2026-06-20)
+
+**iOS (Geberit Home App):** mock is NOT found, even with correct company `0x0100` + UUID `0x3EA0`.
+**Android (Geberit Home App):** mock IS found with company `0x0100` ✓ (confirmed 2026-06-20).
+
+Root cause for iOS failure: the ASUS USB-BT500 (RTL8761B, BT5.0) uses the extended HCI path
+(`LE_Set_Extended_Advertising_Enable`, opcode 0x2039) with the LEGACY-PDU flag set. Whether
+the RTL8761B actually transmits ADV_IND (legacy) or ADV_EXT_IND (extended) on air is unconfirmed.
+nRF Connect (iOS) sees the mock — but nRF Connect uses extended scanning which sees both PDU types.
+The Geberit Home App on iOS likely uses passive legacy scan for the Mera path (no service UUID
+filter = scan-all), which may not see ADV_EXT_IND. Definitive test: nRF52840 sniffer on advertising
+channels while mock runs, to observe the actual on-air PDU type. Workaround: use a BT4.0 adapter
+(forces legacy HCI path, guaranteed ADV_IND on air).
+
+---
+
+## Android GATT connection trace (2026-06-20, mock v1.14.0)
+
+Capture: `mock-geberit-mera_btmon_2026-06-20_08-23.btsnoop`
+
+Android App connected (MAC `78:42:1C:38:DE:16`), showed "press button" screen, then
+"connection failed" after 31 seconds. ATT sequence:
+
+| Time | ATT PDU | Result |
+|------|---------|--------|
+| 08:25:12.513 | Exchange MTU (client_mtu=517) | ✓ |
+| 08:25:12.568 | Read By Type uuid=0x3A2B, range 0x0001–0xFFFF | Error 0x0A (Not Found) |
+| 08:25:12.644 | Read By Group Type uuid=0x0028 (service discovery) | See below |
+| 08:25:12.644 | Write Req att_handle=0x0097 value=0100 (CCCD enable, cached) | Error 0x01 (Invalid Handle) |
+| 08:25:12.744 | Read By Group Type Resp | Only 0x1801 (0x0001–0x0005) and 0x1800 (0x0014–0xFFFF) |
+| 08:25:12.771 | Write Req att_handle=0x0004 value=0200 | Service Changed subscription |
+| 08:25:14 | Button InfoFrame notify received by App | App did nothing further |
+| 08:25:43 | Disconnect (Remote User Terminated) | "connection failed" on App |
+
+**Three simultaneous failures at 08:25:12:**
+
+1. **UUID 0x3A2B not found** — the App probes for a 16-bit UUID characteristic before service
+   discovery. This UUID is present on the real Mera but not in the mock. Unknown what it is;
+   likely relates to the button-state READ characteristic (handle 0x0020 on real device).
+
+2. **Handle 0x0097 → Invalid Handle** — Android cached GATT handles from a prior connection
+   to the mock (when the mock had its A5 CCCD at handle 0x0097). On restart, BlueZ reassigns
+   handles and 0x0097 is no longer valid. Fix: clear Android Bluetooth cache before each test
+   (Settings → Apps → Bluetooth → Clear Cache) to force re-discovery.
+
+3. **Service discovery: custom Geberit service not visible** — BlueZ returns 0x1801 and 0x1800
+   (both 16-bit UUID services) in one Read By Group Type response, skipping the custom Geberit
+   service (128-bit UUID, handles 0x0006–0x0013). Android stops discovery when end_group=0xFFFF
+   is seen. This is a BlueZ GATT server limitation affecting Android but not iOS/bleak (which
+   discover by characteristic UUID directly). The App can't proceed because it can't find the
+   Geberit write or notify characteristic handles.
+
+---
+
 ## Mock implementation requirements
 
 For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 
 **Must implement:**
-1. Advertising: manufacturer-specific, company `0x0001`, state byte `0x00` + 5-char article
-2. GATT: handles `0x0003`, `0x0006`, `0x000F`–`0x001C` (with CCCDs), `0x0020`, `0x002C`
-3. Proc `0x82` → fake SAP number + serial
-4. Proc `0x05` → node list `[3,4,5,6,7,8,9,0xa,0xb,0xc,0xe,0xf]`
-5. Proc `0x81` → fake version strings
-6. Proc `0x0E` / `0x0D` → SPL values for queried indices (zeros are fine)
-7. Proc `0x11` + `0x13` → stub empty responses per node group
-8. Handle `0x0020` read → `b"ro"` initially; web UI "Press Button" triggers notify on `0x000F` + flips state
-9. Proc `0x07` → stub empty per-node profile response (11 nodes)
-10. Proc `0x0A` → stub common setting values for IDs 0–9
+1. Advertising: manufacturer-specific, company `0x0100`, state byte `0x00` + 5-char article
+   (+ optional state_B byte + 2-char RS fw prefix for the 9-byte "11-byte variant" format)
+2. GATT: write chars at 0x0003/0x0006, notify A5–A8 with CCCDs, READ char at 0x0020,
+   non-data CCCD at 0x002C — all visible to Android's Read By Group Type discovery
+3. GATT service must be discoverable via Android `Read By Group Type` — requires investigation
+   of BlueZ D-Bus GATT handle allocation (current mock invisible to Android service discovery)
+4. READ characteristic (equiv. handle 0x0020) → returns `b"ro"` until button pressed;
+   UUID unknown — may be `3334429d-90f3-4c41-a02d-5cb3a43e0000` (inferred from UUID pattern)
+5. UUID 0x3A2B probed by App — characteristic unknown; probably related to (4)
+6. Proc `0x82` → fake SAP number + serial ✓ (implemented)
+7. Proc `0x05` → node list `[3,4,5,6,7,8,9,0xa,0xb,0xc,0xe,0xf]`
+8. Proc `0x81` → fake version strings ✓ (implemented)
+9. Proc `0x0E` / `0x0D` → SPL values for queried indices (zeros are fine) ✓ (implemented)
+10. Proc `0x11` + `0x13` → stub empty responses per node group
+11. Handle `0x0020` read → `b"ro"` initially; web UI "Press Button" triggers notify on A5 + flips state
+12. Proc `0x07` → stub empty per-node profile response (11 nodes)
+13. Proc `0x0A` → stub common setting values for IDs 0–9
 
 **Not needed:** proc `0x55` (GetDeviceRegistrationLevel), proc `0x44` (PIN), proc `0x86` (InitialOperationDate).
 
@@ -122,3 +183,11 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 | `0x0E` | SPL batch query (may be `0x0D`) | Needs raw frame verification |
 | `0x11` | Node firmware version subscribe | New |
 | `0x13` | Node stored settings subscribe | New |
+
+## Unknown GATT characteristics
+
+| UUID / handle | Observed | Status |
+|---------------|----------|--------|
+| UUID 0x3A2B (16-bit) | App probes before service discovery; Not Found on mock | Unknown — may be READ char at 0x0020 or a non-data service char |
+| Handle 0x0020 (READ) | Real device returns `b"ro"` until button pressed | Missing from mock; UUID likely `3334429d-90f3-4c41-a02d-5cb3a43e0000` |
+| Handle 0x002C (CCCD) | App enables notify; non-data service (OTA?) | Missing from mock |
