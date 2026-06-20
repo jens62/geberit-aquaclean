@@ -116,6 +116,37 @@ No PIN entry, no BLE SMP pairing — the physical button press IS the authentica
 
 ---
 
+## iOS GATT cache — clearing mechanism (mock v1.21.0)
+
+iOS caches GATT handle maps per peripheral Bluetooth address across reboots for non-bonded
+peripherals. When the mock's handle layout changes between sessions (e.g. different version
+of `bluez_peripheral` or different characteristic ordering), iOS uses stale handles and
+receives ATT Invalid Handle errors → immediate disconnect → "connection failed" in App.
+
+**Fix: BlueZ GATT re-registration.** Calling `service.unregister()` followed by
+`service.register()` on the `ServiceCollection` causes BlueZ to detect a GATT database
+change and send a **Service Changed indication** on its built-in UUID 0x2A05 at handle
+0x0003 (CCCD at 0x0004). iOS has auto-subscribed to handle 0x0004, receives the indication,
+and discards its cached handle map.
+
+**One-shot flag:** re-registration fires only on the *first* connection per mock session
+(600ms after BLE connect). Once fired, `_service_changed_fired = True` prevents
+re-registration on subsequent connections, so iOS can complete uninterrupted GATT discovery.
+
+**Two-connection pattern:**
+1. Connection 1 — re-registration fires at 600ms → iOS receives Service Changed → disconnects
+   (App shows "connection failed") — **correct and expected**
+2. Connection 2 — re-registration skipped → iOS does fresh Read By Type 0x2803 handle-walking
+   → discovers Geberit chars → enables A5–A8 CCCDs → proceeds to Phase 2
+
+**Pitfall: duplicate 0x2A05 in Geberit service (v1.18.0–v1.20.0).** Adding a custom
+`0x2A05` INDICATE characteristic inside the Geberit service created a second 0x2A05 at
+handle 0x0016. iOS probed handle 0x0016 mid-discovery, then Service Changed arrived from
+re-registration at 600ms and iOS aborted. Removed in v1.21.0 — only BlueZ's built-in
+0x2A05 (0x0001 service, handle 0x0003) is needed.
+
+---
+
 ## iOS vs Android discovery (2026-06-20)
 
 **iOS (Geberit Home App):** mock is NOT found, even with correct company `0x0100` + UUID `0x3EA0`.
