@@ -73,7 +73,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.21.0"
+_MOCK_VERSION = "1.22.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -119,7 +119,6 @@ _NODE_IDS = bytes([3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xe, 0xf])
 _session_log: list = []
 _button_pressed = False
 _connected = False
-_advert_ref: list = [None]   # current _MeraAdvertisement instance; replaced on each state change
 _service_changed_fired = False   # one-shot: GATT re-registration fires only on first connection
 
 
@@ -563,34 +562,10 @@ async def _handle_root(request):
     return web.Response(content_type="text/html", text=html)
 
 
-async def _update_advert(state_byte: int, bus, adapter_wrapper) -> None:
-    """Re-advertise with updated state_A byte (0x00=idle, 0x01=button pressed).
-    Unregisters the current advertisement and registers a new one.
-    """
-    old = _advert_ref[0]
-    if old is not None:
-        try:
-            await old.unregister()
-        except Exception as e:
-            logger.warning("advert unregister failed: %s", e)
-    new = _MeraAdvertisement(state_byte=state_byte)
-    await new.register(bus, adapter_wrapper)
-    _advert_ref[0] = new
-    _log("·", f"Advertisement state_A={state_byte:#04x} ({'button pressed' if state_byte else 'idle'})")
-
-
-async def _handle_button(request, service: MeraService, bus=None, adapter_wrapper=None):
+async def _handle_button(request, service: MeraService):
     from aiohttp import web
     global _button_pressed
     _button_pressed = True
-    if bus is not None and adapter_wrapper is not None:
-        await _update_advert(0x01, bus, adapter_wrapper)
-        async def _reset_advert():
-            await asyncio.sleep(10)
-            if not _connected:
-                await _update_advert(0x00, bus, adapter_wrapper)
-                logger.info("Advertisement state reset to idle (no BLE connect within 10s)")
-        asyncio.ensure_future(_reset_advert())
     _log("·", "Button pressed via web UI — sending InfoFrame on A5")
     await service.push_notify(_build_info_frame())
     raise web.HTTPFound("/")
@@ -702,7 +677,6 @@ async def main(web_port: int = 8765) -> None:
     # the local name is placed in SCAN_RSP automatically.
     advert = _MeraAdvertisement()
     await advert.register(bus, adapter_wrapper)
-    _advert_ref[0] = advert
     logger.info("Advertising: UUID=0x3EA0  company=0x0100  article=%s  rs_fw=30  name='Geberit AC PRO'", _ARTICLE)
 
     # Track BLE connections via ObjectManager (best-effort)
@@ -738,7 +712,7 @@ async def main(web_port: int = 8765) -> None:
     # aiohttp web server
     app = web.Application()
     app.router.add_get("/", _handle_root)
-    app.router.add_post("/button", lambda r: _handle_button(r, service, bus, adapter_wrapper))
+    app.router.add_post("/button", lambda r: _handle_button(r, service))
     app.router.add_get("/status", _handle_status)
     app.router.add_post("/clear-log", _handle_clear_log)
 
