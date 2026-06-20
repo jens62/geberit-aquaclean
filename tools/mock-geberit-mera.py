@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.12.0
+mock-geberit-mera.py v1.13.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -26,8 +26,6 @@ import sys
 import asyncio
 import argparse
 import hashlib
-import socket
-import struct
 import time
 import json
 from pathlib import Path
@@ -65,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.12.0"
+_MOCK_VERSION = "1.13.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -399,15 +397,10 @@ class MeraService(Service):
 class _MeraAdvertisement(Advertisement):
     """Advertisement matching the real Mera Comfort BLE payload.
 
-    Real device ADV_IND contains: flags(3B) + UUID 0x3EA0(4B) + mfr data(10B) = 17B.
-    NO local name in ADV_IND — "Geberit AC PRO" only appears in SCAN_RSP (active scan).
-    nRF Connect shows the name because it does active scanning; the Geberit app does
-    passive (legacy) scanning and never sends SCAN_REQ.
-
-    CRITICAL: keeping local_name="" is required. With the name included, the payload
-    exceeds the 31-byte ADV_IND limit and BlueZ switches to BT5 extended advertising
-    (ADV_EXT_IND). iOS legacy scan (used by the Geberit app) cannot receive extended
-    advertising PDUs → the mock becomes invisible to the app.
+    Registered via D-Bus LEAdvertisingManager1 (bluez_peripheral). BlueZ encodes
+    UUID 0x3EA0 and manufacturer data into the ADV_IND payload, and puts the local
+    name into the SCAN_RSP automatically. This ensures the app's scan filter and
+    CheckDiscovered can match the device.
 
     company 0x0602 (Geberit International AG) — required by BleProductManager.CheckDiscovered
     (j=false path: company identifier must equal 1538 = 0x0602).
@@ -416,8 +409,8 @@ class _MeraAdvertisement(Advertisement):
 
     def __init__(self, state_byte: int = 0):
         super().__init__(
-            "",                                           # no local name — matches real device
-            ["00003ea0-0000-1000-8000-00805f9b34fb"],     # service_uuids (positional)
+            "Geberit AC PRO",                            # name → SCAN_RSP (BlueZ splits automatically)
+            ["00003ea0-0000-1000-8000-00805f9b34fb"],    # service_uuids → ADV_IND
             appearance=0,
             timeout=0,
             manufacturerData={0x0602: bytes([state_byte]) + _ARTICLE.encode("ascii")},
@@ -558,126 +551,6 @@ async def _handle_clear_log(request):
     raise web.HTTPFound("/")
 
 
-# ---- MGMT legacy advertising ----
-async def _mgmt_start_legacy_advertising(adapter_path: str) -> bool:
-    """Register a legacy ADV_IND advertising instance via BlueZ MGMT socket.
-
-    Bypasses LEAdvertisingManager1 D-Bus which, on BT5 adapters, always chooses
-    extended advertising (ADV_EXT_IND) regardless of payload size.
-
-    Root cause of Mera mock invisibility to Geberit Home App:
-      - Alba path: ScanForPeripherals([FD48, ...]) → iOS enables extended scan →
-        finds extended advertising → Alba mock works.
-      - Mera path: ScanForPeripherals([]) (scan all) → iOS uses legacy scan only →
-        extended ADV_EXT_IND is invisible → Mera mock never found.
-
-    Fix: MGMT_OP_ADD_ADVERTISING without SEC_1M/SEC_2M/SEC_CODED flags forces BlueZ
-    to use legacy ADV_IND which iOS legacy scan can receive.
-    """
-    import re as _re
-    m = _re.search(r'hci(\d+)', adapter_path or '')
-    adapter_idx = int(m.group(1)) if m else 0
-
-    # ADV_IND payload (Flags excluded — MANAGED_FLAGS adds 02 01 06):
-    #   UUID list: 0x3EA0 (triggers CheckDiscovered UUID path in Geberit app)
-    #   Manufacturer: company=0x0602 (Geberit International AG, LE bytes 02 06), state_A, article, state_B, RS fw chars
-    #   Required: CheckDiscovered j=false path checks company==1538 (0x0602)
-    _uuid_el = bytes([0x03, 0x02, 0xA0, 0x3E])
-    _mfr_payload = (bytes([0x02, 0x06,           # company 0x0602 (Geberit International AG, LE)
-                            0x00])               # state_A
-                    + _ARTICLE.encode('ascii')   # "14621" (5 B)
-                    + bytes([0x00, 0x32, 0x38])) # state_B + RS fw chars "28" (3 B) → 11 B total
-    _mfr_el  = bytes([1 + len(_mfr_payload), 0xFF]) + _mfr_payload        # 13 B
-    adv_data = _uuid_el + _mfr_el                                         # 17 B
-
-    # SCAN_RSP payload (response to active SCAN_REQ — contains device name and metadata):
-    #   Matches real device capture: name "Geberit AC PRO", conn interval 37.5 ms, 0 dBm
-    _srsp_name = b'Geberit AC PRO'
-    scan_rsp = (
-        bytes([len(_srsp_name) + 1, 0x09]) + _srsp_name +  # Complete Local Name (16 B)
-        bytes([0x05, 0x12, 0x1E, 0x00, 0x1E, 0x00]) +      # Conn Interval Range 37.5 ms (6 B)
-        bytes([0x02, 0x0A, 0x00]) +                         # Tx Power Level: 0 dBm (3 B)
-        bytes([0x04, 0xFF, 0x00, 0x32, 0x38])               # Mfr Specific: co=0x3200, "8" (5 B)
-    )  # total 30 B — within 31-byte SCAN_RSP limit
-
-    _MGMT_OP_REMOVE_ADVERTISING = 0x003F
-    _MGMT_OP_ADD_ADVERTISING    = 0x003E
-    _MGMT_OP_SET_ADV_PARAMS     = 0x0042  # BlueZ >= 5.52
-
-    _FLAG_CONNECTABLE   = 0x00000001
-    _FLAG_DISCOV        = 0x00000002
-    _FLAG_MANAGED_FLAGS = 0x00000008
-
-    try:
-        import ctypes as _ct
-        libc = _ct.CDLL("libc.so.6", use_errno=True)
-
-        sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
-
-        # Python socket.bind() for BTPROTO_HCI always sets hci_channel=0 (RAW).
-        # Binding HCI_DEV_NONE (0xFFFF) with channel 0 → EBADFD.
-        # MGMT requires hci_channel=3 (CONTROL) — use ctypes to pass the full struct.
-        # struct sockaddr_hci { uint16 hci_family; uint16 hci_dev; uint16 hci_channel; }
-        sa = struct.pack('<HHH', socket.AF_BLUETOOTH, 0xFFFF, 3)  # AF_BT, NONE, CONTROL
-        sa_buf = _ct.create_string_buffer(sa)
-        ret = libc.bind(sock.fileno(), sa_buf, len(sa))
-        if ret != 0:
-            err = _ct.get_errno()
-            sock.close()
-            raise OSError(err, f"MGMT bind: errno {err}")
-        sock.settimeout(2.0)
-
-        def _mgmt(opcode: int, params: bytes) -> int:
-            hdr = struct.pack('<HHH', opcode, adapter_idx, len(params))
-            sock.sendall(hdr + params)
-            resp = sock.recv(512)
-            # Command Complete: Event(2B) + Index(2B) + Len(2B) + Opcode(2B) + Status(1B)
-            return resp[8] if len(resp) >= 9 else 0xFF
-
-        # Remove existing instance 1 (ignore errors — may not exist)
-        try:
-            _mgmt(_MGMT_OP_REMOVE_ADVERTISING, bytes([1]))
-        except Exception:
-            pass
-
-        # Add legacy advertising instance (no SEC_* flags → legacy ADV_IND).
-        # Duration=0 / timeout=0 → never expire.
-        # struct mgmt_cp_add_advertising: instance, flags, duration, timeout,
-        #   adv_data_len, scan_rsp_len, data[] (adv_data then scan_rsp).
-        flags = _FLAG_CONNECTABLE | _FLAG_DISCOV | _FLAG_MANAGED_FLAGS
-        cp = (struct.pack('<BIHHBB', 1, flags, 0, 0, len(adv_data), len(scan_rsp))
-              + adv_data + scan_rsp)
-        status = _mgmt(_MGMT_OP_ADD_ADVERTISING, cp)
-        sock.close()
-        if status != 0:
-            print(f"Warning: MGMT ADD_ADVERTISING failed (status=0x{status:02x})")
-            return False
-
-        # MGMT_OP_ADD_ADVERTISING default interval = 1280 ms.
-        # Override via btmgmt subprocess which exposes -m/-M interval flags directly.
-        import shutil as _sh, subprocess as _sp
-        btmgmt = _sh.which('btmgmt')
-        if btmgmt:
-            idx_arg = f'--index={adapter_idx}'
-            # Try with interval; fall back silently without it (older btmgmt versions)
-            for cmd in [
-                [btmgmt, idx_arg, 'adv-params', '--instance', '1', '-m', '160', '-M', '160'],
-                [btmgmt, idx_arg, 'add-adv', '-c', '-g', '-m', '100', '-M', '100',
-                 '-a', adv_data.hex(), '-s', scan_rsp.hex(), '1'],
-            ]:
-                r = _sp.run(cmd, capture_output=True, text=True, timeout=5)
-                if r.returncode == 0 and 'fail' not in (r.stdout + r.stderr).lower():
-                    return True  # interval updated
-        return True  # advertising is up at 1280 ms (still discoverable)
-
-    except PermissionError:
-        print("Warning: MGMT advertising needs CAP_NET_ADMIN — run with sudo")
-        return False
-    except Exception as e:
-        print(f"Warning: MGMT legacy advertising failed: {e}")
-        return False
-
-
 # ---- Main ----
 async def main(web_port: int = 8765) -> None:
     from aiohttp import web
@@ -743,12 +616,12 @@ async def main(web_port: int = 8765) -> None:
     else:
         print("WARNING: notify characteristic not found — push notifications disabled")
 
-    # Advertise via MGMT socket (forces legacy ADV_IND — required for iOS "scan all" path).
-    # D-Bus LEAdvertisingManager1 always uses BT5 extended advertising on this adapter;
-    # extended PDUs are invisible to iOS when it scans without a UUID filter (Mera path).
-    adv_ok = await _mgmt_start_legacy_advertising(adapter_path or "")
-    if adv_ok:
-        print(f"Advertising: legacy ADV_IND  UUID=0x3EA0  company=0x0602  article={_ARTICLE}  +SCAN_RSP name='Geberit AC PRO'")
+    # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
+    # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
+    # the local name is placed in SCAN_RSP automatically.
+    advert = _MeraAdvertisement()
+    await advert.register(bus, adapter_wrapper)
+    print(f"Advertising: UUID=0x3EA0  company=0x0602  article={_ARTICLE}  name='Geberit AC PRO'")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
