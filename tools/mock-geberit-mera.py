@@ -73,7 +73,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.23.0"
+_MOCK_VERSION = "1.24.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -342,7 +342,7 @@ class MeraService(Service):
             _log("·", f"WARNING: push_notify failed: {e}")
 
     async def trigger_bluez_service_changed(
-        self, bus, adapter_wrapper, path: str, delay_s: float = 0.6
+        self, bus, adapter_wrapper, path: str, delay_s: float = 0.15
     ) -> None:
         """Re-register GATT application to trigger BlueZ's built-in Service Changed.
 
