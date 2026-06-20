@@ -651,10 +651,14 @@ _PHASE_SUMMARIES_MD = {
     "Filter Status": "Check ceramic honeycomb filter replacement countdown.",
     "Descale Statistics": "Read descale cycle history and statistics.",
     "User Action": "User triggered a device action via SetCommand (proc 0x09).",
+    "GATT Setup":
+        "Standard GATT characteristic discovery — Read By Type UUID 0x2803 "
+        "(Characteristic Declaration) walking the full handle range to locate all "
+        "characteristics in the Geberit service.",
     "Button Press Ceremony":
-        "App reads button-state characteristic (UUID 0x3A2B, handle 0x0020; returns b'ro'), "
+        "App reads Device Name (UUID 0x2A00) expecting b'ro' to confirm button-ready state, "
         "then waits for the user to press the physical button on the toilet. "
-        "The toilet signals confirmation via a spontaneous notify on A5.",
+        "The toilet signals confirmation via a spontaneous notify (channel unconfirmed from captures).",
     "GATT Notification Subscribe":
         "Enable GATT notifications on the four Geberit NOTIFY characteristics.",
 }
@@ -1197,9 +1201,13 @@ def _annotate_resp(call: _Call) -> str:
     return "ACK" if call.resp_type == "single" else "—"
 
 
-def _get_phase(ctx: int, proc: int) -> str:
+def _get_phase(ctx: int, proc: int, args: bytes = b"") -> str:
     if proc == _PROC_CCCD:
         return "GATT Notification Subscribe"
+    if proc == _PROC_READ_BY_TYPE:
+        uuid_str = args.decode("ascii", errors="replace").strip().lower()
+        if uuid_str == "2803":
+            return "GATT Setup"
     return _PHASE_MD.get((ctx, proc), f"Proc(0x{ctx:02x}, 0x{proc:02x})")
 
 
@@ -1224,7 +1232,7 @@ def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_cou
     cur_phase: str | None = None
     cur_calls: list = []
     for call in calls:
-        phase = _get_phase(call.ctx, call.proc)
+        phase = _get_phase(call.ctx, call.proc, call.args or b"")
         if phase != cur_phase:
             if cur_phase is not None:
                 phases.append((cur_phase, cur_calls))

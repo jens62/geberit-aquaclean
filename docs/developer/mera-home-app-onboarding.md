@@ -55,11 +55,27 @@ The app identifies the toilet exclusively by company ID `0x0100` in manufacturer
 ### Phase 1 — GATT setup (t ≈ 24–26 s)
 
 1. MTU exchange
-2. READ BY GROUP TYPE — service discovery
-3. READ BY TYPE — characteristic discovery (handles `0x0002`–`0x001a`, `0x002a`, `0x002b`)
-4. FIND INFO — descriptor discovery (CCCDs + user descriptions)
-5. WRITE REQ `0x002C` = enable notify (non-data service)
-6. WRITE REQ `0x0010`, `0x0014`, `0x0018`, `0x001C` = enable notify on A5/A6/A7/A8
+2. READ BY TYPE UUID `0x2803` (Characteristic Declaration) — 17× across the full handle
+   range, walking handle-by-handle to discover all characteristics in the Geberit service.
+   Confirmed from nRF52840 capture at t=24.6s–25.6s.
+   Note: the nRF sniffer lags ~200 ms after CONNECT_IND; the first few frames (including any
+   Read By Type UUID `0x3A2B` probe and Read By Group Type service discovery) may precede
+   the first captured packet.
+3. FIND INFO — descriptor discovery (CCCDs + user descriptions)
+4. WRITE REQ `0x002C` = enable notify (non-data service)
+5. WRITE REQ `0x0010`, `0x0014`, `0x0018`, `0x001C` = enable notify on A5/A6/A7/A8
+
+**A6 spontaneous notify burst** — immediately after CCCD-A6 is enabled (t=25.9s), the toilet
+sends **11 unsolicited notifies on A6** (handle `0x0013`) before CCCD-A7 is even enabled.
+All carry the identical 20-byte payload:
+
+```
+80 01 30 14 0c 03 00 03 00 00 00 00 31 30 00 12 00 b7 08 00
+```
+
+Frame header `0x80` = INFO frame, no HasMsgType/IsSubFrameCount bits set (differs from the
+mock's `0x91`). This appears to be a device-state broadcast the toilet sends on every new
+CCCD-enable, not a button-press signal.
 
 ### Phase 2 — Identification (t ≈ 26–28 s)
 
@@ -79,9 +95,15 @@ issue; our bridge deliberately excludes them (conservative safety margin).
 
 ### Phase 3 — Button press (t ≈ 28–39 s, ~10 s gap)
 
-The app reads handle `0x0020` → receives `b"ro"` → waits for the user to press the button
-on the physical toilet. After button press, the toilet signals confirmation (likely via an
-unsolicited notify on `0x000F`) and the app proceeds.
+The app performs a **Read By Type UUID `0x2A00`** (Device Name) at t=29.7s and receives
+`b"ro"` — the button-ready indicator. The mock sets the adapter alias to `"ro"` for
+exactly this check. The App then waits for the user to press the physical button on the
+toilet.
+
+After button press the toilet signals confirmation. The actual notify is **not present in
+the nRF52840 capture** (likely packet loss during the ~9-second button-hold window); the
+expected channel and payload remain unconfirmed from captures. The App proceeds to Phase 4
+(proc `0x07`) without any further ATT traffic visible in the trace.
 
 No PIN entry, no BLE SMP pairing — the physical button press IS the authentication.
 
@@ -188,6 +210,6 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 
 | UUID / handle | Observed | Status |
 |---------------|----------|--------|
-| UUID 0x3A2B (16-bit) | App probes before service discovery; Not Found on mock | Unknown — may be READ char at 0x0020 or a non-data service char |
-| Handle 0x0020 (READ) | Real device returns `b"ro"` until button pressed | Missing from mock; UUID likely `3334429d-90f3-4c41-a02d-5cb3a43e0000` |
+| UUID 0x3A2B (16-bit) | App probes before service discovery; Not Found on mock | Unknown purpose; real device may also return Not Found (nRF capture starts 200 ms late) |
+| Handle 0x0020 (READ) / UUID 0x2A00 | App reads Device Name via Read By Type 0x2A00 at t=29.7s; expects `b"ro"` | Mock sets adapter alias to `"ro"` ✓ — this is the standard Device Name char, not a custom Geberit UUID |
 | Handle 0x002C (CCCD) | App enables notify; non-data service (OTA?) | Missing from mock |
