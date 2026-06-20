@@ -101,6 +101,8 @@ GEBERIT_HANDLES = {
     0x0018: "CCCD-A7",
     0x001B: "READ_3 (A8/notify)",
     0x001C: "CCCD-A8",
+    0x0020: "READ (button-state / UUID 0x3A2B)",
+    0x002C: "CCCD-OTA",
 }
 
 # ---------------------------------------------------------------------------
@@ -546,11 +548,28 @@ class Session:
             extra["att_handle"] = f"0x{att_h:04X}"
             extra["label"]      = GEBERIT_HANDLES.get(att_h, "")
             extra["value"]      = data[3:].hex()
-        elif op in (0x0A,) and len(data) >= 3:        # READ_REQ
+        elif op == 0x08 and len(data) >= 7:             # READ_BY_TYPE_REQ
+            start_h = struct.unpack_from("<H", data, 1)[0]
+            end_h   = struct.unpack_from("<H", data, 3)[0]
+            extra["att_handle"] = f"0x{start_h:04X}"
+            extra["end_handle"] = f"0x{end_h:04X}"
+            uuid_bytes = data[5:]
+            if len(uuid_bytes) == 2:
+                uuid16 = struct.unpack_from("<H", uuid_bytes)[0]
+                extra["value"] = f"0x{uuid16:04X}"
+            else:
+                extra["value"] = uuid_bytes.hex()
+        elif op == 0x09 and len(data) >= 2:             # READ_BY_TYPE_RSP
+            extra["value"] = data[2:].hex()             # skip length-per-entry byte
+        elif op == 0x01 and len(data) >= 5:             # ATT_ERROR_RSP
+            extra["req_opcode"] = f"0x{data[1]:02X}"
+            extra["att_handle"] = f"0x{struct.unpack_from('<H', data, 2)[0]:04X}"
+            extra["error_code"] = data[4]
+        elif op in (0x0A,) and len(data) >= 3:          # READ_REQ
             att_h = struct.unpack_from("<H", data, 1)[0]
             extra["att_handle"] = f"0x{att_h:04X}"
             extra["label"]      = GEBERIT_HANDLES.get(att_h, "")
-        elif op in (0x0B,) and len(data) >= 1:        # READ_RSP
+        elif op in (0x0B,) and len(data) >= 1:          # READ_RSP
             extra["value"]      = data[1:].hex()
 
         self._emit(ts, name, mac=mac, **extra)
@@ -584,6 +603,9 @@ _PROC_NAMES_MD = {
     (0x01, 0x56): "SetDeviceRegistrationLevel",
     (0x01, 0x59): "GetFilterStatus",
     (0x01, 0x81): "GetSOCApplicationVersions",
+    (0xFF, 0xCD): "Read By Type",
+    (0xFF, 0xCE): "Read",
+    (0xFF, 0xCF): "Orphan Notify",
 }
 
 _PHASE_MD = {
@@ -605,6 +627,9 @@ _PHASE_MD = {
     (0x01, 0x59): "Filter Status",
     (0x01, 0x45): "Descale Statistics",
     (0x01, 0x09): "User Action",
+    (0xFF, 0xCD): "Button Press Ceremony",
+    (0xFF, 0xCE): "Button Press Ceremony",
+    (0xFF, 0xCF): "Button Press Ceremony",
 }
 
 _PHASE_SUMMARIES_MD = {
@@ -626,6 +651,10 @@ _PHASE_SUMMARIES_MD = {
     "Filter Status": "Check ceramic honeycomb filter replacement countdown.",
     "Descale Statistics": "Read descale cycle history and statistics.",
     "User Action": "User triggered a device action via SetCommand (proc 0x09).",
+    "Button Press Ceremony":
+        "App reads button-state characteristic (UUID 0x3A2B, handle 0x0020; returns b'ro'), "
+        "then waits for the user to press the physical button on the toilet. "
+        "The toilet signals confirmation via a spontaneous notify on A5.",
     "GATT Notification Subscribe":
         "Enable GATT notifications on the four Geberit NOTIFY characteristics.",
 }
@@ -650,8 +679,11 @@ _COMMON_SETTINGS_MD = {
     0: "WaterHardness", 1: "Brightness", 2: "Color", 3: "Activation",
 }
 
-# Synthetic proc code for CCCD writes (not a real Geberit procedure)
-_PROC_CCCD = 0xCC
+# Synthetic proc codes for non-Geberit ATT operations
+_PROC_CCCD         = 0xCC   # CCCD enable (GATT subscribe)
+_PROC_READ_BY_TYPE = 0xCD   # ATT Read By Type (e.g. button-state gate check UUID 0x3A2B)
+_PROC_READ         = 0xCE   # ATT Read (explicit handle read)
+_PROC_ORPHAN_NOTIF = 0xCF   # Spontaneous ATT notify with no pending request
 
 
 @dataclass
@@ -844,7 +876,67 @@ def _collect_calls(events: list) -> list:
                     resp_type="single", resp_status=0,
                 ))
 
-        elif etype == "ATT_HANDLE_VALUE_NOTIF" and pending:
+        elif etype == "ATT_READ_BY_TYPE_REQ":
+            _finalize_multi()
+            if pending:
+                calls.append(pending)
+                pending = pend_args = None
+                pend_arglen = 0
+            pending = _Call(req_ts=e["ts"], ctx=0xFF, proc=_PROC_READ_BY_TYPE,
+                            args=(e.get("value", "") or "").encode())
+
+        elif etype == "ATT_READ_BY_TYPE_RSP":
+            if pending and pending.proc == _PROC_READ_BY_TYPE:
+                pending.resp_ts     = e["ts"]
+                pending.resp_type   = "single"
+                pending.resp_status = 0
+                try:
+                    pending.resp_result = bytes.fromhex(e.get("value", ""))
+                except Exception:
+                    pending.resp_result = b""
+                calls.append(pending)
+                pending = pend_args = None
+                pend_arglen = 0
+
+        elif etype == "ATT_READ_REQ":
+            _finalize_multi()
+            if pending:
+                calls.append(pending)
+                pending = pend_args = None
+                pend_arglen = 0
+            try:
+                att_h = int(e.get("att_handle", "0x0000"), 16)
+            except Exception:
+                att_h = 0
+            pending = _Call(req_ts=e["ts"], ctx=0xFF, proc=_PROC_READ,
+                            args=bytes([att_h & 0xFF, (att_h >> 8) & 0xFF]))
+
+        elif etype == "ATT_READ_RSP":
+            if pending and pending.proc == _PROC_READ:
+                pending.resp_ts     = e["ts"]
+                pending.resp_type   = "single"
+                pending.resp_status = 0
+                try:
+                    pending.resp_result = bytes.fromhex(e.get("value", ""))
+                except Exception:
+                    pending.resp_result = b""
+                calls.append(pending)
+                pending = pend_args = None
+                pend_arglen = 0
+
+        elif etype == "ATT_ERROR_RSP":
+            req_op = e.get("req_opcode", "")
+            if pending and req_op in ("0x08", "0x0A") and pending.proc in (
+                    _PROC_READ_BY_TYPE, _PROC_READ):
+                pending.resp_ts     = e["ts"]
+                pending.resp_type   = "single"
+                pending.resp_status = e.get("error_code", 0xFF)
+                pending.resp_result = b""
+                calls.append(pending)
+                pending = pend_args = None
+                pend_arglen = 0
+
+        elif etype == "ATT_HANDLE_VALUE_NOTIF":
             try:
                 att_h = int(e.get("att_handle", "0x0000"), 16)
             except Exception:
@@ -852,6 +944,16 @@ def _collect_calls(events: list) -> list:
             try:
                 v = bytes.fromhex(e.get("value", ""))
             except Exception:
+                continue
+
+            if not pending:
+                # Spontaneous notify with no pending request (e.g. button press InfoFrame)
+                calls.append(_Call(
+                    req_ts=e["ts"], ctx=0xFF, proc=_PROC_ORPHAN_NOTIF,
+                    args=bytes([att_h & 0xFF, (att_h >> 8) & 0xFF]),
+                    resp_ts=e["ts"], resp_type="single", resp_status=0,
+                    resp_result=v,
+                ))
                 continue
 
             if att_h == 0x000F:
@@ -914,6 +1016,15 @@ def _annotate_req(ctx: int, proc: int, args: bytes) -> str:
     if proc == _PROC_CCCD:
         h = (args[1] << 8 | args[0]) if len(args) >= 2 else 0
         return f"Enable notifications on {GEBERIT_HANDLES.get(h, f'0x{h:04X}')}"
+    if proc == _PROC_READ_BY_TYPE:
+        uuid = args.decode("ascii", errors="replace") if args else "?"
+        return f"UUID {uuid}"
+    if proc == _PROC_READ:
+        h = (args[1] << 8 | args[0]) if len(args) >= 2 else 0
+        return GEBERIT_HANDLES.get(h, f"handle 0x{h:04X}")
+    if proc == _PROC_ORPHAN_NOTIF:
+        h = (args[1] << 8 | args[0]) if len(args) >= 2 else 0
+        return f"Spontaneous notify on {GEBERIT_HANDLES.get(h, f'0x{h:04X}')}"
 
     if (ctx, proc) in ((0x01, 0x11), (0x01, 0x13)):
         return "Subscription handshake"
@@ -1052,6 +1163,15 @@ def _annotate_resp(call: _Call) -> str:
     if call.resp_status not in (0, -1):
         return f"ERR status=0x{call.resp_status:02X}"
     ctx, proc, result = call.ctx, call.proc, call.resp_result
+    if proc == _PROC_READ_BY_TYPE:
+        return f"→ {result.hex() or '(empty)'}"
+    if proc == _PROC_READ:
+        try:
+            return f"→ b\"{result.decode('ascii')}\""
+        except Exception:
+            return f"→ {result.hex()}"
+    if proc == _PROC_ORPHAN_NOTIF:
+        return f"InfoFrame: {result.hex()}"
     # Decode common single-frame results
     if (ctx, proc) == (0x00, 0x82) and result:
         runs = []

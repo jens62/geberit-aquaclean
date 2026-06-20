@@ -69,15 +69,28 @@ _EMBEDDED_DEVICE_OUIS = {
 } | _ALBA_DEVICE_OUIS
 
 # ATT opcodes we care about
-_OP_WRITE_REQ = 0x12   # ATT_WRITE_REQ  (also used for CCCD enables)
-_OP_WRITE_CMD = 0x52   # ATT_WRITE_CMD  (Geberit procedure requests)
-_OP_NOTIF     = 0x1B   # ATT_HANDLE_VALUE_NOTIF
+_OP_ERROR_RSP         = 0x01   # ATT_ERROR_RSP      (peripheral → central)
+_OP_READ_BY_TYPE_REQ  = 0x08   # ATT_READ_BY_TYPE_REQ (central → peripheral, carries UUID)
+_OP_READ_BY_TYPE_RSP  = 0x09   # ATT_READ_BY_TYPE_RSP (peripheral → central)
+_OP_READ_REQ          = 0x0A   # ATT_READ_REQ       (central → peripheral)
+_OP_READ_RSP          = 0x0B   # ATT_READ_RSP       (peripheral → central)
+_OP_WRITE_REQ         = 0x12   # ATT_WRITE_REQ      (also used for CCCD enables)
+_OP_WRITE_CMD         = 0x52   # ATT_WRITE_CMD      (Geberit procedure requests)
+_OP_NOTIF             = 0x1B   # ATT_HANDLE_VALUE_NOTIF (peripheral → central)
 
 _OP_TO_EVENT = {
-    _OP_WRITE_REQ: "ATT_WRITE_REQ",
-    _OP_WRITE_CMD: "ATT_WRITE_CMD",
-    _OP_NOTIF:     "ATT_HANDLE_VALUE_NOTIF",
+    _OP_ERROR_RSP:        "ATT_ERROR_RSP",
+    _OP_READ_BY_TYPE_REQ: "ATT_READ_BY_TYPE_REQ",
+    _OP_READ_BY_TYPE_RSP: "ATT_READ_BY_TYPE_RSP",
+    _OP_READ_REQ:         "ATT_READ_REQ",
+    _OP_READ_RSP:         "ATT_READ_RSP",
+    _OP_WRITE_REQ:        "ATT_WRITE_REQ",
+    _OP_WRITE_CMD:        "ATT_WRITE_CMD",
+    _OP_NOTIF:            "ATT_HANDLE_VALUE_NOTIF",
 }
+
+# Opcodes that flow peripheral → central (RX from the Geberit device's perspective)
+_RX_OPCODES = {_OP_NOTIF, _OP_READ_BY_TYPE_RSP, _OP_READ_RSP, _OP_ERROR_RSP}
 
 # LL Control PDU opcodes (pre-encryption, visible to sniffer)
 _LL_ENC_REQ_OPCODE = 0x03   # LL_ENC_REQ — central requests link-layer encryption
@@ -740,13 +753,18 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
     Returns (events, att_frame_count) in the format expected by
     android-ble-analyze._collect_calls().
     """
-    dfilter = "btatt.opcode == 0x52 || btatt.opcode == 0x12 || btatt.opcode == 0x1b"
+    dfilter = (
+        "btatt.opcode == 0x01 || btatt.opcode == 0x08 || btatt.opcode == 0x09"
+        " || btatt.opcode == 0x0a || btatt.opcode == 0x0b"
+        " || btatt.opcode == 0x12 || btatt.opcode == 0x52 || btatt.opcode == 0x1b"
+    )
     if mac:
         dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
 
     rows = _run_tshark(tshark, pcapng, dfilter,
                        ["frame.time_relative", addr_field,
-                        "btatt.opcode", "btatt.handle", "btatt.value"])
+                        "btatt.opcode", "btatt.handle", "btatt.value",
+                        "btatt.uuid16", "btatt.error_code"])
 
     # Total ATT frame count for the header
     all_rows = _run_tshark(tshark, pcapng, "btatt", ["frame.number"])
@@ -754,16 +772,16 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
 
     events = []
     for row in rows:
-        if len(row) < 5:
+        if len(row) < 3:
             continue
-        ts_raw, slave, op_raw, handle_raw, value_raw = (row + [""] * 5)[:5]
+        padded = (row + [""] * 7)[:7]
+        ts_raw, slave, op_raw, handle_raw, value_raw, uuid16_raw, err_code_raw = padded
 
-        if not op_raw.strip() or not handle_raw.strip():
+        if not op_raw.strip():
             continue
 
         try:
             opcode = _parse_int(op_raw)
-            handle = _parse_int(handle_raw)
         except ValueError:
             continue
 
@@ -771,15 +789,52 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
         if not etype:
             continue
 
-        events.append({
-            "ts":         _ts_display(ts_raw),
-            "type":       etype,
-            "direction":  "RX" if opcode == _OP_NOTIF else "TX",
-            "mac":        slave.strip().upper() or mac,
-            "att_handle": f"0x{handle:04X}",
-            "label":      _android_ble.GEBERIT_HANDLES.get(handle, ""),
-            "value":      _value_hex(value_raw),
-        })
+        ev: dict = {
+            "ts":        _ts_display(ts_raw),
+            "type":      etype,
+            "direction": "RX" if opcode in _RX_OPCODES else "TX",
+            "mac":       slave.strip().upper() or mac,
+        }
+
+        if opcode == _OP_READ_BY_TYPE_REQ:
+            # btatt.handle = start handle; UUID is in btatt.uuid16 (16-bit) or btatt.value
+            uuid_str = uuid16_raw.strip()
+            if uuid_str:
+                try:
+                    ev["value"] = f"0x{int(uuid_str, 16):04X}"
+                except ValueError:
+                    ev["value"] = uuid_str
+            elif value_raw.strip():
+                ev["value"] = _value_hex(value_raw)
+            try:
+                handle = _parse_int(handle_raw)
+                ev["att_handle"] = f"0x{handle:04X}"
+                ev["end_handle"] = "0xFFFF"
+            except ValueError:
+                pass
+        elif opcode == _OP_ERROR_RSP:
+            try:
+                handle = _parse_int(handle_raw)
+                ev["att_handle"] = f"0x{handle:04X}"
+            except ValueError:
+                pass
+            try:
+                ev["req_opcode"] = f"0x{_parse_int(op_raw):02X}"
+                ev["error_code"] = int(err_code_raw.strip(), 16) if err_code_raw.strip() else 0xFF
+            except (ValueError, AttributeError):
+                ev["error_code"] = 0xFF
+        elif handle_raw.strip():
+            try:
+                handle = _parse_int(handle_raw)
+                ev["att_handle"] = f"0x{handle:04X}"
+                ev["label"]      = _android_ble.GEBERIT_HANDLES.get(handle, "")
+            except ValueError:
+                pass
+            ev["value"] = _value_hex(value_raw)
+        else:
+            ev["value"] = _value_hex(value_raw)
+
+        events.append(ev)
 
     return events, att_count
 

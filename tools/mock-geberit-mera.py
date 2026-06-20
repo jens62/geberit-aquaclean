@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.15.0
+mock-geberit-mera.py v1.16.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.15.0"
+_MOCK_VERSION = "1.16.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -103,7 +103,7 @@ _NOTIFY_A5_UUID = "3334429d-90f3-4c41-a02d-5cb3a53e0000"   # handle 0x000F (prim
 _NOTIFY_A6_UUID = "3334429d-90f3-4c41-a02d-5cb3a63e0000"   # handle 0x0013
 _NOTIFY_A7_UUID = "3334429d-90f3-4c41-a02d-5cb3a73e0000"   # handle 0x0017
 _NOTIFY_A8_UUID = "3334429d-90f3-4c41-a02d-5cb3a83e0000"   # handle 0x001B
-_READ_UUID      = "00003a2b-0000-1000-8000-00805f9b34fb"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B)
+_READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B — short form required for BlueZ Read By Type match)
 
 # ---- Device identity ----
 _ARTICLE     = "14621"
@@ -605,6 +605,15 @@ async def main(web_port: int = 8765) -> None:
     try:
         await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
         print("GATT service registered")
+        for _attr in ("_characteristics", "_chars"):
+            _chars_list = getattr(service, _attr, None)
+            if _chars_list:
+                print(f"GATT characteristics ({len(_chars_list)}):")
+                for _c in _chars_list:
+                    _uuid  = getattr(_c, "uuid",  getattr(_c, "_uuid",  "?"))
+                    _flags = getattr(_c, "flags", getattr(_c, "_flags", "?"))
+                    print(f"  UUID={_uuid}  flags={_flags}")
+                break
     except Exception as e:
         print(f"GATT registration failed: {e}")
         await bus.disconnect()
