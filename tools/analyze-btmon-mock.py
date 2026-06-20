@@ -292,6 +292,63 @@ def _mac_bytes_le(b: bytes, start: int) -> str:
     return ":".join(f"{b[start + 5 - i]:02x}" for i in range(6))
 
 
+def _decode_ad_elements(data: bytes) -> str:
+    """Decode BLE AD structure into a human-readable summary string."""
+    parts = []
+    idx = 0
+    while idx < len(data):
+        length = data[idx]
+        if length == 0:
+            idx += 1
+            continue
+        if idx + 1 + length > len(data):
+            parts.append(f"TRUNCATED(need {length} got {len(data)-idx-1})")
+            break
+        ad_type = data[idx + 1]
+        ad_data = data[idx + 2 : idx + 1 + length]
+        if ad_type == 0x01:
+            flags = ad_data[0] if ad_data else 0
+            fnames = []
+            if flags & 0x01: fnames.append("LE_Lim_Disc")
+            if flags & 0x02: fnames.append("LE_Gen_Disc")
+            if flags & 0x04: fnames.append("No_BR/EDR")
+            parts.append(f"Flags=0x{flags:02X}({'+'.join(fnames) or 'none'})")
+        elif ad_type in (0x02, 0x03):
+            uuids = [f"0x{struct.unpack_from('<H', ad_data, i)[0]:04X}"
+                     for i in range(0, len(ad_data) - 1, 2)]
+            label = "UUID16" if ad_type == 0x03 else "UUID16_inc"
+            parts.append(f"{label}={','.join(uuids)}")
+        elif ad_type in (0x06, 0x07):
+            uuids = []
+            for i in range(0, len(ad_data) - 15, 16):
+                b = bytes(reversed(ad_data[i:i+16]))
+                uuids.append(f"{b[0:4].hex()}-{b[4:6].hex()}-{b[6:8].hex()}-"
+                              f"{b[8:10].hex()}-{b[10:16].hex()}")
+            label = "UUID128" if ad_type == 0x07 else "UUID128_inc"
+            parts.append(f"{label}={','.join(uuids)}")
+        elif ad_type == 0x08:
+            parts.append(f"ShortName='{ad_data.decode('utf-8', errors='replace')}'")
+        elif ad_type == 0x09:
+            parts.append(f"Name='{ad_data.decode('utf-8', errors='replace')}'")
+        elif ad_type == 0x0A:
+            power = struct.unpack_from('b', ad_data)[0] if ad_data else 0
+            parts.append(f"TxPower={power}dBm")
+        elif ad_type == 0xFF:
+            if len(ad_data) >= 2:
+                company = struct.unpack_from('<H', ad_data, 0)[0]
+                parts.append(f"MfrData=co=0x{company:04X},data={ad_data[2:].hex()}")
+            else:
+                parts.append(f"MfrData={ad_data.hex()}")
+        else:
+            parts.append(f"0x{ad_type:02X}={ad_data.hex()}")
+        idx += 1 + length
+    return "  ".join(parts) if parts else "(empty)"
+
+
+_ADV_OPS = {0x00: "Intermediate", 0x01: "First", 0x02: "Last",
+            0x03: "Complete", 0x04: "Unchanged"}
+
+
 def _decode_hci_evt(ev: BtsnoopEvent):
     d = ev.data
     if len(d) < 2:
@@ -579,12 +636,22 @@ def decode_btsnoop_events(records: list[BtsnoopEvent]):
                               f"num_sets={num_sets}  "
                               f"← EXTENDED ADV_EXT_IND (iOS CANNOT see this in scan-all mode!)")
 
-            elif opcode == _HCI_CMD_LE_SET_EXT_ADV_DATA and len(ev.data) >= 5:
-                adv_len = ev.data[4]
-                adv_bytes = ev.data[5:5 + adv_len]
+            elif opcode == _HCI_CMD_LE_SET_EXT_ADV_DATA and len(ev.data) >= 7:
+                # layout: opcode(2)+param_len(1)+handle(1)+operation(1)+fragment_pref(1)+adv_data_len(1)+adv_data(N)
+                adv_len = ev.data[6]
+                adv_bytes = ev.data[7:7 + adv_len]
                 ev.kind = "adv_data_ext"
                 ev.summary = (f"HCI_CMD LE_Set_Extended_Advertising_Data  "
-                              f"len={adv_len}  data={adv_bytes.hex()}")
+                              f"handle={ev.data[3]}  op={_ADV_OPS.get(ev.data[4], hex(ev.data[4]))}  "
+                              f"len={adv_len}  [{_decode_ad_elements(adv_bytes)}]")
+
+            elif opcode == _HCI_CMD_LE_SET_EXT_SCAN_RSP_DATA and len(ev.data) >= 7:
+                rsp_len = ev.data[6]
+                rsp_bytes = ev.data[7:7 + rsp_len]
+                ev.kind = "scan_rsp_data_ext"
+                ev.summary = (f"HCI_CMD LE_Set_Extended_Scan_Response_Data  "
+                              f"handle={ev.data[3]}  op={_ADV_OPS.get(ev.data[4], hex(ev.data[4]))}  "
+                              f"len={rsp_len}  [{_decode_ad_elements(rsp_bytes)}]")
 
             elif opcode == _HCI_CMD_LE_SET_EXT_ADV_PARAMS and len(ev.data) >= 6:
                 # struct: opcode(2B) + param_len(1B) + adv_handle(1B) + properties(2B LE) + ...
@@ -605,7 +672,7 @@ def decode_btsnoop_events(records: list[BtsnoopEvent]):
 
 
 _ADV_KINDS = frozenset(("adv_enable", "adv_enable_ext", "adv_data", "adv_data_ext",
-                        "adv_params", "adv_params_ext"))
+                        "adv_params", "adv_params_ext", "scan_rsp_data_ext"))
 
 
 def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
@@ -1003,7 +1070,8 @@ def print_timeline(
             col = _COL_ADV_LEGACY
         elif bev.kind == "adv_enable_ext":
             col = _COL_ADV_EXTENDED
-        elif bev.kind in ("adv_data", "adv_data_ext", "adv_params", "adv_params_ext"):
+        elif bev.kind in ("adv_data", "adv_data_ext", "adv_params", "adv_params_ext",
+                          "scan_rsp_data_ext"):
             col = _COL_ADV_DATA
         else:
             col = _COL_BTSNOOP_NOTE
@@ -1061,6 +1129,7 @@ def print_summary(btsnoop_events: list[BtsnoopEvent],
     extended_enables = [e for e in btsnoop_events if e.kind == "adv_enable_ext"]
     adv_data_legacy  = [e for e in btsnoop_events if e.kind == "adv_data"]
     adv_data_ext     = [e for e in btsnoop_events if e.kind == "adv_data_ext"]
+    scan_rsp_ext     = [e for e in btsnoop_events if e.kind == "scan_rsp_data_ext"]
     if legacy_enables:
         print(f"\n✓ LEGACY advertising (ADV_IND): {len(legacy_enables)} enable command(s)")
         print("  → iOS CAN see this when scanning without UUID filter (Mera path)")
@@ -1074,6 +1143,8 @@ def print_summary(btsnoop_events: list[BtsnoopEvent],
         for e in extended_enables:
             print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
         for e in adv_data_ext:
+            print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
+        for e in scan_rsp_ext:
             print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
     if not legacy_enables and not extended_enables:
         print("\nNo advertising enable/disable commands found in capture.")

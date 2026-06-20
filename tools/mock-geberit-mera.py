@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.13.0"
+_MOCK_VERSION = "1.14.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -399,21 +399,24 @@ class _MeraAdvertisement(Advertisement):
 
     Registered via D-Bus LEAdvertisingManager1 (bluez_peripheral). BlueZ encodes
     UUID 0x3EA0 and manufacturer data into the ADV_IND payload, and puts the local
-    name into the SCAN_RSP automatically. This ensures the app's scan filter and
-    CheckDiscovered can match the device.
+    name into the SCAN_RSP automatically.
 
-    company 0x0602 (Geberit International AG) — required by BleProductManager.CheckDiscovered
-    (j=false path: company identifier must equal 1538 = 0x0602).
+    company 0x0100 — actual company code used by Geberit AquaClean firmware
+                     (confirmed from real-device nRF capture; 0x0602 is the Alba path).
     UUID 0x3EA0 — Geberit AquaClean discovery UUID.
+
+    Payload (9 bytes): state_A(1) + article(5) + state_B(1) + rs_fw_prefix(2)
+    Matches the real Mera Comfort 11-byte advertising variant.
     """
 
     def __init__(self, state_byte: int = 0):
+        rs_fw = b"30"   # RS firmware prefix matching mock GATT responses (RS30.0 TS206)
         super().__init__(
             "Geberit AC PRO",                            # name → SCAN_RSP (BlueZ splits automatically)
             ["00003ea0-0000-1000-8000-00805f9b34fb"],    # service_uuids → ADV_IND
             appearance=0,
             timeout=0,
-            manufacturerData={0x0602: bytes([state_byte]) + _ARTICLE.encode("ascii")},
+            manufacturerData={0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii") + bytes([0x00]) + rs_fw},
         )
 
 
@@ -621,7 +624,7 @@ async def main(web_port: int = 8765) -> None:
     # the local name is placed in SCAN_RSP automatically.
     advert = _MeraAdvertisement()
     await advert.register(bus, adapter_wrapper)
-    print(f"Advertising: UUID=0x3EA0  company=0x0602  article={_ARTICLE}  name='Geberit AC PRO'")
+    print(f"Advertising: UUID=0x3EA0  company=0x0100  article={_ARTICLE}  rs_fw=30  name='Geberit AC PRO'")
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
