@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.17.0
+mock-geberit-mera.py v1.18.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -73,7 +73,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.17.0"
+_MOCK_VERSION = "1.18.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -104,6 +104,7 @@ _NOTIFY_A6_UUID = "3334429d-90f3-4c41-a02d-5cb3a63e0000"   # handle 0x0013
 _NOTIFY_A7_UUID = "3334429d-90f3-4c41-a02d-5cb3a73e0000"   # handle 0x0017
 _NOTIFY_A8_UUID = "3334429d-90f3-4c41-a02d-5cb3a83e0000"   # handle 0x001B
 _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B — short form required for BlueZ Read By Type match)
+_SVC_CHANGED_UUID = "2a05"  # Service Changed (GATT 0x1801) — sent on connect to clear iOS stale GATT cache
 
 # ---- Device identity ----
 _ARTICLE     = "14621"
@@ -318,10 +319,14 @@ class MeraService(Service):
     def __init__(self):
         super().__init__(_SVC_UUID, True)
         self._notify_value = bytes(20)
-        self._notify_iface = None    # wired after register() via wire_notify()
+        self._notify_iface = None         # wired after register() via wire_notify()
+        self._service_changed_iface = None  # wired after register() via wire_service_changed()
 
     def wire_notify(self, iface) -> None:
         self._notify_iface = iface
+
+    def wire_service_changed(self, iface) -> None:
+        self._service_changed_iface = iface
 
     async def push_notify(self, frame: bytes) -> None:
         """Send an ATT notification on A5."""
@@ -340,6 +345,29 @@ class MeraService(Service):
         except Exception as e:
             _log("·", f"WARNING: push_notify failed: {e}")
 
+    async def send_service_changed(self) -> None:
+        """Send a Service Changed indication covering all handles (0x0001–0xFFFF).
+
+        iOS caches GATT handle maps per peripheral address across reboots (no bonding).
+        Sending this on every new connection forces iOS to discard cached handles and
+        redo full GATT discovery with the current attribute database.
+        Payload: start_handle=0x0001, end_handle=0xFFFF (little-endian uint16 pairs).
+        """
+        payload = bytes([0x01, 0x00, 0xFF, 0xFF])
+        if self._service_changed_iface is None:
+            logger.warning("service_changed: interface not wired — skipping")
+            return
+        try:
+            if hasattr(self._service_changed_iface, "changed"):
+                self._service_changed_iface.changed(payload)
+            else:
+                self._service_changed_iface.emit_properties_changed(
+                    {"Value": Variant("ay", list(payload))}
+                )
+            _log("→", f"Service Changed indication sent [{payload.hex()}] — client will redo GATT discovery")
+        except Exception as e:
+            logger.warning("Service Changed indication failed: %s", e)
+
     async def _handle_request(self, raw: bytes) -> None:
         if len(raw) < 11:
             _log("·", f"frame too short ({len(raw)} B) — ignored")
@@ -356,6 +384,10 @@ class MeraService(Service):
         else:
             # IsSubFrameCount=0: CONS continuation frame — accumulate if needed later
             _log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
+
+    @characteristic(_SVC_CHANGED_UUID, CharFlags.INDICATE)
+    def service_changed_char(self, options):
+        return bytes([0x01, 0x00, 0xFF, 0xFF])
 
     @characteristic(_WRITE_0_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
     def write_0(self, options):
@@ -643,6 +675,24 @@ async def main(web_port: int = 8765) -> None:
     else:
         logger.warning("notify characteristic not found — push notifications disabled")
 
+    # Wire Service Changed indication interface
+    svc_changed_char = None
+    for attr in ("_characteristics", "_chars"):
+        chars = getattr(service, attr, None)
+        if chars:
+            for c in chars:
+                uuid = str(getattr(c, "uuid", getattr(c, "_uuid", ""))).lower()
+                if "2a05" in uuid:
+                    svc_changed_char = c
+                    break
+        if svc_changed_char:
+            break
+    if svc_changed_char:
+        service.wire_service_changed(svc_changed_char)
+        logger.info("Service Changed characteristic wired (0x2A05)")
+    else:
+        logger.warning("Service Changed characteristic not found — iOS GATT cache clearing disabled")
+
     # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
     # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
     # the local name is placed in SCAN_RSP automatically.
@@ -665,6 +715,7 @@ async def main(web_port: int = 8765) -> None:
                     addr = addr.value
                 _connected = True
                 _log("·", f"BLE client connected: {addr}")
+                asyncio.ensure_future(service.send_service_changed())
 
         def _on_removed(path, ifaces):
             global _connected, _button_pressed
