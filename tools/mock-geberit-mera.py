@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.13.0
+mock-geberit-mera.py v1.15.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -9,8 +9,8 @@ Geberit Home App when onboarding to a Mera Comfort for the first time.
 Protocol (no encryption, no SMP):
   - App writes 20-byte procedure requests to write characteristic
   - Mock responds via ATT notify on the A5 notify characteristic
-  - Button press ceremony: app reads Device Name ("ro"), waits for button,
-    web UI "Press Button" triggers notify on A5
+  - Button press ceremony: app reads UUID 0x3A2B characteristic (returns b"ro"),
+    waits for button; web UI "Press Button" triggers InfoFrame notify on A5
 
 Requirements (Linux VM with BlueZ >= 5.50):
   pip install bluez_peripheral dbus-next aiohttp
@@ -63,7 +63,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.14.0"
+_MOCK_VERSION = "1.15.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -103,6 +103,7 @@ _NOTIFY_A5_UUID = "3334429d-90f3-4c41-a02d-5cb3a53e0000"   # handle 0x000F (prim
 _NOTIFY_A6_UUID = "3334429d-90f3-4c41-a02d-5cb3a63e0000"   # handle 0x0013
 _NOTIFY_A7_UUID = "3334429d-90f3-4c41-a02d-5cb3a73e0000"   # handle 0x0017
 _NOTIFY_A8_UUID = "3334429d-90f3-4c41-a02d-5cb3a83e0000"   # handle 0x001B
+_READ_UUID      = "00003a2b-0000-1000-8000-00805f9b34fb"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B)
 
 # ---- Device identity ----
 _ARTICLE     = "14621"
@@ -392,6 +393,12 @@ class MeraService(Service):
     def notify_a8(self, options):
         return bytes(20)
 
+    @characteristic(_READ_UUID, CharFlags.READ)
+    def button_state_read(self, options):
+        # App probes UUID 0x3A2B as a gating check immediately after MTU exchange.
+        # Returns b"ro" while waiting for button press; App then waits for InfoFrame on A5.
+        return b"ro"
+
 
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
@@ -580,8 +587,9 @@ async def main(web_port: int = 8765) -> None:
     except Exception as e:
         print(f"Warning: could not enumerate adapter: {e}")
 
-    # Set Device Name (GATT 0x2a00) to "ro" — the Geberit Home App reads this
-    # during the button-press ceremony and expects exactly b"ro" from a Mera Comfort.
+    # Set Device Name (GATT 0x2a00) to "ro" — cosmetic, matches real Mera Comfort.
+    # The App's actual button-state gating check reads the READ characteristic
+    # (UUID 0x3A2B, handle 0x0020) which also returns b"ro". Both are set to "ro".
     if adapter_path:
         try:
             ai = await bus.introspect("org.bluez", adapter_path)
