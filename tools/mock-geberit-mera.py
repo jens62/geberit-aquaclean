@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.21.0
+mock-geberit-mera.py v1.25.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -73,7 +73,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.24.0"
+_MOCK_VERSION = "1.25.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -115,11 +115,44 @@ _VARIANT     = 0x0D   # Mera Comfort
 # Node IDs confirmed from real Mera onboarding capture
 _NODE_IDS = bytes([3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xe, 0xf])
 
+# ---- Advertisement D-Bus path (bluez_peripheral default, used for unregister) ----
+_ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
+
 # ---- Global state ----
 _session_log: list = []
 _button_pressed = False
 _connected = False
 _service_changed_fired = False   # one-shot: GATT re-registration fires only on first connection
+_advert = None          # current _MeraAdvertisement instance
+_advert_bus = None      # D-Bus connection stored for advert updates
+_advert_adapter = None  # Adapter stored for advert updates
+
+
+async def _update_advert(state_b: int) -> None:
+    """Unregister current advertisement and re-register with updated IsButtonPressed flag.
+
+    state_b=0x01 → iOS scan sees IsButtonPressed=True → device selected for Connection 1.
+    state_b=0x00 → normal idle (button not pressed).
+
+    bluez_peripheral.Advertisement has no unregister() method.
+    We call LEAdvertisingManager1.UnregisterAdvertisement() directly via the cached
+    adapter proxy, using the known fixed D-Bus path _ADVERT_PATH.
+    """
+    global _advert, _advert_bus, _advert_adapter
+    if _advert_bus is None or _advert_adapter is None:
+        logger.warning("_update_advert: bus/adapter not initialised")
+        return
+    try:
+        mgr = _advert_adapter._proxy.get_interface("org.bluez.LEAdvertisingManager1")
+        await mgr.call_unregister_advertisement(_ADVERT_PATH)
+    except Exception as e:
+        logger.warning("advert unregister: %s", e)
+    _advert = _MeraAdvertisement(state_b)
+    try:
+        await _advert.register(_advert_bus, _advert_adapter)
+        _log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}")
+    except Exception as e:
+        logger.error("advert re-register failed: %s", e)
 
 
 def _log(direction: str, msg: str) -> None:
@@ -432,28 +465,33 @@ class MeraService(Service):
 
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
-    """Advertisement matching the real Mera Comfort BLE payload.
+    """Advertisement matching the real Mera Comfort BLE payload (11-byte variant).
 
-    Registered via D-Bus LEAdvertisingManager1 (bluez_peripheral). BlueZ encodes
-    UUID 0x3EA0 and manufacturer data into the ADV_IND payload, and puts the local
-    name into the SCAN_RSP automatically.
+    Manufacturer-specific data layout (company 0x0100, 11 payload bytes):
+      byte[0]    state_A    0x00 normal | 0xAA = IsEmergencyConnectPermitted
+      byte[1]    fw_byte    firmware version indicator (not checked by iOS app — fixed 0x00)
+      byte[2]    state_B    0x00 normal | 0x01 = IsButtonPressed  ← iOS scans THIS byte
+      bytes[3-7] article    5-char ASCII article number
+      bytes[8-10]rs_fw      3-char RS firmware prefix ("30\x00")
 
-    company 0x0100 — actual company code used by Geberit AquaClean firmware
-                     (confirmed from real-device nRF capture; 0x0602 is the Alba path).
-    UUID 0x3EA0 — Geberit AquaClean discovery UUID.
+    Source: AquaCleanProduct.cs UpdateAdvertisingData():
+      IsButtonPressed          = (data[2] == 1)    ← byte[2] of manufacturer payload
+      IsEmergencyConnectPermitted = (data[0] == 0xAA)
 
-    Payload (9 bytes): state_A(1) + article(5) + state_B(1) + rs_fw_prefix(2)
-    Matches the real Mera Comfort 11-byte advertising variant.
+    The iOS app's 15-second scan loop checks IsButtonPressed on every advertisement.
+    Only devices with IsButtonPressed=True are selected for Connection 1.
+    Changing state_B from 0x00→0x01 via _update_advert() is what triggers the connection.
     """
 
-    def __init__(self, state_byte: int = 0):
-        rs_fw = b"30"   # RS firmware prefix matching mock GATT responses (RS30.0 TS206)
+    def __init__(self, state_b: int = 0):
         super().__init__(
             "Geberit AC PRO",                            # name → SCAN_RSP (BlueZ splits automatically)
             ["00003ea0-0000-1000-8000-00805f9b34fb"],    # service_uuids → ADV_IND
             appearance=0,
             timeout=0,
-            manufacturerData={0x0100: bytes([state_byte]) + _ARTICLE.encode("ascii") + bytes([0x00]) + rs_fw},
+            manufacturerData={
+                0x0100: bytes([0x00, 0x00, state_b]) + _ARTICLE.encode("ascii") + b"30\x00"
+            },
         )
 
 
@@ -567,8 +605,11 @@ async def _handle_button(request, service: MeraService):
     from aiohttp import web
     global _button_pressed
     _button_pressed = True
-    _log("·", "Button pressed via web UI — sending InfoFrame on A5")
-    await service.push_notify(_build_info_frame())
+    _log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
+    await _update_advert(1)
+    # If Connection 1 is already active, also push an InfoFrame (harmless if not connected)
+    if _connected:
+        await service.push_notify(_build_info_frame())
     raise web.HTTPFound("/")
 
 
@@ -676,9 +717,16 @@ async def main(web_port: int = 8765) -> None:
     # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
     # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
     # the local name is placed in SCAN_RSP automatically.
-    advert = _MeraAdvertisement()
-    await advert.register(bus, adapter_wrapper)
-    logger.info("Advertising: UUID=0x3EA0  company=0x0100  article=%s  rs_fw=30  name='Geberit AC PRO'", _ARTICLE)
+    # Store bus/adapter globally so _update_advert() can unregister/re-register on button press.
+    global _advert, _advert_bus, _advert_adapter
+    _advert_bus = bus
+    _advert_adapter = adapter_wrapper
+    _advert = _MeraAdvertisement()
+    await _advert.register(bus, adapter_wrapper)
+    logger.info(
+        "Advertising: UUID=0x3EA0  company=0x0100  byte[2]=0x00 (IsButtonPressed=False)"
+        "  article=%s  name='Geberit AC PRO'", _ARTICLE
+    )
 
     # Track BLE connections via ObjectManager (best-effort)
     global _connected, _button_pressed
@@ -701,7 +749,10 @@ async def main(web_port: int = 8765) -> None:
             global _connected, _button_pressed
             if "org.bluez.Device1" in ifaces:
                 _connected = False
-                _button_pressed = False     # reset for next session
+                if _button_pressed:
+                    # Revert advertisement to state_B=0x00 for next scan cycle
+                    asyncio.ensure_future(_update_advert(0))
+                _button_pressed = False
                 _log("·", f"BLE client disconnected: {path}")
 
         objmgr.on_interfaces_added(_on_added)

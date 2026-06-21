@@ -17,17 +17,25 @@ The toilet advertises manufacturer-specific data only — no local name.
 
 | AD type | Value | Notes |
 |---------|-------|-------|
-| `0xFF` | Company `0x0100`, data `00 31 34 36 32 31` | State byte + article chars |
+| `0xFF` | Company `0x0100`, 11-byte payload | State bytes + fw byte + article + RS fw |
 | `0x02` | `0x3EA0` | 16-bit UUID (incomplete list) |
 
 Company `0x0100` = TomTom International BV (Bluetooth SIG assigned).
 Confirmed from `on-board-geberit-Home-app-to-mera.pcapng` (tshark: `company_id=0x0100`).
 
-Manufacturer-specific payload layout:
-- Byte 0: state byte (`0x00` = idle, `0xAA` = emergency connect permitted, `0x01` = button pressed)
-- Bytes 1–5: article number ASCII prefix (e.g. `"14621"`)
+Manufacturer-specific payload layout (11 bytes, confirmed from `AquaCleanProduct.cs`):
 
-The app identifies the toilet exclusively by company ID `0x0100` in manufacturer-specific data, not by local name or UUID alone.
+| Offset | Value | Name | Notes |
+|--------|-------|------|-------|
+| 0 | `0x00` / `0xAA` | state_A | `IsEmergencyConnectPermitted = (byte[0] == 0xAA)` |
+| 1 | e.g. `0x00` | fw_byte | firmware version indicator — not checked by iOS app |
+| 2 | `0x00` / `0x01` | state_B | **`IsButtonPressed = (byte[2] == 0x01)`** ← iOS scans this |
+| 3–7 | e.g. `"14621"` | article | 5-char ASCII article number |
+| 8–10 | e.g. `"30\x00"` | rs_fw | RS firmware prefix (3 bytes) |
+
+The iOS app identifies the toilet by company ID `0x0100` and reads byte[2] (`state_B`) from
+every received advertisement to determine `IsButtonPressed`. Only when `IsButtonPressed=True`
+does the app select the device and attempt a BLE connection.
 
 ---
 
@@ -163,6 +171,64 @@ Connection 2 is the **onboarding cycle**: same init, then writes profile setting
 
 ---
 
+## Button hold mechanism — confirmed from app source (2026-06-21)
+
+Source: `AquaCleanProduct.cs` (`UpdateAdvertisingData`, `Initialize`) +
+`AqCPressButtonProgressViewModel.cs` + nRF52840 capture `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1`.
+
+### What "hold the button" actually does
+
+Physically holding the toilet button causes the firmware to set `state_B = 0x01` in the BLE
+advertisement manufacturer data (byte[2]). The iOS app's 15-second scan loop calls
+`UpdateAdvertisingData()` on every received advertisement:
+
+```csharp
+IsButtonPressed             = (data[2] == 1)    // byte[2] of manufacturer payload
+IsEmergencyConnectPermitted = (data[0] == 0xAA)
+```
+
+`AqCPressButtonProgressViewModel` scans for exactly 15 seconds (`m__E000 = 15000 ms`).
+Within the scan loop, it skips every device where `IsButtonPressed = False`. When a device
+with `IsButtonPressed = True` appears, it cancels the scan and initiates Connection 1.
+
+Releasing the button reverts `state_B = 0x00` in the advertisement, but this does not
+affect the connection that is already in progress.
+
+### What happens during Connection 1 (button held)
+
+The toilet does **not** continuously send anything special during button hold. All
+device-initiated notifications (InfoFrame burst on A6) are sent on every connection
+regardless of button state. There is no special channel. The button-held state is verified
+in three one-shot checks:
+
+| Time in capture | Check | Mechanism |
+|----------------|-------|-----------|
+| Pre-connection (scan) | `IsButtonPressed` | Advertisement `byte[2] == 0x01` |
+| t=72.8s | Button still held | GATT Device Name (UUID 0x2A00) reads `"ro"` |
+| t=79.6s–81.1s | Button detection ceremony | Proc 0x07 × 10 nodes [04,02,05,03,09,01,00,0d,08,07] |
+
+After proc 0x07 responses, the app shows "Release the button". Connection 1 ends; Connection 2
+starts for the actual onboarding commit.
+
+### SecurityManager — not button-related
+
+`AquaCleanProduct.Initialize()` checks `SecurityManager.Unlocked` before any GATT operations.
+This is a **factory-creation license gate** (`BleProductManagerFactory.Create(unlock, ...)` is
+called at app startup), not a button-state gate. It is always true for a legitimately running app.
+
+### Mock implementation of button hold (v1.25.0)
+
+1. **Advertisement byte[2]** starts at `0x00` (IsButtonPressed=False).
+2. User clicks **"Press Button"** in the web UI **after** tapping "Connect" in the iOS app
+   (within the 15-second scan window).
+3. Mock calls `_update_advert(1)` → unregisters current advertisement via
+   `LEAdvertisingManager1.UnregisterAdvertisement` → re-registers with `state_B=0x01`.
+4. iOS scan receives the updated advertisement → `IsButtonPressed=True` → Connection 1 starts
+   automatically — no further user action needed.
+5. On BLE disconnect: `_update_advert(0)` reverts `state_B=0x00` for the next cycle.
+
+---
+
 ## iOS GATT cache — clearing mechanism (mock v1.21.0)
 
 iOS caches GATT handle maps per peripheral Bluetooth address across reboots for non-bonded
@@ -253,8 +319,10 @@ Android App connected (MAC `78:42:1C:38:DE:16`), showed "press button" screen, t
 For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 
 **Must implement:**
-1. Advertising: manufacturer-specific, company `0x0100`, state byte `0x00` + 5-char article
-   (+ optional state_B byte + 2-char RS fw prefix for the 9-byte "11-byte variant" format)
+1. Advertising: company `0x0100`, 11-byte payload — `[state_A=0x00, fw_byte=0x00, state_B] + article(5) + rs_fw(3)`.
+   **`state_B` must be dynamically updated to `0x01` when the button is "pressed"** via advertisement
+   unregister + re-register. The iOS app reads `byte[2]` of the manufacturer payload to determine
+   `IsButtonPressed`; it will not connect until this byte is `0x01`.
 2. GATT: write chars at 0x0003/0x0006, notify A5–A8 with CCCDs, READ char at 0x0020,
    non-data CCCD at 0x002C — all visible to Android's Read By Group Type discovery
 3. GATT service must be discoverable via Android `Read By Group Type` — requires investigation
@@ -267,7 +335,7 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 8. Proc `0x81` → fake version strings ✓ (implemented)
 9. Proc `0x0E` / `0x0D` → SPL values for queried indices (zeros are fine) ✓ (implemented)
 10. Proc `0x11` + `0x13` → stub empty responses per node group
-11. Handle `0x0020` read → `b"ro"` initially; web UI "Press Button" triggers notify on A5 + flips state
+11. Handle `0x0020` read (UUID 0x2A00 Device Name) → `b"ro"` — secondary confirmation that button is held during Connection 1; mock sets adapter alias to `"ro"` ✓
 12. Proc `0x07` → stub empty per-node profile response (11 nodes)
 13. Proc `0x0A` → stub common setting values for IDs 0–9
 
