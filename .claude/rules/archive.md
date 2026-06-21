@@ -1,3 +1,6 @@
+## Memory snapshot 2026-06-18 (session 3)
+Active memory entries: 45  |  Pruned: 0 (no changes since session 2; remote control docs committed + pushed)  |  Snapshot taken by /compress-memory
+
 ## Memory snapshot 2026-06-18 (session 2)
 Active memory entries: 45  |  Pruned: 0 (mock version inline updated: 2.17.0 → 2.18.6 + shower flow note)  |  Snapshot taken by /compress-memory
 

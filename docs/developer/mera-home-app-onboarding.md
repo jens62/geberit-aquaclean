@@ -116,6 +116,53 @@ No PIN entry, no BLE SMP pairing — the physical button press IS the authentica
 
 ---
 
+## Confirmed onboarding sequence — two-connection pattern (v2.14.1, 2026-06-21)
+
+Source: `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1.pcapng`  
+Mapping: `...nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-mapping-1.md`  
+Device firmware: **RS28.0 TS199** (SOC 10.18)
+
+The Geberit Home App uses **two sequential BLE connections** for first-time onboarding:
+
+### Connection 1 — button detection (~15 s)
+
+1. GATT characteristic discovery (18× Read By Type UUID 0x2803)
+2. Enable notify on CCCD-A5, A6, A7 → device sends InfoFrame burst on A6 immediately
+3. Enable notify on CCCD-A8
+4. GetDeviceIdentification (proc 0x82), GetNodeList (proc 0x05), GetSOCApplicationVersions (proc 0x81)
+5. GetFirmwareVersionList (proc 0x0E): 12 component IDs [1,3,4,5,6,7,8,9,10,11,12,14] → **RS28.0 TS199**; then component [15]
+6. SubscribeNotif_0x13 × 4 (init handshakes)
+7. **Device Name read (UUID 0x2A00) → `"ro"`** — confirms button is held
+8. Proc 0x07 × 10 (node IDs 04,02,05,03,09,01,00,0d,08,07) — GetPerNodeProfileSetting for all nodes; device sends InfoFrames on A5
+9. GetStoredProfileSetting (proc 0x53) × 10 (read-only): AnalShowerPressure=2, OscillatorState=3, LadyShowerPressure=2, AnalShowerPosition=2, WaterTemperature=1, WcSeatHeat=1, LadyShowerPosition=0, DryerTemperature=0, OdourExtraction=1, DryerState=0
+10. **App disconnects** — "Release the button" screen appears, user releases button
+
+### Connection 2 — onboarding (≥19 s, then continuous polling)
+
+Steps 1–6 (GATT discovery through SubscribeNotif) repeat identically. Then:
+
+7. **GetStoredProfileSetting × 10** (same settings, read again)
+8. **SetStoredProfileSetting × 3** (init writes): AnalShowerPressure=2, OscillatorState=3, LadyShowerPressure=2
+9. **GetStoredCommonSetting × 10**: Color(2)=Magenta, Brightness(1)=3, Mode(3)=WhenApproached, id4=2, id6=1, id7=1, id5=0, id8=0, WaterHardness(0)=1, id9=0
+10. **GetSystemParameterList**: params [0,1,2,3,4,5,6,7,8,9,10,11] — all 12 including indices 8/9/10
+11. **GetFilterStatus (proc 0x59)**:
+    - First query: IDs [0–7] → empty response (probe)
+    - Second query: IDs [0–11] → days=348, resets=5, last_reset_date (real data)
+12. **UnknownProc_0x55** (GetDeviceRegistrationLevel) — called **once per session** at init completion
+13. **GetDeviceInitialOperationDate (proc 0x86)** — called once
+14. **Continuous GetSystemParameterList polling** at ~0.45 s interval
+
+**App shows "Connection established" + Save button** after step 7–8 complete (SubscribeNotif_0x13 ×4 ACK).  
+**User clicks Save** → polling continues; capture ends at step 14.
+
+### Why two connections?
+
+Connection 1 is the **button detection cycle**: the app verifies the button is held (Device Name = `"ro"`), reads all current settings, and confirms via proc 0x07. Only after the user releases the button does it reconnect for the actual onboarding commit.
+
+Connection 2 is the **onboarding cycle**: same init, then writes profile settings back, reads all device state, and begins normal operation polling.
+
+---
+
 ## iOS GATT cache — clearing mechanism (mock v1.21.0)
 
 iOS caches GATT handle maps per peripheral Bluetooth address across reboots for non-bonded
@@ -224,7 +271,13 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 12. Proc `0x07` → stub empty per-node profile response (11 nodes)
 13. Proc `0x0A` → stub common setting values for IDs 0–9
 
-**Not needed:** proc `0x55` (GetDeviceRegistrationLevel), proc `0x44` (PIN), proc `0x86` (InitialOperationDate).
+**Also needed (confirmed from two-connection capture):**
+14. Proc `0x55` (GetDeviceRegistrationLevel) — called once per session at init completion (Connection 2 only)
+15. Proc `0x86` (GetDeviceInitialOperationDate) — called once in Connection 2
+16. Proc `0x59` (GetFilterStatus) — called twice: first IDs [0–7] (probe, returns empty), then IDs [0–11] (full response)
+17. SetStoredProfileSetting (proc `0x54`) — mock must ACK writes of AnalShowerPressure, OscillatorState, LadyShowerPressure in Connection 2
+
+**Not needed:** proc `0x44` (PIN — physical button replaces app-layer auth).
 
 ---
 
@@ -233,7 +286,7 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 | Proc | Observed behaviour | Status |
 |------|-------------------|--------|
 | `0x05` | Returns 12 node IDs | New — not in bridge or known proc list |
-| `0x0E` | SPL batch query (may be `0x0D`) | Needs raw frame verification |
+| `0x0E` | GetFirmwareVersionList — arg = list of component IDs; called twice: [1,3,4,5,6,7,8,9,10,11,12,14] then [15]; returns RS/TS version strings. **Distinct from `0x0D`.** | Confirmed 2026-06-21 |
 | `0x11` | Node firmware version subscribe | New |
 | `0x13` | Node stored settings subscribe | New |
 

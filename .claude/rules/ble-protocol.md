@@ -197,8 +197,9 @@ The current `!= 0` check for "shower running" is correct, but temperature/pressu
 
 From `aquaclean-SILLY.log`:
 - `0x06` — GetActualOutletTemperature (not yet implemented in bridge)
-- `0x07` — per-node profile setting query (1-byte arg = node_id)
+- `0x07` — GetPerNodeProfileSetting (1-byte arg = node_id). During onboarding (Connection 1 button-detection cycle), the iOS app calls this for 10 nodes in order [04,02,05,03,09,01,00,0d,08,07]; device responds with InfoFrames on A5.
 - `0x08` — SetActiveProfileSetting: format `[arg_count=3, setting_id, value]` (confirmed OTA 2026-06-01)
+- `0x0E` — GetFirmwareVersionList: arg = list of component IDs (ints). iOS queries [1,3,4,5,6,7,8,9,10,11,12,14] then [15] during onboarding. Returns per-component version strings (RS/TS). Distinct from `0x0D` (GetSystemParameterList).
 - `0x09` — SetCommand (toggle/trigger)
 - `0x0A` / `0x0B` — `GetActiveCommonSetting` / `SetActiveCommonSetting` — confirmed from factory (RpcNumberGet=10, RpcNumberSet=11). Same setting ID space as 0x51/0x52. **Key difference: 0x0B applies immediately, no power cycle required.** iPhone uses these at init to restore orientation light settings (colour, brightness, mode). Bridge should use 0x0B to control orientation light at runtime.
 - `0x0D` — GetSystemParameterList (batched state poll)
@@ -206,7 +207,7 @@ From `aquaclean-SILLY.log`:
 - `0x53` / `0x54` — GetStoredProfileSetting / SetStoredProfileSetting
 - `0x55` — `GetDeviceRegistrationLevel` (RpcNumberGet=85 in AcDataPointDefinitionFactory); response = 0/1/2 ("Not registered" / "Registered as private device" / "Registered as public device"). App reads this at init to customise UI — **not used by the toilet device itself**. Bridge does NOT need to call it.
 - `0x56` — `SetDeviceRegistrationLevel` (RpcNumberSet=86); valid range 0–2 (the "value 257" in earlier notes was a misreading)
-- `0x59` — GetFilterStatus
+- `0x59` — GetFilterStatus. iOS onboarding queries this twice in sequence: first IDs [0–7] (returns empty — probe), then IDs [0–11] (returns days remaining, reset count, last reset date). Bridge uses IDs [0–7] only.
 - `0x81` — GetSOCApplicationVersions
 - `0x82` — GetDeviceIdentification
 - `0x86` — GetDeviceInitialOperationDate
