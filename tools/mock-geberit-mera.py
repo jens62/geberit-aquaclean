@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.8
+mock-geberit-mera.py v1.25.9
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import time
 import json
+import shutil
 from pathlib import Path
 
 # ---- add project root so bridge modules are importable without pip install ----
@@ -74,7 +75,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.8"
+_MOCK_VERSION = "1.25.9"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -127,8 +128,6 @@ _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
 _advert_lock: asyncio.Lock = None  # prevents concurrent _update_advert calls
-_sc_flush_done = False             # one-shot: SC flush applied; next iOS conn (Connection 3) is SC-free
-_sc_flush_fired = False            # True once _sc_flush actually called call_disconnect()
 
 
 async def _update_advert(state_b: int) -> None:
@@ -438,6 +437,23 @@ class MeraService(Service):
         return b"ro"
 
 
+class BatteryService(Service):
+    """Standard BLE Battery Service (0x180F).
+
+    BlueZ auto-registers its own Battery Service which requires authentication
+    (Insufficient Authentication, ATT error 0x05) for reads.  Registering our
+    own service overrides it with an unauthenticated READ, silencing the
+    spurious error from iOS without affecting the onboarding flow.
+    """
+
+    def __init__(self):
+        super().__init__("0000180f-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("00002a19-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def battery_level(self, options):
+        return bytes([100])
+
+
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
     """Advertisement matching the real Mera Comfort BLE payload (11-byte total).
@@ -626,12 +642,20 @@ async def main(web_port: int = 8765) -> None:
     logger.addHandler(_file_h)
     logger.info("Log: %s", _log_path.name)
 
-    # Restart the bluetooth daemon so BlueZ assigns fresh GATT handles.
-    # Without this, handles shift between runs and BlueZ sends Service Changed
-    # to iOS, causing chaotic GATT re-discovery that breaks Connection 1.
-    # Safe to call because the mock runs as root and no D-Bus session is open yet.
+    # Stop bluetoothd, clear bond records, then start — ensures BlueZ starts with
+    # no prior bond data so no authentication enforcement or SC subscription fires.
     logger.info("Restarting bluetooth daemon to reset GATT handle state...")
-    result = subprocess.run(["systemctl", "restart", "bluetooth"], capture_output=True)
+    subprocess.run(["systemctl", "stop", "bluetooth"], capture_output=True)
+    _hci_addr_path = Path("/sys/class/bluetooth/hci0/address")
+    if _hci_addr_path.exists():
+        _adapter_mac = _hci_addr_path.read_text().strip()
+        _bt_dev_dir = Path("/var/lib/bluetooth") / _adapter_mac
+        if _bt_dev_dir.is_dir():
+            for _e in _bt_dev_dir.iterdir():
+                if _e.is_dir() and len(_e.name) == 17 and _e.name.count(":") == 5:
+                    shutil.rmtree(_e, ignore_errors=True)
+                    logger.info("Removed bond record: %s", _e.name)
+    result = subprocess.run(["systemctl", "start", "bluetooth"], capture_output=True)
     if result.returncode == 0:
         logger.info("Bluetooth daemon restarted — waiting 2 s for adapter...")
         await asyncio.sleep(2)
@@ -675,10 +699,18 @@ async def main(web_port: int = 8765) -> None:
         except Exception as e:
             logger.warning("could not set adapter alias: %s", e)
 
-    # Register GATT service
+    # Prevent future bonding — real Geberit firmware never pairs
+    if adapter_path:
+        _hci_iface = adapter_path.split("/")[-1]
+        subprocess.run(["btmgmt", "-i", _hci_iface, "pairable", "off"], capture_output=True)
+        logger.info("Adapter set non-pairable (btmgmt pairable off)")
+
+    # Register GATT services
     service = MeraService()
+    battery_service = BatteryService()
     try:
         await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
+        await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
         logger.info("GATT service registered")
         for _attr in ("_characteristics", "_chars"):
             _chars_list = getattr(service, _attr, None)
@@ -734,49 +766,18 @@ async def main(web_port: int = 8765) -> None:
         proxy = bus.get_proxy_object("org.bluez", "/", intro)
         objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
 
-        async def _sc_flush(device_path: str) -> None:
-            # BlueZ sends Service Changed ~497ms after iOS connects (triggered when iOS
-            # enables SC CCCD handle 0x000B during MTU exchange). iOS simultaneously uses
-            # stale cached handles AND starts fresh GATT discovery → ATT Error 0x05 on
-            # handle 0x001B → 22-second chaos → Connection 2 (the clean retry) never happens.
-            # Fix: wait 700ms (SC fires at ~497ms; 200ms margin for iOS to receive it),
-            # then force-disconnect. iOS retries as Connection 3 with cleared cache and
-            # no pending SC → clean 18× Read By Type → onboarding proceeds.
-            # NOTE: total disconnect time is ~1400ms (700ms sleep + D-Bus round-trips).
-            await asyncio.sleep(0.7)
-            if not _connected:
-                return
-            try:
-                dev_intro = await bus.introspect("org.bluez", device_path)
-                dev_proxy = bus.get_proxy_object("org.bluez", device_path, dev_intro)
-                await dev_proxy.get_interface("org.bluez.Device1").call_disconnect()
-                global _sc_flush_fired
-                _sc_flush_fired = True
-                logger.info("[SC flush] SC flush applied — next iOS connection (Connection 3) will be SC-free")
-            except Exception as _e:
-                logger.warning("[SC flush] force-disconnect failed: %s", _e)
-
         def _on_device_connected(device_path: str, addr: str) -> None:
-            global _connected, _sc_flush_done, _sc_flush_fired
+            global _connected
             if _connected:
                 return  # deduplicate: InterfacesAdded and PropertiesChanged may both fire
             _connected = True
-            _sc_flush_fired = False  # reset per-connection; set True only if _sc_flush fires
             _log("·", f"BLE client connected: {addr}")
-            if not _sc_flush_done:
-                _sc_flush_done = True
-                asyncio.ensure_future(_sc_flush(device_path))
 
         def _on_device_disconnected(device_path: str) -> None:
-            global _connected, _button_pressed, _sc_flush_done, _sc_flush_fired
+            global _connected, _button_pressed
             if not _connected:
                 return
             _connected = False
-            if not _sc_flush_fired:
-                # Connection ended without the SC flush firing (spurious self-disconnect
-                # before 700ms, or SC flush failed). Restore the flush opportunity so the
-                # next real iOS connection still gets its SC flush.
-                _sc_flush_done = False
             if _button_pressed:
                 asyncio.ensure_future(_update_advert(0))
             _button_pressed = False
