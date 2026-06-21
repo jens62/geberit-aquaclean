@@ -229,34 +229,82 @@ called at app startup), not a button-state gate. It is always true for a legitim
 
 ---
 
-## iOS GATT cache — clearing mechanism (mock v1.21.0)
+## iOS GATT cache — clearing mechanism (mock v1.21.0, superseded by v1.25.x)
 
 iOS caches GATT handle maps per peripheral Bluetooth address across reboots for non-bonded
 peripherals. When the mock's handle layout changes between sessions (e.g. different version
 of `bluez_peripheral` or different characteristic ordering), iOS uses stale handles and
 receives ATT Invalid Handle errors → immediate disconnect → "connection failed" in App.
 
-**Fix: BlueZ GATT re-registration.** Calling `service.unregister()` followed by
-`service.register()` on the `ServiceCollection` causes BlueZ to detect a GATT database
-change and send a **Service Changed indication** on its built-in UUID 0x2A05 at handle
-0x0003 (CCCD at 0x0004). iOS has auto-subscribed to handle 0x0004, receives the indication,
-and discards its cached handle map.
+**v1.21.0 approach: deliberate BlueZ GATT re-registration.** Calling `service.unregister()`
+followed by `service.register()` on the `ServiceCollection` causes BlueZ to detect a GATT
+database change and send a **Service Changed indication** on its built-in UUID 0x2A05 at
+handle 0x0003 (CCCD at 0x0004). iOS discards its cached handle map.
 
-**One-shot flag:** re-registration fires only on the *first* connection per mock session
-(600ms after BLE connect). Once fired, `_service_changed_fired = True` prevents
-re-registration on subsequent connections, so iOS can complete uninterrupted GATT discovery.
-
-**Two-connection pattern:**
-1. Connection 1 — re-registration fires at 600ms → iOS receives Service Changed → disconnects
-   (App shows "connection failed") — **correct and expected**
-2. Connection 2 — re-registration skipped → iOS does fresh Read By Type 0x2803 handle-walking
-   → discovers Geberit chars → enables A5–A8 CCCDs → proceeds to Phase 2
+**ATT deadlock in v1.21.0 (why it was removed):** The re-registration at 600ms caused a
+deadlock — iOS had pending ATT Read By Type responses in flight; BlueZ was waiting for iOS's
+ATT_CONFIRMATION before delivering those responses; iOS was waiting for responses before
+sending ATT_CONFIRMATION. Removed in v1.25.x in favour of the SC flush approach (see below).
 
 **Pitfall: duplicate 0x2A05 in Geberit service (v1.18.0–v1.20.0).** Adding a custom
 `0x2A05` INDICATE characteristic inside the Geberit service created a second 0x2A05 at
 handle 0x0016. iOS probed handle 0x0016 mid-discovery, then Service Changed arrived from
 re-registration at 600ms and iOS aborted. Removed in v1.21.0 — only BlueZ's built-in
 0x2A05 (0x0001 service, handle 0x0003) is needed.
+
+---
+
+## iOS GATT cache — SC flush mechanism (v1.25.x, 2026-06-21)
+
+**Root cause confirmed from btsnoop** (`mock-geberit-mera_btmon_2026-06-21_15-57.btsnoop`):
+
+BlueZ automatically sends Service Changed (UUID `0x2A05`, handle `0x000A`, value `0100ffff`)
+whenever the GattApplication was freshly registered since the last connection. This is
+fundamental BlueZ behavior and cannot be suppressed.
+
+**SC fires at ~485–497ms after connection**, triggered when iOS enables the SC CCCD
+(handle `0x000B`) during the MTU exchange phase — before any Read By Type discovery.
+
+iOS receives SC and simultaneously:
+1. Starts fresh GATT discovery (`Read By Group Type`)
+2. Reads stale cached handles from the previous session
+
+Handle `0x001B` (A5 CCCD in the current GATT layout) is in the stale cache. BlueZ returns
+**ATT Error 0x05 (Insufficient Authentication)** — it blocks all ATT reads while the SC
+indication is pending acknowledgment from iOS. iOS enters 22 seconds of chaotic parallel
+ATT requests and then gives up. **Connection 2 never happens.**
+
+### SC flush — force-disconnect at 700ms
+
+Exploit the two-connection pattern: SC fires in Connection 1 and clears the iOS cache.
+Force-disconnect Connection 1 immediately after SC is received; iOS retries as Connection 2
+with a clean cache and no pending SC.
+
+1. **Connection 1** — SC fires automatically at ~497ms. Mock detects the connection and
+   schedules `_sc_flush` in 700ms (200ms after SC, enough for iOS to receive it).
+2. `_sc_flush` calls `org.bluez.Device1.Disconnect()`. iOS receives the disconnect and
+   immediately retries (no "connection failed" shown — it's part of the onboarding flow).
+3. **Connection 2** — BlueZ's "changed" flag is cleared (SC was already sent). iOS has no
+   stale cache (SC caused iOS to discard it). Clean 18× Read By Type discovery → all CCCDs
+   enabled → onboarding proceeds normally.
+
+`_sc_flush_done` one-shot flag ensures only Connection 1 is flushed.
+
+### Connection detection bug (v1.25.4) and fix (v1.25.5)
+
+`_sc_flush` was triggered from `_on_added` (ObjectManager `InterfacesAdded` signal).
+`InterfacesAdded` fires only when BlueZ creates a **new** Device1 object. iOS uses RPA
+(Random Private Address); after the first connection BlueZ caches the Device1 object for
+that address → `InterfacesAdded` silently skips on reconnect → `_sc_flush` never fires.
+
+**Confirmed from capture `mock-geberit-mera_btmon_2026-06-21_16-37.btsnoop`:** one iOS
+connection (RPA `67:10:94:...`), no "[SC flush]" log line, 22-second ATT timeout.
+
+**Fix (v1.25.5):** `bus.add_message_handler(_on_props_msg)` receives every D-Bus signal.
+When `org.bluez.Device1` → `Connected = True` fires, `_on_device_connected()` is called
+reliably for every connection regardless of address type. `_on_added`/`_on_removed` are
+kept as complementary fallback. Deduplication: `if _connected: return` in
+`_on_device_connected`.
 
 ---
 

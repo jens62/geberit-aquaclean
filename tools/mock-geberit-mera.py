@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.4
+mock-geberit-mera.py v1.25.5
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.4"
+_MOCK_VERSION = "1.25.5"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -724,7 +724,9 @@ async def main(web_port: int = 8765) -> None:
         "  article=%s  name='Geberit AC PRO'", _ARTICLE
     )
 
-    # Track BLE connections via ObjectManager (best-effort)
+    # Track BLE connections via ObjectManager + PropertiesChanged bus listener.
+    # InterfacesAdded fires only for new Device1 objects; PropertiesChanged fires for
+    # every Connected=True/False change including iOS RPA reconnects. Use both.
     global _connected, _button_pressed
     try:
         intro = await bus.introspect("org.bluez", "/")
@@ -732,11 +734,13 @@ async def main(web_port: int = 8765) -> None:
         objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
 
         async def _sc_flush(device_path: str) -> None:
-            # BlueZ automatically sends Service Changed ~497ms after iOS connects (triggered
-            # when iOS enables SC CCCD during MTU exchange). iOS then simultaneously uses
-            # its stale GATT cache AND starts fresh discovery → chaos → 22s timeout.
-            # Fix: wait 700ms (200ms after SC fires), then force-disconnect. iOS immediately
-            # retries (Connection 2) with cleared cache and no pending SC → clean discovery.
+            # BlueZ sends Service Changed ~497ms after iOS connects (triggered when iOS
+            # enables SC CCCD handle 0x000B during MTU exchange). iOS simultaneously uses
+            # stale cached handles AND starts fresh GATT discovery → ATT Error 0x05 on
+            # handle 0x001B → 22-second chaos → Connection 2 never happens.
+            # Fix: wait 700ms (SC fires at ~497ms; 200ms margin for iOS to receive it),
+            # then force-disconnect. iOS retries immediately as Connection 2 with cleared
+            # cache and no pending SC → clean 18× Read By Type → onboarding succeeds.
             await asyncio.sleep(0.7)
             if not _connected:
                 return
@@ -748,31 +752,61 @@ async def main(web_port: int = 8765) -> None:
             except Exception as _e:
                 logger.warning("[SC flush] force-disconnect: %s", _e)
 
-        def _on_added(path, ifaces):
+        def _on_device_connected(device_path: str, addr: str) -> None:
             global _connected, _sc_flush_done
+            if _connected:
+                return  # deduplicate: InterfacesAdded and PropertiesChanged may both fire
+            _connected = True
+            _log("·", f"BLE client connected: {addr}")
+            if not _sc_flush_done:
+                _sc_flush_done = True
+                asyncio.ensure_future(_sc_flush(device_path))
+
+        def _on_device_disconnected(device_path: str) -> None:
+            global _connected, _button_pressed
+            if not _connected:
+                return
+            _connected = False
+            if _button_pressed:
+                asyncio.ensure_future(_update_advert(0))
+            _button_pressed = False
+            _log("·", f"BLE client disconnected: {device_path}")
+
+        def _on_added(path, ifaces):
             if "org.bluez.Device1" in ifaces:
                 addr = ifaces["org.bluez.Device1"].get("Address", "?")
                 if hasattr(addr, "value"):
                     addr = addr.value
-                _connected = True
-                _log("·", f"BLE client connected: {addr}")
-                if not _sc_flush_done:
-                    _sc_flush_done = True
-                    asyncio.ensure_future(_sc_flush(path))
+                _on_device_connected(path, addr)
 
         def _on_removed(path, ifaces):
-            global _connected, _button_pressed
             if "org.bluez.Device1" in ifaces:
-                _connected = False
-                if _button_pressed:
-                    # Revert advertisement to state_B=0x00 for next scan cycle
-                    asyncio.ensure_future(_update_advert(0))
-                _button_pressed = False
-                _log("·", f"BLE client disconnected: {path}")
+                _on_device_disconnected(path)
+
+        def _on_props_msg(msg) -> None:
+            # Primary connection detection: PropertiesChanged fires for every connect/
+            # disconnect including iOS RPA reconnects where InterfacesAdded is silent.
+            if (msg.member != "PropertiesChanged" or
+                    not msg.body or msg.body[0] != "org.bluez.Device1"):
+                return
+            changed = msg.body[1]
+            if "Connected" not in changed:
+                return
+            val = changed["Connected"]
+            if hasattr(val, "value"):
+                val = val.value
+            dev_path = msg.path
+            # dev_XX_XX_XX_XX_XX_XX → XX:XX:XX:XX:XX:XX
+            addr = dev_path.split("/")[-1][4:].replace("_", ":")
+            if val:
+                _on_device_connected(dev_path, addr)
+            else:
+                _on_device_disconnected(dev_path)
 
         objmgr.on_interfaces_added(_on_added)
         objmgr.on_interfaces_removed(_on_removed)
-        logger.info("Connection tracking active")
+        bus.add_message_handler(_on_props_msg)
+        logger.info("Connection tracking active (InterfacesAdded + PropertiesChanged)")
     except Exception as e:
         logger.warning("connection tracking unavailable: %s", e)
 
