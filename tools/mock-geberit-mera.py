@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.5
+mock-geberit-mera.py v1.25.6
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.5"
+_MOCK_VERSION = "1.25.6"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -128,6 +128,7 @@ _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
 _advert_lock: asyncio.Lock = None  # prevents concurrent _update_advert calls
 _sc_flush_done = False             # one-shot: force-disconnect Connection 1 after SC fires
+_procedure_received = False        # True once any A5 write arrives; resets _sc_flush_done guard on spurious disconnect
 
 
 async def _update_advert(state_b: int) -> None:
@@ -400,6 +401,8 @@ class MeraService(Service):
 
     @write_0.setter
     def write_0(self, value, options):
+        global _procedure_received
+        _procedure_received = True
         raw = bytes(value)
         _log("←", f"WRITE_0 ({len(raw)}B): {raw.hex()}")
         asyncio.ensure_future(self._handle_request(raw))
@@ -410,6 +413,8 @@ class MeraService(Service):
 
     @write_1.setter
     def write_1(self, value, options):
+        global _procedure_received
+        _procedure_received = True
         raw = bytes(value)
         _log("←", f"WRITE_1 ({len(raw)}B): {raw.hex()}")
         asyncio.ensure_future(self._handle_request(raw))
@@ -753,20 +758,25 @@ async def main(web_port: int = 8765) -> None:
                 logger.warning("[SC flush] force-disconnect: %s", _e)
 
         def _on_device_connected(device_path: str, addr: str) -> None:
-            global _connected, _sc_flush_done
+            global _connected, _sc_flush_done, _procedure_received
             if _connected:
                 return  # deduplicate: InterfacesAdded and PropertiesChanged may both fire
             _connected = True
+            _procedure_received = False
             _log("·", f"BLE client connected: {addr}")
             if not _sc_flush_done:
                 _sc_flush_done = True
                 asyncio.ensure_future(_sc_flush(device_path))
 
         def _on_device_disconnected(device_path: str) -> None:
-            global _connected, _button_pressed
+            global _connected, _button_pressed, _sc_flush_done, _procedure_received
             if not _connected:
                 return
             _connected = False
+            if not _procedure_received:
+                # Spurious connection (non-iOS, or SC-chaos victim) — let next connection
+                # also get the SC flush opportunity.
+                _sc_flush_done = False
             if _button_pressed:
                 asyncio.ensure_future(_update_advert(0))
             _button_pressed = False
