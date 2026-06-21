@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.3
+mock-geberit-mera.py v1.25.4
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.3"
+_MOCK_VERSION = "1.25.4"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -127,6 +127,7 @@ _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
 _advert_lock: asyncio.Lock = None  # prevents concurrent _update_advert calls
+_sc_flush_done = False             # one-shot: force-disconnect Connection 1 after SC fires
 
 
 async def _update_advert(state_b: int) -> None:
@@ -730,14 +731,34 @@ async def main(web_port: int = 8765) -> None:
         proxy = bus.get_proxy_object("org.bluez", "/", intro)
         objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
 
+        async def _sc_flush(device_path: str) -> None:
+            # BlueZ automatically sends Service Changed ~497ms after iOS connects (triggered
+            # when iOS enables SC CCCD during MTU exchange). iOS then simultaneously uses
+            # its stale GATT cache AND starts fresh discovery → chaos → 22s timeout.
+            # Fix: wait 700ms (200ms after SC fires), then force-disconnect. iOS immediately
+            # retries (Connection 2) with cleared cache and no pending SC → clean discovery.
+            await asyncio.sleep(0.7)
+            if not _connected:
+                return
+            try:
+                dev_intro = await bus.introspect("org.bluez", device_path)
+                dev_proxy = bus.get_proxy_object("org.bluez", device_path, dev_intro)
+                await dev_proxy.get_interface("org.bluez.Device1").call_disconnect()
+                logger.info("[SC flush] Connection 1 force-disconnected — Connection 2 will be SC-free")
+            except Exception as _e:
+                logger.warning("[SC flush] force-disconnect: %s", _e)
+
         def _on_added(path, ifaces):
-            global _connected
+            global _connected, _sc_flush_done
             if "org.bluez.Device1" in ifaces:
                 addr = ifaces["org.bluez.Device1"].get("Address", "?")
                 if hasattr(addr, "value"):
                     addr = addr.value
                 _connected = True
                 _log("·", f"BLE client connected: {addr}")
+                if not _sc_flush_done:
+                    _sc_flush_done = True
+                    asyncio.ensure_future(_sc_flush(path))
 
         def _on_removed(path, ifaces):
             global _connected, _button_pressed
