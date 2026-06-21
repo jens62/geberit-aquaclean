@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.6
+mock-geberit-mera.py v1.25.7
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.6"
+_MOCK_VERSION = "1.25.7"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -815,6 +815,24 @@ async def main(web_port: int = 8765) -> None:
 
         objmgr.on_interfaces_added(_on_added)
         objmgr.on_interfaces_removed(_on_removed)
+
+        # add_message_handler only sees signals already DELIVERED to this bus connection.
+        # Without an explicit AddMatch rule, org.bluez PropertiesChanged signals are not
+        # delivered. on_interfaces_added works because dbus_fast adds its own match rule
+        # internally; add_message_handler has no such magic — we must add it ourselves.
+        try:
+            _dbus_intro = await bus.introspect("org.freedesktop.DBus", "/org/freedesktop/DBus")
+            _dbus_iface = bus.get_proxy_object(
+                "org.freedesktop.DBus", "/org/freedesktop/DBus", _dbus_intro
+            ).get_interface("org.freedesktop.DBus")
+            await _dbus_iface.call_add_match(
+                "type='signal',sender='org.bluez',"
+                "interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
+            )
+            logger.info("PropertiesChanged match rule registered")
+        except Exception as _me:
+            logger.warning("AddMatch PropertiesChanged failed: %s", _me)
+
         bus.add_message_handler(_on_props_msg)
         logger.info("Connection tracking active (InterfacesAdded + PropertiesChanged)")
     except Exception as e:
