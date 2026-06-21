@@ -149,6 +149,7 @@ _ATT_NOTIF         = 0x1B
 _ATT_IND           = 0x1D
 _ATT_WRITE_CMD     = 0x52
 _ATT_ERROR_RESP    = 0x01
+_ATT_CONFIRMATION  = 0x1E   # client→server ACK for Handle Value Indication (clears SC flag)
 
 _ATT_OP_NAMES = {
     _ATT_MTU_REQ:   "Exchange MTU Req",
@@ -163,6 +164,7 @@ _ATT_OP_NAMES = {
     _ATT_WRITE_RESP: "Write Resp",
     _ATT_NOTIF:     "Handle Value Notif",
     _ATT_IND:       "Handle Value Ind",
+    _ATT_CONFIRMATION: "Handle Value Confirmation",
     _ATT_WRITE_CMD: "Write Cmd",
     _ATT_ERROR_RESP: "Error Resp",
 }
@@ -495,6 +497,13 @@ def _decode_acl(ev: BtsnoopEvent, direction: str):
                       f"att_handle=0x{att_handle:04X}  "
                       f"len={len(value)}  value: {hex_val}")
 
+    elif att_op == _ATT_CONFIRMATION:
+        # iOS→server: ACK for a Handle Value Indication (e.g. Service Changed).
+        # Receiving this clears BlueZ's GATT "changed" flag — critical for SC flush analysis.
+        ev.kind = "att_confirmation"
+        ev.summary = (f"ATT Handle Value Confirmation  acl=0x{acl_handle:04X}  "
+                      f"← iOS ACK for SC indication (BlueZ 'changed' flag cleared)")
+
     elif att_op == _ATT_READ_REQ and len(att) >= 3:
         att_handle = struct.unpack_from("<H", att, 1)[0]
         ev.kind = "att_read_req"
@@ -680,7 +689,7 @@ def interesting_btsnoop(ev: BtsnoopEvent, att_only: bool) -> bool:
     if att_only:
         return ev.kind in ("connect", "disconnect", "disconnect_cmd",
                            "att_write", "att_write_req", "att_notif",
-                           "att_ind", "att_error", "mtu",
+                           "att_ind", "att_confirmation", "att_error", "mtu",
                            "ccc_enable", "ccc_disable",
                            "att_read_req", "att_read_resp",
                            "att_read_by_type_req", "att_read_by_type_resp",
@@ -1064,6 +1073,8 @@ def print_timeline(
             col = _COL_BTSNOOP_ATT_WRITE
         elif bev.kind in ("att_notif", "att_ind"):
             col = _COL_BTSNOOP_ATT_NOTIF
+        elif bev.kind == "att_confirmation":
+            col = "1;33"   # bold yellow — critical SC flush signal
         elif bev.kind == "mtu":
             col = _COL_BTSNOOP_MTU
         elif bev.kind == "adv_enable":

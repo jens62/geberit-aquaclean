@@ -953,13 +953,21 @@ no GATT client role in its firmware). Zero SMP frames appear in any real-device 
 The mock triggers this chain solely because `bluetoothd` runs as a general-purpose BLE host that
 proactively explores the peer's GATT services.
 
-**Fix — `_NoIOPairingAgent` (implemented in `mock-geberit-alba.py`):**
+**Fix — no pairing agent (current state in `mock-geberit-alba.py` v1.3.0+):**
 
-`mock-geberit-alba.py` registers an `org.bluez.Agent1` D-Bus object at startup with
-capability `"NoInputNoOutput"` and calls `RequestDefaultAgent`. When `bluetoothd` next
-attempts to pair with the iPhone, BlueZ invokes the agent's `RequestConfirmation` method;
-the agent auto-accepts (returns without raising), completing Just Works pairing silently.
-iOS no longer sees a rejection and the session proceeds to the application layer.
+The current fix is to register **no** BlueZ pairing agent. Without an agent, BlueZ
+replies "Pairing Not Supported" in ~5 ms. iOS CoreBluetooth resumes unencrypted ATT
+writes immediately and both DpId=8+9 arrive well within the app's 2000 ms window.
+
+Earlier version v1.2.0 registered a `_NoIOPairingAgent` (NoInputNoOutput / Just Works)
+to auto-accept pairing silently. This eliminated the "Pairing Failed" rejection but
+introduced a new problem: BlueZ ran a full LE Secure Connections key exchange (~4 s)
+before auto-rejecting the User Confirmation. During that window CoreBluetooth paused the
+ATT write queue, so DpId=9 (ReadRsTsVersion) never arrived inside the app's 2000 ms
+timeout → "cannot connect". The agent was removed in v1.3.0.
+
+Real Geberit firmware never appears in iOS Bluetooth Settings — it ignores SMP entirely.
+The mock matches this behaviour by having no agent registered.
 
 **Capture evidence (file: `Verbindungsversuch-zum-mockserver-mit-home-app-2.14.1.pcapng`):**
 
@@ -973,6 +981,22 @@ The sniffer WAS following the mock's MAC `a0:ad:9f:72:c4:f public` — the Wires
 device-follow toolbar confirmed this.  The inventory burst (78 notifications in 364 ms)
 caused a sniffer overrun so the notifications themselves are absent from the pcapng; the
 S-RR ACKs in the mock log confirm the iPhone received all 78 DpIds regardless.
+
+---
+
+### Troubleshooting — Mock server (Mera): app retries identically; CCCD reads return ATT Error 0x05
+
+Every CCCD read in every connection returns ATT Error 0x05 (Insufficient Authentication),
+even with no Service Changed outstanding and on a fresh connection. The app retries without
+visible change.
+
+Root cause: a pre-existing BlueZ bond between the test iPad/iPhone and the Linux VM
+adapter (from Bluetooth audio or another BR/EDR use) causes BlueZ to enforce bond-level
+security on all application-registered GATT attributes.
+
+Full diagnosis, detection steps, fix, and the SC-flush-as-red-herring investigation are
+documented in `docs/developer/test-infrastructure.md` → **"Trap: BlueZ Bond Record
+Causes ATT Error 0x05 on All App-Registered GATT CCCDs"**.
 
 ---
 

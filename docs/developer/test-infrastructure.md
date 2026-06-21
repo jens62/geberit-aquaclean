@@ -112,3 +112,152 @@ CSR chip family) does not support public address change via standard `btmgmt` co
 | `btmgmt static-addr C0:1A:7D:DA:71:14` | Succeeds in btmgmt, but `bluez_peripheral` reads `org.bluez.Adapter1.Address` (public/BD address) via D-Bus — unchanged |
 | `bccmd` (CSR-specific NVM tool) | Would work for CSR chips; not packaged on Ubuntu; needs compilation from BlueZ source extras |
 | `bdaddr` (BlueZ test utility, sends vendor HCI command) | Same — needs BlueZ source compilation |
+
+---
+
+## Mock Geberit Mera — Adapter
+
+| Component | Details |
+|-----------|---------|
+| BT adapter | ASUS USB-BT500 |
+| BT address | `A0:AD:9F:72:C4:0F` |
+| Chip vendor | Realtek (OUI `A0:AD:9F`) |
+| Advertising MAC | Real public MAC (not RPA) — confirmed 2026-06-15 |
+
+---
+
+## Trap: BlueZ Bond Record Causes ATT Error 0x05 on All App-Registered GATT CCCDs
+
+### Symptom
+
+Every CCCD read or write for application-registered NOTIFY/INDICATE characteristics returns
+ATT Error 0x05 (Insufficient Authentication), even on an unencrypted connection and with
+no Service Changed outstanding. BlueZ's own internal service CCCDs (Generic Attribute:
+SC CCCD at handle 0x000B, Client Supported Features) are **not** affected — only CCCDs
+registered by the Python application via `bluez_peripheral` show Error 0x05.
+
+The iOS/iPad app retries the connection identically each time (no visible change in app
+behaviour), because the CCCD enable fails on every attempt for the same reason.
+
+### Root cause
+
+If the iOS/iPad test device previously bonded with the Linux VM adapter (for any reason —
+Bluetooth audio, BR/EDR pairing, etc.), BlueZ stores a full bond in:
+
+```
+/var/lib/bluetooth/{adapter_mac}/{device_mac}/info
+```
+
+The `info` file contains `[IdentityResolvingKey]` (IRK) and `[PeripheralLongTermKey]`
+(LTK). When the device reconnects unencrypted, BlueZ:
+
+1. Resolves the RPA to the public address using the stored IRK
+2. Finds the bond record → determines the link should be encrypted
+3. Enforces bond-level security on **all application-registered GATT attributes**
+4. Returns ATT Error 0x05 on any CCCD read/write for those attributes
+
+Additionally, if the bond record contains `[ServiceChanged] CCC_LE=2`, BlueZ has a stored
+SC CCCD subscription for this device. After any `bluetoothd` restart (which reassigns GATT
+handles), BlueZ will send an SC indication on Connection 1, causing iOS to redo GATT
+discovery and delaying or disrupting the onboarding flow.
+
+### How to detect
+
+```bash
+# Check for bond records on the adapter:
+sudo ls -la /var/lib/bluetooth/A0:AD:9F:72:C4:0F/
+
+# Inspect a specific device's bond:
+sudo cat /var/lib/bluetooth/A0:AD:9F:72:C4:0F/88:66:5A:EF:F7:BC/info
+# A real bond has [IdentityResolvingKey] and [PeripheralLongTermKey] sections.
+# A plain connection cache has only [General] / [ConnectionParameters].
+```
+
+Confirmed instance (2026-06-21): iPad `88:66:5A:EF:F7:BC` had bonded with the Linux VM
+adapter for Bluetooth audio (BR/EDR). `Authenticated=2` (LE Secure Connections). The
+Geberit mock never paired with this iPad; the bond pre-existed from a different use of
+the same adapter.
+
+### Fix
+
+**No iOS action needed.** If iOS has already forgotten the device (bond visible on BlueZ
+side but absent from iPad Settings → Bluetooth → "Meine Geräte"), iOS will not try to
+re-establish encryption. Only the BlueZ side needs to be cleared.
+
+**On the mock (code change — v1.25.9):** clear the bond directory before restarting
+`bluetoothd` (the daemon must start with no bond data loaded), and set the adapter
+non-pairable immediately after adapter discovery:
+
+```python
+# In mock startup — between systemctl stop and systemctl start bluetooth:
+import shutil
+_bt_dir = Path(f"/var/lib/bluetooth/{adapter_mac}")
+for e in _bt_dir.iterdir():
+    if e.is_dir() and len(e.name) == 17 and e.name.count(':') == 5:
+        shutil.rmtree(e, ignore_errors=True)
+
+# After adapter is ready:
+subprocess.run(["btmgmt", "-i", hci_iface, "pairable", "off"], capture_output=True)
+```
+
+The real Mera Comfort has no bonding — the mock must match this behaviour.
+
+**Note — bond clearing also eliminates SC on Connection 1:** The bond record's
+`[ServiceChanged] CCC_LE=2` entry is a stored SC CCCD subscription. After any
+`bluetoothd` restart (which reassigns GATT handles), BlueZ sends an SC indication to
+this device on its next connection. Clearing the bond directory removes the subscription
+record — SC is never sent, and the SC flush mechanism in the mock becomes a no-op.
+
+**Note — bond clearing also eliminates the SC flush workaround:** The SC flush
+coroutine (force-disconnect Connection 1 at 700 ms) was removed in v1.25.9. With bond
+clearing, BlueZ starts with no stored `[ServiceChanged] CCC_LE=2` entry — SC is never
+sent, so the workaround is a no-op and can be safely removed.
+
+**Related — the SC flush was a red herring (2026-06-21 investigation):** The SC
+flush approach was investigated over several sessions because SC always fired on
+Connection 1. The btsnoop proved iOS sent ATT_CONFIRMATION within 60 ms of the SC
+indication (clearing the BlueZ "changed" flag), yet Error 0x05 still appeared on
+0x001B in Connection 2 (54 ms after the ACK) and persisted in Connection 3 with no
+SC at all. SC was not the cause — the pre-existing bond was. The SC fired *because*
+of the bond's stored SC subscription, not the other way around.
+
+---
+
+## Trap: BlueZ Battery Plugin Registers Auth-Required Characteristic at Handle 0x001B
+
+### Symptom
+
+After the bond is cleared (either manually or by the mock startup code), iOS does a
+full GATT discovery and successfully reads/writes multiple CCCDs — but then gets
+ATT Error 0x05 at handle 0x001B and BlueZ disconnects the link.
+
+### Root cause
+
+BlueZ ships a battery service plugin that auto-registers a Battery Level characteristic
+(UUID 0x2A19, Battery Service 0x180F) as a GATT server-side service. This
+plugin-registered characteristic requires authentication. In a post-bond-clear
+environment the Mera service's GATT handles land such that handle 0x001B is the
+Battery Level value — iOS reads it during GATT discovery, gets Error 0x05, and
+BlueZ disconnects.
+
+### Fix
+
+**On the mock (code change — v1.25.9):** register a `BatteryService` GATT service
+(READ-only, unauthenticated, returns 100%) at a lower D-Bus path than the plugin.
+BlueZ uses the application-registered service in preference to the plugin, exposing
+an unauthenticated Battery Level that iOS can read without error.
+
+This is the same pattern already used in `mock-geberit-alba.py`.
+
+### Apply the descriptor.py Python 3.12 patch
+
+`tools/patch_bluez_peripheral_py312.py` now patches **both** `characteristic.py` and
+`descriptor.py`. Run it after every `bluez_peripheral` reinstall:
+
+```bash
+sudo /home/jens/venv/bin/python3 tools/patch_bluez_peripheral_py312.py
+```
+
+The `descriptor.py` patch fixes the same Python 3.12 `Flag.__and__` regression in
+the CCCD descriptor's `Flags` D-Bus property — without it BlueZ may apply incorrect
+security policy to app-registered CCCDs.
