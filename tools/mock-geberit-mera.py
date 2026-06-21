@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.0
+mock-geberit-mera.py v1.25.3
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -24,6 +24,7 @@ Web UI: http://<vm-ip>:8766/
 
 import sys
 import asyncio
+import subprocess
 import argparse
 import hashlib
 import time
@@ -73,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.0"
+_MOCK_VERSION = "1.25.3"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -122,10 +123,10 @@ _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
 _session_log: list = []
 _button_pressed = False
 _connected = False
-_service_changed_fired = False   # one-shot: GATT re-registration fires only on first connection
 _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
+_advert_lock: asyncio.Lock = None  # prevents concurrent _update_advert calls
 
 
 async def _update_advert(state_b: int) -> None:
@@ -142,17 +143,18 @@ async def _update_advert(state_b: int) -> None:
     if _advert_bus is None or _advert_adapter is None:
         logger.warning("_update_advert: bus/adapter not initialised")
         return
-    try:
-        mgr = _advert_adapter._proxy.get_interface("org.bluez.LEAdvertisingManager1")
-        await mgr.call_unregister_advertisement(_ADVERT_PATH)
-    except Exception as e:
-        logger.warning("advert unregister: %s", e)
-    _advert = _MeraAdvertisement(state_b)
-    try:
-        await _advert.register(_advert_bus, _advert_adapter)
-        _log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}")
-    except Exception as e:
-        logger.error("advert re-register failed: %s", e)
+    async with _advert_lock:
+        try:
+            mgr = _advert_adapter._proxy.get_interface("org.bluez.LEAdvertisingManager1")
+            await mgr.call_unregister_advertisement(_ADVERT_PATH)
+        except Exception as e:
+            logger.warning("advert unregister: %s", e)
+        _advert = _MeraAdvertisement(state_b)
+        try:
+            await _advert.register(_advert_bus, _advert_adapter)
+            _log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}")
+        except Exception as e:
+            logger.error("advert re-register failed: %s", e)
 
 
 def _log(direction: str, msg: str) -> None:
@@ -374,35 +376,6 @@ class MeraService(Service):
         except Exception as e:
             _log("·", f"WARNING: push_notify failed: {e}")
 
-    async def trigger_bluez_service_changed(
-        self, bus, adapter_wrapper, path: str, delay_s: float = 0.15
-    ) -> None:
-        """Re-register GATT application to trigger BlueZ's built-in Service Changed.
-
-        Fires ONE TIME only (first connection). On first connection BlueZ re-registers
-        and sends Service Changed on handle 0x0003 to iOS; iOS discards its stale cache
-        and reconnects to do a fresh GATT discovery. On all subsequent connections the
-        flag is already set so re-registration is skipped and iOS can complete discovery
-        without interruption.
-        """
-        global _service_changed_fired
-        if _service_changed_fired:
-            logger.info("GATT re-register skipped — already fired once (cache cleared on first connect)")
-            return
-        await asyncio.sleep(delay_s)
-        await asyncio.sleep(0)  # flush D-Bus events so _connected reflects actual state
-        if not _connected:
-            logger.info("GATT re-register skipped — client disconnected before %.1fs delay", delay_s)
-            return
-        try:
-            _log("→", f"Re-registering GATT app (delay={delay_s:.1f}s) to trigger BlueZ Service Changed…")
-            await self.unregister()
-            await self.register(bus, path, adapter_wrapper)
-            _service_changed_fired = True
-            _log("→", "GATT re-registered — BlueZ sent Service Changed; subsequent connects will skip re-registration")
-        except Exception as e:
-            logger.warning("GATT re-register failed: %s", e)
-
     async def _handle_request(self, raw: bytes) -> None:
         if len(raw) < 11:
             _log("·", f"frame too short ({len(raw)} B) — ignored")
@@ -465,22 +438,27 @@ class MeraService(Service):
 
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
-    """Advertisement matching the real Mera Comfort BLE payload (11-byte variant).
+    """Advertisement matching the real Mera Comfort BLE payload (11-byte total).
 
-    Manufacturer-specific data layout (company 0x0100, 11 payload bytes):
-      byte[0]    state_A    0x00 normal | 0xAA = IsEmergencyConnectPermitted
-      byte[1]    fw_byte    firmware version indicator (not checked by iOS app — fixed 0x00)
-      byte[2]    state_B    0x00 normal | 0x01 = IsButtonPressed  ← iOS scans THIS byte
-      bytes[3-7] article    5-char ASCII article number
-      bytes[8-10]rs_fw      3-char RS firmware prefix ("30\x00")
+    BlueZ exposes manufacturer data as (company_id, payload). The iOS app receives the
+    full manufacturer-specific data INCLUDING the 2-byte company ID, so byte offsets
+    in AquaCleanProduct.cs are counted from the company ID:
 
-    Source: AquaCleanProduct.cs UpdateAdvertisingData():
-      IsButtonPressed          = (data[2] == 1)    ← byte[2] of manufacturer payload
-      IsEmergencyConnectPermitted = (data[0] == 0xAA)
+      full_data[0]   company ID low  0x00  (Geberit 0x0100) | 0xAA = IsEmergencyConnectPermitted
+      full_data[1]   company ID high 0x01
+      full_data[2]   payload[0]      state_b  0x00 idle | 0x01 = IsButtonPressed ← iOS reads THIS
+      full_data[3-7] payload[1-5]    article  5-char ASCII (e.g. "14621") → model detection
+      full_data[8]   payload[6]      0x00
+      full_data[9-10]payload[7-8]    RS fw prefix "30"
 
-    The iOS app's 15-second scan loop checks IsButtonPressed on every advertisement.
-    Only devices with IsButtonPressed=True are selected for Connection 1.
-    Changing state_B from 0x00→0x01 via _update_advert() is what triggers the connection.
+    Total: 2 (company ID) + 9 (payload) = 11 bytes — the "11-byte variant" in ble-protocol.md.
+
+    AquaCleanProduct.cs UpdateAdvertisingData():
+      IsButtonPressed             = (full_data[2] == 1)    ← payload[0] = state_b
+      IsEmergencyConnectPermitted = (full_data[0] == 0xAA) ← company ID low byte
+
+    The iOS 15-second scan loop selects a device only when IsButtonPressed=True.
+    _update_advert(1) sets state_b=0x01 → full_data[2]=0x01 → triggers Connection 1.
     """
 
     def __init__(self, state_b: int = 0):
@@ -490,7 +468,7 @@ class _MeraAdvertisement(Advertisement):
             appearance=0,
             timeout=0,
             manufacturerData={
-                0x0100: bytes([0x00, 0x00, state_b]) + _ARTICLE.encode("ascii") + b"30\x00"
+                0x0100: bytes([state_b]) + _ARTICLE.encode("ascii") + bytes([0x00]) + b"30"
             },
         )
 
@@ -604,6 +582,8 @@ async def _handle_root(request):
 async def _handle_button(request, service: MeraService):
     from aiohttp import web
     global _button_pressed
+    if _button_pressed:
+        raise web.HTTPFound("/")
     _button_pressed = True
     _log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
     await _update_advert(1)
@@ -634,12 +614,27 @@ async def _handle_clear_log(request):
 
 # ---- Main ----
 async def main(web_port: int = 8765) -> None:
+    global _advert_lock
+    _advert_lock = asyncio.Lock()
+
     # Auto-named log file alongside this script
     _log_path = Path(__file__).parent / f"mock-geberit-mera_{time.strftime('%Y-%m-%d_%H-%M')}.log"
     _file_h = _logging.FileHandler(_log_path, encoding="utf-8")
     _file_h.setFormatter(_log_fmt)
     logger.addHandler(_file_h)
     logger.info("Log: %s", _log_path.name)
+
+    # Restart the bluetooth daemon so BlueZ assigns fresh GATT handles.
+    # Without this, handles shift between runs and BlueZ sends Service Changed
+    # to iOS, causing chaotic GATT re-discovery that breaks Connection 1.
+    # Safe to call because the mock runs as root and no D-Bus session is open yet.
+    logger.info("Restarting bluetooth daemon to reset GATT handle state...")
+    result = subprocess.run(["systemctl", "restart", "bluetooth"], capture_output=True)
+    if result.returncode == 0:
+        logger.info("Bluetooth daemon restarted — waiting 2 s for adapter...")
+        await asyncio.sleep(2)
+    else:
+        logger.warning("bluetooth restart failed (rc=%d) — Service Changed may occur on first iOS connection", result.returncode)
 
     from aiohttp import web
 
@@ -743,7 +738,6 @@ async def main(web_port: int = 8765) -> None:
                     addr = addr.value
                 _connected = True
                 _log("·", f"BLE client connected: {addr}")
-                asyncio.ensure_future(service.trigger_bluez_service_changed(bus, adapter_wrapper, "/org/bluez/example/mera"))
 
         def _on_removed(path, ifaces):
             global _connected, _button_pressed
