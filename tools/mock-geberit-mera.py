@@ -782,10 +782,11 @@ async def main(web_port: int = 8765) -> None:
     service = MeraService()
     battery_service = BatteryService()
     try:
-        await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
-        await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
-    finally:
-        _MB._emit_interface_added = _orig_emit
+        try:
+            await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
+            await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
+        finally:
+            _MB._emit_interface_added = _orig_emit
         logger.info("GATT service registered")
         for _attr in ("_characteristics", "_chars"):
             _chars_list = getattr(service, _attr, None)
