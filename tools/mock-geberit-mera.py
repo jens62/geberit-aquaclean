@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.28.0"
+_MOCK_VERSION = "1.29.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -707,6 +707,15 @@ async def main(web_port: int = 8765) -> None:
                         capture_output=True,
                     )
                     logger.info("Unpaired bond record: %s", _e.name)
+
+    # Ensure the adapter is in pairable mode so BlueZ handles the battery-plugin
+    # pairing attempt gracefully ("Pairing Not Supported" in ~5 ms, connection
+    # continues) rather than immediately disconnecting with HCI reason 0x05.
+    # Without this, a lingering `btmgmt pairable off` from an older mock run
+    # (pre-v1.26.0, which called pairable off before switching to unpair) persists
+    # across mock restarts because we no longer restart bluetoothd.
+    subprocess.run(["btmgmt", "-i", "0", "pairable", "on"], capture_output=True)
+    logger.info("Adapter set to pairable=on")
 
     from aiohttp import web
 
