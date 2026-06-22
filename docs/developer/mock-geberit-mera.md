@@ -87,9 +87,11 @@ The Geberit Home App "Connection 1" onboarding requires this exact sequence:
 5. App calls GetDeviceIdentification (proc `0x82`), GetFirmwareVersionList (`0x0E`), and
    the standard polling procedures.
 
-The burst fires automatically 4 seconds after connection when `IsButtonPressed` was `True`
-at connect time. The 4 s delay avoids a race where the mock sends before the app has
-written the A6 CCCD.
+The burst fires automatically when iOS writes the A6 CCCD (enables A6 notify). The mock
+detects this by polling `notify_a6_char._notify` at 100 ms intervals and sends the burst
+the instant BlueZ sets it to `True`. A fixed timer MUST NOT be used — the timer always
+fires after iOS has already shown "cannot connect" and disconnected. Event-driven is the
+only correct approach (mock v1.32.0+).
 
 **Source:** nRF52840 capture of iOS app v2.14.1 against real Mera Comfort
 (`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/`).
@@ -121,9 +123,9 @@ each iOS device once per bluetoothd session. On the second connection (same RPA)
 the battery plugin skips already-probed devices → fully benign, connection proceeds
 normally. The Connection 1 flow succeeds on the second connection.
 
-The mock does **not** call `btmgmt pairable on` (v1.31.0+). Earlier versions
-(v1.29.0–v1.30.0) added this call, which was wrong — it caused the SMP pairing
-dialog. Do **not** add it back.
+The mock explicitly calls `btmgmt pairable off` at startup (v1.32.0+) to reset any
+lingering `pairable=on` state from older versions — that state persists across mock
+restarts because bluetoothd is not restarted. Do **not** change this to `pairable=on`.
 
 Do **not** add `DisablePlugins = battery` — it is not needed.
 
@@ -258,7 +260,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
 | All 7 char declarations visible | ✅ v1.30.0 (pre-registration InterfacesAdded fix) |
 | A6 InfoFrame burst (Connection 1 trigger) | ✅ v1.26.0 |
-| No pairing dialog (removed `btmgmt pairable on`) | ✅ v1.31.0 |
+| No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
 | GetDeviceIdentification (proc `0x82`) | ✅ |
 | GetFirmwareVersionList (proc `0x0E`) | ✅ |
@@ -266,4 +268,4 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
 | GetFilterStatus (proc `0x59`) | ✅ |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test on v1.31.0 |
+| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test on v1.32.0 |

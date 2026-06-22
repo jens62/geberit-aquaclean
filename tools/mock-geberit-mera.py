@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.31.0
+mock-geberit-mera.py v1.32.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.31.0"
+_MOCK_VERSION = "1.32.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -650,22 +650,31 @@ async def _handle_clear_log(request):
 
 
 async def _send_a6_connection_frames(service: MeraService, gen: int) -> None:
-    """Send A6 InfoFrame burst after iOS completes GATT setup.
+    """Send A6 InfoFrame burst as soon as iOS enables A6 notifications (CCCD write).
 
     The real device sends 9 frames immediately when CCCD-A6 is written
-    (~1.6 s after connect). A 4 s fixed delay gives iOS time to complete
-    GATT discovery across the larger BlueZ GATT table (~15 services vs the
-    real device) and write Geberit CCCDs before the burst fires.
-    iOS will not call GetDeviceIdentification until it receives this burst.
+    (~1.6 s after connect). This mock fires on the same event: it polls
+    notify_a6_char._notify at 100 ms intervals and sends the burst the
+    instant BlueZ sets it to True (triggered by iOS writing the A6 CCCD).
+
+    A fixed timer MUST NOT be used — it fires after iOS has already shown
+    "cannot connect" and disconnected. Event-driven is the only correct approach.
 
     gen: connection generation at the time this task was spawned. If the
-    connection was lost and a new one started before the 4 s delay expires,
-    _connection_gen will have advanced and this stale task exits without
-    sending — preventing a premature burst on the new connection's setup time.
+    connection was lost before the CCCD is written, _connection_gen will have
+    advanced and this stale task exits without sending.
     IsButtonPressed is NOT reset on disconnect; it resets here after the burst
     so that iOS can retry automatically after a battery-plugin-caused disconnect.
     """
-    await asyncio.sleep(4.0)
+    a6 = service._notify_a6_iface
+    for _ in range(80):          # max 8 s — iOS gives up well before this
+        if not _connected or _connection_gen != gen:
+            return
+        if a6 is not None and a6._notify:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        return                   # A6 CCCD never written within 8 s
     if not _connected or _connection_gen != gen:
         return
     _log("·", "Connection 1: sending A6 InfoFrame burst (9×)")
@@ -707,6 +716,12 @@ async def main(web_port: int = 8765) -> None:
                         capture_output=True,
                     )
                     logger.info("Unpaired bond record: %s", _e.name)
+
+    # Reset any lingering pairable=on state from older mock versions.
+    # pairable=on causes BlueZ to send an SMP Security Request to iOS → iOS shows
+    # a pairing dialog, interrupting the Connection 1 flow.  Always force off.
+    subprocess.run(["btmgmt", "-i", "0", "pairable", "off"], capture_output=True)
+    logger.info("Adapter set to pairable=off")
 
     from aiohttp import web
 
