@@ -289,3 +289,80 @@ sudo /home/jens/venv/bin/python3 tools/patch_bluez_peripheral_py312.py
 The `descriptor.py` patch fixes the same Python 3.12 `Flag.__and__` regression in
 the CCCD descriptor's `Flags` D-Bus property — without it BlueZ may apply incorrect
 security policy to app-registered CCCDs.
+
+Verify **both** files are patched:
+```bash
+grep -c "Python 3.12 Flag.__and__ regression" \
+  /home/jens/venv/lib/python3.12/site-packages/bluez_peripheral/gatt/characteristic.py
+grep -c "Python 3.12 Flag.__and__ regression" \
+  /home/jens/venv/lib/python3.12/site-packages/bluez_peripheral/gatt/descriptor.py
+# Both must return 1
+```
+
+---
+
+## Connection 1 Protocol — Real Mera Comfort BLE Sequence
+
+Source: `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1.md`
+
+Connection 1 is the button-press onboarding flow. iOS detects `IsButtonPressed=True` in
+the manufacturer-specific advertisement data and connects. The device must then drive the
+session by sending InfoFrames — iOS will not proceed otherwise.
+
+### Complete GATT sequence (relative time, iOS app v2.14.1)
+
+| Rel. time | Direction | Event |
+|-----------|-----------|-------|
+| +0.0s | iOS → device | Connects (RPA, unencrypted) |
+| +0.2–1.5s | iOS → device | GATT discovery: Read By Type UUID 0x2803 (char declarations), ~18 reads |
+| +1.3–1.5s | iOS → device | Write CCCD-A5, CCCD-A6, CCCD-A7: `0x0100` (notify enable) |
+| **+1.6s** | **device → iOS** | **9× notify on A6**: `800130140c030003000000003130001200b70800` |
+| +1.7s | iOS → device | Write CCCD-A8: `0x0100` |
+| +1.7s | iOS → device | GetDeviceIdentification (proc 0x82) |
+| +1.8s | iOS → device | GetNodeList |
+| +1.9s | iOS → device | GetSOCApplicationVersions (proc 0x81) |
+| +2.3–2.4s | iOS → device | GetFirmwareVersionList (proc 0x0E): nodes [1–12,14] then [15] |
+| +2.5s | device → iOS | notify on A8: `160b303716000c303712000e30371b0000000000` |
+| +2.7–3.2s | iOS → device | SubscribeNotif_0x11 (×4) and 0x13 (×4) |
+| +5.3s | iOS → device | Read Device Name (UUID 0x2A00) → "ro" |
+| +5.3–12.1s | — | **6.8-second silence** — iOS waits, device sends nothing |
+| +12.1–13.6s | iOS → device | Proc 0x07 to 10 nodes: [04, 02, 05, 03, 09, 01, 00, 0d, 08, 07] |
+| +12.1–13.6s | device → iOS | notify on A5 after each node query (A5 InfoFrames) |
+| +13.7s+ | iOS → device | Profile settings init (proc 0x0A), Common settings (proc 0x51), SPL, GetFilterStatus |
+
+### Key trigger: A6 InfoFrame burst
+
+iOS does **not** proceed to GetDeviceIdentification until it receives at least one
+notify on A6. The real device sends the burst immediately when CCCD-A6 is written —
+on the same BLE connection event. The frame is repeated 9× (6 after CCCD-A5/A6/A7,
+3 more after CCCD-A8):
+
+```
+80 01 30 14 0c 03 00 03 00 00 00 00 31 30 00 12 00 b7 08 00
+```
+
+### The "hold the button" mechanics
+
+The app instructs the user to hold the toilet button. In BLE terms this maps to:
+
+1. **Advertisement with `IsButtonPressed=True`** → iOS connects
+2. **iOS writes CCCDs → device sends A6 InfoFrame burst** → iOS proceeds with identification
+3. **6.8-second gap** → iOS waits (physical hold confirmation); device is completely silent
+4. **Proc 0x07 to 10 nodes** → iOS polls each node for button state; device responds with
+   A5 InfoFrames confirming the button is still pressed
+5. **iOS proceeds** with profile and common settings init
+
+A single web UI "Button pressed" click is sufficient to start the flow — the physical
+hold duration is reflected in the mock by responding correctly to proc 0x07 (if the mock
+sends the right A5 InfoFrames, iOS concludes the button is held and proceeds).
+
+### Mock implementation gaps (v1.25.12, 2026-06-22)
+
+| Gap | Symptom | Fix needed |
+|-----|---------|------------|
+| No A6 InfoFrames after CCCD write | iOS waits indefinitely after GATT setup | Send 9× A6 frame after CCCD-A6 is enabled |
+| Wrong InfoFrame format | `_build_info_frame()` returns `0x91 0x01 0x00…`; real frame starts `0x80` | Fix `_build_info_frame()` |
+| Proc 0x07 returns empty | iOS gets no A5 InfoFrames; button state unconfirmed | Implement proc 0x07 response with A5 notify |
+
+Current test result (v1.25.12, attempt 2, 2026-06-22): iOS connects, completes GATT
+discovery, reads "ro" — then waits 17 s for A6 InfoFrames that never arrive, times out.
