@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.9
+mock-geberit-mera.py v1.25.10
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -75,7 +75,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.9"
+_MOCK_VERSION = "1.25.10"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -641,6 +641,20 @@ async def main(web_port: int = 8765) -> None:
     _file_h.setFormatter(_log_fmt)
     logger.addHandler(_file_h)
     logger.info("Log: %s", _log_path.name)
+
+    # Disable BlueZ battery plugin: without this, bluetoothd automatically reads
+    # Battery Level (UUID 0x2A19) from the connected iOS device as a GATT client.
+    # iOS requires authentication for that read, returns ATT Error 0x05, and BlueZ
+    # immediately disconnects with HCI reason=0x05 (Authentication Failure) —
+    # before the app ever writes to the mock.  Using --noplugin=battery stops
+    # bluetoothd from probing the peer's battery GATT service entirely.
+    _bt_override_dir = Path("/etc/systemd/system/bluetooth.service.d")
+    _bt_override_dir.mkdir(parents=True, exist_ok=True)
+    (_bt_override_dir / "noplugin-battery.conf").write_text(
+        "[Service]\nExecStart=\nExecStart=/usr/lib/bluetooth/bluetoothd --noplugin=battery\n"
+    )
+    subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+    logger.info("BlueZ battery plugin disabled via systemd drop-in (--noplugin=battery)")
 
     # Stop bluetoothd, clear bond records, then start — ensures BlueZ starts with
     # no prior bond data so no authentication enforcement or SC subscription fires.
