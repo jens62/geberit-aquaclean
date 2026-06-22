@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.26.1"
+_MOCK_VERSION = "1.27.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -92,9 +92,13 @@ from bluez_peripheral.util import Adapter
 if "dbus_fast" in sys.modules:
     from dbus_fast.aio import MessageBus
     from dbus_fast import BusType, Variant
+    from dbus_fast.service import dbus_property
+    from dbus_fast.constants import PropertyAccess
 else:
     from dbus_next.aio import MessageBus
     from dbus_next import BusType, Variant
+    from dbus_next.service import dbus_property
+    from dbus_next.constants import PropertyAccess
 
 # ---- GATT UUIDs (Geberit AquaClean — matches BluetoothLeConnector constants) ----
 _SVC_UUID       = "3334429d-90f3-4c41-a02d-5cb3a03e0000"
@@ -354,6 +358,12 @@ class MeraService(Service):
 
     def wire_notify_a6(self, iface) -> None:
         self._notify_a6_iface = iface
+
+    @dbus_property(PropertyAccess.READ)
+    def Includes(self) -> "ao":  # type: ignore
+        # bluez_peripheral 0.1.7 bug: base class unconditionally appended self._path,
+        # creating a self-include declaration that displaces A6–A8/A1/A2 char declarations.
+        return []
 
     async def push_notify(self, frame: bytes) -> None:
         """Send an ATT notification on A5."""
