@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.32.0
+mock-geberit-mera.py v1.33.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.32.0"
+_MOCK_VERSION = "1.33.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -790,7 +790,10 @@ async def main(web_port: int = 8765) -> None:
     try:
         try:
             await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
-            await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
+            # DIAGNOSTIC v1.33.0b1: battery_service registration skipped to test whether
+            # registering battery on the same bus corrupts the mera GATT char decls.
+            # If all 7 mera char decls are now visible, the fix is a separate bus for battery.
+            # await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
         finally:
             _MB._emit_interface_added = _orig_emit
         logger.info("GATT service registered")
