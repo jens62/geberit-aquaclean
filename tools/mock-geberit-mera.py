@@ -29,7 +29,6 @@ import argparse
 import hashlib
 import time
 import json
-import shutil
 from pathlib import Path
 
 # ---- add project root so bridge modules are importable without pip install ----
@@ -75,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.11"
+_MOCK_VERSION = "1.25.12"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -642,10 +641,11 @@ async def main(web_port: int = 8765) -> None:
     logger.addHandler(_file_h)
     logger.info("Log: %s", _log_path.name)
 
-    # Stop bluetoothd, clear bond records, then start — ensures BlueZ starts with
-    # no prior bond data so no authentication enforcement or SC subscription fires.
-    logger.info("Restarting bluetooth daemon to reset GATT handle state...")
-    subprocess.run(["systemctl", "stop", "bluetooth"], capture_output=True)
+    # Clear any bond records without restarting the daemon.
+    # btmgmt unpair removes the device (including stored IRK) from BlueZ memory and
+    # disk — iOS's RPA cannot resolve to a bonded identity, preventing auth
+    # enforcement on CCCDs.  Skipping the daemon restart preserves the battery
+    # plugin's per-session device cache (see test-infrastructure.md).
     _hci_addr_path = Path("/sys/class/bluetooth/hci0/address")
     if _hci_addr_path.exists():
         _adapter_mac = _hci_addr_path.read_text().strip()
@@ -653,14 +653,11 @@ async def main(web_port: int = 8765) -> None:
         if _bt_dev_dir.is_dir():
             for _e in _bt_dev_dir.iterdir():
                 if _e.is_dir() and len(_e.name) == 17 and _e.name.count(":") == 5:
-                    shutil.rmtree(_e, ignore_errors=True)
-                    logger.info("Removed bond record: %s", _e.name)
-    result = subprocess.run(["systemctl", "start", "bluetooth"], capture_output=True)
-    if result.returncode == 0:
-        logger.info("Bluetooth daemon restarted — waiting 2 s for adapter...")
-        await asyncio.sleep(2)
-    else:
-        logger.warning("bluetooth restart failed (rc=%d) — Service Changed may occur on first iOS connection", result.returncode)
+                    subprocess.run(
+                        ["btmgmt", "-i", "0", "unpair", _e.name],
+                        capture_output=True,
+                    )
+                    logger.info("Unpaired bond record: %s", _e.name)
 
     from aiohttp import web
 

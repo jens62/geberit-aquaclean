@@ -223,31 +223,59 @@ of the bond's stored SC subscription, not the other way around.
 
 ---
 
-## Trap: BlueZ Battery Plugin Registers Auth-Required Characteristic at Handle 0x001B
+## Trap: BlueZ Battery Plugin Reads iOS Battery Level — ATT Error 0x05 → Disconnect
 
 ### Symptom
 
-After the bond is cleared (either manually or by the mock startup code), iOS does a
-full GATT discovery and successfully reads/writes multiple CCCDs — but then gets
-ATT Error 0x05 at handle 0x001B and BlueZ disconnects the link.
+After the bond is cleared, iOS connects and GATT discovery proceeds normally — both
+sides exchange service and characteristic lists, CCCDs are written successfully — but
+then BlueZ disconnects with HCI reason=0x05 (Authentication Failure).
+
+The btsnoop sequence is always:
+```
+ATT Read Req  att_handle=0x001B          ← mock/BlueZ reading FROM iOS
+ATT Error Resp  handle=0x001B  error=0x05
+HCI_CMD Disconnect  reason=0x05          ← local host terminates
+```
 
 ### Root cause
 
-BlueZ ships a battery service plugin that auto-registers a Battery Level characteristic
-(UUID 0x2A19, Battery Service 0x180F) as a GATT server-side service. This
-plugin-registered characteristic requires authentication. In a post-bond-clear
-environment the Mera service's GATT handles land such that handle 0x001B is the
-Battery Level value — iOS reads it during GATT discovery, gets Error 0x05, and
-BlueZ disconnects.
+BlueZ acts as a **GATT client** to iOS (the remote device) and discovers iOS's full
+service table — including iOS's Battery Service (0x180F) at handles 0x0019–0x001C.
+BlueZ's battery plugin reads the Battery Level at handle 0x001B on iOS. iOS requires
+authentication for this characteristic and returns ATT Error 0x05 (Insufficient
+Authentication). BlueZ then disconnects.
 
-### Fix
+This happens on **every** mock start if the `bluetoothd` daemon was restarted —
+a fresh daemon clears the battery plugin's per-session device cache. The plugin has
+no record of the previous failure for this iOS RPA, so it retries the battery read
+unconditionally.
 
-**On the mock (code change — v1.25.9):** register a `BatteryService` GATT service
-(READ-only, unauthenticated, returns 100%) at a lower D-Bus path than the plugin.
-BlueZ uses the application-registered service in preference to the plugin, exposing
-an unauthenticated Battery Level that iOS can read without error.
+The `mock-geberit-alba.py` mock is unaffected because it **never restarts `bluetoothd`**:
+the battery plugin's cache persists across mock restarts, and after the first failed
+read for a given iOS RPA the plugin skips all subsequent reads for that RPA within
+the same daemon session.
 
-This is the same pattern already used in `mock-geberit-alba.py`.
+### Fix (v1.25.12)
+
+**Do not restart `bluetoothd`** in mock startup. Use `btmgmt unpair` to clear bond
+records from BlueZ memory and disk without a daemon restart. The battery plugin cache
+is preserved, so after the first failed battery read (if any) for a given iOS RPA,
+all subsequent connections in the same `bluetoothd` session proceed without the
+battery read:
+
+```python
+subprocess.run(["btmgmt", "-i", "0", "unpair", device_mac], capture_output=True)
+```
+
+**First connection after a system reboot** (fresh `bluetoothd` with empty cache) may
+still drop immediately — the battery plugin retries once. Pressing "Connection 1" a
+second time in the app succeeds. All subsequent connection attempts within the same
+daemon session succeed without retry.
+
+**BatteryService is still registered** (added v1.25.9) as a precaution in case iOS
+reads the mock's own battery level later in the connection, though this direction has
+not been observed as the cause of disconnect.
 
 ### Apply the descriptor.py Python 3.12 patch
 
