@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.25.11
+mock-geberit-mera.py v1.30.0
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.29.0"
+_MOCK_VERSION = "1.30.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -754,12 +754,38 @@ async def main(web_port: int = 8765) -> None:
         except Exception as e:
             logger.warning("could not set adapter alias: %s", e)
 
-    # Register GATT services
+    # Register GATT services.
+    #
+    # Why _emit_interface_added is suppressed:
+    # dbus_next queues all D-Bus messages for async sending.  When bus.export()
+    # is called for each characteristic inside service.register(), it fires
+    # _emit_interface_added(), which queues an InterfacesAdded signal for that
+    # characteristic.  Because the queue is FIFO, ALL 7 InterfacesAdded signals
+    # are sent to BlueZ BEFORE the RegisterApplication method call arrives.
+    # BlueZ processes those pre-registration signals and creates preliminary
+    # handle allocations for all 7 characteristics.  When RegisterApplication
+    # then arrives and BlueZ calls GetManagedObjects, BlueZ's GDBusClient watcher
+    # dedup logic sees characteristics 2–6 as already tracked and skips creating
+    # ATT Characteristic Declaration (0x2803) attributes for them.  Result:
+    # only 3a2b and A5 get char decls; A6–A8, A1, A2 are handle-allocated but
+    # invisible to ATT Read By Type uuid=0x2803 — iOS cannot find A6 and the
+    # Connection 1 flow fails.
+    #
+    # Fix: suppress _emit_interface_added during the initial export so BlueZ
+    # learns about all characteristics exclusively via GetManagedObjects.
+    # bus.export() still adds every characteristic to _path_exports (line 120
+    # of message_bus.py runs before _emit_interface_added), so GetManagedObjects
+    # returns all 7 and BlueZ creates char decls for all 7.
+    from dbus_next.message_bus import BaseMessageBus as _MB
+    _orig_emit = _MB._emit_interface_added
+    _MB._emit_interface_added = lambda *a, **kw: None
     service = MeraService()
     battery_service = BatteryService()
     try:
         await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
         await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
+    finally:
+        _MB._emit_interface_added = _orig_emit
         logger.info("GATT service registered")
         for _attr in ("_characteristics", "_chars"):
             _chars_list = getattr(service, _attr, None)
