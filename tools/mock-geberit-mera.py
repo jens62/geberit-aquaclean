@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.33.0b1
+mock-geberit-mera.py v1.34.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.33.0b1"
+_MOCK_VERSION = "1.34.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -782,21 +782,38 @@ async def main(web_port: int = 8765) -> None:
     # bus.export() still adds every characteristic to _path_exports (line 120
     # of message_bus.py runs before _emit_interface_added), so GetManagedObjects
     # returns all 7 and BlueZ creates char decls for all 7.
+    # v1.34.0b1: pre-cleanup — unregister any stale GATT application from a previous
+    # mock run that exited without calling UnregisterApplication.  BlueZ retains
+    # GDBusClient watcher entries for those paths; stale entries cause it to skip
+    # creating ATT Characteristic Declarations (0x2803) for chars 2–6 on the next
+    # RegisterApplication, leaving only 3a2b + A5 visible to iOS.
+    try:
+        _gatt_manager = adapter_wrapper._proxy.get_interface("org.bluez.GattManager1")
+        await _gatt_manager.call_unregister_application("/org/bluez/example/mera")
+        logger.info("Pre-cleanup: removed stale GATT application /org/bluez/example/mera")
+    except Exception as _e:
+        logger.debug("Pre-cleanup: no stale GATT app (OK on first run): %s", _e)
+
     from dbus_next.message_bus import BaseMessageBus as _MB
     _orig_emit = _MB._emit_interface_added
-    _MB._emit_interface_added = lambda *a, **kw: None
+    _emit_count = [0]
+
+    def _counting_emit(*a, **kw):
+        _emit_count[0] += 1
+        # intentionally suppressed — do not forward to BlueZ
+
+    _MB._emit_interface_added = _counting_emit
     service = MeraService()
     battery_service = BatteryService()
     try:
         try:
             await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
-            # DIAGNOSTIC v1.33.0b1: battery_service registration skipped to test whether
-            # registering battery on the same bus corrupts the mera GATT char decls.
-            # If all 7 mera char decls are now visible, the fix is a separate bus for battery.
-            # await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
+            await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
         finally:
             _MB._emit_interface_added = _orig_emit
-        logger.info("GATT service registered")
+        logger.info("GATT service registered (suppressed %d InterfacesAdded signals)", _emit_count[0])
+        _exported = list(getattr(bus, "_path_exports", {}).keys())
+        logger.info("D-Bus exported paths (%d): %s", len(_exported), _exported)
         for _attr in ("_characteristics", "_chars"):
             _chars_list = getattr(service, _attr, None)
             if _chars_list:
