@@ -102,30 +102,28 @@ Two independent mechanisms interact when an iOS device connects for the first ti
 a bluetoothd session:
 
 1. **BlueZ battery plugin (GATT client)** — BlueZ immediately reads Battery Level
-   (handle `0x001B`) from the *connected iOS device's* GATT server. iOS returns
-   `0x05` (Insufficient Authentication). BlueZ then tries to initiate pairing.
-   - `pairable=on` (correct state): pairing fails gracefully — "Pairing Not Supported"
-     in ~5 ms (no agent registered) — **connection continues**.
-   - `pairable=off` (wrong state): BlueZ cannot start pairing → immediately disconnects
-     with HCI reason `0x05` → **first connection killed at ~3 s**.
+   from the *connected iOS device's* GATT server. iOS returns `0x05` (Insufficient
+   Authentication). BlueZ then tries to initiate pairing.
+   - `pairable=on` (**wrong**): BlueZ sends an SMP Security Request to iOS — iOS
+     shows a "Kopplungsanforderung" (pairing dialog) to the user, interrupting the
+     Connection 1 flow. **Do not set `btmgmt pairable on`.**
+   - `pairable=off` (BlueZ default): BlueZ cannot start pairing → immediately
+     disconnects with HCI reason `0x05` → **first connection killed at ~3 s**.
+     This is acceptable — the first connection dying is expected behavior.
 
 2. **iOS GATT client reads mock Battery Level** — iOS reads the mock's own Battery
    Level characteristic during GATT discovery. The mock registers a `BatteryService`
    (UUID `0x180F`) that returns `bytes([100])` without authentication, so iOS sees a
    clean value and does not disconnect.
 
-**Required setup (handled by mock at startup):** `btmgmt pairable on` (v1.29.0+).
-Older mock versions called `btmgmt pairable off`, and that state persisted across
-restarts because the mock no longer restarts bluetoothd. Without explicitly resetting
-to `pairable=on`, the battery plugin kills the first connection.
+**First connection dying is expected and harmless.** The battery plugin only probes
+each iOS device once per bluetoothd session. On the second connection (same RPA),
+the battery plugin skips already-probed devices → fully benign, connection proceeds
+normally. The Connection 1 flow succeeds on the second connection.
 
-Note: the "partial GATT table missing A6–A8" mentioned in earlier notes was caused by
-the pre-registration InterfacesAdded race (see Known Issues — fixed in v1.30.0), not
-by the battery plugin disconnect. The battery plugin only affects first-connection
-survival; the 2-char-decl issue is independent and was present on every connection.
-
-**Second connect with the same RPA**: battery plugin skips already-probed devices →
-fully benign, connection proceeds normally.
+The mock does **not** call `btmgmt pairable on` (v1.31.0+). Earlier versions
+(v1.29.0–v1.30.0) added this call, which was wrong — it caused the SMP pairing
+dialog. Do **not** add it back.
 
 Do **not** add `DisablePlugins = battery` — it is not needed.
 
@@ -253,14 +251,14 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.30.0 (2026-06-22)
+## Current status — mock v1.31.0 (2026-06-22)
 
 | Feature | Status |
 |---------|--------|
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
 | All 7 char declarations visible | ✅ v1.30.0 (pre-registration InterfacesAdded fix) |
 | A6 InfoFrame burst (Connection 1 trigger) | ✅ v1.26.0 |
-| Battery plugin survives first connection | ✅ v1.25.11 + v1.29.0 |
+| No pairing dialog (removed `btmgmt pairable on`) | ✅ v1.31.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
 | GetDeviceIdentification (proc `0x82`) | ✅ |
 | GetFirmwareVersionList (proc `0x0E`) | ✅ |
@@ -268,4 +266,4 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
 | GetFilterStatus (proc `0x59`) | ✅ |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test on v1.30.0 |
+| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test on v1.31.0 |
