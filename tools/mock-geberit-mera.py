@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.25.12"
+_MOCK_VERSION = "1.26.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -104,6 +104,12 @@ _NOTIFY_A5_UUID = "3334429d-90f3-4c41-a02d-5cb3a53e0000"   # handle 0x000F (prim
 _NOTIFY_A6_UUID = "3334429d-90f3-4c41-a02d-5cb3a63e0000"   # handle 0x0013
 _NOTIFY_A7_UUID = "3334429d-90f3-4c41-a02d-5cb3a73e0000"   # handle 0x0017
 _NOTIFY_A8_UUID = "3334429d-90f3-4c41-a02d-5cb3a83e0000"   # handle 0x001B
+
+# A6 InfoFrame burst — sent 9× immediately after iOS enables CCCD-A6.
+# This is the Connection 1 trigger: iOS will not call GetDeviceIdentification
+# until it receives at least one notify on A6.
+# Source: nRF capture of iOS app v2.14.1 against real Mera Comfort.
+_A6_INFO_FRAME = bytes.fromhex("800130140c030003000000003130001200b70800")
 _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B — short form required for BlueZ Read By Type match)
 
 # ---- Device identity ----
@@ -232,20 +238,6 @@ def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
     return frames
 
 
-def _build_info_frame() -> bytes:
-    """Build an InfoFrame sent as unsolicited notify on button press.
-
-    FrameType=INFO=4: bits[7:5]=0b100 → 0x80
-    HasMsgType=True (bit4) + IsSubFrameCount=True (bit0): 0x80|0x10|0x01 = 0x91
-    Body byte 1 = 0x01 (button-pressed state hint).
-    InfoFrames are spontaneous device events — not CrcMessage-wrapped.
-    """
-    frame = bytearray(20)
-    frame[0] = 0x91   # INFO, HasMsgType, IsSubFrameCount
-    frame[1] = 0x01   # state: button pressed
-    return bytes(frame)
-
-
 # ---- Procedure dispatch ----
 def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     """Return list of 20-byte frames for the response to proc."""
@@ -355,9 +347,13 @@ class MeraService(Service):
         super().__init__(_SVC_UUID, True)
         self._notify_value = bytes(20)
         self._notify_iface = None         # wired after register() via wire_notify()
+        self._notify_a6_iface = None      # wired after register() via wire_notify_a6()
 
     def wire_notify(self, iface) -> None:
         self._notify_iface = iface
+
+    def wire_notify_a6(self, iface) -> None:
+        self._notify_a6_iface = iface
 
     async def push_notify(self, frame: bytes) -> None:
         """Send an ATT notification on A5."""
@@ -375,6 +371,22 @@ class MeraService(Service):
                 )
         except Exception as e:
             _log("·", f"WARNING: push_notify failed: {e}")
+
+    async def push_notify_a6(self, frame: bytes) -> None:
+        """Send an ATT notification on A6."""
+        _log("→", f"NOTIFY A6 ({len(frame)}B): {frame.hex()}")
+        if self._notify_a6_iface is None:
+            _log("·", "WARNING: A6 notify interface not wired — cannot push frame")
+            return
+        try:
+            if hasattr(self._notify_a6_iface, "changed"):
+                self._notify_a6_iface.changed(frame)
+            else:
+                self._notify_a6_iface.emit_properties_changed(
+                    {"Value": Variant("ay", list(frame))}
+                )
+        except Exception as e:
+            _log("·", f"WARNING: push_notify_a6 failed: {e}")
 
     async def _handle_request(self, raw: bytes) -> None:
         if len(raw) < 11:
@@ -604,9 +616,6 @@ async def _handle_button(request, service: MeraService):
     _button_pressed = True
     _log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
     await _update_advert(1)
-    # If Connection 1 is already active, also push an InfoFrame (harmless if not connected)
-    if _connected:
-        await service.push_notify(_build_info_frame())
     raise web.HTTPFound("/")
 
 
@@ -627,6 +636,23 @@ async def _handle_clear_log(request):
     from aiohttp import web
     _session_log.clear()
     raise web.HTTPFound("/")
+
+
+async def _send_a6_connection_frames(service: MeraService) -> None:
+    """Send A6 InfoFrame burst after iOS completes GATT setup.
+
+    The real device sends 9 frames immediately when CCCD-A6 is written
+    (~1.6 s after connect). A 2 s fixed delay covers GATT discovery and
+    CCCD writes without needing CCCD-write detection.
+    iOS will not call GetDeviceIdentification until it receives this burst.
+    """
+    await asyncio.sleep(2.0)
+    if not _connected:
+        return
+    _log("·", "Connection 1: sending A6 InfoFrame burst (9×)")
+    for _ in range(9):
+        await service.push_notify_a6(_A6_INFO_FRAME)
+        await asyncio.sleep(0.05)
 
 
 # ---- Main ----
@@ -734,6 +760,24 @@ async def main(web_port: int = 8765) -> None:
     else:
         logger.warning("notify characteristic not found — push notifications disabled")
 
+    # Wire A6 notify by UUID so push_notify_a6() can send the Connection 1 InfoFrame burst
+    notify_a6_char = None
+    for attr in ("_characteristics", "_chars"):
+        chars = getattr(service, attr, None)
+        if chars:
+            for c in chars:
+                uuid = str(getattr(c, "uuid", getattr(c, "_uuid", ""))).lower()
+                if uuid == _NOTIFY_A6_UUID.lower():
+                    notify_a6_char = c
+                    break
+        if notify_a6_char:
+            break
+    if notify_a6_char:
+        service.wire_notify_a6(notify_a6_char)
+        logger.info("A6 notify characteristic wired")
+    else:
+        logger.warning("A6 notify characteristic not found — Connection 1 burst disabled")
+
     # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
     # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
     # the local name is placed in SCAN_RSP automatically.
@@ -763,6 +807,7 @@ async def main(web_port: int = 8765) -> None:
                 return  # deduplicate: InterfacesAdded and PropertiesChanged may both fire
             _connected = True
             _log("·", f"BLE client connected: {addr}")
+            asyncio.ensure_future(_send_a6_connection_frames(service))
 
         def _on_device_disconnected(device_path: str) -> None:
             global _connected, _button_pressed
