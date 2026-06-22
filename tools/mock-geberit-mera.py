@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.27.0"
+_MOCK_VERSION = "1.28.0"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -133,6 +133,7 @@ _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
 _session_log: list = []
 _button_pressed = False
 _connected = False
+_connection_gen = 0     # incremented on each new connection; guards stale burst tasks
 _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
@@ -648,7 +649,7 @@ async def _handle_clear_log(request):
     raise web.HTTPFound("/")
 
 
-async def _send_a6_connection_frames(service: MeraService) -> None:
+async def _send_a6_connection_frames(service: MeraService, gen: int) -> None:
     """Send A6 InfoFrame burst after iOS completes GATT setup.
 
     The real device sends 9 frames immediately when CCCD-A6 is written
@@ -656,14 +657,25 @@ async def _send_a6_connection_frames(service: MeraService) -> None:
     GATT discovery across the larger BlueZ GATT table (~15 services vs the
     real device) and write Geberit CCCDs before the burst fires.
     iOS will not call GetDeviceIdentification until it receives this burst.
+
+    gen: connection generation at the time this task was spawned. If the
+    connection was lost and a new one started before the 4 s delay expires,
+    _connection_gen will have advanced and this stale task exits without
+    sending — preventing a premature burst on the new connection's setup time.
+    IsButtonPressed is NOT reset on disconnect; it resets here after the burst
+    so that iOS can retry automatically after a battery-plugin-caused disconnect.
     """
     await asyncio.sleep(4.0)
-    if not _connected:
+    if not _connected or _connection_gen != gen:
         return
     _log("·", "Connection 1: sending A6 InfoFrame burst (9×)")
     for _ in range(9):
         await service.push_notify_a6(_A6_INFO_FRAME)
         await asyncio.sleep(0.05)
+    global _button_pressed
+    if _button_pressed:
+        _button_pressed = False
+        asyncio.ensure_future(_update_advert(0))
 
 
 # ---- Main ----
@@ -813,22 +825,26 @@ async def main(web_port: int = 8765) -> None:
         objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
 
         def _on_device_connected(device_path: str, addr: str) -> None:
-            global _connected
+            global _connected, _connection_gen
             if _connected:
                 return  # deduplicate: InterfacesAdded and PropertiesChanged may both fire
             _connected = True
+            _connection_gen += 1
+            gen = _connection_gen
             _log("·", f"BLE client connected: {addr}")
-            asyncio.ensure_future(_send_a6_connection_frames(service))
+            asyncio.ensure_future(_send_a6_connection_frames(service, gen))
 
         def _on_device_disconnected(device_path: str) -> None:
-            global _connected, _button_pressed
+            global _connected
             if not _connected:
                 return
             _connected = False
-            if _button_pressed:
-                asyncio.ensure_future(_update_advert(0))
-            _button_pressed = False
             _log("·", f"BLE client disconnected: {device_path}")
+            # IsButtonPressed intentionally NOT reset here.
+            # The BlueZ battery plugin kills the first iOS connect (~2 s) before
+            # CCCD-A6 is written. Keeping IsButtonPressed=True lets iOS retry with
+            # the same RPA; the 2nd attempt skips the battery plugin.
+            # IsButtonPressed resets to False only after the A6 burst is sent.
 
         def _on_added(path, ifaces):
             if "org.bluez.Device1" in ifaces:
