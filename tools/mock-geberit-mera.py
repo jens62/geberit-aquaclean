@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.26.0"
+_MOCK_VERSION = "1.26.1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -642,11 +642,12 @@ async def _send_a6_connection_frames(service: MeraService) -> None:
     """Send A6 InfoFrame burst after iOS completes GATT setup.
 
     The real device sends 9 frames immediately when CCCD-A6 is written
-    (~1.6 s after connect). A 2 s fixed delay covers GATT discovery and
-    CCCD writes without needing CCCD-write detection.
+    (~1.6 s after connect). A 4 s fixed delay gives iOS time to complete
+    GATT discovery across the larger BlueZ GATT table (~15 services vs the
+    real device) and write Geberit CCCDs before the burst fires.
     iOS will not call GetDeviceIdentification until it receives this burst.
     """
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(4.0)
     if not _connected:
         return
     _log("·", "Connection 1: sending A6 InfoFrame burst (9×)")
