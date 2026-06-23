@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.35.0b2
+mock-geberit-mera.py v1.36.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.35.0b2"
+_MOCK_VERSION = "1.36.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -134,6 +134,8 @@ _session_log: list = []
 _button_pressed = False
 _connected = False
 _connection_gen = 0     # incremented on each new connection; guards stale burst tasks
+_sc_flush_done = False  # True after Connection 1 cache-flush disconnect has fired
+_current_device_path = None  # D-Bus path of the currently connected device
 _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
@@ -887,26 +889,48 @@ async def main(web_port: int = 8765) -> None:
         proxy = bus.get_proxy_object("org.bluez", "/", intro)
         objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
 
+        async def _sc_flush(device_path: str) -> None:
+            # Connection 1 cache-update flush (v1.36.0+).
+            # iOS CoreBluetooth delivers a stale 2-char cached list to the app
+            # delegate (from pre-RBT-patch sessions) while concurrently running
+            # fresh ATT discovery in the background. ATT discovery completes in
+            # ~500 ms and updates the cache to 7 chars. Force-disconnect at 700 ms
+            # so the app never acts on the stale list. iOS retries as Connection 2
+            # with the updated cache → app finds A6 → CCCD write → burst fires.
+            global _sc_flush_done
+            await asyncio.sleep(0.7)
+            try:
+                _intro = await bus.introspect("org.bluez", device_path)
+                _dev = bus.get_proxy_object("org.bluez", device_path, _intro)
+                await _dev.get_interface("org.bluez.Device1").call_disconnect()
+                _log("·", "SC flush: force-disconnected Connection 1 at 700 ms (iOS cache update)")
+            except Exception as _exc:
+                _log("·", f"SC flush: disconnect skipped ({_exc})")
+            _sc_flush_done = True
+
         def _on_device_connected(device_path: str, addr: str) -> None:
-            global _connected, _connection_gen
+            global _connected, _connection_gen, _current_device_path
             if _connected:
                 return  # deduplicate: InterfacesAdded and PropertiesChanged may both fire
             _connected = True
+            _current_device_path = device_path
             _connection_gen += 1
             gen = _connection_gen
             _log("·", f"BLE client connected: {addr}")
+            if _button_pressed and not _sc_flush_done:
+                asyncio.ensure_future(_sc_flush(device_path))
+                return  # A6 burst launches on Connection 2 after cache update
             asyncio.ensure_future(_send_a6_connection_frames(service, gen))
 
         def _on_device_disconnected(device_path: str) -> None:
-            global _connected
-            if not _connected:
-                return
+            global _connected, _current_device_path
+            if not _connected or device_path != _current_device_path:
+                return  # stale disconnect for an old/untracked device
             _connected = False
+            _current_device_path = None
             _log("·", f"BLE client disconnected: {device_path}")
-            # IsButtonPressed intentionally NOT reset here.
-            # The BlueZ battery plugin kills the first iOS connect (~2 s) before
-            # CCCD-A6 is written. Keeping IsButtonPressed=True lets iOS retry with
-            # the same RPA; the 2nd attempt skips the battery plugin.
+            # IsButtonPressed intentionally NOT reset here — stays True so iOS
+            # retries automatically with the same RPA after Connection 1 flush.
             # IsButtonPressed resets to False only after the A6 burst is sent.
 
         def _on_added(path, ifaces):

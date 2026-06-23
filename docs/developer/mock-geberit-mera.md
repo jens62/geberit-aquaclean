@@ -76,15 +76,29 @@ The real Mera Comfort handle map (from nRF52840 capture) is at
 
 ## Connection 1 flow
 
-The Geberit Home App "Connection 1" onboarding requires this exact sequence:
+The Geberit Home App "Connection 1" onboarding requires **two BLE connections**
+(v1.36.0+, see [SC flush](#sc-flush--ios-corebluetooth-cache)):
 
-1. App scans BLE advertisements, detects `IsButtonPressed=True` in manufacturer data.
-2. App connects and performs GATT discovery — finds all 7 characteristics.
-3. App writes CCCD on A6 (enables notify).
-4. **Mock sends 9× A6 InfoFrame burst** (`800130140c030003000000003130001200b70800`) —
+**BLE Connection 1 — cache update (force-disconnected at 700 ms):**
+
+1. App detects `IsButtonPressed=True` in the BLE advertisement and connects.
+2. iOS CoreBluetooth runs ATT characteristic discovery. With the patched
+   `gatt-server.c`, all 7 chars are returned via two Read By Type passes
+   (`RBT [0015–0027]: 7 attr(s)`). CoreBluetooth updates its peripheral cache
+   from the pre-patch stale 2-char entry to the correct 7-char result.
+3. Mock force-disconnects at 700 ms — ATT discovery finishes in ~500 ms;
+   700 ms is enough to update the cache before the app layer acts on the
+   (potentially stale) cached list.
+
+**BLE Connection 2 — protocol exchange:**
+
+4. iOS retries automatically with the same RPA (`IsButtonPressed` stays `True`).
+5. CoreBluetooth delivers the updated 7-characteristic list to the app delegate.
+6. App writes CCCD on A6 (enables notify).
+7. **Mock sends 9× A6 InfoFrame burst** (`800130140c030003000000003130001200b70800`) —
    this is the Connection 1 trigger; the app will not call GetDeviceIdentification until
    it receives at least one A6 notify.
-5. App calls GetDeviceIdentification (proc `0x82`), GetFirmwareVersionList (`0x0E`), and
+8. App calls GetDeviceIdentification (proc `0x82`), GetFirmwareVersionList (`0x0E`), and
    the standard polling procedures.
 
 The burst fires automatically when iOS writes the A6 CCCD (enables A6 notify). The mock
@@ -98,36 +112,58 @@ only correct approach (mock v1.32.0+).
 
 ---
 
-## Battery plugin behavior (iOS only)
+## SC flush — iOS CoreBluetooth cache (v1.36.0+)
 
-Two independent mechanisms interact when an iOS device connects for the first time in
-a bluetoothd session:
+iOS CoreBluetooth caches GATT characteristic lists by **peripheral MAC address**
+(not by iOS RPA). Sessions from before the `gatt-server.c` RBT patch (2026-06-23)
+left a stale 2-char cache for our adapter MAC (`A0:AD:9F:72:C4:0F`) — only `3a2b`
+and `A5`, the only two characteristics the broken BlueZ reported. This cache persists
+across iPad reboots.
 
-1. **BlueZ battery plugin (GATT client)** — BlueZ immediately reads Battery Level
-   from the *connected iOS device's* GATT server. iOS returns `0x05` (Insufficient
-   Authentication). BlueZ then tries to initiate pairing.
-   - `pairable=on` (**wrong**): BlueZ sends an SMP Security Request to iOS — iOS
-     shows a "Kopplungsanforderung" (pairing dialog) to the user, interrupting the
-     Connection 1 flow. **Do not set `btmgmt pairable on`.**
-   - `pairable=off` (BlueZ default): BlueZ cannot start pairing → immediately
-     disconnects with HCI reason `0x05` → **first connection killed at ~3 s**.
-     This is acceptable — the first connection dying is expected behavior.
+**Symptom without SC flush:** iOS connects, CoreBluetooth delivers the stale 2-char
+list to the app delegate immediately while concurrently running fresh ATT discovery in
+the background. The ATT layer correctly finds all 7 chars (visible in the `bluetoothd
+-d` log as `RBT [0015-0027]: 7 attr(s)`), but the app already moved on with 2 chars —
+A6 not in the list → no CCCD write → no burst → app shows "connection could not be
+established."
 
-2. **iOS GATT client reads mock Battery Level** — iOS reads the mock's own Battery
-   Level characteristic during GATT discovery. The mock registers a `BatteryService`
-   (UUID `0x180F`) that returns `bytes([100])` without authentication, so iOS sees a
-   clean value and does not disconnect.
+**SC flush mechanism (v1.36.0+):** BLE Connection 1 lets iOS run ATT discovery (which
+updates the CoreBluetooth cache from 2 → 7 chars), then force-disconnects at 700 ms
+before the app layer acts on the stale list. iOS retries automatically with the same
+RPA as BLE Connection 2, where CoreBluetooth delivers the fresh 7-char list to the app.
 
-**First connection dying is expected and harmless.** The battery plugin only probes
-each iOS device once per bluetoothd session. On the second connection (same RPA),
-the battery plugin skips already-probed devices → fully benign, connection proceeds
-normally. The Connection 1 flow succeeds on the second connection.
+The `_sc_flush_done` flag (one-shot) ensures only BLE Connection 1 is flushed; all
+subsequent connections go directly to the A6 burst flow.
 
-The mock explicitly calls `btmgmt pairable off` at startup (v1.32.0+) to reset any
-lingering `pairable=on` state from older versions — that state persists across mock
-restarts because bluetoothd is not restarted. Do **not** change this to `pairable=on`.
+The flush only triggers when `IsButtonPressed=True`. Pre-button-press auto-reconnects
+from iOS (old RPA arriving before the user presses the physical button) bypass the
+flush — their A6 task exits cleanly because no CCCD is written.
 
-Do **not** add `DisablePlugins = battery` — it is not needed.
+**Stale-disconnect guard:** `_on_device_disconnected` gates on `_current_device_path`.
+iOS sometimes sends a deferred `Connected=False` PropertiesChanged signal for an
+already-disconnected old RPA after a new RPA has connected. Without this guard that
+stale signal would clobber `_connected` for the live connection.
+
+### Battery plugin interaction
+
+The BlueZ battery plugin (GATT client) reads Battery Level from the connected iOS
+device immediately on connection. iOS returns `0x05` (Insufficient Authentication).
+With `pairable=off` (BlueZ default), BlueZ cannot start pairing → disconnects at ~3 s.
+
+The SC flush fires at 700 ms, well before the battery plugin's 3 s kill. Run
+bluetoothd with `--noplugin=battery` to eliminate the battery plugin entirely and
+keep the two-connection flow clean and predictable:
+
+```bash
+sudo bluetoothd --noplugin=battery -d 2>&1 | tee ~/bluetoothd-debug.log
+```
+
+The mock registers a `BatteryService` (UUID `0x180F`) returning `bytes([100])`
+without authentication, so iOS reading the mock's own battery level never causes
+a disconnect (same mechanism as `mock-geberit-alba.py`).
+
+The mock calls `btmgmt pairable off` at startup (v1.32.0+). Do **not** change this
+to `pairable=on` — that triggers an iOS pairing dialog interrupting the flow.
 
 ---
 
