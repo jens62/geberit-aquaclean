@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.35.0b1
+mock-geberit-mera.py v1.35.0b2
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.35.0b1"
+_MOCK_VERSION = "1.35.0b2"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -823,33 +823,6 @@ async def main(web_port: int = 8765) -> None:
                     _flags = getattr(_c, "flags", getattr(_c, "_flags", "?"))
                     logger.info("  UUID=%s  flags=%s", _uuid, _flags)
                 break
-
-        # BlueZ GATT readback: verify how many char decls BlueZ actually created
-        # from our GetManagedObjects response.  This is the key diagnostic for the
-        # 2-char-decl bug — if BlueZ returns fewer than 7 here, the bug is confirmed
-        # on the BlueZ side and the root cause is NOT in the Python/dbus_next stack.
-        try:
-            _bi = await bus.introspect("org.bluez", "/")
-            _bp = bus.get_proxy_object("org.bluez", "/", _bi)
-            _bm = _bp.get_interface("org.freedesktop.DBus.ObjectManager")
-            _bo = await _bm.call_get_managed_objects()
-            _bc = {
-                p: v["org.bluez.GattCharacteristic1"]
-                for p, v in _bo.items()
-                if "org.bluez.GattCharacteristic1" in v
-            }
-            logger.info("BlueZ GATT readback: %d characteristic(s) registered in BlueZ DB:", len(_bc))
-            for _p, _pr in sorted(_bc.items()):
-                _u = getattr(_pr.get("UUID"), "value", _pr.get("UUID"))
-                _f = getattr(_pr.get("Flags"), "value", _pr.get("Flags"))
-                logger.info("  %s  uuid=%s  flags=%s", _p, _u, _f)
-            if len(_bc) < 7:
-                logger.warning(
-                    "BlueZ registered only %d/7 characteristics — 2-char-decl bug confirmed on BlueZ side",
-                    len(_bc),
-                )
-        except Exception as _re:
-            logger.warning("BlueZ GATT readback failed: %s", _re)
 
     except Exception as e:
         logger.error("GATT registration failed: %s", e)

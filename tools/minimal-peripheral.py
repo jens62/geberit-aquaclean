@@ -16,21 +16,9 @@ Run on the BlueZ VM:
 """
 
 import asyncio
-import logging
+import subprocess
 
-# Suppress TxPower property noise from BlueZ.
-try:
-    from bluez_peripheral.advert import Advertisement
-    if hasattr(Advertisement, "get_properties"):
-        _orig = Advertisement.get_properties
-        def _patched(self):
-            p = _orig(self)
-            (p.get("org.bluez.LEAdvertisement1") or p).pop("TxPower", None)
-            return p
-        Advertisement.get_properties = _patched
-except Exception:
-    pass
-
+from bluez_peripheral.advert import Advertisement
 from bluez_peripheral.gatt.service import Service, ServiceCollection
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.util import get_message_bus
@@ -90,6 +78,9 @@ class VendorService(Service):
 
 
 async def main():
+    # Prevent BlueZ battery plugin from killing the first connection (same fix as mock-geberit-mera.py v1.32.0+).
+    subprocess.run(["btmgmt", "pairable", "off"], capture_output=True)
+
     bus = await get_message_bus()
 
     svc = VendorService()

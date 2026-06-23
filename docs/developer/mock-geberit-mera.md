@@ -133,70 +133,141 @@ Do **not** add `DisablePlugins = battery` — it is not needed.
 
 ## Known issues
 
-### dbus_next async queue — pre-registration InterfacesAdded race (fixed in mock v1.30.0)
+### 2-char-decl bug — OPEN as of v1.35.0b1 (2026-06-23)
 
 **Symptom:** GATT discovery finds only 2 characteristic declarations out of 7 (3a2b at
-handle 0x0118 + A5 at 0x011A). A6, A7, A8, A1, A2 are allocated a handle range
-(service range is exactly right for 7 chars, e.g. 0x0117–0x0129 = 19 handles) but
-have **no ATT Characteristic Declaration** (type `0x2803`). iOS's `ATT Read By Type
-uuid=0x2803` response for the range 0x011A–0x0129 returns only A5 (1 item, MTU=517
-allows 24 — BlueZ confirms there are no more). iOS cannot subscribe to A6 → the
-Connection 1 flow never completes.
+handle 0x0016 + A5 at 0x0018). iOS stops char discovery after A5 and never finds
+A6–A2. Without A6 discoverable, iOS cannot write A6's CCCD → Connection 1 never
+completes.
 
-**Root cause — dbus_next async write queue:**
+**Confirmed GATT handle layout** (from `bluetoothd -d` debug log, 2026-06-22 21:17):
 
-`dbus_next`'s async `MessageBus.send()` does not write to the D-Bus socket
-immediately. It queues messages via `_writer.schedule_write()` (FIFO). This means:
+| Handle | Attribute | Type |
+|--------|-----------|------|
+| 0x0015 | Service decl | — |
+| 0x0016 | 3a2b char decl | 16-bit UUID → item\_len=7 |
+| 0x0017 | 3a2b value | READ |
+| 0x0018 | A5 char decl | 128-bit UUID → item\_len=21 |
+| 0x0019 | A5 value | NOTIFY |
+| 0x001a | A5 CCC | — |
+| 0x001b | A6 char decl | 128-bit |
+| 0x001c | A6 value | NOTIFY |
+| 0x001d | A6 CCC | — |
+| 0x001e | A7 char decl | 128-bit |
+| 0x001f | A7 value | NOTIFY |
+| 0x0020 | A7 CCC | — |
+| 0x0021 | A8 char decl | 128-bit |
+| 0x0022 | A8 value | NOTIFY |
+| 0x0023 | A8 CCC | — |
+| 0x0024 | A1 char decl | 128-bit |
+| 0x0025 | A1 value | WRITE\_WITHOUT\_RESPONSE |
+| 0x0026 | A2 char decl | 128-bit |
+| 0x0027 | A2 value | WRITE\_WITHOUT\_RESPONSE |
 
-1. `service.register()` calls `Service._export()`, which calls `bus.export()` for
-   each of the 7 characteristics.
-2. Each `bus.export()` call fires `_emit_interface_added()`, which calls
-   `bus.send(InterfacesAdded signal)` — queuing it for async writing.
-3. After all 7 characteristics are exported, `ServiceCollection.register()` calls
-   `await manager.call_register_application(path, {})`.
-4. The `await` suspends the coroutine and the asyncio event loop runs the write
-   callback, which drains the queue **in FIFO order**: the 7 `InterfacesAdded`
-   signals are written to the D-Bus socket **before** the `RegisterApplication`
-   method call.
+All 7 chars + 4 CCCDs = 19 handles (correct). **BlueZ has all 7 char decls at the
+correct handles.** Proven by `database_add_chrc()` firing 7 times with correct handles.
 
-BlueZ therefore receives `InterfacesAdded` for all 7 characteristics **before** it
-receives `RegisterApplication`. BlueZ processes these pre-registration signals and
-creates a preliminary GDBusClient watcher entry for each characteristic. When
-`RegisterApplication` then arrives, BlueZ calls `GetManagedObjects` (which correctly
-returns all 7 characteristics), but its internal watcher dedup logic sees
-characteristics 2–6 as already-tracked objects and skips creating ATT Characteristic
-Declaration (`0x2803`) attributes for them. The handle allocations are made (hence the
-correct 19-handle service range), but no char decls → iOS char discovery finds only 2.
+**Why iOS only sees A5** (confirmed from debug log lines 360–364, iOS RBT sequence):
 
-**Key evidence:**
-- Both v1.26.1 (btsnoop `mock-geberit-mera_btmon_2026-06-22_11-27-android.btsnoop`,
-  pre-Includes-fix) and v1.29.0 (iOS, `mock-geberit-mera_btmon_2026-06-22_14-08.btsnoop`,
-  post-Includes-fix) show identical 2-char-decl behavior. The Includes fix only removed
-  the self-include `0x2802` attribute; the 2-char-decl root cause is independent and
-  was present in both versions.
-- Service handle range is correct for 7 chars (allocations prove BlueZ received all 7
-  from GetManagedObjects), yet only 2 char decls exist (proving BlueZ skipped creating
-  `0x2803` entries for chars 2–6 after the pre-registration watcher entries were made).
+```
+Read By Type [0x0015, 0x0027]:
+  → 3a2b at 0x0016  (item_len=7, 1 item)   ← 3a2b is 16-bit UUID; A5 has different
+                                               item_len=21, so BlueZ stops at size boundary
+  → iOS next start = value_handle(0x0017)+1 = 0x0018
 
-**Fix (mock v1.30.0):** Suppress `_emit_interface_added` during the initial GATT
-export so BlueZ learns about all characteristics exclusively from `GetManagedObjects`
-(the canonical path). `bus.export()` still adds every characteristic to
-`_path_exports` (line 120 of `message_bus.py` runs before `_emit_interface_added`),
-so `GetManagedObjects` returns all 7 and BlueZ creates char decls for all 7.
-
-```python
-from dbus_next.message_bus import BaseMessageBus as _MB
-_orig_emit = _MB._emit_interface_added
-_MB._emit_interface_added = lambda *a, **kw: None
-try:
-    await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
-    await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
-finally:
-    _MB._emit_interface_added = _orig_emit
+Read By Type [0x0018, 0x0027]:
+  → A5 only at 0x0018  (item_len=21, 1 item, PDU=23 bytes)
+  → 23 < MTU(517)–1=516: ATT spec says "no more matching attrs in range" → iOS STOPS
+  → iOS jumps to battery service [0x0028, 0x002a]
 ```
 
-After both `service.register()` calls return, `_emit_interface_added` is restored.
-Any post-startup dynamic GATT updates (not used by this mock) would work normally.
+All 6 remaining char decls (A5–A2) have the same 128-bit UUID format → same item_len=21.
+BlueZ should pack them all into one 128-byte response, but returns only A5 (23 bytes).
+
+**A5 char decl content is correct:** props=0x10 (NOTIFY), value_handle=0x0019 (correct).
+The problem is that BlueZ returns only 1 item instead of all 6 same-size items.
+
+**Mock's `BlueZ registered only 0/7` diagnostic is a false alarm.**
+The v1.35.0b1 "GATT readback" code always returns 0 regardless of BlueZ state — it is
+a bug in the mock's own diagnostic. The bluetoothd debug log proves all 7 ARE registered.
+This dead-code diagnostic should be removed.
+
+**What the btsnoop and debug log confirm:**
+
+| Observation | Implication |
+|---|---|
+| Vendor service range = 19 handles (0x0015–0x0027) | BlueZ counted all 7 chars from `GetManagedObjects` |
+| All 7 `database_add_chrc()` calls succeed (debug log) | All 7 char decls exist in BlueZ GATT DB |
+| `Read By Type [0x0018, 0x0027]` → only A5 returned | BlueZ's `gatt_db_read_by_type` returns 1 item instead of 6 |
+| PDU=23 bytes < MTU-1 → iOS stops | ATT spec conclusion: no more attrs in range |
+| Bug identical before and after `systemctl restart bluetooth` | Not stale state |
+
+**Theories DISPROVED:**
+
+1. ~~`_emit_interface_added` pre-registration race~~ — suppression working (12 signals suppressed)
+2. ~~Stale BlueZ watcher entries~~ — `UnregisterApplication` pre-cleanup + restart unchanged
+3. ~~Battery service sharing the D-Bus connection~~ — removal has no effect
+4. ~~iOS GATT cache~~ — first connection to fresh bluetoothd shows same bug
+5. ~~BlueZ doesn't register the chars~~ — debug log proves all 7 ARE registered
+
+**macOS behaves identically to iOS — no continuations from either client.**
+
+Earlier analysis incorrectly stated "macOS works because it uses large MTU and handles
+multiple continuation queries." This was wrong. Four test sessions across 2026-06-23
+all show the same result: BlueZ returns A5 only, and both iOS and macOS stop after
+that single short response — no follow-up range query is issued by either client.
+
+The `gatt-discovery-test.py` "PASS — 7/7" result observed on macOS was entirely from
+CoreBluetooth's peripheral cache. The cache is keyed by **peripheral UUID**
+(e.g. `4E695123-…`), not by service UUID. Changing the vendor service UUID suffix from
+`…0000` to `…0001` moved the service to new ATT handles, but CoreBluetooth returned
+the cached 7-characteristic database for that peripheral UUID regardless.
+
+| Session | Service range | ATT live result | PASS source |
+|---------|--------------|-----------------|-------------|
+| 08:55 — `…0000` | [0x0015, 0x0027] | A5 only → jumps to battery | cache (Alba peripheral) |
+| 14:02 — `…0000` | [0x00C3, 0x00D5] | A5 → tries 0x00CF → A1 → stops | cache (partial) |
+| 14:18 — `…0001` | [0x00E9, 0x00FB] | A5 only → disconnects | cache (peripheral UUID) |
+
+In all sessions: BlueZ returns A5, client stops, no continuation.
+
+**Root cause confirmed: `gatt-server.c` / `process_read_by_type` packing loop.**
+
+The `gatt-db.c` diagnostic (printf after `gatt_db_foreach_in_range`) was run against a
+compiled BlueZ 5.77 on 2026-06-23 and produced:
+
+```
+>>> RBT [0015-0027]: 7 attr(s)   ← gatt_db_read_by_type queues ALL 7 correctly
+>>> RBT [0021-0027]: 3 attr(s)
+>>> RBT [0024-0027]: 2 attr(s)
+```
+
+`gatt-db.c` / `foreach_in_range` is correct — all 7 char decls go into the queue.
+The bug is in `gatt-server.c` / `process_read_by_type`: it receives a full queue of
+7 items but the packing loop stops at the first `item_len` boundary. `0x3A2B` has
+`item_len=7`; A5–A2 have `item_len=21`. Only the first size group is packed and sent.
+
+**Why `mock-geberit-alba.py` is unaffected:** `GeberitServiceA` in the alba mock has
+exactly two characteristics, both with 128-bit UUIDs (`559eb101-…` and `559eb110-…`),
+so all char decls in the service have `item_len=21`. No size boundary exists → BlueZ
+packs both into one response without hitting the packing loop's stopping condition.
+The mera mock is the only mock that mixes a 16-bit UUID (`0x3A2B`, `item_len=7`)
+with 128-bit UUIDs (`item_len=21`) inside the same service.
+
+**Two possible fixes:**
+
+1. **Replace `0x3A2B` with a 128-bit UUID** (no BlueZ patch needed) — makes all
+   char decls `item_len=21`, eliminating the size boundary. The app reads this
+   characteristic as a button-state probe; it does not verify the UUID value beyond
+   confirming a readable characteristic exists.
+
+2. **Patch `process_read_by_type` in `gatt-server.c`** — fix the packing loop to
+   send a second response frame for the remaining same-size items when a size
+   boundary is hit mid-queue. Requires compiling a custom `bluetoothd`.
+
+**Char ordering note:** `inspect.getmembers(type(self), ...)` sorts alphabetically →
+`button_state_read` (b) → `notify_a5/a6/a7/a8` (n) → `write_0/1` (w). This is the
+observed char0–char6 order and is correct behaviour, not a bug.
 
 ---
 
@@ -253,19 +324,19 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.31.0 (2026-06-22)
+## Current status — mock v1.35.0b1 (2026-06-23)
 
 | Feature | Status |
 |---------|--------|
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
-| All 7 char declarations visible | ✅ v1.30.0 (pre-registration InterfacesAdded fix) |
-| A6 InfoFrame burst (Connection 1 trigger) | ✅ v1.26.0 |
+| All 7 char declarations visible to iOS | ❌ **OPEN** — only A5 returned (BlueZ `gatt-server.c` `process_read_by_type` packing bug, see above) |
+| A6 InfoFrame burst (Connection 1 trigger) | ⏳ blocked by char-decl bug — A6 CCCD never written |
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
-| GetDeviceIdentification (proc `0x82`) | ✅ |
+| GetDeviceIdentification (proc `0x82`) | ✅ (works when char decls are fixed) |
 | GetFirmwareVersionList (proc `0x0E`) | ✅ |
 | GetSystemParameterList (proc `0x0D`) | ✅ |
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
 | GetFilterStatus (proc `0x59`) | ✅ |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test on v1.32.0 |
+| Full Connection 1 → GetDeviceIdentification flow | ❌ blocked by char-decl bug |
