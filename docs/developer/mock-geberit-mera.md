@@ -133,7 +133,7 @@ Do **not** add `DisablePlugins = battery` — it is not needed.
 
 ## Known issues
 
-### 2-char-decl bug — OPEN as of v1.35.0b1 (2026-06-23)
+### 2-char-decl bug — FIXED via `gatt-server.c` patch (2026-06-23)
 
 **Symptom:** GATT discovery finds only 2 characteristic declarations out of 7 (3a2b at
 handle 0x0016 + A5 at 0x0018). iOS stops char discovery after A5 and never finds
@@ -254,16 +254,30 @@ packs both into one response without hitting the packing loop's stopping conditi
 The mera mock is the only mock that mixes a 16-bit UUID (`0x3A2B`, `item_len=7`)
 with 128-bit UUIDs (`item_len=21`) inside the same service.
 
-**Two possible fixes:**
+**Fix applied — `gatt-server.c` `read_by_type_read_complete_cb` (BlueZ 5.77, 2026-06-23):**
 
-1. **Replace `0x3A2B` with a 128-bit UUID** (no BlueZ patch needed) — makes all
-   char decls `item_len=21`, eliminating the size boundary. The app reads this
-   characteristic as a button-state probe; it does not verify the UUID value beyond
-   confirming a readable characteristic exists.
+When the packing loop hits a mismatched `item_len`, instead of calling `op->done = true`
+and sending a short PDU, the patched code calls `process_read_by_type(op)` and returns —
+skipping the mismatched item and continuing the scan for same-size items. The skipped item
+is found by the client's follow-up RBT with a fresh handle range.
 
-2. **Patch `process_read_by_type` in `gatt-server.c`** — fix the packing loop to
-   send a second response frame for the remaining same-size items when a size
-   boundary is hit mid-queue. Requires compiling a custom `bluetoothd`.
+Patch file: `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/bluez-5.77/src/shared/gatt-server.c`
+(backup at `gatt-server.c.bak`).
+
+**Verified 2026-06-23 — `minimal-peripheral.py` + `minimal-central.py` against macOS (MTU=515):**
+
+```
+RBT [0015-0027]: 7 attr(s) queued → 3a2b returned alone (item_len=7, short PDU)
+                                   → client continues: next RBT start = 0x0018
+RBT [0018-0027]: 6 attr(s) queued → all 6 × 128-bit chars returned (item_len=21)
+Result: PASS — 7/7 characteristics discovered ✓
+```
+
+The client (CoreBluetooth) received the short first response and issued a follow-up
+RBT at 0x0018 (3a2b value_handle 0x0017 + 1) — exactly as the ATT spec requires.
+BlueZ returned all 6 remaining same-size items in the second response. This is live
+discovery, NOT CoreBluetooth cache (the central was restarted against a fresh peripheral
+with correct service UUID `3334429d-…a03e0000`).
 
 **Char ordering note:** `inspect.getmembers(type(self), ...)` sorts alphabetically →
 `button_state_read` (b) → `notify_a5/a6/a7/a8` (n) → `write_0/1` (w). This is the
@@ -324,19 +338,21 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.35.0b1 (2026-06-23)
+## Current status — mock v1.35.0b2 (2026-06-23)
+
+Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
 
 | Feature | Status |
 |---------|--------|
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
-| All 7 char declarations visible to iOS | ❌ **OPEN** — only A5 returned (BlueZ `gatt-server.c` `process_read_by_type` packing bug, see above) |
-| A6 InfoFrame burst (Connection 1 trigger) | ⏳ blocked by char-decl bug — A6 CCCD never written |
+| All 7 char declarations visible to iOS/macOS | ✅ `gatt-server.c` patch applied — 7/7 confirmed on macOS 2026-06-23 |
+| A6 InfoFrame burst (Connection 1 trigger) | ⏳ unblocked — pending iOS test with patched bluetoothd |
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
-| GetDeviceIdentification (proc `0x82`) | ✅ (works when char decls are fixed) |
+| GetDeviceIdentification (proc `0x82`) | ✅ |
 | GetFirmwareVersionList (proc `0x0E`) | ✅ |
 | GetSystemParameterList (proc `0x0D`) | ✅ |
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
 | GetFilterStatus (proc `0x59`) | ✅ |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ❌ blocked by char-decl bug |
+| Full Connection 1 → GetDeviceIdentification flow | ⏳ unblocked — pending iOS test with patched bluetoothd |
