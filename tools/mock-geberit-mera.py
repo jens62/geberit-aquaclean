@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.37.0b1"
+_MOCK_VERSION = "1.38.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -134,8 +134,6 @@ _session_log: list = []
 _button_pressed = False
 _connected = False
 _connection_gen = 0     # incremented on each new connection; guards stale burst tasks
-_sc_flush_done = False  # True after Connection 1 cache-flush disconnect has fired
-_sc_flush_primary_path = None  # D-Bus path of the device that triggered SC flush
 _current_device_path = None  # D-Bus path of the currently connected device
 _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
@@ -890,39 +888,19 @@ async def main(web_port: int = 8765) -> None:
         proxy = bus.get_proxy_object("org.bluez", "/", intro)
         objmgr = proxy.get_interface("org.freedesktop.DBus.ObjectManager")
 
-        async def _sc_flush(device_path: str) -> None:
-            # Connection 1 cache-update flush (v1.36.0+).
-            # iOS CoreBluetooth delivers a stale 2-char cached list to the app
-            # delegate (from pre-RBT-patch sessions) while concurrently running
-            # fresh ATT discovery in the background. ATT discovery completes in
-            # ~500 ms and updates the cache to 7 chars. Force-disconnect at 700 ms
-            # so the app never acts on the stale list. iOS retries as Connection 2
-            # with the updated cache → app finds A6 → CCCD write → burst fires.
-            global _sc_flush_done, _sc_flush_primary_path
-            _sc_flush_primary_path = device_path
-            await asyncio.sleep(0.7)
-            try:
-                _intro = await bus.introspect("org.bluez", device_path)
-                _dev = bus.get_proxy_object("org.bluez", device_path, _intro)
-                await _dev.get_interface("org.bluez.Device1").call_disconnect()
-                _log("·", "SC flush: force-disconnected Connection 1 at 700 ms (iOS cache update)")
-            except Exception as _exc:
-                _log("·", f"SC flush: disconnect skipped ({_exc})")
-            _sc_flush_done = True
-
         async def _force_remove_and_reregister(device_path: str) -> None:
-            # A stale iOS RPA (not the Connection-1 primary) connected briefly
-            # after the SC flush. BlueZ marks it temporary; after ~20 s its cleanup
-            # timer calls device_remove() → device_free(), which triggers
-            # service_disconnect for our mock's D-Bus name → proxy_removed_cb fires
-            # → our GATT app registration is torn down with a Service Changed
-            # indication sent to iOS right in the middle of Connection 2.
+            # BlueZ marks every non-bonded disconnected device as "temporary" and
+            # starts a ~20 s cleanup timer. When the timer fires, device_remove()
+            # → device_free() triggers service_disconnect for our mock's D-Bus name
+            # → proxy_removed_cb tears down our GATT app registration and sends a
+            # Service Changed indication to any active iOS connection → iOS
+            # re-discovers an empty GATT database and fails.
             #
-            # Fix: force-remove the stale device NOW via Adapter1.RemoveDevice so
-            # the teardown fires immediately while no iOS client is present (no SC
-            # sent), then re-register both GATT apps before Connection 2 arrives.
+            # Fix: force-remove the device NOW via Adapter1.RemoveDevice so the
+            # teardown fires immediately while no iOS client is connected, then
+            # re-register both GATT apps so they are intact for the next attempt.
             mac = device_path.split("/")[-1][4:].replace("_", ":")
-            _log("·", f"Stale RPA {mac}: force-removing to prevent GATT teardown during Connection 2")
+            _log("·", f"Force-removing {mac} to prevent GATT teardown on next connection")
             try:
                 _ai = await bus.introspect("org.bluez", adapter_path)
                 _ap = bus.get_proxy_object("org.bluez", adapter_path, _ai)
@@ -950,9 +928,6 @@ async def main(web_port: int = 8765) -> None:
             _connection_gen += 1
             gen = _connection_gen
             _log("·", f"BLE client connected: {addr}")
-            if _button_pressed and not _sc_flush_done:
-                asyncio.ensure_future(_sc_flush(device_path))
-                return  # A6 burst launches on Connection 2 after cache update
             asyncio.ensure_future(_send_a6_connection_frames(service, gen))
 
         def _on_device_disconnected(device_path: str) -> None:
@@ -962,15 +937,11 @@ async def main(web_port: int = 8765) -> None:
             _connected = False
             _current_device_path = None
             _log("·", f"BLE client disconnected: {device_path}")
-            # IsButtonPressed intentionally NOT reset here — stays True so iOS
-            # retries automatically with the same RPA after Connection 1 flush.
-            # IsButtonPressed resets to False only after the A6 burst is sent.
-            #
-            # If we just finished the SC flush and this device is NOT the primary
-            # iOS connection (78:42:1C vs 5E:F9), its BlueZ cleanup timer (~20 s)
-            # would fire during Connection 2 and tear down our GATT registration.
-            # Force-remove it now and re-register GATT before Connection 2 starts.
-            if _sc_flush_done and _button_pressed and device_path != _sc_flush_primary_path:
+            # IsButtonPressed resets only after the A6 burst fires (in
+            # _send_a6_connection_frames). While it is still True, pairing is
+            # incomplete and iOS may retry — force-remove this device now so
+            # BlueZ's ~20 s cleanup timer cannot fire during the next attempt.
+            if _button_pressed:
                 asyncio.ensure_future(_force_remove_and_reregister(device_path))
 
         def _on_added(path, ifaces):
