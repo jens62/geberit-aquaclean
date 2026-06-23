@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.38.0b1"
+_MOCK_VERSION = "1.39.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -670,15 +670,18 @@ async def _send_a6_connection_frames(service: MeraService, gen: int) -> None:
     a6 = service._notify_a6_iface
     for _ in range(80):          # max 8 s — iOS gives up well before this
         if not _connected or _connection_gen != gen:
+            if not _connected and _connection_gen == gen:
+                _log("·", f"Attempt {gen}: client disconnected before A6 CCCD — keep mock running, attempt again")
             return
         if a6 is not None and a6._notify:
             break
         await asyncio.sleep(0.1)
     else:
-        return                   # A6 CCCD never written within 8 s
+        _log("·", f"Attempt {gen}: GATT cache built — A6 CCCD not written within 8 s. Keep mock running, attempt again")
+        return
     if not _connected or _connection_gen != gen:
         return
-    _log("·", "Connection 1: sending A6 InfoFrame burst (9×)")
+    _log("·", f"Attempt {gen}: sending A6 InfoFrame burst (9×)")
     for _ in range(9):
         await service.push_notify_a6(_A6_INFO_FRAME)
         await asyncio.sleep(0.05)
