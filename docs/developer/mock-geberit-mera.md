@@ -107,6 +107,20 @@ the instant BlueZ sets it to `True`. A fixed timer MUST NOT be used — the time
 fires after iOS has already shown "cannot connect" and disconnected. Event-driven is the
 only correct approach (mock v1.32.0+).
 
+**Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
+After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
+object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails
+immediately (GATT init fails, bond error `0xe`). BlueZ marks it temporary; its ~20 s
+cleanup timer then fires `device_remove()` right in the middle of Connection 2, tearing
+down our GATT app registration and sending a Service Changed indication to iOS — which
+triggers a full GATT re-discovery, finds nothing, and shows "cannot connect".
+
+`_force_remove_and_reregister` (v1.37.0b1) detects this via the
+`_sc_flush_primary_path` guard and immediately calls `Adapter1.RemoveDevice` on the
+stale device, pulling the teardown into the safe 18-second window before Connection 2.
+Both GATT apps are then re-registered before Connection 2 arrives. See the
+[Stale RPA GATT teardown](#stale-rpa-gatt-teardown--v1370) section below.
+
 **Source:** nRF52840 capture of iOS app v2.14.1 against real Mera Comfort
 (`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/`).
 
@@ -357,6 +371,74 @@ in v1.27.0–v1.29.0 and was only fixed in v1.30.0.
 
 ---
 
+### Stale RPA GATT teardown — v1.37.0+
+
+**Symptom:** After the SC flush, Connection 2 connects successfully and iOS begins GATT
+service discovery. Approximately 20 seconds after Connection 2 starts, both GATT app
+registrations are torn down: BlueZ sends Service Changed indications to iOS, iOS
+re-discovers services, finds nothing, shows "cannot connect." The `bluetoothd -d` log
+shows (in sequence):
+
+```
+device_remove()     Removing device /org/bluez/hci0/dev_78_42_1C_38_DE_16
+btd_device_unref()  Freeing device
+device_free()       0x…
+proxy_removed_cb()  Proxy removed - removing service: /org/bluez/example/mera/service0
+gatt_db_service_removed()  Local GATT service removed
+send_notification_to_device()  GATT server sending indication    ← SC to iOS
+client_disconnect_cb()  Client disconnected
+proxy_removed_cb()  Proxy removed - removing service: /org/bluez/example/battery/service0
+… (same for battery) …
+src/advertising.c:client_disconnect_cb()  Client disconnected
+service_changed_conf()   ← iOS acknowledged SC
+service_changed_conf()
+```
+
+**Root cause — BlueZ stale device cleanup timer:**
+
+When `78:42:1C` (an old iOS RPA from a pre-SC-flush session) connects briefly after the
+SC flush and immediately disconnects, BlueZ marks it a "temporary" (non-bonded, no
+stored keys) device and starts a ~20 second cleanup timer. When the timer fires,
+`btd_adapter_remove_device()` → `device_remove()` → `device_free()` is called.
+
+This triggers `service_disconnect` in BlueZ's GDBusClient for our mock's D-Bus name.
+`service_disconnect` walks the client's proxy list and calls `proxy_removed_cb` for each
+registered proxy. For the mera and battery service proxies, `proxy_removed_cb` calls
+`service_free()` → `gatt_db_remove_service()` → `gatt_db_service_removed()` →
+`send_notification_to_device()`. Since iOS (`5E:F9`) is actively connected and
+subscribed to Service Changed at this point, BlueZ sends a SC indication. iOS
+re-discovers GATT, finds no Geberit services, and shows "cannot connect".
+
+**Investigation artifacts:**
+- `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/minimal-peripheral_bluetoothd-debug_2026-06-23_19-56.log` lines 758–783 — definitive capture
+- Confirmed in 18-51 log (lines 543–574) and 18-32 log (lines 601–622) — same mechanism across all runs
+- BlueZ source traced: `gdbus/client.c` `service_disconnect()` (line 1294) → `g_list_free_full(proxy_list, proxy_free)` → `proxy_free` (line 554) → `proxy_removed_cb` — `app_free()` clears callbacks BEFORE `g_dbus_client_unref`, so the call chain is confirmed via `service_disconnect`, not `g_dbus_client_unref`
+- `interfaces_removed` watch (line 1385 `gdbus/client.c`) only fires for signals FROM our mock's D-Bus name — not from BlueZ itself
+
+**Fix (v1.37.0b1):**
+
+`_sc_flush_primary_path` is set at the start of `_sc_flush()` to the Connection 1
+device path (e.g. `…/dev_5E_F9_F9_11_DA_81`). In `_on_device_disconnected`, if
+`_sc_flush_done=True`, `_button_pressed=True`, and the disconnecting device path is
+NOT `_sc_flush_primary_path`, the disconnecting device is a stale interloper. The mock
+immediately calls `Adapter1.RemoveDevice` (pure D-Bus, no subprocess), which triggers
+the GATT teardown at this safe moment — iOS is not yet connected for Connection 2, so
+the Service Changed indication is sent to no one. After 500 ms (to let BlueZ settle),
+both GATT apps are re-registered via `GattManager1.RegisterApplication`. The D-Bus
+object exports are still live (no re-export needed); BlueZ's new GDBusClient calls
+`GetManagedObjects` and finds all 7 characteristics. Connection 2 arrives ~18 seconds
+later to a clean registration.
+
+**Why `_sc_flush_primary_path` rather than just `_sc_flush_done`:**
+The SC flush itself disconnects `5E:F9` (the primary device). At that moment
+`_sc_flush_done` is set to `True` — so the primary `5E:F9` disconnecting after SC flush
+would also match a naive `_sc_flush_done` check. The primary path guard ensures only
+genuinely foreign devices (old RPAs) trigger the force-remove.
+
+**Advertising note:** The same teardown mechanism also fires `src/advertising.c:client_disconnect_cb()`. Advertising re-registration is not performed by `_force_remove_and_reregister` (not needed for Connection 2, which reuses an existing BLE connection).
+
+---
+
 ## btmon correlation tool
 
 `tools/analyze-btmon-mock.py` correlates a btmon btsnoop capture with a mock log
@@ -374,7 +456,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.35.0b2 (2026-06-23)
+## Current status — mock v1.37.0b1 (2026-06-23)
 
 Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
 
@@ -382,7 +464,9 @@ Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bu
 |---------|--------|
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
 | All 7 char declarations visible to iOS/macOS | ✅ `gatt-server.c` patch applied — 7/7 confirmed on macOS 2026-06-23 |
-| A6 InfoFrame burst (Connection 1 trigger) | ⏳ unblocked — pending iOS test with patched bluetoothd |
+| SC flush (iOS CoreBluetooth cache update) | ✅ v1.36.0b1 — confirmed working (mock log 2026-06-23 19-56) |
+| Stale RPA force-remove + GATT re-register | ✅ v1.37.0b1 — prevents GATT teardown during Connection 2 |
+| A6 InfoFrame burst (Connection 1 trigger) | ⏳ pending iOS test end-to-end with v1.37.0b1 |
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
 | GetDeviceIdentification (proc `0x82`) | ✅ |
@@ -391,4 +475,4 @@ Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bu
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
 | GetFilterStatus (proc `0x59`) | ✅ |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ⏳ unblocked — pending iOS test with patched bluetoothd |
+| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test end-to-end with v1.37.0b1 |
