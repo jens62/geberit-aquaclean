@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.41.0b1"
+_MOCK_VERSION = "1.42.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
