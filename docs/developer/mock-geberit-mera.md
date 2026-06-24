@@ -57,17 +57,24 @@ Wait for `--- Mera Comfort Mock Active ---` and note the adapter MAC address.
 
 ## GATT profile
 
-Single vendor service `3334429d-90f3-4c41-a02d-5cb3a03e0000`, 7 characteristics:
+Single vendor service `3334429d-90f3-4c41-a02d-5cb3a03e0000`, 9 characteristics:
 
 | UUID suffix | Properties | Role |
 |-------------|-----------|------|
-| `...a13e0000` | WRITE_WITHOUT_RESPONSE | Procedure requests (app → mock) |
-| `...a23e0000` | WRITE_WITHOUT_RESPONSE | Multi-frame continuation writes |
+| `...a13e0000` | WRITE_WITHOUT_RESPONSE | A1 — procedure requests (app → mock, cy[0]) |
+| `...a23e0000` | WRITE_WITHOUT_RESPONSE | A2 — write channel cy[1] |
+| `...a33e0000` | WRITE_WITHOUT_RESPONSE | A3 — write channel cy[2] |
+| `...a43e0000` | WRITE_WITHOUT_RESPONSE | A4 — write channel cy[3] |
 | `...a53e0000` | NOTIFY | A5 — primary response channel |
 | `...a63e0000` | NOTIFY | A6 — CONS continuation + Connection 1 trigger |
 | `...a73e0000` | NOTIFY | A7 — CONS continuation |
 | `...a83e0000` | NOTIFY | A8 — CONS continuation |
 | `00003a2b-...` | READ | Button-state probe — returns `b"ro"` |
+
+**All four write channels (A1–A4) are required.** The app calls
+`GetCharacteristic()` for each and throws "Bulk transfer characteristic missing"
+if any returns null — showing "connection could not be established" before writing
+any CCCD. Root cause confirmed from `AquaCleanProduct.cs` line 1062.
 
 The real Mera Comfort handle map (from nRF52840 capture) is at
 `docs/developer/mera-home-app-onboarding.md`.

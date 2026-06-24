@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.37.0b1
+mock-geberit-mera.py v1.40.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -74,7 +74,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage import CrcMessage  
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.39.0b1"
+_MOCK_VERSION = "1.40.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -104,6 +104,8 @@ else:
 _SVC_UUID       = "3334429d-90f3-4c41-a02d-5cb3a03e0000"
 _WRITE_0_UUID   = "3334429d-90f3-4c41-a02d-5cb3a13e0000"   # handle 0x0003 (requests)
 _WRITE_1_UUID   = "3334429d-90f3-4c41-a02d-5cb3a23e0000"   # handle 0x0006 (FIRST continuation)
+_WRITE_2_UUID   = "3334429d-90f3-4c41-a02d-5cb3a33e0000"   # A3 (cy[2] in AquaCleanProduct.cs)
+_WRITE_3_UUID   = "3334429d-90f3-4c41-a02d-5cb3a43e0000"   # A4 (cy[3] in AquaCleanProduct.cs)
 _NOTIFY_A5_UUID = "3334429d-90f3-4c41-a02d-5cb3a53e0000"   # handle 0x000F (primary response)
 _NOTIFY_A6_UUID = "3334429d-90f3-4c41-a02d-5cb3a63e0000"   # handle 0x0013
 _NOTIFY_A7_UUID = "3334429d-90f3-4c41-a02d-5cb3a73e0000"   # handle 0x0017
@@ -343,7 +345,10 @@ def _proc_86() -> bytes:
 class MeraService(Service):
     """Geberit AquaClean Mera Comfort GATT service.
 
-    Write characteristics accept 20-byte request frames from the app.
+    Write characteristics (A1-A4) accept 20-byte request frames.
+    The app rotates across cy[channelId % 4] = A1/A2/A3/A4; all four
+    must be present or the app throws "Bulk transfer characteristic missing"
+    and shows "connection could not be established" without writing any CCC.
     A5 notify characteristic delivers response frames back to the app.
     A6/A7/A8 are registered so the app's GATT discovery succeeds;
     the mock does not actively use them (all responses go on A5).
@@ -435,6 +440,26 @@ class MeraService(Service):
     def write_1(self, value, options):
         raw = bytes(value)
         _log("←", f"WRITE_1 ({len(raw)}B): {raw.hex()}")
+        asyncio.ensure_future(self._handle_request(raw))
+
+    @characteristic(_WRITE_2_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
+    def write_2(self, options):
+        return bytes(20)
+
+    @write_2.setter
+    def write_2(self, value, options):
+        raw = bytes(value)
+        _log("←", f"WRITE_2 ({len(raw)}B): {raw.hex()}")
+        asyncio.ensure_future(self._handle_request(raw))
+
+    @characteristic(_WRITE_3_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
+    def write_3(self, options):
+        return bytes(20)
+
+    @write_3.setter
+    def write_3(self, value, options):
+        raw = bytes(value)
+        _log("←", f"WRITE_3 ({len(raw)}B): {raw.hex()}")
         asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_NOTIFY_A5_UUID, CharFlags.NOTIFY)
