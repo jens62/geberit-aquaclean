@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.54.0b1"
+_MOCK_VERSION = "1.55.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -132,6 +132,10 @@ _VARIANT     = 0x0D   # Mera Comfort
 
 # Node IDs confirmed from real Mera onboarding capture
 _NODE_IDS = bytes([3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xe, 0xf])
+
+# SPL indices supported on Mera Comfort. Indices 8/9/10 permanently corrupt
+# GetFilterStatus state until power-cycle — never send them on Mera Comfort.
+_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 11]
 
 # ---- Advertisement D-Bus path (bluez_peripheral default, used for unregister) ----
 _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
@@ -329,11 +333,8 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = _proc_0d(args)
     elif proc == 0x09:            # SetCommand (shower/lid/flush toggle)
         result = b""
-    elif proc in (0x11, 0x13):    # SubscribeNotif: count(1) + 4×[node_id(1)+zeros(12)] = 53b
-        nodes = _NODE_IDS[:4]
-        result = bytes([len(nodes)])
-        for nid in nodes:
-            result += bytes([nid]) + bytes(12)
+    elif proc in (0x11, 0x13):
+        result = _proc_subscribenotif(proc, args)
     elif proc in (0x08, 0x14, 0x15):  # SetStored* (empty OK)
         result = b""
     elif proc == 0x07:            # GetPerNodeProfileSetting: value(1) + null(1)
@@ -347,7 +348,7 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     elif proc == 0x55:            # GetDeviceRegistrationLevel
         result = bytes([0])
     elif proc == 0x59:            # GetFilterStatus
-        result = bytes(10)
+        result = _proc_59()
     else:
         _log("·", f"  unknown proc 0x{proc:02X} — returning empty OK")
         result = b""
@@ -390,11 +391,52 @@ def _proc_81() -> bytes:
 
 
 def _proc_0d(args: bytes) -> bytes:
-    """GetSystemParameterList: 4-byte zero (uint32) per queried index."""
-    if not args:
-        return b""
-    count = args[0]
-    return bytes([count]) + bytes(count * 4)
+    """GetSystemParameterList: count(1) + count×(index(1)+value_le(4)).
+
+    Real Mera Comfort skips indices 8/9/10 and returns 9 items for a 12-index request.
+    Including index bytes is mandatory — iOS maps each value by its index field, not position.
+    """
+    result = bytes([len(_SPL_MERA_INDICES)])
+    for idx in _SPL_MERA_INDICES:
+        result += bytes([idx]) + bytes(4)
+    return result
+
+
+def _proc_59() -> bytes:
+    """GetFilterStatus: count(1) + count×(id(1)+value_le(4)).
+    Real device returns 11 items. id=7 = DaysUntilNextFilterChange.
+    """
+    items = [
+        (0, 0), (1, 0), (2, 0), (3, 0),
+        (4, 0), (5, 0), (6, 0),
+        (7, 365),  # DaysUntilNextFilterChange — realistic value
+        (8, 0), (9, 0), (10, 0),
+    ]
+    result = bytes([len(items)])
+    for id_, val in items:
+        result += bytes([id_]) + val.to_bytes(4, "little")
+    return result
+
+
+def _proc_subscribenotif(proc: int, args: bytes) -> bytes:
+    """SubscribeNotif 0x11/0x13: count(1) + count×(node_id(1)+data(12)).
+
+    iOS batches node IDs 4 at a time; args = count(1) + node_ids(count).
+    0x11: 12-byte ASCII firmware version per node (all same version string).
+    0x13: 12 zero bytes per node (profile settings); node 5 has byte[6]=0x04.
+    """
+    n = args[0] if args else 0
+    nodes = list(args[1:1 + n])
+    result = bytes([len(nodes)])
+    for nid in nodes:
+        if proc == 0x11:
+            result += bytes([nid]) + b"818.802.00.0"
+        else:
+            profile = bytearray(12)
+            if nid == 5:
+                profile[6] = 0x04
+            result += bytes([nid]) + bytes(profile)
+    return result
 
 
 def _proc_0e(args: bytes) -> bytes:

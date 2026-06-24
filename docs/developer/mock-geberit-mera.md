@@ -551,9 +551,12 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.41.0b1 (2026-06-24)
+## Current status — mock v1.55.0b1 (2026-06-24)
 
 Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
+
+**v1.54.0b1 — first confirmed iOS onboarding (2026-06-24).** Full Connection 1 + Connection 2
+flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 
 | Feature | Status |
 |---------|--------|
@@ -564,13 +567,49 @@ Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bu
 | All four write channels A1–A4 present | ✅ v1.40.0b1 — cy[2]/cy[3] null-check passes |
 | FlowControlFrame dispatch + A5 retransmit | ✅ v1.41.0b1 — CONTROL frames parsed, missing frames retransmitted |
 | A6 burst serialized before A5 response | ✅ v1.41.0b1 — `_a6_burst_done` event prevents ATT congestion |
-| A6 InfoFrame burst (Connection 1 trigger) | ⏳ pending iOS test end-to-end with v1.41.0b1 |
+| A6 InfoFrame burst (Connection 1 trigger) | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
-| GetDeviceIdentification (proc `0x82`) | ✅ |
-| GetFirmwareVersionList (proc `0x0E`) | ✅ |
-| GetSystemParameterList (proc `0x0D`) | ✅ |
-| GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
-| GetFilterStatus (proc `0x59`) | ✅ |
+| GetDeviceIdentification (proc `0x82`) | ✅ v1.54.0b1 — confirmed |
+| GetFirmwareVersionList (proc `0x0E`) | ✅ v1.54.0b1 — confirmed |
+| GetSystemParameterList (proc `0x0D`) | ✅ v1.55.0b1 — format fixed (index bytes per item, 9 Mera Comfort items) |
+| GetDeviceInitialOperationDate (proc `0x86`) | ✅ v1.54.0b1 — confirmed |
+| GetFilterStatus (proc `0x59`) | ✅ v1.55.0b1 — format fixed (11 items with id+value, DaysUntilNextFilterChange=365) |
+| SubscribeNotif 0x11/0x13 — correct node IDs | ✅ v1.55.0b1 — uses requested node IDs from args; 0x11 with firmware version string |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test end-to-end with v1.41.0b1 |
+| Full Connection 1 → GetDeviceIdentification flow | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
+
+---
+
+### SPL and GetFilterStatus format — fixed in v1.55.0b1
+
+**Symptom (v1.54.0b1):** iOS remote-control screen blocked with "running descaling" message after
+successful onboarding. Also possible "Save" error on first device registration.
+
+**Root cause:** Two response format bugs:
+
+1. **`GetSystemParameterList` (proc `0x0D`) — missing index bytes.** Mock sent
+   `count(1) + count×value_le(4)`. Real Mera Comfort sends `count(1) + count×(index(1)+value_le(4))`.
+   iOS maps each value by its index field, not by position. Without index bytes, all 12 items were
+   interpreted as index=0 (StateUserPresent). StateDescaling (index 4) was never updated → iOS
+   retained a stale or default non-zero descaling state → remote control blocked.
+
+2. **`GetFilterStatus` (proc `0x59`) — wrong format.** Mock returned `bytes(10)` (count=0, no items).
+   Real device returns 11 items in `count(1) + count×(id(1)+value_le(4))` format.
+
+**`descaling_state = 0` is correct for idle device.** Confirmed from
+`docs/developer/descaling-protocol.md`: state 0 = idle, state 1–3 = active descaling cycle.
+The `0=Error` entry in `docs/developer/mera-comfort-alba-mapping.md` applies to **Alba DpId 585**
+enum (`DESCALING_STATUS`) — a different encoding from Mera Comfort's raw `uint32` SPL parameter.
+
+**Real device SPL response** (from `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md`):
+9 items for a 12-index request — skips indices 8/9/10 (dangerous on Mera Comfort; permanently
+corrupts `GetFilterStatus` until power-cycle). Returns indices `[0,1,2,3,4,5,6,7,11]`, all values 0
+when idle.
+
+**Fix:**
+- `_proc_0d`: returns `_SPL_MERA_INDICES = [0,1,2,3,4,5,6,7,11]` with proper `(index+value)` format
+- `_proc_59`: new function returning 11 items; id=7 (`DaysUntilNextFilterChange`) = 365
+- `_proc_subscribenotif`: new function; parses requested node IDs from args; `0x11` returns
+  12-byte ASCII firmware version `"818.802.00.0"` per node; `0x13` returns 12 zero bytes
+  (node 5: byte[6]=0x04 from real device capture)
