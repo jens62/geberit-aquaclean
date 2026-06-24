@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.55.0b1"
+_MOCK_VERSION = "1.56.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -303,6 +303,7 @@ _PROC_NAMES: dict = {
     0x13: "SubscribeNotif_0x13",
     0x14: "SubscribeNotif_0x14",
     0x15: "SubscribeNotif_0x15",
+    0x45: "GetStatisticsDescale",
     0x51: "GetStoredCommonSetting",
     0x53: "GetStoredProfileSetting",
     0x54: "SetStoredProfileSetting",
@@ -347,6 +348,8 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = bytes([0, 0])
     elif proc == 0x55:            # GetDeviceRegistrationLevel
         result = bytes([0])
+    elif proc == 0x45:            # GetStatisticsDescale
+        result = _proc_45()
     elif proc == 0x59:            # GetFilterStatus
         result = _proc_59()
     else:
@@ -399,6 +402,28 @@ def _proc_0d(args: bytes) -> bytes:
     result = bytes([len(_SPL_MERA_INDICES)])
     for idx in _SPL_MERA_INDICES:
         result += bytes([idx]) + bytes(4)
+    return result
+
+
+def _proc_45() -> bytes:
+    """GetStatisticsDescale: 16-byte StatisticsDescale struct.
+
+    Wire format (little-endian):
+      unposted_shower_cycles(1) + days_until_next_descale(2) +
+      days_until_shower_restricted(2) + shower_cycles_until_confirmation(1) +
+      date_time_at_last_descale(4) + date_time_at_last_descale_prompt(4) +
+      number_of_descale_cycles(2)
+
+    Simulates a device last descaled 3 weeks ago; next descaling due in ~69 days.
+    """
+    last_descale = int(time.time()) - 21 * 24 * 3600   # 3 weeks ago (Unix timestamp)
+    result  = bytes([12])                               # unposted_shower_cycles
+    result += (69).to_bytes(2, "little")                # days_until_next_descale
+    result += (76).to_bytes(2, "little")                # days_until_shower_restricted
+    result += bytes([20])                               # shower_cycles_until_confirmation
+    result += last_descale.to_bytes(4, "little")        # date_time_at_last_descale
+    result += last_descale.to_bytes(4, "little")        # date_time_at_last_descale_prompt
+    result += (3).to_bytes(2, "little")                 # number_of_descale_cycles
     return result
 
 
