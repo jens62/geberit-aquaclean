@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.51.0b1"
+_MOCK_VERSION = "1.52.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -146,6 +146,7 @@ _advert = None          # current _MeraAdvertisement instance
 _advert_bus = None      # D-Bus connection stored for advert updates
 _advert_adapter = None  # Adapter stored for advert updates
 _advert_lock: asyncio.Lock = None  # prevents concurrent _update_advert calls
+_bus = None                         # system D-Bus connection; set in main()
 
 
 async def _update_advert(state_b: int) -> None:
@@ -518,7 +519,7 @@ class MeraService(Service):
                     self._retransmit_count = 0
                     for i, frame in enumerate(frames):
                         if i:
-                            await asyncio.sleep(0.02)  # one frame per BLE event — prevents iOS dropping batched pairs
+                            await asyncio.sleep(0.012)  # 12ms > CI(10ms): each frame its own CE; all within ~54ms FlowControl window
                         await self.push_notify(frame)
                     if len(frames) == 1:
                         name = _PROC_NAMES.get(proc, f"0x{proc:02X}")
@@ -780,6 +781,29 @@ async def _handle_clear_log(request):
     raise web.HTTPFound("/")
 
 
+async def _request_short_ci() -> None:
+    """Request a shorter BLE connection interval from iOS via BlueZ UpdateConnectionParameters.
+
+    Called right after iOS enables A5 CCCD.  The new CI (8.75–10ms) takes effect
+    within ~200ms (6 × 30ms CEs) — well before the first proc request (~480ms later).
+
+    With CI=10ms and 12ms inter-frame delay, all 4 CONS frames of the largest
+    proc response (proc 0x82, 82-byte payload) arrive within iOS's ~54ms FlowControl
+    window, instead of running past it when CI=30ms.
+    """
+    if _bus is None or _current_device_path is None:
+        return
+    try:
+        dev_intro = await _bus.introspect("org.bluez", _current_device_path)
+        dev_proxy = _bus.get_proxy_object("org.bluez", _current_device_path, dev_intro)
+        dev_iface = dev_proxy.get_interface("org.bluez.Device1")
+        # minInterval=7 (8.75ms), maxInterval=8 (10ms), latency=0, supervision_timeout=200 (2s)
+        await dev_iface.call_update_connection_parameters(7, 8, 0, 200)
+        _log("·", f"Requested CI=8.75-10ms — {_current_device_path}")
+    except Exception as e:
+        _log("·", f"UpdateConnectionParameters: {e}")
+
+
 async def _send_a5_info_frames(service: MeraService, gen: int) -> None:
     """Send 10 InfoFrames on A5 as soon as iOS enables A5 notifications (CCCD write).
 
@@ -814,6 +838,8 @@ async def _send_a5_info_frames(service: MeraService, gen: int) -> None:
         return
     if not _connected or _connection_gen != gen:
         return
+    # Request shorter CI so multi-frame responses arrive within iOS's FlowControl window
+    asyncio.ensure_future(_request_short_ci())
     _log("·", f"Attempt {gen}: sending A5 InfoFrame burst (10×)")
     service._a6_burst_done.clear()   # block A5 responses during burst to prevent ATT congestion
     for _ in range(10):
@@ -865,6 +891,8 @@ async def main(web_port: int = 8765) -> None:
     from aiohttp import web
 
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    global _bus
+    _bus = bus
 
     # Suppress harmless "does not have property TxPower" error from dbus_next
     class _SuppressDbusPropertyErrors(_logging.Filter):
