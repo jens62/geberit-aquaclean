@@ -702,6 +702,7 @@ class _Call:
     resp_status:  int   = -1
     resp_result:  bytes = b""
     resp_type:    str   = ""   # "single" | "multi" | ""
+    req_raw:      bytes = b""  # raw ATT write frame bytes (for hex comparison)
 
 
 def _parse_req(v: bytes):
@@ -747,9 +748,11 @@ def _parse_resp(v: bytes):
         return ('CONTROL', v[1] if len(v) > 1 else 0)
     if h == 0x11 and len(v) >= 12 and v[1] == 0x05:  # SINGLE response
         return ('SINGLE', v[9], v[10], v[7], v[12:12 + v[11]])
-    if h in (0x13, 0x15, 0x17):        # FIRST[N] — multi-frame response
-        cons_needed = (h >> 1) & 7     # N encoded in header bits [3:1]
+    if 0x12 < h < 0x20 and (h & 1):    # FIRST[N], N = (h>>1)&7; handles N=1..7
+        cons_needed = (h >> 1) & 7
         return ('MULTI', cons_needed, v)
+    if h == 0x30 and len(v) >= 2:       # Extended FIRST — v[1]=total frame count (incl. FIRST)
+        return ('MULTI_EXT', v[1] - 1, v)
     return None
 
 
@@ -799,24 +802,42 @@ def _collect_calls(events: list) -> list:
     multi_first  = None    # raw bytes of FIRST[N] response frame (for assembly)
     multi_needed = 0       # CONS frames still expected
     multi_cons   = []      # (att_handle, bytes) — collected CONS frames in arrival order
+    multi_ext    = False   # True when FIRST frame is extended 0x30 format
     CCCD_HANDLES = {0x0010, 0x0014, 0x0018, 0x001C}
     SIDE_HANDLES = {0x0013, 0x0017, 0x001B}   # A6, A7, A8
-    # CONS frame headers: FrameType=0, IsCount=0 (not a count) → 0x12/0x14/0x16/0x42/0x44/0x46
-    _CONS_HEADERS = {0x12, 0x14, 0x16, 0x42, 0x44, 0x46}
+    # CONS frame headers — standard FIRST[N]: 0x10/0x12/.../0x1E; extended 0x30: 0x40-0x4E + 0x52-0x5E
+    _CONS_HEADERS = {0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1E,
+                     0x40, 0x42, 0x44, 0x46, 0x48, 0x4A, 0x4C, 0x4E,
+                     0x52, 0x54, 0x56, 0x58, 0x5A, 0x5C, 0x5E}
 
     def _finalize_multi():
         """Assemble collected CONS frames into pending.resp_result (in-place)."""
-        nonlocal multi_first, multi_needed, multi_cons
+        nonlocal multi_first, multi_needed, multi_cons, multi_ext
         if pending is not None and pending.resp_type == "multi" and multi_first is not None:
-            # Sort side frames by handle (A6 < A7 < A8) so they follow assembly order
-            cons_ordered = [v for _, v in sorted(multi_cons, key=lambda x: x[0])]
-            ctx_r, proc_r, result = _assemble_multi(multi_first, cons_ordered)
-            pending.resp_ctx    = ctx_r
-            pending.resp_proc   = proc_r
-            pending.resp_result = result
+            if multi_ext:
+                # Extended 0x30 format: proc at v[11], result_len at v[12], data at v[13:]
+                # CONS frames: 2-byte header (type + seq), sort by seq (v[1])
+                if len(multi_first) >= 14:
+                    ctx_r        = multi_first[10]
+                    proc_r       = multi_first[11]
+                    result_len   = multi_first[12]
+                    cons_sorted  = sorted(multi_cons, key=lambda x: x[1][1] if len(x[1]) >= 2 else 0)
+                    parts        = [multi_first[13:]] + [c[2:] for _, c in cons_sorted if len(c) >= 2]
+                    result       = (b"".join(parts))[:result_len]
+                    pending.resp_ctx    = ctx_r
+                    pending.resp_proc   = proc_r
+                    pending.resp_result = result
+            else:
+                # Standard FIRST[N] format: sort CONS by handle (A6 < A7 < A8)
+                cons_ordered = [v for _, v in sorted(multi_cons, key=lambda x: x[0])]
+                ctx_r, proc_r, result = _assemble_multi(multi_first, cons_ordered)
+                pending.resp_ctx    = ctx_r
+                pending.resp_proc   = proc_r
+                pending.resp_result = result
         multi_first  = None
         multi_needed = 0
         multi_cons   = []
+        multi_ext    = False
 
     for e in events:
         etype = e["type"]
@@ -848,7 +869,7 @@ def _collect_calls(events: list) -> list:
                 if not parsed:
                     continue
                 ctx, proc, arg_len, partial = parsed
-                pending = _Call(req_ts=e["ts"], ctx=ctx, proc=proc, args=partial)
+                pending = _Call(req_ts=e["ts"], ctx=ctx, proc=proc, args=partial, req_raw=v)
                 if arg_len > len(partial):   # CONS frame carries the remaining args
                     pend_args   = partial
                     pend_arglen = arg_len
@@ -988,12 +1009,20 @@ def _collect_calls(events: list) -> list:
                     calls.append(pending)
                     pending = pend_args = None
                     pend_arglen = 0
-                else:   # MULTI — FIRST[N] detected; wait for N CONS frames
+                elif tag == 'MULTI':   # FIRST[N] detected; wait for N CONS frames
                     _, cons_needed, first_v = parsed
                     pending.resp_type = "multi"
                     multi_first  = first_v
                     multi_needed = cons_needed
                     multi_cons   = []
+                    multi_ext    = False
+                else:               # MULTI_EXT — extended 0x30 FIRST; wait for v[1]-1 CONS frames
+                    _, cons_needed, first_v = parsed
+                    pending.resp_type = "multi"
+                    multi_first  = first_v
+                    multi_needed = cons_needed
+                    multi_cons   = []
+                    multi_ext    = True
                     if cons_needed == 0:
                         # Self-contained FIRST[0] — finalize immediately
                         _finalize_multi()
@@ -1261,17 +1290,21 @@ def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_cou
             out.append(f"*{summary}*")
         out.append("")
 
-        out.append("| Time | Procedure | Request | Response |")
-        out.append("|------|-----------|---------|----------|")
+        out.append("| Time | Procedure | Request | Response | Req bytes | Resp bytes |")
+        out.append("|------|-----------|---------|----------|-----------|------------|")
         for call in phase_calls:
             if call.proc == _PROC_CCCD:
                 proc_name = "CCCD Write"
             else:
                 proc_name = _PROC_NAMES_MD.get((call.ctx, call.proc),
                                                f"0x{call.proc:02x}")
-            req_ann  = _annotate_req(call.ctx, call.proc, call.args)
-            resp_ann = _annotate_resp(call)
-            out.append(f"| {call.req_ts} | {proc_name} | {req_ann} | {resp_ann} |")
+            req_ann   = _annotate_req(call.ctx, call.proc, call.args)
+            resp_ann  = _annotate_resp(call)
+            req_hex   = (" ".join(f"{b:02x}" for b in call.req_raw)
+                         if call.req_raw else "")
+            resp_hex  = (" ".join(f"{b:02x}" for b in call.resp_result)
+                         if call.resp_result else "")
+            out.append(f"| {call.req_ts} | {proc_name} | {req_ann} | {resp_ann} | `{req_hex}` | `{resp_hex}` |")
         out.append("")
 
     return "\n".join(out)
