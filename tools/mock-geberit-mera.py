@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.41.0b1
+mock-geberit-mera.py v1.42.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -363,6 +363,8 @@ class MeraService(Service):
         self._notify_iface = None         # wired after register() via wire_notify()
         self._notify_a6_iface = None      # wired after register() via wire_notify_a6()
         self._last_a5_frames: list = []   # last response frames; used for FlowControl retransmit
+        self._retransmit_count: int = 0   # retransmits for current transaction; reset on new proc
+        self._request_lock = asyncio.Lock()   # serialise _handle_request — prevents concurrent frame interleave
         self._a6_burst_done: asyncio.Event = asyncio.Event()
         self._a6_burst_done.set()         # no burst in progress initially
 
@@ -412,55 +414,65 @@ class MeraService(Service):
             _log("·", f"WARNING: push_notify_a6 failed: {e}")
 
     async def _handle_request(self, raw: bytes) -> None:
-        if len(raw) < 11:
-            _log("·", f"frame too short ({len(raw)} B) — ignored")
-            return
-        hdr = raw[0]
-        ft = _FrameFactory.getFrameTypeFromHeaderByte(hdr)
-
-        if ft == _FrameType.CONTROL:
-            # FlowControlFrame — app reports which A5 response frames it received.
-            # Bitmask bit N=1 means frame N was received; 0 means it was lost and
-            # needs retransmission.  Root cause of loss: A6 burst notifications
-            # concurrent with A5 response can cause ATT congestion on iOS.
-            fc = _FlowControlFrame.create_flow_control_frame(raw)
-            ack = fc.AckdFrameBitmask[0]
-            n = len(self._last_a5_frames)
-            if n == 0:
-                _log("·", f"FlowControl: no pending A5 frames (bitmask=0x{ack:02x})")
+        async with self._request_lock:
+            if len(raw) < 11:
+                _log("·", f"frame too short ({len(raw)} B) — ignored")
                 return
-            expected = (1 << n) - 1
-            if ack == expected:
-                _log("·", f"FlowControl: all {n} A5 frame(s) ACKed (bitmask=0x{ack:02x})")
-                self._last_a5_frames = []
-                return
-            missing = [i for i in range(n) if not (ack >> i) & 1]
-            _log("!", f"FlowControl: bitmask=0x{ack:02x} (expected 0x{expected:02x}) — "
-                      f"retransmitting A5 frame(s) {missing}")
-            for i in missing:
-                await self.push_notify(self._last_a5_frames[i])
-                await asyncio.sleep(0.05)
-            return
+            hdr = raw[0]
+            ft = _FrameFactory.getFrameTypeFromHeaderByte(hdr)
 
-        if ft == _FrameType.SINGLE:
-            if hdr & 0x01:
-                # SINGLE (SubFrameCount=0) or FIRST[N] (N>0) — new request
-                # Wait for any in-progress A6 burst to finish; prevents ATT congestion
-                # that causes iOS to drop A5 frames and send a partial FlowControl ACK.
-                try:
-                    await asyncio.wait_for(self._a6_burst_done.wait(), timeout=3.0)
-                except asyncio.TimeoutError:
-                    _log("·", "A6 burst wait timed out — sending A5 response anyway")
-                ctx, proc, args = _parse_request(raw)
-                _log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
-                frames = _dispatch(ctx, proc, args)
-                self._last_a5_frames = frames   # store for potential FlowControl retransmit
-                for frame in frames:
-                    await self.push_notify(frame)
-                    await asyncio.sleep(0.05)   # 50 ms between frames — D-Bus→BlueZ pipeline
-            else:
-                # CONS continuation frame (bit 0 = 0) — multi-frame request not yet assembled
-                _log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
+            if ft == _FrameType.CONTROL:
+                # FlowControlFrame — app reports which A5 response frames it received.
+                # Bitmask bit N=1 means frame N was received; 0 means it was lost and
+                # needs retransmission.  Root cause of loss: A6 burst notifications
+                # concurrent with A5 response can cause ATT congestion on iOS.
+                fc = _FlowControlFrame.create_flow_control_frame(raw)
+                ack = fc.AckdFrameBitmask[0]
+                n = len(self._last_a5_frames)
+                if n == 0:
+                    _log("·", f"FlowControl: no pending A5 frames (bitmask=0x{ack:02x})")
+                    return
+                expected = (1 << n) - 1
+                if ack == expected:
+                    _log("·", f"FlowControl: all {n} A5 frame(s) ACKed (bitmask=0x{ack:02x})")
+                    self._last_a5_frames = []
+                    self._retransmit_count = 0
+                    return
+                self._retransmit_count += 1
+                if self._retransmit_count > 3:
+                    _log("!", f"FlowControl: giving up after {self._retransmit_count - 1} retransmit(s) — app will retry proc")
+                    self._last_a5_frames = []
+                    self._retransmit_count = 0
+                    return
+                missing = [i for i in range(n) if not (ack >> i) & 1]
+                _log("!", f"FlowControl: bitmask=0x{ack:02x} (expected 0x{expected:02x}) — "
+                          f"retransmit #{self._retransmit_count} of A5 frame(s) {missing}")
+                await asyncio.sleep(0.2)   # drain ATT queue before retransmit
+                for i in missing:
+                    await self.push_notify(self._last_a5_frames[i])
+                    await asyncio.sleep(0.05)
+                return
+
+            if ft == _FrameType.SINGLE:
+                if hdr & 0x01:
+                    # SINGLE (SubFrameCount=0) or FIRST[N] (N>0) — new request
+                    # Wait for any in-progress A6 burst to finish; prevents ATT congestion
+                    # that causes iOS to drop A5 frames and send a partial FlowControl ACK.
+                    try:
+                        await asyncio.wait_for(self._a6_burst_done.wait(), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        _log("·", "A6 burst wait timed out — sending A5 response anyway")
+                    ctx, proc, args = _parse_request(raw)
+                    _log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
+                    frames = _dispatch(ctx, proc, args)
+                    self._last_a5_frames = frames   # store for potential FlowControl retransmit
+                    self._retransmit_count = 0
+                    for frame in frames:
+                        await self.push_notify(frame)
+                        await asyncio.sleep(0.05)   # 50 ms between frames — D-Bus→BlueZ pipeline
+                else:
+                    # CONS continuation frame (bit 0 = 0) — multi-frame request not yet assembled
+                    _log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
 
     @characteristic(_WRITE_0_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
     def write_0(self, options):
@@ -751,11 +763,11 @@ async def _send_a6_connection_frames(service: MeraService, gen: int) -> None:
     for _ in range(9):
         await service.push_notify_a6(_A6_INFO_FRAME)
         await asyncio.sleep(0.05)
-    service._a6_burst_done.set()     # burst complete — A5 responses may now proceed
     global _button_pressed
     if _button_pressed:
         _button_pressed = False
-        asyncio.ensure_future(_update_advert(0))
+        await _update_advert(0)      # await: HCI commands must finish before A5 responses start
+    service._a6_burst_done.set()     # burst complete — A5 responses may now proceed
 
 
 # ---- Main ----
