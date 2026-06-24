@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.52.0b1"
+_MOCK_VERSION = "1.53.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -210,22 +210,22 @@ def _parse_request(frame: bytes):
 
 # ---- Response building ----
 def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
-    """Build 20-byte ATT notify frames for a procedure response.
+    """Build ATT notify frames for a procedure response.
 
-    Uses CrcMessage.create() from the bridge for CRC16 computation.
+    iOS negotiates MTU=517 → ATT notification payload = 514 bytes.
+    Using chunk_size=513 (payload - 1 header byte), all current proc responses
+    (largest: GetNodeInventory = 140 bytes content) fit in a single frame with
+    n_cons=0.  Single-frame responses require no CONS frames and no FlowControl
+    timing coordination — iOS sends FlowControl bitmask=0x00 (expected for
+    n_cons=0) immediately after the one notification, and the mock ACKs it.
 
     Response body: [status, 0x00, ctx, proc, result_len, ...result]
     Wrapped in CrcMessage: [id=5, seg=255, len_hi, len_lo, crc_hi, crc_lo, ...body]
-    Split into 20-byte BLE frames: frame[0]=header, frame[1:20]=CrcMessage chunk.
 
-    Headers encode SINGLE vs FIRST[N]+CONS[i]:
-      0x11 = SINGLE  (IsSubFrameCount=1, SubFrameCount=0, no CONS)
-      0x13 = FIRST + 1 CONS   (SubFrameCount=1)
-      0x15 = FIRST + 2 CONS
-      0x17 = FIRST + 3 CONS
-      0x10 = CONS[0]  (IsSubFrameCount=0, SubFrameIndex=0)
-      0x12 = CONS[1]
-      0x14 = CONS[2]
+    Headers:
+      0x11 = SINGLE  (n_cons=0, no CONS frames)
+      0x13 = FIRST + 1 CONS, 0x15 = FIRST + 2 CONS, …
+      0x10 = CONS[0], 0x12 = CONS[1], …
     """
     body = bytearray(5 + len(result))
     body[0] = status
@@ -236,19 +236,20 @@ def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
     body[5:] = result
 
     crc_msg = CrcMessage.create(_BLEMSG_ID_CRC_RSP, 0xFF, body)
-    serialized = crc_msg.serialize()                   # 262 bytes
+    serialized = crc_msg.serialize()
 
-    content_len = 6 + len(body)                       # CrcMessage header + body bytes
+    content_len = 6 + len(body)       # CrcMessage header (6 bytes) + body
+    # ATT payload = MTU(517) - opcode(1) - handle(2) = 514; reserve 1 byte for frame header.
+    _CHUNK = 513
     chunks = []
-    for i in range(0, content_len, 19):
-        chunk = serialized[i:i + 19]
-        chunks.append(chunk + bytes(19 - len(chunk))) # pad last chunk to 19 bytes
+    for i in range(0, content_len, _CHUNK):
+        chunks.append(bytes(serialized[i:i + _CHUNK]))  # variable length, no padding
 
     n_cons = len(chunks) - 1
     frames = []
     for i, chunk in enumerate(chunks):
         hdr = (0x11 | (n_cons << 1)) if i == 0 else (0x10 | ((i - 1) << 1))
-        frames.append(bytes([hdr]) + bytes(chunk))
+        frames.append(bytes([hdr]) + chunk)
     return frames
 
 
