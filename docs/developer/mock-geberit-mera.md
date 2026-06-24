@@ -197,7 +197,7 @@ handle 0x0016 + A5 at 0x0018). iOS stops char discovery after A5 and never finds
 A6–A2. Without A6 discoverable, iOS cannot write A6's CCCD → Connection 1 never
 completes.
 
-**Confirmed GATT handle layout** (from `bluetoothd -d` debug log, 2026-06-22 21:17):
+**Confirmed GATT handle layout** (current — 9 characteristics as of v1.40.0b1; 7-char layout was confirmed from `bluetoothd -d` debug log, 2026-06-22 21:17):
 
 | Handle | Attribute | Type |
 |--------|-----------|------|
@@ -220,9 +220,13 @@ completes.
 | 0x0025 | A1 value | WRITE\_WITHOUT\_RESPONSE |
 | 0x0026 | A2 char decl | 128-bit |
 | 0x0027 | A2 value | WRITE\_WITHOUT\_RESPONSE |
+| 0x0028 | A3 char decl | 128-bit |
+| 0x0029 | A3 value | WRITE\_WITHOUT\_RESPONSE |
+| 0x002a | A4 char decl | 128-bit |
+| 0x002b | A4 value | WRITE\_WITHOUT\_RESPONSE |
 
-All 7 chars + 4 CCCDs = 19 handles (correct). **BlueZ has all 7 char decls at the
-correct handles.** Proven by `database_add_chrc()` firing 7 times with correct handles.
+All 9 chars + 4 CCCDs = 23 handles. **BlueZ has all 9 char decls at the
+correct handles.** Proven by `database_add_chrc()` firing 9 times with correct handles.
 
 **Why iOS only sees A5** (confirmed from debug log lines 360–364, iOS RBT sequence):
 
@@ -253,8 +257,8 @@ This dead-code diagnostic should be removed.
 
 | Observation | Implication |
 |---|---|
-| Vendor service range = 19 handles (0x0015–0x0027) | BlueZ counted all 7 chars from `GetManagedObjects` |
-| All 7 `database_add_chrc()` calls succeed (debug log) | All 7 char decls exist in BlueZ GATT DB |
+| Vendor service range = 23 handles (0x0015–0x002b) | BlueZ counted all 9 chars from `GetManagedObjects` |
+| All 9 `database_add_chrc()` calls succeed (debug log) | All 9 char decls exist in BlueZ GATT DB |
 | `Read By Type [0x0018, 0x0027]` → only A5 returned | BlueZ's `gatt_db_read_by_type` returns 1 item instead of 6 |
 | PDU=23 bytes < MTU-1 → iOS stops | ATT spec conclusion: no more attrs in range |
 | Bug identical before and after `systemctl restart bluetooth` | Not stale state |
@@ -265,7 +269,7 @@ This dead-code diagnostic should be removed.
 2. ~~Stale BlueZ watcher entries~~ — `UnregisterApplication` pre-cleanup + restart unchanged
 3. ~~Battery service sharing the D-Bus connection~~ — removal has no effect
 4. ~~iOS GATT cache~~ — first connection to fresh bluetoothd shows same bug
-5. ~~BlueZ doesn't register the chars~~ — debug log proves all 7 ARE registered
+5. ~~BlueZ doesn't register the chars~~ — debug log proves all 9 ARE registered
 
 **macOS behaves identically to iOS — no continuations from either client.**
 
@@ -446,6 +450,90 @@ genuinely foreign devices (old RPAs) trigger the force-remove.
 
 ---
 
+### Missing write channels A3/A4 — fixed in v1.40.0b1
+
+**Symptom (v1.39.0b1 and earlier):** The `bluetoothd -d` log shows GATT discovery
+completing and both CCC writes but the Geberit Home App shows "connection could not be
+established" immediately — zero ATT reads or CCCD writes to any Geberit characteristic.
+
+**Root cause:** The Geberit Home App's `AquaCleanProduct.cs` (line 1062) checks all four
+write channels immediately after GATT discovery:
+
+```
+cy[0] = service.GetCharacteristic("...a13e0000");  // A1 ✓ mock had
+cy[1] = service.GetCharacteristic("...a23e0000");  // A2 ✓ mock had
+cy[2] = service.GetCharacteristic("...a33e0000");  // A3 ✗ missing
+cy[3] = service.GetCharacteristic("...a43e0000");  // A4 ✗ missing
+if (... || cy[2] == null || cy[3] == null)
+    throw new Exception("Bulk transfer characteristic missing");
+```
+
+`cy[2]/cy[3]` were null → app threw immediately → "connection could not be established"
+— before writing a single CCCD.
+
+**Fix (v1.40.0b1):** `mock-geberit-mera.py` adds `write_2` (A3) and `write_3` (A4) as
+`WRITE_WITHOUT_RESPONSE` characteristics. All four write channels dispatch to
+`_handle_request` identically.
+
+---
+
+### FlowControlFrame misidentified as CONS — fixed in v1.41.0b1
+
+**Background — Geberit frame type encoding:**
+
+Bits [7:5] of the header byte encode the frame type
+(see `FrameFactory.getFrameTypeFromHeaderByte()` in the bridge):
+
+| Bits [7:5] | FrameType | Header range |
+|---|---|---|
+| 0 | SINGLE | 0x00–0x1F |
+| 1 | FIRST | 0x20–0x3F |
+| 2 | CONS | 0x40–0x5F |
+| 3 | CONTROL | 0x60–0x7F |
+| 4 | INFO | 0x80–0x9F |
+
+**FlowControlFrame wire format** (`FlowControlFrame.create_flow_control_frame(data)`):
+
+| Offset | Field |
+|---|---|
+| 0 | Header byte (0x60–0x7F; FrameType.CONTROL) |
+| 1 | ErrorCode |
+| 2 | UnackdFrameLimit (= 8) |
+| 3 | TransactionLatency |
+| 4–11 | AckdFrameBitmask (8 bytes; bit N = 1 means frame N was received) |
+
+**Symptom (v1.40.0b1):** After sending a multi-frame A5 response (FIRST + 3 × CONS for
+GetDeviceIdentification), the app sends a FlowControlFrame on A1 acknowledging which
+frames it received. A FlowControlFrame has header `0x70` (CONTROL type, bits[7:5]=3).
+The old check `hdr & 0x01` (bit 0=0) silently discarded the frame. The app expected
+retransmission of the missing frame and retried GetDeviceIdentification three times,
+then showed "connection could not be established."
+
+**Root cause of frame loss:** The A6 InfoFrame burst (9 frames × 50 ms = 450 ms window)
+was running concurrently with the 4-frame A5 response. iOS CoreBluetooth dropped the
+last CONS frame (CONS[2]) due to ATT pipeline congestion. The app sent FlowControlFrame
+with `AckdFrameBitmask[0] = 0x07` (frames 0–2 received; frame 3 missing).
+
+**Fix (v1.41.0b1) — two changes:**
+
+1. **Frame type dispatch** — use `FrameFactory.getFrameTypeFromHeaderByte(hdr)` (imported
+   from the bridge — no code copied) instead of the bit 0 check. CONTROL → FlowControl
+   handler; parse `AckdFrameBitmask`, identify missing frames by index, retransmit them
+   from `_last_a5_frames`.
+
+2. **A6 burst serialization** — `_a6_burst_done` asyncio.Event is cleared before the
+   9-frame burst and set after. `_handle_request` awaits it (3 s timeout) before sending
+   any A5 frames, preventing the ATT congestion that caused the frame loss.
+
+**Bridge imports used (DRY — not copied, imported directly):**
+```python
+from aquaclean_console_app.aquaclean_core.Frames.FrameFactory              import FrameFactory     as _FrameFactory
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType          import FrameType        as _FrameType
+from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame   import FlowControlFrame as _FlowControlFrame
+```
+
+---
+
 ## btmon correlation tool
 
 `tools/analyze-btmon-mock.py` correlates a btmon btsnoop capture with a mock log
@@ -463,17 +551,20 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.37.0b1 (2026-06-23)
+## Current status — mock v1.41.0b1 (2026-06-24)
 
 Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
 
 | Feature | Status |
 |---------|--------|
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
-| All 7 char declarations visible to iOS/macOS | ✅ `gatt-server.c` patch applied — 7/7 confirmed on macOS 2026-06-23 |
+| All 9 char declarations visible to iOS/macOS | ✅ `gatt-server.c` patch applied — confirmed on macOS 2026-06-23 |
 | SC flush (iOS CoreBluetooth cache update) | ✅ v1.36.0b1 — confirmed working (mock log 2026-06-23 19-56) |
 | Stale RPA force-remove + GATT re-register | ✅ v1.37.0b1 — prevents GATT teardown during Connection 2 |
-| A6 InfoFrame burst (Connection 1 trigger) | ⏳ pending iOS test end-to-end with v1.37.0b1 |
+| All four write channels A1–A4 present | ✅ v1.40.0b1 — cy[2]/cy[3] null-check passes |
+| FlowControlFrame dispatch + A5 retransmit | ✅ v1.41.0b1 — CONTROL frames parsed, missing frames retransmitted |
+| A6 burst serialized before A5 response | ✅ v1.41.0b1 — `_a6_burst_done` event prevents ATT congestion |
+| A6 InfoFrame burst (Connection 1 trigger) | ⏳ pending iOS test end-to-end with v1.41.0b1 |
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
 | GetDeviceIdentification (proc `0x82`) | ✅ |
@@ -482,4 +573,4 @@ Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bu
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ |
 | GetFilterStatus (proc `0x59`) | ✅ |
 | Web UI button press + live state | ✅ |
-| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test end-to-end with v1.37.0b1 |
+| Full Connection 1 → GetDeviceIdentification flow | ⏳ pending iOS test end-to-end with v1.41.0b1 |
