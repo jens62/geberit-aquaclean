@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.44.0b1
+mock-geberit-mera.py v1.45.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.44.0b1"
+_MOCK_VERSION = "1.45.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -123,9 +123,10 @@ _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B —
 
 # ---- Device identity ----
 _ARTICLE     = "14621"
-_SAP_NUMBER  = "HB2300EU000001"
-_SERIAL      = "GB2000EU000001"
-_DESCRIPTION = "AquaClean Mera Comfort"
+_SAP_NUMBER      = "HB2300EU000001"
+_SERIAL          = "GB2000EU000001"
+_PRODUCTION_DATE = "2023-01-01"
+_DESCRIPTION     = "AquaClean Mera Comfort"
 _VARIANT     = 0x0D   # Mera Comfort
 
 # Node IDs confirmed from real Mera onboarding capture
@@ -319,11 +320,12 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
 
 # ---- Procedure result builders ----
 def _proc_82() -> bytes:
-    """GetDeviceIdentification: variant + SAP + serial + description."""
+    """GetDeviceIdentification: variant + SAP + serial + production_date + description."""
     return (
         bytes([_VARIANT])
         + _SAP_NUMBER.encode("ascii") + b"\x00"
         + _SERIAL.encode("ascii") + b"\x00"
+        + _PRODUCTION_DATE.encode("ascii") + b"\x00"
         + _DESCRIPTION.encode("ascii") + b"\x00"
     )
 
