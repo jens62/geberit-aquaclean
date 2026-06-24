@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.43.0b1
+mock-geberit-mera.py v1.44.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.43.0b1"
+_MOCK_VERSION = "1.44.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -249,6 +249,31 @@ def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
     return frames
 
 
+# ---- Procedure names (for progress log) ----
+_PROC_NAMES: dict = {
+    0x05: "GetNodeInventory",
+    0x07: "GetPerNodeProfileSetting",
+    0x08: "SetActiveProfileSetting",
+    0x09: "SetCommand",
+    0x0A: "GetActiveCommonSetting",
+    0x0B: "SetActiveCommonSetting",
+    0x0D: "GetSystemParameterList",
+    0x0E: "GetFirmwareVersionList",
+    0x11: "SubscribeNotif_0x11",
+    0x13: "SubscribeNotif_0x13",
+    0x14: "SubscribeNotif_0x14",
+    0x15: "SubscribeNotif_0x15",
+    0x51: "GetStoredCommonSetting",
+    0x53: "GetStoredProfileSetting",
+    0x54: "SetStoredProfileSetting",
+    0x55: "GetDeviceRegistrationLevel",
+    0x59: "GetFilterStatus",
+    0x81: "GetSOCApplicationVersions",
+    0x82: "GetDeviceIdentification",
+    0x86: "GetDeviceInitialOperationDate",
+}
+
+
 # ---- Procedure dispatch ----
 def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     """Return list of 20-byte frames for the response to proc."""
@@ -363,6 +388,7 @@ class MeraService(Service):
         self._notify_iface = None         # wired after register() via wire_notify()
         self._notify_a6_iface = None      # wired after register() via wire_notify_a6()
         self._last_a5_frames: list = []   # last response frames; used for FlowControl retransmit
+        self._last_a5_proc: int = 0       # proc code of last multi-frame response (for progress log)
         self._retransmit_count: int = 0   # retransmits for current transaction; reset on new proc
         self._request_lock = asyncio.Lock()   # serialise _handle_request — prevents concurrent frame interleave
         self._a6_burst_done: asyncio.Event = asyncio.Event()
@@ -432,9 +458,14 @@ class MeraService(Service):
                 if n == 0:
                     _log("·", f"FlowControl: no pending A5 frames (bitmask=0x{ack:02x})")
                     return
-                expected = (1 << n) - 1
+                # AckdFrameBitmask tracks CONS frames only (not the FIRST frame).
+                # For n total frames: n_cons = n-1 CONS frames; expected = (1<<n_cons)-1.
+                # e.g. 4 frames (1 FIRST + 3 CONS): expected = 0x07, not 0x0F.
+                n_cons = n - 1
+                expected = (1 << n_cons) - 1
                 if ack == expected:
-                    _log("·", f"FlowControl: all {n} A5 frame(s) ACKed (bitmask=0x{ack:02x})")
+                    name = _PROC_NAMES.get(self._last_a5_proc, f"0x{self._last_a5_proc:02X}")
+                    _log("✅", f"{name} ({n} frames all ACKed)")
                     self._last_a5_frames = []
                     self._retransmit_count = 0
                     return
@@ -444,9 +475,10 @@ class MeraService(Service):
                     self._last_a5_frames = []
                     self._retransmit_count = 0
                     return
-                missing = [i for i in range(n) if not (ack >> i) & 1]
+                # Bit i set → CONS[i] received → frame index i+1 in _last_a5_frames
+                missing = [i + 1 for i in range(n_cons) if not (ack >> i) & 1]
                 _log("!", f"FlowControl: bitmask=0x{ack:02x} (expected 0x{expected:02x}) — "
-                          f"retransmit #{self._retransmit_count} of A5 frame(s) {missing}")
+                          f"retransmit #{self._retransmit_count} of CONS frame(s) {[i-1 for i in missing]}")
                 await asyncio.sleep(0.2)   # drain ATT queue before retransmit
                 for i in missing:
                     await self.push_notify(self._last_a5_frames[i])
@@ -466,10 +498,13 @@ class MeraService(Service):
                     _log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
                     frames = _dispatch(ctx, proc, args)
                     self._last_a5_frames = frames   # store for potential FlowControl retransmit
+                    self._last_a5_proc = proc
                     self._retransmit_count = 0
                     for frame in frames:
                         await self.push_notify(frame)
-                        await asyncio.sleep(0.01)   # 10 ms — all 4 frames within one BLE conn interval
+                    if len(frames) == 1:
+                        name = _PROC_NAMES.get(proc, f"0x{proc:02X}")
+                        _log("✅", f"{name}")
                 else:
                     # CONS continuation frame (bit 0 = 0) — multi-frame request not yet assembled
                     _log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
