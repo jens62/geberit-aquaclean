@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.45.0b1
+mock-geberit-mera.py v1.46.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.45.0b1"
+_MOCK_VERSION = "1.46.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -764,41 +764,44 @@ async def _handle_clear_log(request):
     raise web.HTTPFound("/")
 
 
-async def _send_a6_connection_frames(service: MeraService, gen: int) -> None:
-    """Send A6 InfoFrame burst as soon as iOS enables A6 notifications (CCCD write).
+async def _send_a5_info_frames(service: MeraService, gen: int) -> None:
+    """Send 10 InfoFrames on A5 as soon as iOS enables A5 notifications (CCCD write).
 
-    The real device sends 9 frames immediately when CCCD-A6 is written
-    (~1.6 s after connect). This mock fires on the same event: it polls
-    notify_a6_char._notify at 100 ms intervals and sends the burst the
-    instant BlueZ sets it to True (triggered by iOS writing the A6 CCCD).
+    Both the bridge (wait_for_info_frames_async, threshold=10) and the Geberit Home App
+    wait for an InfoFrame flood on A5 before sending any procedure request.  Sending on
+    A6 (old behaviour) was wrong — the bridge and iOS only count frames received on A5.
 
-    A fixed timer MUST NOT be used — it fires after iOS has already shown
-    "cannot connect" and disconnected. Event-driven is the only correct approach.
+    Sends exactly 10 frames so wait_for_info_frames_async exits via the count path
+    (info_frame_count >= 10) rather than the 2-second timeout path.
 
-    gen: connection generation at the time this task was spawned. If the
-    connection was lost before the CCCD is written, _connection_gen will have
-    advanced and this stale task exits without sending.
-    IsButtonPressed is NOT reset on disconnect; it resets here after the burst
-    so that iOS can retry automatically after a battery-plugin-caused disconnect.
+    Event-driven: polls A5 CCCD at 100 ms intervals; fires the burst the instant
+    BlueZ sets it to True (triggered by iOS writing CCCD-A5).  A fixed timer MUST NOT
+    be used — it fires after iOS has already shown "cannot connect" and disconnected.
+
+    gen: connection generation at the time this task was spawned.  If the connection
+    was lost before the CCCD is written, _connection_gen will have advanced and this
+    stale task exits without sending.
+    IsButtonPressed is NOT reset on disconnect; it resets here after the burst so that
+    iOS can retry automatically after a battery-plugin-caused disconnect.
     """
-    a6 = service._notify_a6_iface
+    a5 = service._notify_iface
     for _ in range(80):          # max 8 s — iOS gives up well before this
         if not _connected or _connection_gen != gen:
             if not _connected and _connection_gen == gen:
-                _log("·", f"Attempt {gen}: client disconnected before A6 CCCD — keep mock running, attempt again")
+                _log("·", f"Attempt {gen}: client disconnected before A5 CCCD — keep mock running, attempt again")
             return
-        if a6 is not None and a6._notify:
+        if a5 is not None and a5._notify:
             break
         await asyncio.sleep(0.1)
     else:
-        _log("·", f"Attempt {gen}: GATT cache built — A6 CCCD not written within 8 s. Keep mock running, attempt again")
+        _log("·", f"Attempt {gen}: GATT cache built — A5 CCCD not written within 8 s. Keep mock running, attempt again")
         return
     if not _connected or _connection_gen != gen:
         return
-    _log("·", f"Attempt {gen}: sending A6 InfoFrame burst (9×)")
+    _log("·", f"Attempt {gen}: sending A5 InfoFrame burst (10×)")
     service._a6_burst_done.clear()   # block A5 responses during burst to prevent ATT congestion
-    for _ in range(9):
-        await service.push_notify_a6(_A6_INFO_FRAME)
+    for _ in range(10):
+        await service.push_notify(_A6_INFO_FRAME)
         await asyncio.sleep(0.05)
     global _button_pressed
     if _button_pressed:
@@ -1047,7 +1050,7 @@ async def main(web_port: int = 8765) -> None:
             _connection_gen += 1
             gen = _connection_gen
             _log("·", f"BLE client connected: {addr}")
-            asyncio.ensure_future(_send_a6_connection_frames(service, gen))
+            asyncio.ensure_future(_send_a5_info_frames(service, gen))
 
         def _on_device_disconnected(device_path: str) -> None:
             global _connected, _current_device_path
@@ -1056,8 +1059,8 @@ async def main(web_port: int = 8765) -> None:
             _connected = False
             _current_device_path = None
             _log("·", f"BLE client disconnected: {device_path}")
-            # IsButtonPressed resets only after the A6 burst fires (in
-            # _send_a6_connection_frames). While it is still True, pairing is
+            # IsButtonPressed resets only after the A5 burst fires (in
+            # _send_a5_info_frames). While it is still True, pairing is
             # incomplete and iOS may retry — force-remove this device now so
             # BlueZ's ~20 s cleanup timer cannot fire during the next attempt.
             if _button_pressed:
