@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.48.0b1
+mock-geberit-mera.py v1.49.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.48.0b1"
+_MOCK_VERSION = "1.49.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -508,7 +508,9 @@ class MeraService(Service):
                     self._last_a5_frames = frames   # store for potential FlowControl retransmit
                     self._last_a5_proc = proc
                     self._retransmit_count = 0
-                    for frame in frames:
+                    for i, frame in enumerate(frames):
+                        if i:
+                            await asyncio.sleep(0.02)  # one frame per BLE event — prevents iOS dropping batched pairs
                         await self.push_notify(frame)
                     if len(frames) == 1:
                         name = _PROC_NAMES.get(proc, f"0x{proc:02X}")
