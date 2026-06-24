@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.51.0b1
+mock-geberit-mera.py v1.54.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.53.0b1"
+_MOCK_VERSION = "1.54.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -210,46 +210,78 @@ def _parse_request(frame: bytes):
 
 # ---- Response building ----
 def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
-    """Build ATT notify frames for a procedure response.
+    """Build ATT notify frames matching the real Mera Comfort wire format.
 
-    iOS negotiates MTU=517 → ATT notification payload = 514 bytes.
-    Using chunk_size=513 (payload - 1 header byte), all current proc responses
-    (largest: GetNodeInventory = 140 bytes content) fit in a single frame with
-    n_cons=0.  Single-frame responses require no CONS frames and no FlowControl
-    timing coordination — iOS sends FlowControl bitmask=0x00 (expected for
-    n_cons=0) immediately after the one notification, and the mock ACKs it.
+    CrcMessage body: [status, node_id=0x01, ctx, proc, result_len, ...result]
+    CrcMessage header: id=5, seg=0x00 (real device value, not 0xFF)
 
-    Response body: [status, 0x00, ctx, proc, result_len, ...result]
-    Wrapped in CrcMessage: [id=5, seg=255, len_hi, len_lo, crc_hi, crc_lo, ...body]
+    Two formats selected by content_len = 6 (CrcMsg header) + 5 (body prefix) + len(result):
 
-    Headers:
-      0x11 = SINGLE  (n_cons=0, no CONS frames)
-      0x13 = FIRST + 1 CONS, 0x15 = FIRST + 2 CONS, …
-      0x10 = CONS[0], 0x12 = CONS[1], …
+    Legacy SINGLE-type (bits[6:5]=00), 19-byte payload, max 4 frames (n_cons ≤ 3):
+      Used when content_len ≤ 76 bytes (≤ 4 × 19).
+      FIRST header: 0x11 | (n_cons << 1)     e.g. 0x13 for n_cons=1
+      CONS  header: 0x10 | (frame_index << 1) e.g. 0x12 for first CONS
+
+    Extended FIRST+CONS (bits[6:5]=01/10), 18-byte payload:
+      Used when content_len > 76 bytes (proc 0x82 = 93 bytes → 6 frames).
+      FIRST:  [0x30, total_frame_count] + 18 bytes payload
+      CONS i: [byte1, frame_index]      + 18 bytes payload
+        byte1 = 0x40 | window_flag | channel_bits
+        channel_bits: A6=0x02, A7=0x04, A8=0x06, A5=0x00 (rotation for CONS slots)
+        window_flag:  0x10 for CONS frames 1–3 (first FC window), 0x00 thereafter
+
+    Characteristic routing (both formats):
+      frame 0 → A5,  frame 1 → A6,  frame 2 → A7,  frame 3 → A8,
+      frame 4 → A5,  frame 5 → A6,  …  (rotation mod 4)
+
+    FlowControl bitmask (from iOS): bit i set = frame i received (bit 0 = FIRST frame).
+    All-acked expected value for n total frames: (1 << n) - 1.
     """
     body = bytearray(5 + len(result))
     body[0] = status
-    body[1] = 0x00     # reserved (always 0 in device responses)
+    body[1] = 0x01     # node_id — real device sends 0x01
     body[2] = ctx
     body[3] = proc
     body[4] = len(result) & 0xFF
     body[5:] = result
 
-    crc_msg = CrcMessage.create(_BLEMSG_ID_CRC_RSP, 0xFF, body)
-    serialized = crc_msg.serialize()
+    crc_msg = CrcMessage.create(_BLEMSG_ID_CRC_RSP, 0x00, body)  # seg=0x00
+    serialized = bytes(crc_msg.serialize())   # 262-byte buffer; extra zeros ignored by receiver
+    content_len = 6 + len(body)
 
-    content_len = 6 + len(body)       # CrcMessage header (6 bytes) + body
-    # ATT payload = MTU(517) - opcode(1) - handle(2) = 514; reserve 1 byte for frame header.
-    _CHUNK = 513
-    chunks = []
-    for i in range(0, content_len, _CHUNK):
-        chunks.append(bytes(serialized[i:i + _CHUNK]))  # variable length, no padding
+    _LEGACY_MAX = 4 * 19   # 76 bytes — max content for legacy format (SubFrameCount fits 2 bits)
 
-    n_cons = len(chunks) - 1
-    frames = []
-    for i, chunk in enumerate(chunks):
-        hdr = (0x11 | (n_cons << 1)) if i == 0 else (0x10 | ((i - 1) << 1))
-        frames.append(bytes([hdr]) + chunk)
+    if content_len <= _LEGACY_MAX:
+        # Legacy SINGLE-type: 1-byte header, 19-byte payload
+        _P = 19
+        n_frames = (content_len + _P - 1) // _P
+        n_cons = n_frames - 1
+        frames = []
+        for i in range(n_frames):
+            chunk = serialized[i * _P : (i + 1) * _P]
+            chunk = bytes(chunk) + bytes(_P - len(chunk))   # pad last chunk
+            if i == 0:
+                hdr = bytes([0x11 | (n_cons << 1)])
+            else:
+                hdr = bytes([0x10 | (i << 1)])
+            frames.append(hdr + chunk)
+    else:
+        # Extended FIRST+CONS: 2-byte header, 18-byte payload
+        _P = 18
+        n_frames = (content_len + _P - 1) // _P
+        # CONS byte1 channel rotation: CONS slot 0→A6, 1→A7, 2→A8, 3→A5, 4→A6, …
+        _CHAN = [0x02, 0x04, 0x06, 0x00]   # A6, A7, A8, A5
+        frames = []
+        for i in range(n_frames):
+            chunk = serialized[i * _P : (i + 1) * _P]
+            chunk = bytes(chunk) + bytes(_P - len(chunk))   # pad last chunk
+            if i == 0:
+                hdr = bytes([0x30, n_frames])
+            else:
+                ch = _CHAN[(i - 1) % 4]
+                wf = 0x10 if i <= 3 else 0x00   # window flag: set for first 3 CONS
+                hdr = bytes([0x40 | wf | ch, i])
+            frames.append(hdr + chunk)
     return frames
 
 
@@ -405,6 +437,8 @@ class MeraService(Service):
         self._notify_value = bytes(20)
         self._notify_iface = None         # wired after register() via wire_notify()
         self._notify_a6_iface = None      # wired after register() via wire_notify_a6()
+        self._notify_a7_iface = None      # wired after register() via wire_notify_a7()
+        self._notify_a8_iface = None      # wired after register() via wire_notify_a8()
         self._last_a5_frames: list = []   # last response frames; used for FlowControl retransmit
         self._last_a5_proc: int = 0       # proc code of last multi-frame response (for progress log)
         self._retransmit_count: int = 0   # retransmits for current transaction; reset on new proc
@@ -417,6 +451,12 @@ class MeraService(Service):
 
     def wire_notify_a6(self, iface) -> None:
         self._notify_a6_iface = iface
+
+    def wire_notify_a7(self, iface) -> None:
+        self._notify_a7_iface = iface
+
+    def wire_notify_a8(self, iface) -> None:
+        self._notify_a8_iface = iface
 
     @dbus_property(PropertyAccess.READ)
     def Includes(self) -> "ao":  # type: ignore
@@ -457,6 +497,43 @@ class MeraService(Service):
         except Exception as e:
             _log("·", f"WARNING: push_notify_a6 failed: {e}")
 
+    async def push_notify_a7(self, frame: bytes) -> None:
+        """Send an ATT notification on A7."""
+        _log("→", f"NOTIFY A7 ({len(frame)}B): {frame.hex()}")
+        if self._notify_a7_iface is None:
+            _log("·", "WARNING: A7 notify interface not wired — cannot push frame")
+            return
+        try:
+            if hasattr(self._notify_a7_iface, "changed"):
+                self._notify_a7_iface.changed(frame)
+            else:
+                self._notify_a7_iface.emit_properties_changed(
+                    {"Value": Variant("ay", list(frame))}
+                )
+        except Exception as e:
+            _log("·", f"WARNING: push_notify_a7 failed: {e}")
+
+    async def push_notify_a8(self, frame: bytes) -> None:
+        """Send an ATT notification on A8."""
+        _log("→", f"NOTIFY A8 ({len(frame)}B): {frame.hex()}")
+        if self._notify_a8_iface is None:
+            _log("·", "WARNING: A8 notify interface not wired — cannot push frame")
+            return
+        try:
+            if hasattr(self._notify_a8_iface, "changed"):
+                self._notify_a8_iface.changed(frame)
+            else:
+                self._notify_a8_iface.emit_properties_changed(
+                    {"Value": Variant("ay", list(frame))}
+                )
+        except Exception as e:
+            _log("·", f"WARNING: push_notify_a8 failed: {e}")
+
+    def _push_method(self, frame_index: int):
+        """Return push_notify method for frame i: rotates A5→A6→A7→A8→A5→…"""
+        return [self.push_notify, self.push_notify_a6,
+                self.push_notify_a7, self.push_notify_a8][frame_index % 4]
+
     async def _handle_request(self, raw: bytes) -> None:
         async with self._request_lock:
             if len(raw) < 11:
@@ -466,21 +543,16 @@ class MeraService(Service):
             ft = _FrameFactory.getFrameTypeFromHeaderByte(hdr)
 
             if ft == _FrameType.CONTROL:
-                # FlowControlFrame — app reports which A5 response frames it received.
-                # Bitmask bit N=1 means frame N was received; 0 means it was lost and
-                # needs retransmission.  Root cause of loss: A6 burst notifications
-                # concurrent with A5 response can cause ATT congestion on iOS.
+                # FlowControlFrame — app reports which response frames it received.
+                # Bitmask bit i=1 → frame i received (bit 0 = FIRST, bit 1 = CONS[0], …).
+                # Expected all-acked value for n total frames: (1 << n) - 1.
                 fc = _FlowControlFrame.create_flow_control_frame(raw)
                 ack = fc.AckdFrameBitmask[0]
                 n = len(self._last_a5_frames)
                 if n == 0:
-                    _log("·", f"FlowControl: no pending A5 frames (bitmask=0x{ack:02x})")
+                    _log("·", f"FlowControl: no pending frames (bitmask=0x{ack:02x})")
                     return
-                # AckdFrameBitmask tracks CONS frames only (not the FIRST frame).
-                # For n total frames: n_cons = n-1 CONS frames; expected = (1<<n_cons)-1.
-                # e.g. 4 frames (1 FIRST + 3 CONS): expected = 0x07, not 0x0F.
-                n_cons = n - 1
-                expected = (1 << n_cons) - 1
+                expected = (1 << n) - 1
                 if ack == expected:
                     name = _PROC_NAMES.get(self._last_a5_proc, f"0x{self._last_a5_proc:02X}")
                     _log("✅", f"{name} ({n} frames all ACKed)")
@@ -493,13 +565,12 @@ class MeraService(Service):
                     self._last_a5_frames = []
                     self._retransmit_count = 0
                     return
-                # Bit i set → CONS[i] received → frame index i+1 in _last_a5_frames
-                missing = [i + 1 for i in range(n_cons) if not (ack >> i) & 1]
+                missing = [i for i in range(n) if not (ack >> i) & 1]
                 _log("!", f"FlowControl: bitmask=0x{ack:02x} (expected 0x{expected:02x}) — "
-                          f"retransmit #{self._retransmit_count} of CONS frame(s) {[i-1 for i in missing]}")
+                          f"retransmit #{self._retransmit_count} of frame(s) {missing}")
                 await asyncio.sleep(0.2)   # drain ATT queue before retransmit
                 for i in missing:
-                    await self.push_notify(self._last_a5_frames[i])
+                    await self._push_method(i)(self._last_a5_frames[i])
                     await asyncio.sleep(0.01)
                 return
 
@@ -520,8 +591,8 @@ class MeraService(Service):
                     self._retransmit_count = 0
                     for i, frame in enumerate(frames):
                         if i:
-                            await asyncio.sleep(0.012)  # 12ms > CI(10ms): each frame its own CE; all within ~54ms FlowControl window
-                        await self.push_notify(frame)
+                            await asyncio.sleep(0.012)  # 12ms > CI(10ms): each frame its own CE
+                        await self._push_method(i)(frame)
                     if len(frames) == 1:
                         name = _PROC_NAMES.get(proc, f"0x{proc:02X}")
                         _log("✅", f"{name}")
@@ -1031,6 +1102,28 @@ async def main(web_port: int = 8765) -> None:
         logger.info("A6 notify characteristic wired")
     else:
         logger.warning("A6 notify characteristic not found — Connection 1 burst disabled")
+
+    # Wire A7 and A8 notify by UUID so multi-frame responses can distribute across characteristics
+    for uuid_target, wire_fn, label in [
+        (_NOTIFY_A7_UUID, service.wire_notify_a7, "A7"),
+        (_NOTIFY_A8_UUID, service.wire_notify_a8, "A8"),
+    ]:
+        found = None
+        for attr in ("_characteristics", "_chars"):
+            chars = getattr(service, attr, None)
+            if chars:
+                for c in chars:
+                    uuid = str(getattr(c, "uuid", getattr(c, "_uuid", ""))).lower()
+                    if uuid == uuid_target.lower():
+                        found = c
+                        break
+            if found:
+                break
+        if found:
+            wire_fn(found)
+            logger.info("%s notify characteristic wired", label)
+        else:
+            logger.warning("%s notify characteristic not found — multi-frame distribution degraded", label)
 
     # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
     # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
