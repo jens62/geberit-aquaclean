@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.42.0b1
+mock-geberit-mera.py v1.43.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.42.0b1"
+_MOCK_VERSION = "1.43.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -450,7 +450,7 @@ class MeraService(Service):
                 await asyncio.sleep(0.2)   # drain ATT queue before retransmit
                 for i in missing:
                     await self.push_notify(self._last_a5_frames[i])
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.01)
                 return
 
             if ft == _FrameType.SINGLE:
@@ -469,7 +469,7 @@ class MeraService(Service):
                     self._retransmit_count = 0
                     for frame in frames:
                         await self.push_notify(frame)
-                        await asyncio.sleep(0.05)   # 50 ms between frames — D-Bus→BlueZ pipeline
+                        await asyncio.sleep(0.01)   # 10 ms — all 4 frames within one BLE conn interval
                 else:
                     # CONS continuation frame (bit 0 = 0) — multi-frame request not yet assembled
                     _log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
