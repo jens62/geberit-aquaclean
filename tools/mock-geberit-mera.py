@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.50.0b1
+mock-geberit-mera.py v1.51.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.50.0b1"
+_MOCK_VERSION = "1.51.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -122,7 +122,8 @@ _A6_INFO_FRAME = bytes.fromhex("800130140c030003000000003130001200b70800")
 _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B — short form required for BlueZ Read By Type match)
 
 # ---- Device identity ----
-_ARTICLE     = "146.21x.xx.1"  # real device format: 12 chars, no null padding
+_ARTICLE      = "14621"          # BLE advertisement article prefix (model lookup)
+_ARTICLE_FULL = "146.21x.xx.1"  # proc 0x82 ArticleNumber field: 12-char fixed-width
 _SAP_NUMBER      = "HB2300EU000001"
 _SERIAL          = "GB2000EU000001"
 _PRODUCTION_DATE = "01.01.2023"  # real device format: DD.MM.YYYY
@@ -334,7 +335,7 @@ def _proc_82() -> bytes:
         b = s.encode("ascii")[:n]
         return b + bytes(n - len(b))
     return (
-        _pad(_ARTICLE, 12)           # ArticleNumber  offset  0
+        _pad(_ARTICLE_FULL, 12)      # ArticleNumber  offset  0
         + _pad(_SAP_NUMBER, 20)      # SerialNumber   offset 12
         + _pad(_PRODUCTION_DATE, 10) # ProductionDate offset 32
         + _pad(_DESCRIPTION, 40)     # Description    offset 42
