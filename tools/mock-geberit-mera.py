@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.54.0b1
+mock-geberit-mera.py v1.57.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.56.0b1"
+_MOCK_VERSION = "1.57.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -135,7 +135,16 @@ _NODE_IDS = bytes([3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xe, 0xf])
 
 # SPL indices supported on Mera Comfort. Indices 8/9/10 permanently corrupt
 # GetFilterStatus state until power-cycle — never send them on Mera Comfort.
-_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 11]
+# Indices 12+13 (UnpostedShowerCycles / DaysUntilNextDescale) must be non-zero
+# or iOS interprets DaysUntilNextDescale=0 as "descaling necessary".
+_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 13]
+
+# SPL values for indices that need non-zero defaults.
+# Keep in sync with _proc_45() descaling schedule values.
+_SPL_MERA_VALUES = {
+    12: 5,   # UnpostedShowerCycles — 5 showers since last descale
+    13: 69,  # DaysUntilNextDescale — ~2 months remaining
+}
 
 # ---- Advertisement D-Bus path (bluez_peripheral default, used for unregister) ----
 _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
@@ -398,10 +407,12 @@ def _proc_0d(args: bytes) -> bytes:
 
     Real Mera Comfort skips indices 8/9/10 and returns 9 items for a 12-index request.
     Including index bytes is mandatory — iOS maps each value by its index field, not position.
+    Index 13 (DaysUntilNextDescale) must be non-zero or iOS shows "descaling necessary".
     """
     result = bytes([len(_SPL_MERA_INDICES)])
     for idx in _SPL_MERA_INDICES:
-        result += bytes([idx]) + bytes(4)
+        val = _SPL_MERA_VALUES.get(idx, 0)
+        result += bytes([idx]) + val.to_bytes(4, "little")
     return result
 
 
