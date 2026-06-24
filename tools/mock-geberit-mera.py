@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.46.0b1
+mock-geberit-mera.py v1.47.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.46.0b1"
+_MOCK_VERSION = "1.47.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -320,14 +320,20 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
 
 # ---- Procedure result builders ----
 def _proc_82() -> bytes:
-    """GetDeviceIdentification: variant + SAP + serial + production_date + description."""
+    """GetDeviceIdentification: 82-byte fixed-width payload.
+
+    AcDeviceIdentification requires exactly 82 bytes (null-padded, no leading variant byte):
+      ArticleNumber[12] + SerialNumber[20] + ProductionDate[10] + Description[40]
+    """
+    def _pad(s: str, n: int) -> bytes:
+        b = s.encode("ascii")[:n]
+        return b + bytes(n - len(b))
     return (
-        bytes([_VARIANT])
-        + _SAP_NUMBER.encode("ascii") + b"\x00"
-        + _SERIAL.encode("ascii") + b"\x00"
-        + _PRODUCTION_DATE.encode("ascii") + b"\x00"
-        + _DESCRIPTION.encode("ascii") + b"\x00"
-    )
+        _pad(_ARTICLE, 12)           # ArticleNumber  offset  0
+        + _pad(_SAP_NUMBER, 20)      # SerialNumber   offset 12
+        + _pad(_PRODUCTION_DATE, 10) # ProductionDate offset 32
+        + _pad(_DESCRIPTION, 40)     # Description    offset 42
+    )                                # total = 82 bytes
 
 
 def _proc_05() -> bytes:
