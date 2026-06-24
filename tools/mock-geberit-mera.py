@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.49.0b1
+mock-geberit-mera.py v1.50.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.49.0b1"
+_MOCK_VERSION = "1.50.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -294,10 +294,15 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = _proc_0d(args)
     elif proc == 0x09:            # SetCommand (shower/lid/flush toggle)
         result = b""
-    elif proc in (0x08, 0x11, 0x13, 0x14, 0x15):  # Subscribe* / SetStored*
+    elif proc in (0x11, 0x13):    # SubscribeNotif: count(1) + 4×[node_id(1)+zeros(12)] = 53b
+        nodes = _NODE_IDS[:4]
+        result = bytes([len(nodes)])
+        for nid in nodes:
+            result += bytes([nid]) + bytes(12)
+    elif proc in (0x08, 0x14, 0x15):  # SetStored* (empty OK)
         result = b""
-    elif proc == 0x07:            # GetPerNodeProfileSetting
-        result = b""
+    elif proc == 0x07:            # GetPerNodeProfileSetting: value(1) + null(1)
+        result = bytes([0, 0])
     elif proc == 0x0A:            # GetActiveCommonSetting
         result = bytes([0, 0])    # 16-bit value = 0
     elif proc == 0x0B:            # SetActiveCommonSetting
@@ -337,14 +342,16 @@ def _proc_82() -> bytes:
 
 
 def _proc_05() -> bytes:
-    """GetNodeInventory: count + node IDs."""
-    return bytes([len(_NODE_IDS)]) + _NODE_IDS
+    """GetNodeInventory: count(1) + node IDs + zero-pad to 129 bytes total."""
+    payload = bytes([len(_NODE_IDS)]) + _NODE_IDS
+    return payload + bytes(129 - len(payload))
 
 
 def _proc_81() -> bytes:
-    """GetSOCApplicationVersions: minimal version string."""
-    ver = b"RS30TS206\x00"
-    return bytes([1, len(ver)]) + ver
+    """GetSOCApplicationVersions: major_str(2) + minor_byte + null = 4 bytes.
+    Real device sends "10.18" as b"10" + 0x12 + 0x00.
+    """
+    return b"10\x12\x00"
 
 
 def _proc_0d(args: bytes) -> bytes:
@@ -369,7 +376,7 @@ def _proc_0e(args: bytes) -> bytes:
     records = bytes([len(comp_ids)])
     for cid in comp_ids:
         records += bytes([cid, 0x33, 0x30, 206, 0])  # version="30", build=206
-    return records
+    return records + bytes(max(0, 61 - len(records)))  # always pad to 61 bytes
 
 
 def _proc_86() -> bytes:
