@@ -685,7 +685,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.63.0b1 (2026-06-25)
+## Current status — mock v1.64.0b1 (2026-06-25)
 
 Works with **original (unpatched) bluetoothd** (BlueZ 5.77) — `gatt-server.c` patch is **NOT required** (confirmed 2026-06-25).
 
@@ -713,9 +713,11 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | GetStatisticsDescale (proc `0x45`) | ✅ v1.56.0b1 — 16-byte struct; called only from descaling history screen (never during polling) |
 | Web UI button press + live state | ✅ |
 | Full Connection 1 → GetDeviceIdentification flow | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
-| "Error" popup after first FilterStatus | ✅ CONFIRMED FIXED v1.63.0b1 (2026-06-25) — A6 burst + FilterStatus timestamps + correct proc 0x51/0x0A values |
+| "Error" popup after first FilterStatus | ⚠️ still occurring as of v1.64.0b1 — root cause unknown; investigation deferred |
 | GetActiveProfileSetting (proc `0x0A`) | ✅ v1.63.0b1 — per-ID values from real device capture (WaterHardness crash fix) |
 | GetStoredCommonSetting (proc `0x51`) | ✅ v1.63.0b1 — per-ID values from real device capture; WaterHardness(0)=1 (was 0, caused crash) |
+| GetStoredProfileSetting (proc `0x53`) | ✅ v1.64.0b1 — per-ID values from real device capture (was returning 0 for all IDs) |
+| GetPerNodeProfileSetting (proc `0x07`) | ✅ v1.64.0b1 — per-node values from real device capture (was returning 0 for all nodes) |
 | "Descaling necessary" warning | ✅ v1.59.0b1 — confirmed fixed (2026-06-25); root cause was SPL index 13=0 |
 
 ---
