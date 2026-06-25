@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 """
-minimal-peripheral.py — minimal BlueZ GATT peripheral to reproduce the
-Read-By-Type mixed-length truncation bug in gatt-server.c.
+minimal-peripheral.py — minimal BlueZ GATT peripheral for Read-By-Type testing.
 
 Service layout:
   - 1× READ  characteristic with 16-bit UUID 0xABCD  → char-decl item_len=7
   - 4× NOTIFY characteristics with 128-bit UUIDs     → char-decl item_len=21
   - 2× WRITE_WITHOUT_RESPONSE characteristics         → char-decl item_len=21
 
-BlueZ's process_read_by_type packs only same-length entries in one ATT
-response.  When a central (iOS, macOS, Android) sends ATT_READ_BY_TYPE_REQ
-for char declarations (type=0x2803), BlueZ returns only the 16-bit-UUID
-entry in the first response (len=7) and stops — the 128-bit-UUID entries
-are never sent.  Result: the central sees 1 characteristic instead of 7.
-
-The READ characteristic is sorted alphabetically first (name "char_short"
-comes before "notify_*") so it gets the lowest handle, ensuring it is the
-first entry BlueZ encounters in the packing loop.
+NOTE: this script does NOT demonstrate a behavioral difference between original
+and patched BlueZ. char_short sorts alphabetically first → gets the lowest handle
+→ first in queue → both versions pack it alone in the first response.
+Original BlueZ 5.77 is spec-correct (ATT §3.4.4.2). Clients that follow
+GATT §4.6.1 issue follow-up RBTs and find all 7 chars.
 
 Run on the BlueZ host (requires bluez-peripheral):
   sudo python3 minimal-peripheral.py
@@ -100,8 +95,7 @@ async def main():
     print("--- Minimal Peripheral Active ---")
     print(f"Service: {SERVICE_UUID}")
     print("7 chars: char_short(0xABCD/READ) + notify_1-4 + write_1/2")
-    print("Expected: central discovers all 7 characteristics")
-    print("Bug:      central discovers only 1 (char_short) — BlueZ truncates the rest")
+    print("Expected: central discovers all 7 characteristics via GATT §4.6.1 follow-up RBTs")
     try:
         while True:
             await asyncio.sleep(1)

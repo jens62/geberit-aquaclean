@@ -89,10 +89,10 @@ The Geberit Home App "Connection 1" onboarding requires **two BLE connections**
 **BLE Connection 1 — cache update (force-disconnected at 700 ms):**
 
 1. App detects `IsButtonPressed=True` in the BLE advertisement and connects.
-2. iOS CoreBluetooth runs ATT characteristic discovery. With the patched
-   `gatt-server.c`, all 7 chars are returned via two Read By Type passes
-   (`RBT [0015–0027]: 7 attr(s)`). CoreBluetooth updates its peripheral cache
-   from the pre-patch stale 2-char entry to the correct 7-char result.
+2. iOS CoreBluetooth runs ATT characteristic discovery via multiple Read By Type
+   passes (GATT §4.6.1 follow-ups). CoreBluetooth updates its peripheral cache
+   from any stale 2-char entry (leftover from early mock sessions) to the correct
+   9-char result.
 3. Mock force-disconnects at 700 ms — ATT discovery finishes in ~500 ms;
    700 ms is enough to update the cache before the app layer acts on the
    (potentially stale) cached list.
@@ -139,10 +139,9 @@ Both GATT apps are then re-registered before Connection 2 arrives. See the
 ## SC flush — iOS CoreBluetooth cache (v1.36.0+)
 
 iOS CoreBluetooth caches GATT characteristic lists by **peripheral MAC address**
-(not by iOS RPA). Sessions from before the `gatt-server.c` RBT patch (2026-06-23)
-left a stale 2-char cache for our adapter MAC (`A0:AD:9F:72:C4:0F`) — only `3a2b`
-and `A5`, the only two characteristics the broken BlueZ reported. This cache persists
-across iPad reboots.
+(not by iOS RPA). Early mock sessions (before v1.40.0b1, when the mock only
+registered `3a2b` + `A5`) left a stale 2-char cache for our adapter MAC
+(`A0:AD:9F:72:C4:0F`). This cache persists across iPad reboots.
 
 **Symptom without SC flush:** iOS connects, CoreBluetooth delivers the stale 2-char
 list to the app delegate immediately while concurrently running fresh ATT discovery in
@@ -193,12 +192,16 @@ to `pairable=on` — that triggers an iOS pairing dialog interrupting the flow.
 
 ## Known issues
 
-### 2-char-decl bug — FIXED via `gatt-server.c` patch (2026-06-23)
+### 2-char-decl investigation — gatt-server.c patch NOT required (2026-06-25)
 
-**Symptom:** GATT discovery finds only 2 characteristic declarations out of 7 (3a2b at
-handle 0x0016 + A5 at 0x0018). iOS stops char discovery after A5 and never finds
-A6–A2. Without A6 discoverable, iOS cannot write A6's CCCD → Connection 1 never
-completes.
+**CONFIRMED 2026-06-25:** Geberit Home App v2.14.1 works against mock v1.63.0b1 with
+**original (unpatched) BlueZ 5.77 `bluetoothd`**. No `gatt-server.c` patch needed.
+See correction note at the end of this section for what the investigation actually found.
+
+**Original symptom (before v1.40.0b1):** GATT discovery found only 2 characteristic
+declarations (3a2b + A5). This was because early mock versions registered only those
+2 chars (service end handle 0x0019). iOS correctly stopped after A5 — there were no
+more chars in the service range to discover.
 
 **Confirmed GATT handle layout** (current — 9 characteristics as of v1.40.0b1; 7-char layout was confirmed from `bluetoothd -d` debug log, 2026-06-22 21:17):
 
@@ -274,31 +277,7 @@ This dead-code diagnostic should be removed.
 4. ~~iOS GATT cache~~ — first connection to fresh bluetoothd shows same bug
 5. ~~BlueZ doesn't register the chars~~ — debug log proves all 9 ARE registered
 
-**macOS behaves identically to iOS — no continuations from either client.**
-
-Earlier analysis incorrectly stated "macOS works because it uses large MTU and handles
-multiple continuation queries." This was wrong. Four test sessions across 2026-06-23
-all show the same result: BlueZ returns A5 only, and both iOS and macOS stop after
-that single short response — no follow-up range query is issued by either client.
-
-The `gatt-discovery-test.py` "PASS — 7/7" result observed on macOS was entirely from
-CoreBluetooth's peripheral cache. The cache is keyed by **peripheral UUID**
-(e.g. `4E695123-…`), not by service UUID. Changing the vendor service UUID suffix from
-`…0000` to `…0001` moved the service to new ATT handles, but CoreBluetooth returned
-the cached 7-characteristic database for that peripheral UUID regardless.
-
-| Session | Service range | ATT live result | PASS source |
-|---------|--------------|-----------------|-------------|
-| 08:55 — `…0000` | [0x0015, 0x0027] | A5 only → jumps to battery | cache (Alba peripheral) |
-| 14:02 — `…0000` | [0x00C3, 0x00D5] | A5 → tries 0x00CF → A1 → stops | cache (partial) |
-| 14:18 — `…0001` | [0x00E9, 0x00FB] | A5 only → disconnects | cache (peripheral UUID) |
-
-In all sessions: BlueZ returns A5, client stops, no continuation.
-
-**Root cause confirmed: `gatt-server.c` / `process_read_by_type` packing loop.**
-
-The `gatt-db.c` diagnostic (printf after `gatt_db_foreach_in_range`) was run against a
-compiled BlueZ 5.77 on 2026-06-23 and produced:
+**`gatt-db.c` diagnostic** (`printf` after `gatt_db_foreach_in_range`, BlueZ 5.77, 2026-06-23):
 
 ```
 >>> RBT [0015-0027]: 7 attr(s)   ← gatt_db_read_by_type queues ALL 7 correctly
@@ -307,45 +286,47 @@ compiled BlueZ 5.77 on 2026-06-23 and produced:
 ```
 
 `gatt-db.c` / `foreach_in_range` is correct — all 7 char decls go into the queue.
-The bug is in `gatt-server.c` / `process_read_by_type`: it receives a full queue of
-7 items but the packing loop stops at the first `item_len` boundary. `0x3A2B` has
-`item_len=7`; A5–A2 have `item_len=21`. Only the first size group is packed and sent.
 
-**Why `mock-geberit-alba.py` is unaffected:** `GeberitServiceA` in the alba mock has
-exactly two characteristics, both with 128-bit UUIDs (`559eb101-…` and `559eb110-…`),
-so all char decls in the service have `item_len=21`. No size boundary exists → BlueZ
-packs both into one response without hitting the packing loop's stopping condition.
-The mera mock is the only mock that mixes a 16-bit UUID (`0x3A2B`, `item_len=7`)
-with 128-bit UUIDs (`item_len=21`) inside the same service.
-
-**Fix applied — `gatt-server.c` `read_by_type_read_complete_cb` (BlueZ 5.77, 2026-06-23):**
-
-When the packing loop hits a mismatched `item_len`, instead of calling `op->done = true`
-and sending a short PDU, the patched code calls `process_read_by_type(op)` and returns —
-skipping the mismatched item and continuing the scan for same-size items. The skipped item
-is found by the client's follow-up RBT with a fresh handle range.
-
-Patch file: `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/bluez-5.77/src/shared/gatt-server.c`
-(backup at `gatt-server.c.bak`).
-
-**Verified 2026-06-23 — `minimal-peripheral.py` + `minimal-central.py` against macOS (MTU=515):**
-
-```
-RBT [0015-0027]: 7 attr(s) queued → 3a2b returned alone (item_len=7, short PDU)
-                                   → client continues: next RBT start = 0x0018
-RBT [0018-0027]: 6 attr(s) queued → all 6 × 128-bit chars returned (item_len=21)
-Result: PASS — 7/7 characteristics discovered ✓
-```
-
-The client (CoreBluetooth) received the short first response and issued a follow-up
-RBT at 0x0018 (3a2b value_handle 0x0017 + 1) — exactly as the ATT spec requires.
-BlueZ returned all 6 remaining same-size items in the second response. This is live
-discovery, NOT CoreBluetooth cache (the central was restarted against a fresh peripheral
-with correct service UUID `3334429d-…a03e0000`).
+`gatt-server.c` / `process_read_by_type` stops packing at the first `item_len` boundary
+(`0x3A2B` has `item_len=7`; A5–A2 have `item_len=21` — only the first size group is packed
+per response). The client issues follow-up RBTs to find the rest.
 
 **Char ordering note:** `inspect.getmembers(type(self), ...)` sorts alphabetically →
 `button_state_read` (b) → `notify_a5/a6/a7/a8` (n) → `write_0/1` (w). This is the
 observed char0–char6 order and is correct behaviour, not a bug.
+
+---
+
+**CORRECTION (2026-06-25) — original bluetoothd is correct; patch NOT required:**
+
+The `process_read_by_type` stop-at-mismatch behavior is **spec-correct** per ATT §3.4.4.2.
+iOS CoreBluetooth implements GATT §4.6.1 and always issues follow-up RBTs after receiving a
+response shorter than MTU-1 — it always finds all 9 characteristics without any patch.
+
+With mock v1.63.0b1 (9 chars, service range 0x0015–0x002b), the full RBT sequence on
+original bluetoothd is:
+
+```
+RBT [0015-002b]: 3a2b alone (item_len=7, 1 item)     → client follow-up at 0x0018
+RBT [0018-002b]: A5–A2 packed (6 × item_len=21)      → client follow-up at 0x0028
+RBT [0028-002b]: A3+A4 packed (2 × item_len=21)      → discovery complete
+All 9 chars found. ✓
+```
+
+The early 2-char stale CoreBluetooth cache came from sessions before v1.40.0b1, when the
+mock only registered `3a2b` + `A5`. iOS cached those 2 chars; the cache persisted across
+sessions. The SC flush (BLE Connection 1) is still needed to update this stale cache.
+
+**The gatt-server.c "skip-and-continue" patch** (at
+`local-assets/…/bluez-5.77/src/shared/gatt-server.c`, backup `gatt-server.c.bak`)
+is NOT needed and carries a regression risk: if the short-UUID char decl falls between
+two same-length chars in handle order, the client's follow-up jumps past the middle
+short char permanently. **Do not apply or submit this patch.**
+
+The `minimal-peripheral.py` / `minimal-central.py` test scripts in `tools/` show PASS
+with both original and patched BlueZ because `char_short` sorts alphabetically before
+`notify_*` → gets the lowest handle → first in queue → both versions return identical
+first responses. The scripts do not demonstrate a behavioural difference.
 
 ---
 
@@ -706,7 +687,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ## Current status — mock v1.63.0b1 (2026-06-25)
 
-Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
+Works with **original (unpatched) bluetoothd** (BlueZ 5.77) — `gatt-server.c` patch is **NOT required** (confirmed 2026-06-25).
 
 **v1.54.0b1 — first confirmed iOS onboarding (2026-06-24).** Full Connection 1 + Connection 2
 flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
@@ -714,7 +695,7 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | Feature | Status |
 |---------|--------|
 | BLE advertising with `IsButtonPressed` toggle | ✅ |
-| All 9 char declarations visible to iOS/macOS | ✅ `gatt-server.c` patch applied — confirmed on macOS 2026-06-23 |
+| All 9 char declarations visible to iOS/macOS | ✅ original bluetoothd — confirmed with Geberit Home App 2026-06-25 |
 | SC flush (iOS CoreBluetooth cache update) | ✅ v1.36.0b1 — confirmed working (mock log 2026-06-23 19-56) |
 | Stale RPA force-remove + GATT re-register | ✅ v1.37.0b1 — prevents GATT teardown during Connection 2 |
 | All four write channels A1–A4 present | ✅ v1.40.0b1 — cy[2]/cy[3] null-check passes |
@@ -732,7 +713,7 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | GetStatisticsDescale (proc `0x45`) | ✅ v1.56.0b1 — 16-byte struct; called only from descaling history screen (never during polling) |
 | Web UI button press + live state | ✅ |
 | Full Connection 1 → GetDeviceIdentification flow | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
-| "Error" popup after first FilterStatus | ⚠️ fix applied v1.61.0b1 + v1.63.0b1 — A6 burst + FilterStatus timestamps + correct proc 0x51/0x0A values; needs test confirmation |
+| "Error" popup after first FilterStatus | ✅ CONFIRMED FIXED v1.63.0b1 (2026-06-25) — A6 burst + FilterStatus timestamps + correct proc 0x51/0x0A values |
 | GetActiveProfileSetting (proc `0x0A`) | ✅ v1.63.0b1 — per-ID values from real device capture (WaterHardness crash fix) |
 | GetStoredCommonSetting (proc `0x51`) | ✅ v1.63.0b1 — per-ID values from real device capture; WaterHardness(0)=1 (was 0, caused crash) |
 | "Descaling necessary" warning | ✅ v1.59.0b1 — confirmed fixed (2026-06-25); root cause was SPL index 13=0 |

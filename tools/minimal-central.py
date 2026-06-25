@@ -6,8 +6,10 @@ Scans for a peripheral advertising SERVICE_UUID, connects, enumerates all
 services/characteristics, and reports whether all EXPECTED_CHARS characteristics
 were discovered.
 
-On a patched BlueZ: PASS — 7/7 characteristics discovered.
-On stock BlueZ:     FAIL — 1/7 characteristics discovered (Read-By-Type truncation bug).
+NOTE: this script does NOT demonstrate a behavioral difference between original and
+patched BlueZ. char_short sorts alphabetically first → lowest handle → first in queue,
+so both versions return identical first responses. Original BlueZ 5.77 is spec-correct
+(ATT §3.4.4.2 + GATT §4.6.1) and the Geberit mock works without any BlueZ patch.
 
 Usage:
   python3 minimal-central.py                      # scan by service UUID
@@ -142,7 +144,6 @@ async def run(timeout: float, mac: Optional[str], name: str, verbose: bool = Fal
                     print(f"  PASS — {n}/{EXPECTED_CHARS} characteristics discovered ✓")
                 else:
                     print(f"  FAIL — {n}/{EXPECTED_CHARS} characteristics discovered")
-                    print("         (Read-By-Type mixed-length truncation — see BlueZ gatt-server.c)")
             print()
 
         if not vendor_found:
