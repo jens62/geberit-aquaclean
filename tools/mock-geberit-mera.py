@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.66.0b1"
+_MOCK_VERSION = "1.67.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -523,7 +523,7 @@ _ACTIVE_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 
 _STORED_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
 _STORED_COMMON_SETTINGS   = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
 _PER_NODE_PROFILE_SETTINGS = {
-    0x00: 1, 0x01: 1, 0x02: 4, 0x03: 1, 0x04: 2,
+    0x00: 1, 0x01: 1, 0x02: 2, 0x03: 1, 0x04: 2,
     0x05: 1, 0x06: 4, 0x07: 0, 0x08: 3, 0x09: 1, 0x0d: 1,
 }
 
