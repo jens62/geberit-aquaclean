@@ -756,6 +756,58 @@ Implementation notes:
 
 ---
 
+### Mock Mera: pair Geberit Remote Control with mock — blocked by pre-existing bond
+
+**Goal:** connect the physical Geberit Remote Control (`B0:10:A0:68:5C:8B`) to
+`mock-geberit-mera.py` so the remote's GATT commands are visible in btmon (decrypted,
+because BlueZ holds the LTK after bonding).
+
+**What happened (2026-06-25, v1.60.0b1):**
+Logs: `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/mock-geberit-mera_RC_*_2026-06-25_12-04.*`
+
+The remote control (`B0:10:A0:68:5C:8B`) never appeared in the mock log at all.
+The only device that connected was `78:42:1C:38:DE:16` (random address → iPhone, stale
+bond, RPA rotated → encryption failed with status 0x0e → disconnect). After that disconnect
+the mock's GATT re-registration failed: `"Already Exists"` → mock broken, no further connections possible.
+
+**Root cause — pre-existing bond:**
+The remote has a bond (LTK) with the real toilet `38:AB:41:2A:0D:67`.
+When the remote connects to the mock it immediately sends `LL_ENC_REQ` with the stored
+EDIV+Rand from the real toilet bond. The mock VM has no matching LTK → encryption setup
+fails → remote disconnects before GATT is reached. Confirmed in reference capture
+`toogle-lid-with-remote-without-running-bridge.md`: `LL_ENC_REQ / LL_ENC_RSP / LL_START_ENC_RSP`
+sequence fires within ~0.1s of connect, all ATT frames encrypted.
+
+**Root cause — GATT re-registration bug:**
+After Connection 1 disconnects via bonding failure, the mock tries to re-register its GATT
+application but BlueZ returns "Already Exists" (re-registration races with BlueZ cleanup).
+Mock is left without GATT services for any subsequent connection attempt.
+
+**What's needed to succeed:**
+
+1. **Clear the remote's bond with the real toilet** — run on raspi5 while bridge is stopped:
+   ```
+   bluetoothctl remove B0:10:A0:68:5C:8B
+   ```
+   (or factory-reset the remote). After clearing, the remote has no stored LTK → it will
+   perform fresh SMP with the mock → BlueZ handles Just Works pairing → new LTK established
+   → subsequent ATT frames are visible decrypted in btmon.
+
+2. **Fix GATT re-registration bug** — mock must not attempt `RegisterApplication` before
+   BlueZ confirms the old registration is gone. Symptom: `"GATT re-registration failed: Already Exists"`.
+
+3. **Run `tools/nrf-ble-analyze.py`** on the reference capture
+   `pairing with RC and toggle lid.pcapng` (same folder) to see the full pairing +
+   lid-toggle sequence from the real toilet side — this is the target to replicate with the mock.
+
+**Reference capture (real pairing, already decoded):**
+`toogle-lid-with-remote-without-running-bridge.md` — shows LL encryption setup; ATT
+frames encrypted (LTK needed to decode). Contains `SetCommand ToggleLidPosition` at t=98.5s
+and `SetCommand 0x03` (Stop) at t=93.7s — confirms the remote sends standard
+`SetCommand` proc 0x09 codes, no proprietary protocol layer.
+
+---
+
 ### Mock Mera: add "User sitting" toggle button to web UI
 
 The alba-mock web UI already has a button to simulate a user sitting on the seat.
