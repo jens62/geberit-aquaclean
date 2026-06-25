@@ -560,6 +560,37 @@ Sela mock server exists.
 
 ## Code quality / Maintenance
 
+### Move `_build_frames` response encoding from mock to `FrameFactory`
+
+`_build_frames(ctx, proc, result, status=0)` in `tools/mock-geberit-mera.py` encodes the
+response-side AquaClean frame format: `seg=0x00`, `node_id=0x01`, format selection
+(single-frame vs multi-frame), and characteristic routing (A5/A6/A7/A8).
+
+This logic belongs in `aquaclean_core/Frames/` alongside `FrameFactory` — it mirrors the
+request-side encoding already there and would be reusable by both the mock and any future
+bridge code that needs to construct device-side response frames (e.g. a relay/hub).
+
+**Proposed API:**
+```python
+# aquaclean_core/Frames/FrameFactory.py  (new static method)
+@staticmethod
+def build_response_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list[bytes]:
+    ...
+
+# or a companion class
+# aquaclean_core/Frames/ResponseFrameFactory.py
+class ResponseFrameFactory:
+    @staticmethod
+    def build(ctx: int, proc: int, result: bytes, status: int = 0) -> list[bytes]: ...
+```
+
+The mock would then `from aquaclean_core.Frames.FrameFactory import FrameFactory` and call
+`FrameFactory.build_response_frames(...)` instead of the local `_build_frames`.
+
+**Status:** logic currently in `mock-geberit-mera.py` `_build_frames`. Move to bridge when asked.
+
+---
+
 ### Refactor web UI (`static/index.html`)
 
 `aquaclean_console_app/static/index.html` is a single monolithic file that has grown too
@@ -722,6 +753,58 @@ Implementation notes:
 - Firmware version: RS08.0 TS57 (node 0x01) — from msperl's confirmed Sela.
 - Advertise article prefix `146.22` in manufacturer-specific data so the bridge detects
   `AcSela` variant at scan time.
+
+---
+
+### Mock Mera: add "User sitting" toggle button to web UI
+
+The alba-mock web UI already has a button to simulate a user sitting on the seat.
+The mera-mock needs the same: a toggle that sets `StateUserPresent` (SPL index 0) to 1 or 0
+and keeps it there until toggled again.
+
+**Why:** the Geberit Home App's Remote Control area only enables shower/dryer buttons when
+the seat sensor reports a user sitting. Without this toggle the remote-control section of
+the app stays greyed out during mock testing.
+
+**Implementation sketch:**
+- Add `_user_sitting: bool = False` state to the mock.
+- Web UI button: "Simulate: User Sitting ON / OFF" — POST `/set-user-sitting` with `{"value": 0|1}`.
+- SPL handler for index 0 reads `_user_sitting` instead of returning a hardcoded 0.
+- Pattern: mirror the alba-mock's existing user-sitting toggle (same POST + state variable approach).
+
+---
+
+### Mock Mera: `UpdateConnectionParameters` silently skipped — BLE CI stays at ~30 ms
+
+**Symptom (log):**
+```
+[08:21:15]   · UpdateConnectionParameters: 'ProxyInterface' object has no attribute 'call_update_connection_parameters'
+```
+
+**What it means:** `_request_short_ci()` fires right after iOS enables the A5 CCCD. It calls
+`device_proxy.call_update_connection_parameters()` to negotiate the BLE connection interval
+down from the default ~30 ms to 8.75–10 ms. dbus-next generates `call_<method>` wrappers
+automatically from D-Bus introspection. On the BlueZ build used in the mock VM,
+`org.bluez.Device1` does not advertise `UpdateConnectionParameters` in its introspection
+XML → the wrapper is never created → `AttributeError` is caught silently and the request
+is skipped.
+
+**Impact:** ATT round-trips run at the default ~30 ms CI → each procedure takes ~1 s instead
+of ~200 ms. This is a significant contributor to the total onboarding latency in the mock.
+The mock is functionally correct; it just runs ~5× slower than the real device.
+
+**Root cause:** BlueZ version or build configuration — `UpdateConnectionParameters` was added
+to `org.bluez.Device1` in a later BlueZ release or requires a specific build flag to appear
+in the introspection XML.
+
+**Fix options:**
+1. Upgrade the mock VM to a BlueZ version that exposes the method in introspection.
+2. Send the D-Bus `UpdateConnectionParameters` message via raw `bus.send_message()` (bypassing
+   the introspection-based proxy) — works on any BlueZ version that implements the underlying
+   D-Bus method, regardless of whether it is advertised in the introspection XML.
+
+**Status:** accepted as infrastructure limitation for now. Does not affect correctness of the
+mock or the Geberit Home App flow. Fix only if mock latency becomes a testing bottleneck.
 
 ---
 

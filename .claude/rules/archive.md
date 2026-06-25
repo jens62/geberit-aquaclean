@@ -1,3 +1,6 @@
+## Memory snapshot 2026-06-25
+Active memory entries: 45  |  Pruned: 1 (`feedback_prerelease_before_stable.md` — verbatim duplicate of `.claude/rules/release-process.md` MANDATORY pre-release rule)  |  Snapshot taken by /compress-memory
+
 ## Memory snapshot 2026-06-18 (session 3)
 Active memory entries: 45  |  Pruned: 0 (no changes since session 2; remote control docs committed + pushed)  |  Snapshot taken by /compress-memory
 
