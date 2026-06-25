@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.63.0b1
+mock-geberit-mera.py v1.64.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.63.0b1"
+_MOCK_VERSION = "1.64.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -344,8 +344,8 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = _proc_subscribenotif(proc, args)
     elif proc in (0x08, 0x14, 0x15):  # SetStored* (empty OK)
         result = b""
-    elif proc == 0x07:            # GetPerNodeProfileSetting: value(1) + null(1)
-        result = bytes([0, 0])
+    elif proc == 0x07:            # GetPerNodeProfileSetting
+        result = _proc_07(args)
     elif proc == 0x0A:            # GetActiveProfileSetting
         result = _proc_0a(args)
     elif proc == 0x0B:            # SetActiveProfileSetting
@@ -353,7 +353,7 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     elif proc == 0x51:            # GetStoredCommonSetting
         result = _proc_51(args)
     elif proc == 0x53:            # GetStoredProfileSetting
-        result = bytes([0, 0])
+        result = _proc_53(args)
     elif proc == 0x55:            # GetDeviceRegistrationLevel
         result = bytes([0])
     elif proc == 0x45:            # GetStatisticsDescale
@@ -505,8 +505,20 @@ def _proc_86() -> bytes:
 
 
 # Values from real Mera Comfort onboarding capture (onboarding-real-mera_timing.md).
-_ACTIVE_PROFILE_SETTINGS = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
-_STORED_COMMON_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+_ACTIVE_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+_STORED_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+_STORED_COMMON_SETTINGS   = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+_PER_NODE_PROFILE_SETTINGS = {
+    0x00: 1, 0x01: 1, 0x02: 4, 0x03: 1, 0x04: 2,
+    0x05: 1, 0x06: 4, 0x07: 0, 0x08: 3, 0x09: 1, 0x0d: 1,
+}
+
+
+def _proc_07(args: bytes) -> bytes:
+    """GetPerNodeProfileSetting: args[0] = node_id, returns 16-bit LE value."""
+    node_id = args[0] if args else 0
+    value = _PER_NODE_PROFILE_SETTINGS.get(node_id, 0)
+    return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
 
 def _proc_0a(args: bytes) -> bytes:
@@ -520,6 +532,13 @@ def _proc_51(args: bytes) -> bytes:
     """GetStoredCommonSetting: args[0] = setting ID, returns 16-bit LE value."""
     setting_id = args[0] if args else 0
     value = _STORED_COMMON_SETTINGS.get(setting_id, 0)
+    return bytes([value & 0xFF, (value >> 8) & 0xFF])
+
+
+def _proc_53(args: bytes) -> bytes:
+    """GetStoredProfileSetting: args[0] = setting ID, returns 16-bit LE value."""
+    setting_id = args[0] if args else 0
+    value = _STORED_PROFILE_SETTINGS.get(setting_id, 0)
     return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
 
