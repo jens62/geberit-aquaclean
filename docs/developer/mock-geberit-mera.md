@@ -101,18 +101,21 @@ The Geberit Home App "Connection 1" onboarding requires **two BLE connections**
 
 4. iOS retries automatically with the same RPA (`IsButtonPressed` stays `True`).
 5. CoreBluetooth delivers the updated 7-characteristic list to the app delegate.
-6. App writes CCCD on A6 (enables notify).
-7. **Mock sends 9× A6 InfoFrame burst** (`800130140c030003000000003130001200b70800`) —
-   this is the Connection 1 trigger; the app will not call GetDeviceIdentification until
-   it receives at least one A6 notify.
-8. App calls GetDeviceIdentification (proc `0x82`), GetFirmwareVersionList (`0x0E`), and
+6. App writes CCCDs on A5, A6, A7, A8 (in order, within ~400 ms).
+7. **Mock sends 10× InfoFrame burst on A5** — triggered by A5 CCCD enable. Required by
+   the bridge (`wait_for_info_frames_async`, threshold=10 on A5).
+8. **Mock sends 9× InfoFrame burst on A6** — triggered once A6 CCCD is set (~200 ms after
+   A5 CCCD). Required by iOS: `GeberitDeviceCoreService.Connect()` checks
+   `ConnectionState == Ready` after `EstablishAsync()` returns; `ConnectionState` is set
+   to `Ready` only when InfoFrames are received on **A6** (not A5).
+   Without this burst, `Connect()` returns `TryResult.Fail` → "Fehler" popup.
+9. App calls GetDeviceIdentification (proc `0x82`), GetFirmwareVersionList (`0x0E`), and
    the standard polling procedures.
 
-The burst fires automatically when iOS writes the A6 CCCD (enables A6 notify). The mock
-detects this by polling `notify_a6_char._notify` at 100 ms intervals and sends the burst
-the instant BlueZ sets it to `True`. A fixed timer MUST NOT be used — the timer always
-fires after iOS has already shown "cannot connect" and disconnected. Event-driven is the
-only correct approach (mock v1.32.0+).
+Both bursts fire event-driven: the mock polls CCCD state at 100 ms intervals and sends
+each burst the instant BlueZ sets the respective CCCD to `True`. A fixed timer MUST NOT
+be used — it fires after iOS has already shown "cannot connect" and disconnected.
+The `_a6_burst_done` event keeps A5 responses blocked during both bursts (v1.41.0b1+).
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
@@ -570,11 +573,11 @@ mock testing on UTM/USB.
 
 ---
 
-### "Error" popup after first FilterStatus poll (pre-existing since v1.54.0b1)
+### "Error" popup after first FilterStatus poll — fixed in v1.61.0b1
 
 **Symptom:** Geberit Home App shows "Fehler / Ein Fehler ist aufgetreten" popup ~1 s after
 the first complete `GetFilterStatus` (proc 0x59) response on Connection 2 (the Save flow
-reconnect). Appears consistently; mock handles the protocol correctly at ATT level.
+reconnect). Appeared consistently from v1.54.0b1.
 
 **Timing** (log `mock-geberit-mera_2026-06-25_08-46.log`):
 
@@ -583,9 +586,25 @@ reconnect). Appears consistently; mock handles the protocol correctly at ATT lev
 08:47:44  "Fehler / Ein Fehler ist aufgetreten" shown in app
 ```
 
-**Root cause — FilterStatus id=4 and id=8 are zero (missing timestamps):**
+**Root cause A — InfoFrame burst sent on A5 instead of A6 (primary, fixed v1.61.0b1):**
 
-After fixing id=3 and id=6 in v1.59.0b1, the only remaining differences were id=4 and id=8:
+`GeberitDeviceCoreService.Connect()` checks `ConnectionState == Ready` after
+`EstablishAsync()` returns (line 175 in decompiled source). `ConnectionState` is set to
+`Ready` only when InfoFrames are received on **A6** — not A5. The mock was sending the
+burst on A5 only (since v1.41.0b1). The procs (0x82, 0x0E, 0x0D, 0x59) all succeed
+because they are independent of `ConnectionState`. But `Connect()` finds
+`ConnectionState != Ready` → returns `TryResult.Fail` → error popup fires.
+
+Confirmed from `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md`: InfoFrame
+burst fires on A6 after CCCD-A7 enable (lines 60–65, t=69.1 s). No error occurs on real
+device. The 0.6 s gap after GetFilterStatus (lines 440–444) contains NO spontaneous notifies.
+
+**Fix (v1.61.0b1):** `_send_info_frame_burst()` (renamed from `_send_a5_info_frames`)
+sends 10× on A5 first (bridge compatibility), then waits for CCCD-A6 and sends 9× on A6.
+
+**Root cause B — FilterStatus id=4/id=8 zero (partial fix v1.60.0b1):**
+
+After fixing id=3 and id=6 in v1.59.0b1, the remaining differences were id=4 and id=8:
 
 | id | Real device | Mock (v1.59.0b1) | Meaning |
 |---|---|---|---|
@@ -601,12 +620,13 @@ After fixing id=3 and id=6 in v1.59.0b1, the only remaining differences were id=
 | 9 | 0 | 0 | ✓ |
 | 10 | 5 | 5 | ✓ |
 
-The app detects an inconsistency: `id=10=5` (5 filter changes) and `id=7=348`
-(days remaining) indicate the filter has been replaced before, but `id=4=0`
-(epoch = "never changed") contradicts this → app shows "Fehler".
+`id=10=5` (5 filter changes) and `id=7=348` (days remaining) indicate the filter has
+been replaced before, but `id=4=0` (epoch = "never changed") contradicts this. May
+contribute to the error but is NOT the primary cause — the A6 burst was the missing piece.
 
-**Fix (v1.60.0b1):** `_proc_59()` sets id=4 and id=8 to `int(time.time()) - 17*24*3600`
-(17 days ago, consistent with id=7=348 = 17 days into a 365-day cycle). Needs test confirmation.
+**Fix (v1.60.0b1):** `_proc_59()` sets id=4 and id=8 to `int(time.time()) - 17*24*3600`.
+
+**Both fixes combined in v1.61.0b1.** Needs test confirmation.
 
 ---
 
@@ -684,7 +704,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.60.0b1 (2026-06-25)
+## Current status — mock v1.61.0b1 (2026-06-25)
 
 Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
 
@@ -700,7 +720,7 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | All four write channels A1–A4 present | ✅ v1.40.0b1 — cy[2]/cy[3] null-check passes |
 | FlowControlFrame dispatch + A5 retransmit | ✅ v1.41.0b1 — CONTROL frames parsed, missing frames retransmitted |
 | A6 burst serialized before A5 response | ✅ v1.41.0b1 — `_a6_burst_done` event prevents ATT congestion |
-| A6 InfoFrame burst (Connection 1 trigger) | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
+| A5+A6 InfoFrame burst (bridge + iOS ConnectionState.Ready) | ✅ v1.61.0b1 — A5 burst for bridge; A6 burst for iOS ConnectionState=Ready |
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
 | GetDeviceIdentification (proc `0x82`) | ✅ v1.54.0b1 — confirmed |
@@ -712,7 +732,7 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | GetStatisticsDescale (proc `0x45`) | ✅ v1.56.0b1 — 16-byte struct; called only from descaling history screen (never during polling) |
 | Web UI button press + live state | ✅ |
 | Full Connection 1 → GetDeviceIdentification flow | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
-| "Error" popup after first FilterStatus | ⚠️ fix applied v1.60.0b1 — id=4/id=8 timestamps now non-zero; needs test confirmation |
+| "Error" popup after first FilterStatus | ⚠️ fix applied v1.61.0b1 — A6 burst + FilterStatus timestamps; needs test confirmation |
 | "Descaling necessary" warning | ✅ v1.59.0b1 — confirmed fixed (2026-06-25); root cause was SPL index 13=0 |
 
 ---

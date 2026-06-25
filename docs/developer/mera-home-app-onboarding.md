@@ -414,6 +414,192 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 | Handle 0x0020 (READ) / UUID 0x2A00 | App reads Device Name via Read By Type 0x2A00 at t=29.7s; expects `b"ro"` | Mock sets adapter alias to `"ro"` ✓ — this is the standard Device Name char, not a custom Geberit UUID |
 | Handle 0x002C (CCCD) | App enables notify; non-data service (OTA?) | Missing from mock |
 
+---
+
+## `Connect()` state machine — decompiled internals (v2.14.1, 2026-06-25)
+
+Source: `GeberitDeviceCoreService.cs` + `NewAquaCleanDevice.cs` + `NewAqcDescaleState.cs` +
+`NewAqcFilterChangeState.cs` + `DeviceDataPoints.cs`.
+
+### Full Connect() flow
+
+`GeberitDeviceCoreService.Connect(IBleProduct, CancellationToken, executePostConnectTasks:bool)`
+is an async state machine. Steps in order:
+
+1. **Disconnect** — if a live device exists (`m__E006 != null`), disconnect it first.
+2. **Subscribe** `ConnectionStateChanged` on the BLE product.
+3. **`await EstablishAsync(_E004)`** — runs the full init sequence (GATT setup through
+   GetFilterStatus). On the real device this takes ~5.7 s for the second connection.
+4. **Check `ConnectionState == Ready`** — if NOT Ready → unsubscribe → break →
+   line 257: `result = (_E007 != null) ? Fail : Fail` (device never created).
+5. **Factory: `_E007 = _E003(BleProduct)`** — creates `NewAquaCleanDevice` (or `OldAquaCleanDevice`
+   for DeviceSeries=248, or base `GeberitDevice` for other/unknown DeviceSeries).
+6. **`await SaveLastConnectInfo(DeviceId, DateTime.UtcNow)`** — saves to local storage.
+   `DeviceId` is built from `BleProductExtension._E000(product)`. Fast (<1 ms).
+7. **`m__E006 = _E007`** — stores device reference. Background poll can now use it.
+8. **`if (executePostConnectTasks) await m__E006.PostConnectTask(token, onProgress)`**
+   — see below.
+9. **Result** — `(exception caught at step 8) → TryResult.Fail`. Otherwise:
+   `_E007 != null ? TryResult.Success(_E007) : TryResult.Fail`.
+
+**Important**: `m__E006` is stored at step 7 BEFORE PostConnectTask. Even if PostConnectTask
+throws (step 8 → exception catch), `m__E006` is non-null. Background polling tasks that hold
+a reference to `m__E006` keep running after the failure. This explains why GATT polls continue
+on the mock even after the "Fehler" popup.
+
+### DeviceSeries routing in the factory
+
+`DeviceSeries` comes from the **`DeviceStatusData` notification** (CommandId=0xE0=224) that
+the device sends spontaneously. Parsed in `FrameHandler.cs` → `DeviceStatusChangedEventArgs`:
+
+| Byte | Field |
+|------|-------|
+| 0 | version (must be 2) |
+| 1 | DeviceSeries (250 = Mera/AcSela/etc., 248 = OldAquaClean) |
+| 2 | DeviceVariant (0x0D = Mera Comfort) |
+| 3–5 | DeviceNumber (3 bytes LE) |
+| 6–9 | DeviceUniqueId |
+| 10 | DeviceModel (lower 4 bits) |
+| 11–12 | IdcHash |
+| 13–14 | Flags |
+
+The factory routes on DeviceSeries:
+- `250` → `NewAquaCleanDevice` (Mera Comfort, Sela, etc.)
+- `248` → `OldAquaCleanDevice`
+- else → base `GeberitDevice`
+
+**The mock must send a `DeviceStatusData` (CommandId=0xE0) notify** with
+`[version=2, DeviceSeries=250, DeviceVariant=0x0D, ...]` for the factory to create
+the correct `NewAquaCleanDevice`. The A6 INFO_FRAME burst (`80 01 30 14 0c...`) is
+a DIFFERENT format and does NOT trigger DeviceStatusChangedEventArgs.
+
+### PostConnectTask (NewAquaCleanDevice)
+
+Called only when `executePostConnectTasks=True`. Executes four steps:
+
+| Step | Call | DpId | Behavior |
+|------|------|------|----------|
+| 1 | `ReadDescaleStatisticsFromDevice()` | `DP_DAYS_UNTIL_NEXT_DESCALING` = 589 | via `IDeviceDataPoints.ReadAsync` |
+| 2 | `ReadIsDescalingFlagFromDevice()` | `DP_DESCALING_STATUS` = 585 + `DP_DESCALING_DEVICE_LOCK_STATUS` = 983 | via `IDeviceDataPoints.ReadAsync` |
+| 3 | `ReadFilterChangeUsageFromDevice()` | `DP_ODOUR_EXTRACTION_FILTER_USAGE` = 39 (if defined) | via `IDeviceDataPoints.ReadAsync` |
+| 4 | `ExecuteCommand(DP_START_USER_SESSION)` | DpId 802 = `DP_START_USER_SESSION` | via `IDeviceDataPoints.ExecuteCommand` |
+
+`DeviceDataPoints._E004` (online guard) = `(m__E003 != null) && (m__E001.Count > 0)`.
+`m__E001` (DpId definition dict) is populated at `DeviceDataPoints` construction from
+`IBleProduct.DataPointDefinitionList`. If `ConnectionState != Ready` at construction time,
+`m__E001` is empty → `_E004 = false` → all four steps are no-ops (no BLE calls).
+
+If `_E004 = true` AND a DpId is in `m__E001`: `IBleProduct.ReadAsync([DataPointAddress])` or
+`WriteAsync` is called — these make actual BLE GATT writes and would appear in the mock log.
+
+### `IDeviceDataPoints.ReadAsync` semantics
+
+`ReadAsync<TDataPointType, TReturnValue>(DpId, defaultValue)`:
+- If `_E004 = false` → returns without action (no BLE call, no exception)
+- If DpId not in `m__E001` → logs warning, returns without exception
+- If DpId in `m__E001` → calls `IBleProduct.ReadAsync(list)` → makes BLE request
+
+`ExecuteCommand(DpId)`:
+- If `_E004 = false` → no-op
+- If DpId not in `m__E001` → logs warning, no-op
+- If DpId in `m__E001` → calls `IBleProduct.WriteAsync(item)` → sends BLE write
+
+---
+
+## "Fehler / Ein Fehler ist aufgetreten" — root cause investigation (2026-06-25)
+
+Capture: `mock-geberit-mera_2026-06-25_08-46.log` (mock v1.60.0b1 running)
+
+### Observed timeline (mock)
+
+| Time | Event |
+|------|-------|
+| 08:47:29 | User clicks "Save" in Geberit Home App |
+| 08:47:35.6 | "Verbindung wird hergestellt" screen appears |
+| 08:47:36 | Second BLE connection: proc 0x82 starts |
+| 08:47:43 | Second connection init completes (proc 0x59 done) |
+| **08:47:44** | **"Fehler / Ein Fehler ist aufgetreten" popup** |
+| 08:47:46 | GetSystemParameterList (background poll resumes) |
+| 08:47:47 | Proc 0x55, then 0x0D |
+| 08:47:49 | Proc 0x59 (second FilterStatus) |
+
+### Real device (nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md)
+
+No error occurs on the real device. The corresponding point where the error would appear
+is at t≈94.0–94.6s (the 0.6-second gap after the first 0x59). The real device proceeds
+normally with State Poll #2 at t=94.6s. The error diagnostic window is this 0.6s gap.
+
+**After 0x59 (both real device and mock) — sequence comparison:**
+
+| Step | Real device | Mock (post-error) |
+|------|------------|-------------------|
+| +0.6s | 0x0D (State Poll #2) | 0x0D at +3s |
+| +0.8s | 0x55 (GetDeviceRegistrationLevel) → `00` | 0x55 at +4s |
+| +1.1–1.6s | 0x0D × 2 | 0x0D |
+| +1.8s | 0x59 (GetFilterStatus #2) | 0x59 at +6s |
+| +2.0s | 0x86 (GetDeviceInitialOperationDate) | 0x86 (expected) |
+
+The post-error mock sequence is IDENTICAL to the real device sequence. The BLE connection
+and device remain active; background polling and post-connect steps all fire as expected.
+
+### Ruling out fixed causes
+
+| Version | Fix attempted | Outcome |
+|---------|--------------|---------|
+| v1.59.0b1 | FilterStatus id=3/6 non-zero | Error persists |
+| v1.60.0b1 | FilterStatus id=4/8 non-zero timestamps | Error persists |
+
+v1.60.0b1 current FilterStatus values vs real device — all match:
+id=0(1) id=1(130) id=2(14) id=3(1) id=4(timestamp✓) id=5(0) id=6(3) id=7(348) id=8(timestamp✓) id=9(0) id=10(5).
+
+### Leading hypothesis
+
+**The mock does not send `DeviceStatusData` (CommandId=0xE0) notification.**
+
+The `IBleProduct.ConnectionState` transitions to `Ready` when this notification is received
+(it contains DeviceSeries, DeviceVariant, and device identity). Without it:
+
+- If `ConnectionState != Ready` after `EstablishAsync` → Connect() line 175 check fails →
+  break → `_E007 = null` → `TryResult.Fail` → "Fehler" popup within ~1s of line 175 check.
+- The background poll continues because it runs on `m__E006` which is separate.
+
+The A6 INFO_FRAME burst (`80 01 30 14 0c 03 00 03 00 00 00 00 31 30 00 12 00 b7 08 00`)
+is **not** `DeviceStatusData`. It has a different CommandId (0x14, not 0xE0).
+
+### What the mock needs to send
+
+A spontaneous GATT notify (on A5 or A6) with a CrcMessage body:
+
+```
+CommandId: 0xE0 (224)
+Payload:
+  byte[0] = 0x02  (version)
+  byte[1] = 0xFA  (DeviceSeries = 250 = Mera Comfort)
+  byte[2] = 0x0D  (DeviceVariant = Mera Comfort)
+  byte[3–5] = device number (3 bytes LE)
+  byte[6–9] = device unique ID
+  byte[10] = device model (lower 4 bits)
+  byte[11–12] = IdcHash
+  byte[13–14] = flags
+```
+
+Timing: at connection setup, ideally immediately after CCCD-A5 or A6 is enabled — the same
+window as the A6 INFO_FRAME burst. The real device likely sends this during the
+0.6s gap between 0x59 completion and the first background 0x0D.
+
+### Investigation still needed
+
+1. **Confirm `ConnectionState.Ready` trigger** — search decompiled source for where
+   `ConnectionState` is set to `Ready`. Likely in `IBleProduct` implementation
+   (AquaClean RPC client layer).
+2. **Confirm `DeviceStatusData` (0xE0) timing** — analyze the raw btsnoop from the real
+   device (`nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.pcapng`) for any
+   A5/A6 frames with first payload byte `0xE0` between t=94.0s and t=94.6s.
+3. **Alternative: search decompiled source** for what sets `ConnectionState = ConnectionState.Ready`
+   in the AquaClean BLE product implementation.
+
+---
+
 ## Write characteristics — real device has 4 (mock has 2)
 
 The app's connection code discovers characteristics **a1, a2, a3, a4** (all WRITE_WITHOUT_RESPONSE).

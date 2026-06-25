@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.60.0b1"
+_MOCK_VERSION = "1.61.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -114,10 +114,9 @@ _NOTIFY_A6_UUID = "3334429d-90f3-4c41-a02d-5cb3a63e0000"   # handle 0x0013
 _NOTIFY_A7_UUID = "3334429d-90f3-4c41-a02d-5cb3a73e0000"   # handle 0x0017
 _NOTIFY_A8_UUID = "3334429d-90f3-4c41-a02d-5cb3a83e0000"   # handle 0x001B
 
-# A6 InfoFrame burst — sent 9× immediately after iOS enables CCCD-A6.
-# This is the Connection 1 trigger: iOS will not call GetDeviceIdentification
-# until it receives at least one notify on A6.
-# Source: nRF capture of iOS app v2.14.1 against real Mera Comfort.
+# InfoFrame payload — sent on A5 (for bridge wait_for_info_frames_async threshold=10)
+# AND on A6 (for iOS ConnectionState.Ready check in GeberitDeviceCoreService.Connect()).
+# Real device: 9× on A6 after CCCD-A7 enable (nRF capture iOS v2.14.1, real Mera Comfort).
 _A6_INFO_FRAME = bytes.fromhex("800130140c030003000000003130001200b70800")
 _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B — short form required for BlueZ Read By Type match)
 
@@ -511,9 +510,9 @@ class MeraService(Service):
     The app rotates across cy[channelId % 4] = A1/A2/A3/A4; all four
     must be present or the app throws "Bulk transfer characteristic missing"
     and shows "connection could not be established" without writing any CCC.
-    A5 notify characteristic delivers response frames back to the app.
-    A6/A7/A8 are registered so the app's GATT discovery succeeds;
-    the mock does not actively use them (all responses go on A5).
+    A5 notify delivers single-frame responses and the InfoFrame burst (for bridge).
+    A6 delivers the InfoFrame burst (iOS ConnectionState.Ready check); A6/A7/A8
+    also deliver continuation frames for multi-frame responses.
     """
 
     def __init__(self):
@@ -960,25 +959,18 @@ async def _request_short_ci() -> None:
         _log("·", f"UpdateConnectionParameters: {e}")
 
 
-async def _send_a5_info_frames(service: MeraService, gen: int) -> None:
-    """Send 10 InfoFrames on A5 as soon as iOS enables A5 notifications (CCCD write).
+async def _send_info_frame_burst(service: MeraService, gen: int) -> None:
+    """Send InfoFrame burst on A5 (for bridge) and on A6 (for iOS ConnectionState.Ready).
 
-    Both the bridge (wait_for_info_frames_async, threshold=10) and the Geberit Home App
-    wait for an InfoFrame flood on A5 before sending any procedure request.  Sending on
-    A6 (old behaviour) was wrong — the bridge and iOS only count frames received on A5.
-
-    Sends exactly 10 frames so wait_for_info_frames_async exits via the count path
-    (info_frame_count >= 10) rather than the 2-second timeout path.
+    Real device (nRF capture v2.14.1): 9 InfoFrames on A6 after CCCD-A7 enable.
+    Bridge wait_for_info_frames_async counts frames on A5 only → also send 10× on A5.
 
     Event-driven: polls A5 CCCD at 100 ms intervals; fires the burst the instant
-    BlueZ sets it to True (triggered by iOS writing CCCD-A5).  A fixed timer MUST NOT
-    be used — it fires after iOS has already shown "cannot connect" and disconnected.
+    BlueZ sets it to True.  A fixed timer MUST NOT be used — it fires after iOS has
+    already shown "cannot connect" and disconnected.
 
-    gen: connection generation at the time this task was spawned.  If the connection
-    was lost before the CCCD is written, _connection_gen will have advanced and this
-    stale task exits without sending.
-    IsButtonPressed is NOT reset on disconnect; it resets here after the burst so that
-    iOS can retry automatically after a battery-plugin-caused disconnect.
+    gen: connection generation guard — stale tasks exit without sending.
+    IsButtonPressed is NOT reset on disconnect; resets here after both bursts complete.
     """
     a5 = service._notify_iface
     for _ in range(80):          # max 8 s — iOS gives up well before this
@@ -997,15 +989,34 @@ async def _send_a5_info_frames(service: MeraService, gen: int) -> None:
     # Request shorter CI so multi-frame responses arrive within iOS's FlowControl window
     asyncio.ensure_future(_request_short_ci())
     _log("·", f"Attempt {gen}: sending A5 InfoFrame burst (10×)")
-    service._a6_burst_done.clear()   # block A5 responses during burst to prevent ATT congestion
+    service._a6_burst_done.clear()   # block A5 responses during both bursts
     for _ in range(10):
         await service.push_notify(_A6_INFO_FRAME)
         await asyncio.sleep(0.05)
+    # Also send on A6: iOS watches A6 for InfoFrames to set ConnectionState=Ready
+    # (GeberitDeviceCoreService.Connect() line 175).  Wait for CCCD-A6 — written
+    # ~200 ms after CCCD-A5, so it will be set by the time the A5 burst finishes.
+    a6 = service._notify_a6_iface
+    _a6_ready = False
+    for _ in range(30):          # max 3 s
+        if not _connected or _connection_gen != gen:
+            break
+        if a6 is not None and a6._notify:
+            _a6_ready = True
+            break
+        await asyncio.sleep(0.1)
+    if _a6_ready and _connected and _connection_gen == gen:
+        _log("·", f"Attempt {gen}: sending A6 InfoFrame burst (9×)")
+        for _ in range(9):
+            await service.push_notify_a6(_A6_INFO_FRAME)
+            await asyncio.sleep(0.05)
+    else:
+        _log("·", f"Attempt {gen}: A6 CCCD not set within 3 s — skipping A6 burst")
     global _button_pressed
     if _button_pressed:
         _button_pressed = False
         await _update_advert(0)      # await: HCI commands must finish before A5 responses start
-    service._a6_burst_done.set()     # burst complete — A5 responses may now proceed
+    service._a6_burst_done.set()     # bursts complete — A5 responses may now proceed
 
 
 # ---- Main ----
@@ -1272,7 +1283,7 @@ async def main(web_port: int = 8765) -> None:
             _connection_gen += 1
             gen = _connection_gen
             _log("·", f"BLE client connected: {addr}")
-            asyncio.ensure_future(_send_a5_info_frames(service, gen))
+            asyncio.ensure_future(_send_info_frame_burst(service, gen))
 
         def _on_device_disconnected(device_path: str) -> None:
             global _connected, _current_device_path
