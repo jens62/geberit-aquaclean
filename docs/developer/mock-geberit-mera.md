@@ -685,6 +685,158 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
+## Complete procedure response values — v1.64.0b1
+
+Download current mock:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/9dd3b2f0a01d1c4e2c856cc6dc1ba75290a9447c/tools/mock-geberit-mera.py -o tools/mock-geberit-mera.py
+```
+
+### GetDeviceIdentification (proc `0x82`) — 82 bytes
+
+| Field | Value |
+|---|---|
+| ArticleNumber | `146.21x.xx.1` |
+| SerialNumber (SAP) | `HB2300EU000001` |
+| ProductionDate | `01.01.2023` |
+| Description | `AquaClean Mera Comfort` |
+
+### GetNodeList (proc `0x05`) — 129 bytes
+
+Node IDs: `[03, 04, 05, 06, 07, 08, 09, 0A, 0B, 0C, 0E, 0F]` (12 nodes)
+
+### GetSOCApplicationVersions (proc `0x81`)
+
+`"10"` + `0x12` + `0x00` → version `10.18`
+
+### GetFirmwareVersionList (proc `0x0E`) — per requested component
+
+All components: version `"30"`, build `206` → `RS30.0 TS206`
+
+### GetDeviceInitialOperationDate (proc `0x86`)
+
+`2023-01-01`
+
+### SubscribeNotif `0x11` — per requested node
+
+12-byte ASCII: `818.802.00.0` (same for all nodes)
+
+### SubscribeNotif `0x13` — per requested node
+
+12 zero bytes per node, except node `0x05`: byte[6] = `0x04`
+
+### GetPerNodeProfileSetting (proc `0x07`) — per node
+
+| Node | Value |
+|---|---|
+| `0x00` | 1 |
+| `0x01` | 1 |
+| `0x02` | 4 |
+| `0x03` | 1 |
+| `0x04` | 2 |
+| `0x05` | 1 |
+| `0x06` | 4 |
+| `0x07` | 0 |
+| `0x08` | 3 |
+| `0x09` | 1 |
+| `0x0D` | 1 |
+| any other | 0 |
+
+### GetActiveProfileSetting (proc `0x0A`) and GetStoredProfileSetting (proc `0x53`) — per setting ID
+
+Both procs return identical values.
+
+| ID | Name | Value |
+|---|---|---|
+| 0 | OdourExtraction | 1 |
+| 1 | OscillatorState | 3 |
+| 2 | AnalShowerPressure | 2 |
+| 3 | LadyShowerPressure | 2 |
+| 4 | AnalShowerPosition | 2 |
+| 5 | LadyShowerPosition | 0 |
+| 6 | WaterTemperature | 1 |
+| 7 | WcSeatHeat | 1 |
+| 8 | DryerTemperature | 0 |
+| 9 | DryerState | 0 |
+| any other | 0 |
+
+### GetStoredCommonSetting (proc `0x51`) — per setting ID
+
+| ID | Name | Value |
+|---|---|---|
+| 0 | WaterHardness | 1 |
+| 1 | OrientationLightBrightness | 3 |
+| 2 | OrientationLightColour | 2 |
+| 3 | OrientationLightMode | 2 |
+| 4 | LidSensorRange | 2 |
+| 5 | OdourExtractionRunOn | 0 |
+| 6 | LidAutoOpen | 1 |
+| 7 | LidAutoClose | 1 |
+| 8 | AutoFlush | 0 |
+| 9 | DemoMode | 0 |
+| any other | 0 |
+
+### GetSystemParameterList (proc `0x0D`) — 9 indices
+
+| Index | Name | Value |
+|---|---|---|
+| 0 | StateUserPresent | 0 |
+| 1 | StateShowerAnal | 0 |
+| 2 | StateShowerLady | 0 |
+| 3 | StateDryer | 0 |
+| 4 | StateDescaling | 0 |
+| 5 | DurationDescaling | 0 |
+| 6 | LastError | 0 |
+| 7 | StateService | 0 |
+| 11 | EndiannessCheck | 0 |
+
+### GetFilterStatus (proc `0x59`) — 11 items
+
+| ID | Value |
+|---|---|
+| 0 | 1 |
+| 1 | 130 |
+| 2 | 14 |
+| 3 | 1 |
+| 4 | `now − 17 days` (Unix timestamp) |
+| 5 | 0 |
+| 6 | 3 |
+| 7 | 348 |
+| 8 | `now − 17 days` (Unix timestamp) |
+| 9 | 0 |
+| 10 | 5 |
+
+### GetStatisticsDescale (proc `0x45`) — 16 bytes
+
+| Field | Value |
+|---|---|
+| unposted_shower_cycles | 12 |
+| days_until_next_descale | 69 |
+| days_until_shower_restricted | 76 |
+| shower_cycles_until_confirmation | 20 |
+| date_time_at_last_descale | `now − 21 days` (Unix timestamp) |
+| date_time_at_last_descale_prompt | `now − 21 days` (Unix timestamp) |
+| number_of_descale_cycles | 3 |
+
+### GetDeviceRegistrationLevel (proc `0x55`)
+
+`0` (not registered)
+
+### Procs returning empty ACK
+
+`0x09` SetCommand, `0x0B` SetActiveProfileSetting, `0x54` SetStoredProfileSetting,
+`0x08` / `0x14` / `0x15` SetStored*
+
+### GATT notifications (unsolicited)
+
+**A6 InfoFrame burst** — 9 frames, fired on CCCD-A6 enable:
+`80 01 30 14 0c 03 00 03 00 00 00 00 31 30 00 12 00 b7 08 00`
+
+**A5 InfoFrame burst** — 10 frames, fired on CCCD-A5 enable: same 20-byte payload
+
+---
+
 ## Current status — mock v1.64.0b1 (2026-06-25)
 
 Works with **original (unpatched) bluetoothd** (BlueZ 5.77) — `gatt-server.c` patch is **NOT required** (confirmed 2026-06-25).
