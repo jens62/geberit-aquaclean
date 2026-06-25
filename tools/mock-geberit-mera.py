@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.64.0b1"
+_MOCK_VERSION = "1.65.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -219,10 +219,11 @@ def _parse_request(frame: bytes):
 
 
 # ---- Response building ----
-def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
+def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0, node_id: int = 0x01) -> list:
     """Build ATT notify frames matching the real Mera Comfort wire format.
 
-    CrcMessage body: [status, node_id=0x01, ctx, proc, result_len, ...result]
+    CrcMessage body: [status, node_id, ctx, proc, result_len, ...result]
+    node_id defaults to 0x01 (real device default); proc 0x07 echoes the queried node_id.
     CrcMessage header: id=5, seg=0x00 (real device value, not 0xFF)
 
     Two formats selected by content_len = 6 (CrcMsg header) + 5 (body prefix) + len(result):
@@ -249,7 +250,7 @@ def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0) -> list:
     """
     body = bytearray(5 + len(result))
     body[0] = status
-    body[1] = 0x01     # node_id — real device sends 0x01
+    body[1] = node_id
     body[2] = ctx
     body[3] = proc
     body[4] = len(result) & 0xFF
@@ -326,6 +327,8 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     """Return list of 20-byte frames for the response to proc."""
     _log("←", f"proc=0x{proc:02X} ctx={ctx} args={args.hex() if args else '(none)'}")
 
+    response_node_id = 0x01
+
     if proc == 0x82:              # GetDeviceIdentification
         result = _proc_82()
     elif proc == 0x05:            # GetNodeInventory
@@ -344,7 +347,8 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = _proc_subscribenotif(proc, args)
     elif proc in (0x08, 0x14, 0x15):  # SetStored* (empty OK)
         result = b""
-    elif proc == 0x07:            # GetPerNodeProfileSetting
+    elif proc == 0x07:            # GetPerNodeProfileSetting — echo queried node_id
+        response_node_id = args[0] if args else 0x01
         result = _proc_07(args)
     elif proc == 0x0A:            # GetActiveProfileSetting
         result = _proc_0a(args)
@@ -364,7 +368,7 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         _log("·", f"  unknown proc 0x{proc:02X} — returning empty OK")
         result = b""
 
-    frames = _build_frames(ctx, proc, result)
+    frames = _build_frames(ctx, proc, result, node_id=response_node_id)
     for f in frames:
         _log("→", f"  {f.hex()}")
     return frames

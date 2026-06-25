@@ -870,6 +870,7 @@ responses matching real device values.
 - GATT characteristic discovery — original BlueZ 5.77 confirmed working; all 9 chars found
 - proc 0x51 WaterHardness=0 — fixed v1.63.0b1 (value now 1)
 - proc 0x0A / 0x53 / 0x07 returning zeros — fixed v1.63.0b1 / v1.64.0b1
+- proc 0x07 echoing wrong node_id in response body[1] — fixed v1.65.0b1
 - A6 InfoFrame burst missing — fixed v1.61.0b1
 
 **Next investigation steps:**
@@ -887,6 +888,30 @@ Consider analysing the Sela firmware before building the mock:
 - Sela-specific nodes not present in Mera Comfort: 0x0F (Durchlauferhitzer / tankless heater).
 - BLE controller (node 0x00) is identical to Mera Comfort (same binary, RS10 TS18).
 - Decompiled output: `local-assets/firmware/FwPkg_F806_V8.2.57.251023_0650871a_Sela_F8_06_RS_08_02_TS_57_extracted/`
+
+### Mock Mera: GATT discovery overhead — 341 calls vs 17 on real device
+
+**Source:** `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/onboarding-real-mera-vs-mock-diff.md`
+
+**Symptom:** Geberit Home App performs 341 `Read By Type UUID=0x2803` GATT discovery requests
+against the mock vs only 17 against a real Mera Comfort. Total mock onboarding takes ~64s vs ~28s
+on real hardware.
+
+**Root cause:** The SC-flush mechanism (mock force-disconnects Connection 1 at ~700ms so iOS
+invalidates its GATT cache) causes iOS to perform full GATT rediscovery on the Connection 2
+reconnect. The nRF sniffer captures discovery from both connections, plus retry cycles triggered
+by the mock's GATT handle layout. Each `Read By Type` round-trip at the default ~30ms connection
+interval costs ~180ms. 341 × 180ms ≈ 61s, which matches the observed total.
+
+**Note:** The SC-flush is required for correctness (real device handles GATT caching at the
+hardware level and does not need it). This is mock-specific overhead, not a protocol bug.
+The `UpdateConnectionParameters` failure (separate item above) compounds it by keeping the
+CI at ~30ms instead of ~10ms.
+
+**Priority:** Low — does not affect functional correctness; only relevant if mock latency
+becomes a testing bottleneck.
+
+---
 
 ### Agentic BLE protocol fuzzer
 
