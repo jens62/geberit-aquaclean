@@ -599,7 +599,7 @@ _PROC_NAMES_MD = {
     (0x01, 0x52): "SetStoredCommonSetting",
     (0x01, 0x53): "GetStoredProfileSetting",
     (0x01, 0x54): "SetStoredProfileSetting",
-    (0x01, 0x55): "UnknownProc_0x55",
+    (0x01, 0x55): "GetDeviceRegistrationLevel",
     (0x01, 0x56): "SetDeviceRegistrationLevel",
     (0x01, 0x59): "GetFilterStatus",
     (0x01, 0x81): "GetSOCApplicationVersions",
@@ -622,7 +622,7 @@ _PHASE_MD = {
     (0x01, 0x54): "Profile Settings",
     (0x01, 0x51): "Common Settings",
     (0x01, 0x52): "Common Settings",
-    (0x01, 0x55): "Session Init",
+    (0x01, 0x55): "Device Registration",
     (0x01, 0x0D): "State Poll",
     (0x01, 0x59): "Filter Status",
     (0x01, 0x45): "Descale Statistics",
@@ -1072,10 +1072,11 @@ def _annotate_req(ctx: int, proc: int, args: bytes) -> str:
     if (ctx, proc) == (0x01, 0x45):
         return "Reading descale cycle statistics"
     if (ctx, proc) == (0x01, 0x55):
-        return f"Unknown — args={args.hex() or '(none)'}"
+        return "Reading device registration level"
     if (ctx, proc) == (0x01, 0x56):
-        val = int.from_bytes(args[:2], "little") if len(args) >= 2 else "?"
-        return f"registrationLevel={val}"
+        _LEVELS = {0: "NotRegistered", 1: "PrivateDevice", 2: "PublicDevice"}
+        val = args[0] if args else 0
+        return f"registrationLevel={val} ({_LEVELS.get(val, '?')})"
 
     if (ctx, proc) == (0x01, 0x0D):
         if args:

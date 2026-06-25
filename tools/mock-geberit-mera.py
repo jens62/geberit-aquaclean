@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.65.0b1"
+_MOCK_VERSION = "1.66.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -149,6 +149,7 @@ _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
 # ---- Global state ----
 _session_log: list = []
 _button_pressed = False
+_registration_level: int = 1   # 0=Not registered, 1=Private, 2=Public — default 1 (registered)
 _connected = False
 _connection_gen = 0     # incremented on each new connection; guards stale burst tasks
 _current_device_path = None  # D-Bus path of the currently connected device
@@ -323,6 +324,12 @@ _PROC_NAMES: dict = {
 
 
 # ---- Procedure dispatch ----
+
+def _set_registration_level(level: int) -> None:
+    global _registration_level
+    _registration_level = level
+
+
 def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     """Return list of 20-byte frames for the response to proc."""
     _log("←", f"proc=0x{proc:02X} ctx={ctx} args={args.hex() if args else '(none)'}")
@@ -359,7 +366,10 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
     elif proc == 0x53:            # GetStoredProfileSetting
         result = _proc_53(args)
     elif proc == 0x55:            # GetDeviceRegistrationLevel
-        result = bytes([0])
+        result = bytes([_registration_level])
+    elif proc == 0x56:            # SetDeviceRegistrationLevel
+        _set_registration_level(args[0] if args else 1)
+        result = b""
     elif proc == 0x45:            # GetStatisticsDescale
         result = _proc_45()
     elif proc == 0x59:            # GetFilterStatus

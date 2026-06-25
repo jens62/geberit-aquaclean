@@ -1094,6 +1094,191 @@ def _print_adv_packets(packets: list, mac: str, pcapng_name: str) -> None:
         print(f"  All 16-bit UUIDs seen: {', '.join(f'0x{u.upper()}' for u in all_uuids)}")
 
 
+# ---------------------------------------------------------------------------
+# Geberit bidirectional raw traffic log (every write + notify frame)
+# ---------------------------------------------------------------------------
+
+def _decode_write_payload(v: bytes) -> str:
+    """Decode a Geberit WRITE_CMD/WRITE_REQ payload (handle 0x0003)."""
+    if not v:
+        return "(empty)"
+    h = v[0]
+    if h in (0x60, 0x70) or (h & 0x80):
+        return f"CTRL  byte0=0x{h:02x}"
+    parsed = _android_ble._parse_req(v)
+    if parsed:
+        ctx, proc, _arg_len, args = parsed
+        name = (_android_ble._PROC_NAMES_MD.get((ctx, proc))
+                or _android_ble._PROC_NAMES_MD.get((0, proc))
+                or _android_ble._PROC_NAMES_MD.get((1, proc))
+                or f"0x{proc:02x}")
+        ann = _android_ble._annotate_req(ctx, proc, args) if args is not None else ""
+        frame_type = "SINGLE" if h == 0x11 else "FIRST"
+        return f"{frame_type}  {name}" + (f"  {ann}" if ann else "")
+    return f"WRITE  byte0=0x{h:02x}"
+
+
+def _decode_notif_payload(v: bytes) -> str:
+    """Decode a Geberit NOTIF payload (handle 0x000F / A5)."""
+    if not v:
+        return "(empty)"
+    h = v[0]
+    if h in (0x60, 0x70) or (h & 0x80):
+        return f"CTRL  byte0=0x{h:02x}"
+    parsed = _android_ble._parse_resp(v)
+    if parsed is None:
+        return f"NOTIF byte0=0x{h:02x}"
+    kind = parsed[0]
+    if kind == 'CONTROL':
+        return f"CTRL  byte0=0x{h:02x}"
+    if kind == 'SINGLE':
+        _, ctx, proc, status, result = parsed
+        name = (_android_ble._PROC_NAMES_MD.get((ctx, proc))
+                or _android_ble._PROC_NAMES_MD.get((0, proc))
+                or _android_ble._PROC_NAMES_MD.get((1, proc))
+                or f"0x{proc:02x}")
+        res_str = result.hex() if result else "(none)"
+        stat = f"  status=0x{status:02x}" if status else ""
+        return f"RESP  {name}  result={res_str}{stat}"
+    if kind == 'MULTI':
+        _, cons_needed, first_v = parsed
+        ctx  = first_v[9]  if len(first_v) > 9  else 0
+        proc = first_v[10] if len(first_v) > 10 else 0
+        name = (_android_ble._PROC_NAMES_MD.get((ctx, proc))
+                or _android_ble._PROC_NAMES_MD.get((0, proc))
+                or _android_ble._PROC_NAMES_MD.get((1, proc))
+                or f"0x{proc:02x}")
+        return f"FIRST[{cons_needed}]  {name}"
+    if kind == 'MULTI_EXT':
+        _, cons_needed, first_v = parsed
+        ctx  = first_v[10] if len(first_v) > 10 else 0
+        proc = first_v[11] if len(first_v) > 11 else 0
+        name = (_android_ble._PROC_NAMES_MD.get((ctx, proc))
+                or _android_ble._PROC_NAMES_MD.get((0, proc))
+                or _android_ble._PROC_NAMES_MD.get((1, proc))
+                or f"0x{proc:02x}")
+        return f"FIRST_EXT[{cons_needed}]  {name}"
+    return f"NOTIF byte0=0x{h:02x}"
+
+
+def _get_geberit_traffic(tshark: str, pcapng: Path,
+                          mac: str, addr_field: str) -> list:
+    """
+    Return every ATT WRITE and NOTIF frame in chronological order with decoded payload.
+    Covers both directions: App→Dev (writes) and Dev→App (notifies + WRITE_RSP acks).
+    Each dict: ts, ts_str, direction, opcode, handle, decoded, raw_hex.
+    """
+    _MERA_WRITE_H = 0x0003
+    _MERA_A5_H    = 0x000F
+    _SIDE_HANDLES = {0x0013, 0x0017, 0x001B}
+    _CCCD_HANDLES = {0x0010, 0x0014, 0x0018, 0x001C}
+
+    dfilter = ("btatt.opcode == 0x12 || btatt.opcode == 0x52"
+               " || btatt.opcode == 0x1b || btatt.opcode == 0x13")
+    if mac:
+        dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
+
+    rows = _run_tshark(tshark, pcapng, dfilter,
+                       ["frame.time_relative", "btatt.opcode",
+                        "btatt.handle", "btatt.value"])
+
+    frames = []
+    for row in rows:
+        padded = (row + [""] * 4)[:4]
+        ts_raw, op_raw, handle_raw, value_raw = padded
+        try:
+            opcode = _parse_int(op_raw)
+            _ts    = float(ts_raw.strip())
+        except (ValueError, TypeError):
+            continue
+        try:
+            handle = _parse_int(handle_raw)
+        except (ValueError, TypeError):
+            handle = 0
+
+        raw_hex = _value_hex(value_raw)
+        try:
+            raw_bytes = bytes.fromhex(raw_hex)
+        except Exception:
+            raw_bytes = b""
+
+        handle_label = _android_ble.GEBERIT_HANDLES.get(handle, f"0x{handle:04X}")
+
+        if opcode in (0x12, 0x52):        # WRITE_REQ / WRITE_CMD  (App→Dev)
+            direction = "App→Dev"
+            if handle in _CCCD_HANDLES:
+                val   = int.from_bytes(raw_bytes[:2], "little") if len(raw_bytes) >= 2 else 0
+                state = "enable" if val & 1 else "disable"
+                decoded = f"CCCD {state} notif  {handle_label}"
+            else:
+                # Try Geberit protocol decode on any write handle (real=0x0003, mock varies)
+                geberit_decoded = _decode_write_payload(raw_bytes)
+                if geberit_decoded.startswith("WRITE  byte0=") or geberit_decoded == "(empty)":
+                    decoded = f"write → {handle_label}  {geberit_decoded}"
+                else:
+                    decoded = geberit_decoded
+        elif opcode == 0x13:              # WRITE_RSP  (Dev→App, ack)
+            direction = "Dev→App"
+            decoded   = "WRITE_RSP ack"
+        else:                             # 0x1B NOTIF  (Dev→App)
+            direction = "Dev→App"
+            if handle == _MERA_A5_H or handle in _SIDE_HANDLES:
+                # Real device: A5=0x000F, side=0x0013/17/1B
+                if handle in _SIDE_HANDLES:
+                    seq     = raw_bytes[0] if raw_bytes else 0
+                    decoded = f"CONS  seq=0x{seq:02x}  {handle_label}"
+                else:
+                    decoded = _decode_notif_payload(raw_bytes)
+            else:
+                # Try Geberit protocol decode on any notif handle (mock uses different handles)
+                geberit_decoded = _decode_notif_payload(raw_bytes)
+                if geberit_decoded.startswith("NOTIF byte0=") or geberit_decoded == "(empty)":
+                    decoded = f"notif on {handle_label}  {geberit_decoded}"
+                else:
+                    decoded = geberit_decoded
+
+        frames.append({
+            "ts":        _ts,
+            "ts_str":    _ts_display(ts_raw),
+            "direction": direction,
+            "opcode":    opcode,
+            "handle":    handle,
+            "decoded":   decoded,
+            "raw_hex":   raw_hex,
+        })
+
+    return frames
+
+
+def _format_traffic_log(frames: list, markdown: bool) -> str:
+    """Render the chronological ATT traffic log as markdown or plain text."""
+    lines: list[str] = []
+    if markdown:
+        lines.append("## Raw ATT Traffic\n")
+        if not frames:
+            lines.append("_No ATT write or notify frames found._\n")
+            return "\n".join(lines)
+        lines.append("| Time | Dir | Handle | Decoded |")
+        lines.append("|------|-----|--------|---------|")
+        for f in frames:
+            h_str = f"0x{f['handle']:04X}"
+            lines.append(f"| `{f['ts_str']}` | {f['direction']} | `{h_str}` | {f['decoded']} |")
+    else:
+        lines.append("Raw ATT Traffic")
+        lines.append("-" * 100)
+        if not frames:
+            lines.append("  No ATT write or notify frames found.")
+        else:
+            lines.append(f"  {'Time':<12}  {'Dir':<9}  {'Handle':<8}  Decoded")
+            lines.append(f"  {'-'*12}  {'-'*9}  {'-'*8}  {'-'*50}")
+            for f in frames:
+                h_str = f"0x{f['handle']:04X}"
+                lines.append(
+                    f"  {f['ts_str']:<12}  {f['direction']:<9}  {h_str:<8}  {f['decoded']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
                          addr_field: str) -> tuple:
     """
@@ -1229,9 +1414,15 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     ctrl_plain  = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=False)
     ctrl_md     = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=True)
 
+    # Bidirectional raw traffic log (every write + notify, decoded)
+    traffic      = _get_geberit_traffic(tshark, pcapng, mac, addr_field)
+    traffic_plain = _format_traffic_log(traffic, markdown=False)
+    traffic_md    = _format_traffic_log(traffic, markdown=True)
+
     if args.raw:
         print(conn_events_plain)
         print(ctrl_plain)
+        print(traffic_plain)
         for e in events:
             print(f"  {e['ts']:<12}  {e['direction']}  {e['type']:<30}  "
                   f"handle={e.get('att_handle', '')}  {e.get('value', '')}")
@@ -1240,15 +1431,18 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     calls = _android_ble._collect_calls(events)
 
     if args.markdown:
-        md = conn_events_md + "\n" + ctrl_md + "\n" + _android_ble.render_markdown_android(
-            calls, pcapng, mac, "nRF52840 pcapng", att_count)
+        md = (conn_events_md + "\n" + ctrl_md + "\n"
+              + traffic_md + "\n"
+              + _android_ble.render_markdown_android(
+                  calls, pcapng, mac, "nRF52840 pcapng", att_count))
         if args.output:
             Path(args.output).write_text(md, encoding="utf-8")
             print(f"[+] Markdown written to {args.output}", file=sys.stderr)
         else:
             print(md)
     else:
-        _print_mera_table(calls, pcapng, mac, att_count, conn_events_plain + ctrl_plain)
+        _print_mera_table(calls, pcapng, mac, att_count,
+                          conn_events_plain + ctrl_plain + traffic_plain)
 
 
 def _print_mera_table(calls, pcapng: Path, mac: str, att_count: int,
