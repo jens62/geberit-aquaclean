@@ -14,7 +14,7 @@ Both decoded with `tools/nrf-ble-analyze.py` using bidirectional ATT traffic mod
 |---|-------|-------------|------|----------|
 | 1 | Proc 0x07 node 0x02 value | **0x0200** | ~~0x0400~~ | **BUG — fixed in v1.67.0b1** |
 | 2 | GetDeviceInitialOperationDate | **Called** (t≈96s) | Not called | **MISSING** |
-| 3 | Proc 0x55 registration level | 0x00 (not registered) | 0x01 (v1.66.0b1 "fix") | **WRONG FIX — see note** |
+| 3 | Proc 0x55 registration level | 0x00 (not registered) | 0x00 (reverted in v1.68.0b1) | ✅ fixed |
 | 4 | SC-flush CTRL 0x80 frames | None | Many — from mock timer | Mock behavior only |
 | 5 | Proc 0x07 retries per node | 1× per node | 3× per node | Side-effect of SC-flush |
 | 6 | BLE connection count | 2 connections | 3 connections | Side-effect of SC-flush |
@@ -96,7 +96,7 @@ fresh onboarding. Both real device and mock should return 0x00 for proc 0x55.
 The app does not show "Fehler" when it receives 0x00 for proc 0x55 — it's the
 expected "not yet registered" state.
 
-The v1.66.0b1 fix should be reverted. **Not done yet — pending confirmation.**
+**Reverted in v1.68.0b1** — `_registration_level` reset to 0 (matches real device).
 
 ---
 
@@ -222,8 +222,7 @@ GetDeviceInitialOperationDate (proc 0x86)  ← real device only
 
 - **Why does the app skip GetDeviceInitialOperationDate on the mock?** The proc 0x07
   node 0x02 bug (value 4 vs 2) is the prime suspect. Retest with v1.67.0b1.
-- **Revert proc 0x55 fix from v1.66.0b1:** real device also returns 0x00 for
-  registration level. The v1.66.0b1 "fix" is incorrect and should be reverted.
+- **proc 0x55 reverted in v1.68.0b1:** real device returns 0x00; mock now matches.
 - **"Fehler" popup:** identified as proc 0x51 WaterHardness=0 in earlier analysis
   (see GATT findings memory). Fixed in v1.65.0b1 (WaterHardness now returns 1).
   Confirm no Fehler after v1.67.0b1 test.

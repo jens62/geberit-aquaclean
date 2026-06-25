@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.67.0b1"
+_MOCK_VERSION = "1.68.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -149,7 +149,7 @@ _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
 # ---- Global state ----
 _session_log: list = []
 _button_pressed = False
-_registration_level: int = 1   # 0=Not registered, 1=Private, 2=Public — default 1 (registered)
+_registration_level: int = 0   # 0=Not registered, 1=Private, 2=Public — real device returns 0 during onboarding
 _connected = False
 _connection_gen = 0     # incremented on each new connection; guards stale burst tasks
 _current_device_path = None  # D-Bus path of the currently connected device
