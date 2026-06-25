@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.57.0b1
+mock-geberit-mera.py v1.58.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.57.0b1"
+_MOCK_VERSION = "1.58.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -135,16 +135,14 @@ _NODE_IDS = bytes([3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xe, 0xf])
 
 # SPL indices supported on Mera Comfort. Indices 8/9/10 permanently corrupt
 # GetFilterStatus state until power-cycle — never send them on Mera Comfort.
-# Indices 12+13 (UnpostedShowerCycles / DaysUntilNextDescale) must be non-zero
-# or iOS interprets DaysUntilNextDescale=0 as "descaling necessary".
-_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 13]
+# Indices 12+13 are only requested by iOS during first-time onboarding
+# (request=[13,12,0-7]); in the reconnect flow iOS requests [0-11] and
+# returning unrequested 12+13 triggers an iOS "Error". Keep this list
+# to indices 0-7 and 11 (all safe, all within the reconnect request set).
+_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 11]
 
-# SPL values for indices that need non-zero defaults.
-# Keep in sync with _proc_45() descaling schedule values.
-_SPL_MERA_VALUES = {
-    12: 5,   # UnpostedShowerCycles — 5 showers since last descale
-    13: 69,  # DaysUntilNextDescale — ~2 months remaining
-}
+# SPL values for indices that need non-zero defaults (none currently needed).
+_SPL_MERA_VALUES: dict = {}
 
 # ---- Advertisement D-Bus path (bluez_peripheral default, used for unregister) ----
 _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
