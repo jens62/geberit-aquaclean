@@ -519,6 +519,16 @@ After disabling, retry the config flow. The geberit_aquaclean integration will t
 
 > **Note:** This only applies to users who previously added the same ESP32 to HA via the built-in ESPHome integration. If you flashed your ESP32 specifically for use as an AquaClean proxy and never added it to the ESPHome integration, this does not apply.
 
+### Multiple devices on the same ESPHome proxy
+
+If you have more than one Geberit toilet and all config entries point at the same ESP32 proxy, only the first device will connect — the others silently fail to appear.
+
+**Root cause:** The ESP32 firmware only allows **one BLE advertisement subscription at a time** across all API clients. When the first coordinator opens a scan, the proxy rejects any concurrent scan from a second coordinator before that second device ever appears in the HA log. The failure happens at the subscription layer, not at the BLE GATT layer — so no second MAC address is ever logged.
+
+**Fix (v3.1.3b1+):** A per-proxy serialization lock was added to `coordinator.py`. All coordinators sharing the same ESPHome host now queue their polls and take turns — the subscription conflict no longer occurs. Upgrade to v3.1.3b1 or later.
+
+**Workaround for older versions:** Use one dedicated ESP32 proxy per toilet. Each config entry stores its own ESPHome host; pointing them at separate proxies avoids the subscription conflict entirely. The config flow wizard supports selecting a different proxy per device.
+
 ### ESPHome proxy troubleshooting
 
 See [`docs/esphome-troubleshooting.md`](esphome-troubleshooting.md) for ESP32-specific issues (stuck BLE scanner, subscription conflicts, auto-restart).
