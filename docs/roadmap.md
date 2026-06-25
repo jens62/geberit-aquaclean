@@ -723,6 +723,29 @@ Implementation notes:
 - Advertise article prefix `146.22` in manufacturer-specific data so the bridge detects
   `AcSela` variant at scan time.
 
+---
+
+### Mock Mera: "Fehler / Ein Fehler ist aufgetreten" popup — root cause unknown (v1.64.0b1)
+
+**Symptom:** Geberit Home App v2.14.1 shows "Fehler / Ein Fehler ist aufgetreten" after the
+onboarding flow completes. Occurs consistently as of v1.64.0b1 despite all known procedure
+responses matching real device values.
+
+**Already ruled out:**
+- GATT characteristic discovery — original BlueZ 5.77 confirmed working; all 9 chars found
+- proc 0x51 WaterHardness=0 — fixed v1.63.0b1 (value now 1)
+- proc 0x0A / 0x53 / 0x07 returning zeros — fixed v1.63.0b1 / v1.64.0b1
+- A6 InfoFrame burst missing — fixed v1.61.0b1
+
+**Next investigation steps:**
+1. Capture mock BLE traffic with nRF Sniffer during the failing flow; compare procedure
+   responses byte-for-byte against `onboarding-real-mera_timing.md`.
+2. Check whether the app calls any proc not yet implemented (e.g. proc 0x08
+   `SetActiveProfileSetting`, or procs called after the "Save" / registration step).
+3. Verify SetStoredProfileSetting (proc 0x54) — the timing log shows 3 writes
+   (AnalShowerPressure=2, OscillatorState=3, LadyShowerPressure=2) are sent by the app;
+   mock currently returns `b""` which should be correct but confirm no error check.
+
 Consider analysing the Sela firmware before building the mock:
 - Node 0x01 (`0x01_decompiled.c`, 18,739 lines) — main controller; contains SPL dispatcher,
   procedure handlers, and the CommonSetting/ProfileSetting switch tables.
