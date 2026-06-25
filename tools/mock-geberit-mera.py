@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.58.0b1
+mock-geberit-mera.py v1.60.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.58.0b1"
+_MOCK_VERSION = "1.60.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -438,13 +438,21 @@ def _proc_45() -> bytes:
 
 def _proc_59() -> bytes:
     """GetFilterStatus: count(1) + count×(id(1)+value_le(4)).
-    Real device returns 11 items. id=7 = DaysUntilNextFilterChange.
+    Real device returns 11 items. Values matched to real Mera Comfort capture
+    (nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md).
+    id=4 and id=8 are Unix timestamps (TimestampAtLastFilterChange /
+    TimestampAtLastFilterChangePrompt). Returning 0 for these while id=7 and
+    id=10 are non-zero triggers the "Fehler / Ein Fehler ist aufgetreten" popup —
+    the app detects an inconsistency (filter has been changed but no date recorded).
+    id=7=348: filter changed 17 days ago (365-348).
+    id=10=5: 5 filter changes total.
     """
+    last_change = int(time.time()) - 17 * 24 * 3600  # 17 days ago, matching 365-348
     items = [
-        (0, 0), (1, 0), (2, 0), (3, 0),
-        (4, 0), (5, 0), (6, 0),
-        (7, 365),  # DaysUntilNextFilterChange — realistic value
-        (8, 0), (9, 0), (10, 0),
+        (0, 1), (1, 130), (2, 14), (3, 1),
+        (4, last_change), (5, 0), (6, 3),
+        (7, 348),  # DaysUntilNextFilterChange
+        (8, last_change), (9, 0), (10, 5),
     ]
     result = bytes([len(items)])
     for id_, val in items:

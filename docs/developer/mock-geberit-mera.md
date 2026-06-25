@@ -534,6 +534,139 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame   impor
 
 ---
 
+### App slow on mock — ~60 s Remote Control delay (infrastructure limitation)
+
+**Symptom:** Opening "Remote Control" in Geberit Home App v2.14.1 against the mock takes
+~60 seconds. Against a real device the same screen opens instantly (< 1 s).
+
+**Confirmed timing** (mock log `mock-geberit-mera_2026-06-25_07-22.log`, v1.57.0b1):
+
+| Time | Event |
+|------|-------|
+| 07:23:57 | GetStoredProfileSetting ×20 begins (proc 0x53, settings 0–14 × repeat) |
+| 07:24:36 | GetStoredProfileSetting sequence completes (~39 s) |
+| 07:24:36 | GetPerNodeProfileSetting ×11 (proc 0x07) and SetActiveProfileSetting ×7+ (proc 0x08) interleaved |
+| 07:24:59 | User taps "Remote Control" in app |
+| 07:25:59 | Remote Control screen appears (~60 s after first GetStoredProfileSetting) |
+
+All of the above interleaved with continuous `GetSystemParameterList` (proc 0x0D) +
+`GetFilterStatus` (proc 0x59) polls every ~2 s.
+
+**Root cause — BLE round-trip latency:**
+
+| Environment | Per-request latency | 60-request sequence |
+|---|---|---|
+| Real device (hardware BLE) | ~100 ms | ~6 s (imperceptible) |
+| Mock (UTM VM + USB-BT500 + BlueZ) | ~1,000 ms | ~60 s |
+
+The ~1 s per-request latency on the mock is due to the USB-BT500 adapter inside a UTM
+virtual machine. Every ATT write → notify round-trip crosses: USB host → UTM VM → BlueZ
+userspace → HCI → USB → Bluetooth radio → iOS → response over air → USB → BlueZ → VM.
+Each hop adds latency; the aggregate is ~10× slower than hardware.
+
+**Not fixable from the protocol side.** The app issues the same requests against both
+targets; the delay is purely a function of infrastructure latency. Accepted limitation of
+mock testing on UTM/USB.
+
+---
+
+### "Error" popup after first FilterStatus poll (pre-existing since v1.54.0b1)
+
+**Symptom:** Geberit Home App shows "Fehler / Ein Fehler ist aufgetreten" popup ~1 s after
+the first complete `GetFilterStatus` (proc 0x59) response on Connection 2 (the Save flow
+reconnect). Appears consistently; mock handles the protocol correctly at ATT level.
+
+**Timing** (log `mock-geberit-mera_2026-06-25_08-46.log`):
+
+```
+08:47:43  proc 0x59 GetFilterStatus         → ok, 4 frames ACKed
+08:47:44  "Fehler / Ein Fehler ist aufgetreten" shown in app
+```
+
+**Root cause — FilterStatus id=4 and id=8 are zero (missing timestamps):**
+
+After fixing id=3 and id=6 in v1.59.0b1, the only remaining differences were id=4 and id=8:
+
+| id | Real device | Mock (v1.59.0b1) | Meaning |
+|---|---|---|---|
+| 0 | 1 | 1 | ✓ |
+| 1 | 130 | 130 | ✓ |
+| 2 | 14 | 14 | ✓ |
+| 3 | 1 | 1 | ✓ (fixed v1.59.0b1) |
+| **4** | **0x69e8e6d4** (~March 2026) | **0** | **TimestampAtLastFilterChange** |
+| 5 | 0 | 0 | ✓ |
+| 6 | 3 | 3 | ✓ (fixed v1.59.0b1) |
+| 7 | 348 | 348 | DaysUntilNextFilterChange ✓ |
+| **8** | **0x6a218efe** (~May 2026) | **0** | **TimestampAtLastFilterChangePrompt** |
+| 9 | 0 | 0 | ✓ |
+| 10 | 5 | 5 | ✓ |
+
+The app detects an inconsistency: `id=10=5` (5 filter changes) and `id=7=348`
+(days remaining) indicate the filter has been replaced before, but `id=4=0`
+(epoch = "never changed") contradicts this → app shows "Fehler".
+
+**Fix (v1.60.0b1):** `_proc_59()` sets id=4 and id=8 to `int(time.time()) - 17*24*3600`
+(17 days ago, consistent with id=7=348 = 17 days into a 365-day cycle). Needs test confirmation.
+
+---
+
+### BlueZ SMP bonding failure — 29 s hang on first two connections
+
+**Symptom:** Connections 1 and 2 each hang ~29 s before proceeding, then disconnect with
+`device_bonding_failed() status 14` ("Repeated Attempts"). Connection 3 always succeeds.
+Pre-existing since v1.54.0b1.
+
+**Root cause:** BlueZ SMP state machine. After Connection 1 fails SMP pairing and records
+the failure, Connection 2 immediately from the same iOS device triggers the SMP
+"Repeated Attempts" timer (status 0x0E = 14). BlueZ waits the full timer (~29 s) before
+permitting a retry.
+
+**Not a protocol issue.** The mock BLE link is unencrypted; SMP pairing is not required.
+The hang is an artefact of BlueZ's SMP rate-limiting triggered by iOS attempting
+pairing on each connection. Connection 3 succeeds because the timer has expired.
+
+**Impact:** Each test session takes ~60 s longer than on real hardware. Workaround:
+ensure `btmgmt pairable off` is in effect (mock sets this at startup, v1.32.0+).
+
+---
+
+### "Descaling necessary" warning — fixed in v1.59.0b1
+
+**Symptom:** Geberit Home App showed "descaling necessary" warning banner after onboarding
+against the mock. Present from v1.54.0b1; confirmed fixed in v1.59.0b1 (2026-06-25).
+
+**Root cause:** SPL index 13 (`DaysUntilNextDescale`) was 0 in mock responses. iOS
+requests `[13, 12, 0..7]` during first-time onboarding (Connection 1). Index 13 = 0
+is interpreted as "0 days remaining" → descaling overdue warning.
+
+**Fix (v1.59.0b1):** Added index 13 to `_SPL_MERA_INDICES` with value 69
+(`_SPL_MERA_VALUES[13] = 69`). Confirmed by user: "descaling warnings are gone" (2026-06-25).
+
+**Investigation history:**
+- v1.57.0b1 added indices 12+13 but incorrect — did not fix (user confirmed).
+- v1.58.0b1 reverted (wrong diagnosis — root cause was index 13=0, not the index list).
+- v1.59.0b1 re-added index 13=69 correctly — **confirmed fixed**.
+
+**`_proc_45()` annual cycle mismatch (low priority):** Returns `last_descale = 21 days ago` +
+`days_until_next = 69` = 90-day cycle. Real device is annual (365-day):
+`last_descale_elapsed + DaysUntilNextDescale = 365`. Not called during polling; does
+not affect the warning.
+
+---
+
+### FilterStatus vs. descaling — two separate maintenance systems
+
+| System | BLE source | Key field |
+|--------|-----------|-----------|
+| Descaling (water heater, citric acid) | SPL proc 0x0D index 13; proc 0x45 history | Index 13 = DaysUntilNextDescale; proc 0x45 = 16-byte history struct |
+| Ceramic honeycomb filter (annual replacement) | proc 0x59 GetFilterStatus | id=7 = DaysUntilNextFilterChange |
+
+Both are annual (365-day) cycles. `id=7` in `GetFilterStatus` is the **ceramic filter**,
+not descaling. Real device: id=7=348 (filter changed 2026-06-04, 17 days elapsed at
+time of capture). Mock id=7=348, id=4/id=8 = dynamic timestamps 17 days ago — consistent.
+
+---
+
 ## btmon correlation tool
 
 `tools/analyze-btmon-mock.py` correlates a btmon btsnoop capture with a mock log
@@ -551,7 +684,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.55.0b1 (2026-06-24)
+## Current status — mock v1.60.0b1 (2026-06-25)
 
 Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
 
@@ -574,10 +707,13 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | GetFirmwareVersionList (proc `0x0E`) | ✅ v1.54.0b1 — confirmed |
 | GetSystemParameterList (proc `0x0D`) | ✅ v1.55.0b1 — format fixed (index bytes per item, 9 Mera Comfort items) |
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ v1.54.0b1 — confirmed |
-| GetFilterStatus (proc `0x59`) | ✅ v1.55.0b1 — format fixed (11 items with id+value, DaysUntilNextFilterChange=365) |
+| GetFilterStatus (proc `0x59`) | ✅ v1.60.0b1 — id=4/id=8 set to dynamic Unix timestamps (17 days ago); id=3=1, id=6=3, id=7=348, id=10=5 |
 | SubscribeNotif 0x11/0x13 — correct node IDs | ✅ v1.55.0b1 — uses requested node IDs from args; 0x11 with firmware version string |
+| GetStatisticsDescale (proc `0x45`) | ✅ v1.56.0b1 — 16-byte struct; called only from descaling history screen (never during polling) |
 | Web UI button press + live state | ✅ |
 | Full Connection 1 → GetDeviceIdentification flow | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
+| "Error" popup after first FilterStatus | ⚠️ fix applied v1.60.0b1 — id=4/id=8 timestamps now non-zero; needs test confirmation |
+| "Descaling necessary" warning | ✅ v1.59.0b1 — confirmed fixed (2026-06-25); root cause was SPL index 13=0 |
 
 ---
 
