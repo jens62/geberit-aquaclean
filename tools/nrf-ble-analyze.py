@@ -95,6 +95,53 @@ _RX_OPCODES = {_OP_NOTIF, _OP_READ_BY_TYPE_RSP, _OP_READ_RSP, _OP_ERROR_RSP}
 # LL Control PDU opcodes (pre-encryption, visible to sniffer)
 _LL_ENC_REQ_OPCODE = 0x03   # LL_ENC_REQ — central requests link-layer encryption
 
+# LL Control PDU name table
+_LL_CTRL_NAMES: dict = {
+    0x00: "LL_CONNECTION_UPDATE_IND",
+    0x01: "LL_CHANNEL_MAP_IND",
+    0x02: "LL_TERMINATE_IND",
+    0x03: "LL_ENC_REQ",
+    0x04: "LL_ENC_RSP",
+    0x05: "LL_START_ENC_REQ",
+    0x06: "LL_START_ENC_RSP",
+    0x07: "LL_UNKNOWN_RSP",
+    0x08: "LL_FEATURE_REQ",
+    0x09: "LL_FEATURE_RSP",
+    0x0A: "LL_PAUSE_ENC_REQ",
+    0x0B: "LL_PAUSE_ENC_RSP",
+    0x0C: "LL_VERSION_IND",
+    0x0D: "LL_REJECT_IND",
+    0x0E: "LL_PERIPHERAL_FEATURE_REQ",
+    0x0F: "LL_CONNECTION_PARAM_REQ",
+    0x10: "LL_CONNECTION_PARAM_RSP",
+    0x11: "LL_REJECT_EXT_IND",
+    0x12: "LL_PING_REQ",
+    0x13: "LL_PING_RSP",
+    0x14: "LL_LENGTH_REQ",
+    0x15: "LL_LENGTH_RSP",
+    0x16: "LL_PHY_REQ",
+    0x17: "LL_PHY_RSP",
+    0x18: "LL_PHY_UPDATE_IND",
+    0x19: "LL_MIN_USED_CHANNELS_IND",
+}
+
+_LL_TERMINATE_REASONS: dict = {
+    0x02: "Unknown Conn ID",
+    0x05: "Authentication Failure",
+    0x08: "Connection Timeout",
+    0x13: "Remote User Terminated",
+    0x14: "Remote Low Resources",
+    0x15: "Remote Power Off",
+    0x16: "Local Host Terminated",
+    0x1A: "Unsupported Remote Feature",
+    0x3B: "Unacceptable Connection Parameters",
+}
+
+_BT_VERSIONS: dict = {
+    6: "BT 4.0", 7: "BT 4.1", 8: "BT 4.2",
+    9: "BT 5.0", 10: "BT 5.1", 11: "BT 5.2", 12: "BT 5.3",
+}
+
 # GATT handles by device type
 _MERA_WRITE_HANDLE  = 0x0003   # Mera Comfort: outgoing procedure requests
 _ALBA_WRITE_HANDLE  = 0x001E   # Alba: Arendi Security channel (write)
@@ -200,20 +247,39 @@ def _get_connection_events(tshark: str, pcapng: Path,
                        "btle.advertising_header.pdu_type == 0x05",
                        ["frame.time_relative",
                         "btle.initiator_address",
-                        "btle.advertising_address"])
+                        "btle.advertising_address",
+                        "btle.link_layer_data.interval",
+                        "btle.link_layer_data.latency",
+                        "btle.link_layer_data.timeout"])
     connect_inds = []
     for row in rows:
         if len(row) < 3:
             continue
-        ts_s, initiator, advertiser = row[0].strip(), row[1].strip(), row[2].strip()
+        padded = (row + [""] * 6)[:6]
+        ts_s, initiator, advertiser, ci_raw, lat_raw, to_raw = padded
+        ts_s, initiator, advertiser = ts_s.strip(), initiator.strip(), advertiser.strip()
         if advertiser.lower() != toilet_lower:
             continue
         if not initiator:
             continue
         try:
-            connect_inds.append({"ts": float(ts_s), "initiator": initiator.upper()})
+            ts_f = float(ts_s)
         except ValueError:
+            continue
+        entry: dict = {"ts": ts_f, "initiator": initiator.upper()}
+        try:
+            entry["ci_ms"] = _parse_int(ci_raw) * 1.25
+        except (ValueError, TypeError):
             pass
+        try:
+            entry["latency"] = _parse_int(lat_raw)
+        except (ValueError, TypeError):
+            pass
+        try:
+            entry["timeout_ms"] = _parse_int(to_raw) * 10
+        except (ValueError, TypeError):
+            pass
+        connect_inds.append(entry)
 
     # ADV_DIRECT_IND (pdu_type=1) FROM the toilet
     # btle.initiator_address holds TargetA (directed destination) in this PDU type
@@ -267,27 +333,35 @@ def _format_connection_events(connect_inds: list, directed_advs: list,
     )
     all_events.sort()
 
+    # Build quick lookup: ts → CI params dict for CONNECT_INDs
+    _ci_by_ts: dict = {c["ts"]: c for c in connect_inds}
+
     # Print timeline
+    conn_index = 0
     for ts, evt, addr in all_events:
         if evt == "CONNECT_IND":
+            conn_index += 1
             if _is_embedded_device(addr) and addr.lower() != toilet_lower:
                 tag = "← remote (embedded-device OUI)"
             else:
                 tag = "← app / other"
+            ci_info = _ci_by_ts.get(ts, {})
+            params  = ""
+            if "ci_ms" in ci_info:
+                params += f"  CI={ci_info['ci_ms']:.2f}ms"
+            if "latency" in ci_info:
+                params += f"  latency={ci_info['latency']}"
+            if "timeout_ms" in ci_info:
+                params += f"  supv={ci_info['timeout_ms']}ms"
         else:   # ADV_DIRECT_IND
-            tag = "← toilet → directed advert"
+            tag    = "← toilet → directed advert"
+            params = ""
             if remote_mac and addr.lower() == remote_mac.lower():
                 tag += " (to remote)"
 
-        line = f"  t={ts:>8.1f}s  {evt:<16}  {addr:<22}  {tag}"
+        line = f"  t={ts:>8.1f}s  {evt:<16}  {addr:<22}  {tag}{params}"
         if markdown:
-            lines.append(f"```")
-            lines.append(line)
-            lines.append(f"```")
-            lines[-3] = f"`{line}`"
-            lines.pop(-2)
-            lines.pop(-1)
-            lines.append(f"- `t={ts:>7.1f}s`  **{evt}**  `{addr}`  {tag}")
+            lines.append(f"- `t={ts:>7.1f}s`  **{evt}**  `{addr}`  {tag}{params}")
         else:
             lines.append(line)
 
@@ -615,6 +689,280 @@ def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
 # Mera Comfort — reuse android-ble-analyze.py decode pipeline
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# BLE Control Layer — LL Control PDUs, L2CAP signaling, ATT meta
+# ---------------------------------------------------------------------------
+
+def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
+    """Extract all LL Control PDUs with decoded fields."""
+    rows = _run_tshark(tshark, pcapng,
+                       "btle.control_opcode",
+                       ["frame.time_relative",
+                        "btle.control_opcode",
+                        "btle.control.error_code",           # LL_TERMINATE_IND reason
+                        "btle.control.feature_set",          # LL_FEATURE_*
+                        "btle.control.version_number",       # LL_VERSION_IND
+                        "btle.control.company_id",           # LL_VERSION_IND
+                        "btle.control.interval",             # LL_CONNECTION_UPDATE_IND / PARAM_*
+                        "btle.control.latency",
+                        "btle.control.timeout",
+                        "btle.control.max_rx_octets",        # LL_LENGTH_REQ/RSP
+                        "btle.control.max_tx_octets",
+                        "btle.control.max_rx_time",
+                        "btle.control.max_tx_time",
+                        "btle.control.tx_phys",              # LL_PHY_REQ/RSP
+                        "btle.control.rx_phys",
+                        "btle.control.m_to_s_phy",           # LL_PHY_UPDATE_IND
+                        "btle.control.s_to_m_phy",
+                        "btle.control.instant"])
+    _PHY_MAP = {"1": "1M", "2": "2M", "3": "Coded", "4": "Coded"}
+    events = []
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        padded = (row + [""] * 18)[:18]
+        ts_raw, op_raw = padded[0].strip(), padded[1].strip()
+        if not op_raw:
+            continue
+        try:
+            opcode = _parse_int(op_raw)
+            ts_f   = float(ts_raw)
+        except ValueError:
+            continue
+        name    = _LL_CTRL_NAMES.get(opcode, f"LL_CTRL_0x{opcode:02X}")
+        details = []
+        if opcode == 0x02:  # LL_TERMINATE_IND
+            err_raw = padded[2].strip()
+            try:
+                err    = _parse_int(err_raw)
+                reason = _LL_TERMINATE_REASONS.get(err, f"0x{err:02X}")
+                details.append(f"reason={reason}")
+            except ValueError:
+                pass
+        elif opcode in (0x08, 0x09, 0x0E):  # LL_FEATURE_REQ/RSP
+            feat = padded[3].strip()
+            if feat:
+                details.append(f"features={feat}")
+        elif opcode == 0x0C:  # LL_VERSION_IND
+            ver     = padded[4].strip()
+            company = padded[5].strip()
+            if ver:
+                try:
+                    ver_int = _parse_int(ver)
+                    details.append(_BT_VERSIONS.get(ver_int, f"v0x{ver_int:02X}"))
+                except ValueError:
+                    details.append(f"v{ver}")
+            if company:
+                try:
+                    details.append(f"company=0x{_parse_int(company):04X}")
+                except ValueError:
+                    details.append(f"company={company}")
+        elif opcode in (0x00, 0x0F, 0x10):  # CONN_UPDATE_IND / PARAM_REQ/RSP
+            ci_raw, lat_raw, to_raw = padded[6].strip(), padded[7].strip(), padded[8].strip()
+            try:
+                details.append(f"CI={_parse_int(ci_raw) * 1.25:.2f}ms")
+            except ValueError:
+                pass
+            try:
+                details.append(f"latency={_parse_int(lat_raw)}")
+            except ValueError:
+                pass
+            try:
+                details.append(f"supv={_parse_int(to_raw) * 10}ms")
+            except ValueError:
+                pass
+            instant = padded[17].strip()
+            if instant:
+                try:
+                    details.append(f"instant={_parse_int(instant)}")
+                except ValueError:
+                    pass
+        elif opcode in (0x14, 0x15):  # LL_LENGTH_REQ/RSP
+            for label, idx in (("maxRxOct", 9), ("maxTxOct", 10),
+                                ("maxRxTime", 11), ("maxTxTime", 12)):
+                raw = padded[idx].strip()
+                if raw:
+                    try:
+                        v = _parse_int(raw)
+                        suffix = "μs" if "Time" in label else ""
+                        details.append(f"{label}={v}{suffix}")
+                    except ValueError:
+                        pass
+        elif opcode in (0x16, 0x17):  # LL_PHY_REQ/RSP
+            tx_raw, rx_raw = padded[13].strip(), padded[14].strip()
+            if tx_raw:
+                try:
+                    details.append(f"tx={_PHY_MAP.get(str(_parse_int(tx_raw)), tx_raw)}")
+                except ValueError:
+                    pass
+            if rx_raw:
+                try:
+                    details.append(f"rx={_PHY_MAP.get(str(_parse_int(rx_raw)), rx_raw)}")
+                except ValueError:
+                    pass
+        elif opcode == 0x18:  # LL_PHY_UPDATE_IND
+            m2s, s2m = padded[15].strip(), padded[16].strip()
+            if m2s:
+                try:
+                    details.append(f"M→S={_PHY_MAP.get(str(_parse_int(m2s)), m2s)}")
+                except ValueError:
+                    pass
+            if s2m:
+                try:
+                    details.append(f"S→M={_PHY_MAP.get(str(_parse_int(s2m)), s2m)}")
+                except ValueError:
+                    pass
+        events.append({
+            "ts_raw": ts_f,
+            "ts":     _ts_display(ts_raw),
+            "opcode": opcode,
+            "name":   name,
+            "details": "  ".join(details),
+        })
+    return events
+
+
+def _get_l2cap_events(tshark: str, pcapng: Path) -> list:
+    """Extract L2CAP Connection Parameter Update requests/responses (iOS → CI negotiation)."""
+    rows = _run_tshark(tshark, pcapng,
+                       "btl2cap.cmd_code == 0x12 || btl2cap.cmd_code == 0x13",
+                       ["frame.time_relative",
+                        "btl2cap.cmd_code",
+                        "btl2cap.min_interval",
+                        "btl2cap.max_interval",
+                        "btl2cap.peripheral_latency",
+                        "btl2cap.timeout_multiplier"])
+    events = []
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        padded = (row + [""] * 6)[:6]
+        ts_raw, cmd_raw, f1, f2, f3, f4 = padded
+        try:
+            cmd  = _parse_int(cmd_raw)
+            ts_f = float(ts_raw.strip())
+        except ValueError:
+            continue
+        name    = "L2CAP_CONN_PARAM_UPDATE_REQ" if cmd == 0x12 else "L2CAP_CONN_PARAM_UPDATE_RSP"
+        details = []
+        if cmd == 0x12:
+            try:
+                min_ci = _parse_int(f1) * 1.25
+                max_ci = _parse_int(f2) * 1.25
+                details.append(f"CI={min_ci:.2f}–{max_ci:.2f}ms")
+            except ValueError:
+                pass
+            try:
+                details.append(f"latency={_parse_int(f3)}")
+            except ValueError:
+                pass
+            try:
+                details.append(f"supv={_parse_int(f4) * 10}ms")
+            except ValueError:
+                pass
+        else:
+            try:
+                result = _parse_int(f1)
+                details.append("accepted" if result == 0 else f"rejected(0x{result:04X})")
+            except ValueError:
+                pass
+        events.append({
+            "ts_raw": ts_f,
+            "ts":     _ts_display(ts_raw),
+            "name":   name,
+            "details": "  ".join(details),
+        })
+    return events
+
+
+def _get_att_meta_events(tshark: str, pcapng: Path,
+                         mac: str, addr_field: str) -> list:
+    """Extract ATT setup frames: MTU exchange and Write RSP confirmations."""
+    dfilter = "btatt.opcode == 0x02 || btatt.opcode == 0x03 || btatt.opcode == 0x13"
+    if mac:
+        dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
+    rows = _run_tshark(tshark, pcapng, dfilter,
+                       ["frame.time_relative", "btatt.opcode",
+                        "btatt.client_rx_mtu", "btatt.server_rx_mtu", "btatt.handle"])
+    _ATT_META_NAMES = {
+        0x02: "ATT_MTU_REQ",
+        0x03: "ATT_MTU_RSP",
+        0x13: "ATT_WRITE_RSP",
+    }
+    events = []
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        padded = (row + [""] * 5)[:5]
+        ts_raw, op_raw, client_mtu_raw, server_mtu_raw, handle_raw = padded
+        try:
+            opcode = _parse_int(op_raw)
+            ts_f   = float(ts_raw.strip())
+        except ValueError:
+            continue
+        name    = _ATT_META_NAMES.get(opcode, f"ATT_0x{opcode:02X}")
+        details = []
+        if opcode == 0x02 and client_mtu_raw.strip():
+            try:
+                details.append(f"clientMTU={_parse_int(client_mtu_raw)}")
+            except ValueError:
+                pass
+        elif opcode == 0x03 and server_mtu_raw.strip():
+            try:
+                details.append(f"serverMTU={_parse_int(server_mtu_raw)}")
+            except ValueError:
+                pass
+        if opcode == 0x13 and handle_raw.strip():
+            try:
+                details.append(f"handle=0x{_parse_int(handle_raw):04X}")
+            except ValueError:
+                pass
+        events.append({
+            "ts_raw": ts_f,
+            "ts":     _ts_display(ts_raw),
+            "opcode": opcode,
+            "name":   name,
+            "details": "  ".join(details),
+        })
+    return events
+
+
+def _format_ctrl_section(ll_events: list, l2cap_events: list,
+                          att_meta: list, markdown: bool) -> str:
+    """Render LL Control + L2CAP + ATT meta as a markdown or plain-text section."""
+    lines: list[str] = []
+    if markdown:
+        lines.append("## BLE Control Layer\n")
+    else:
+        lines.append("BLE Control Layer")
+        lines.append("-" * 72)
+
+    # Merge and sort all control-layer events
+    all_ctrl = (
+        [(e["ts_raw"], "LL",    e["ts"], e["name"], e["details"]) for e in ll_events]
+      + [(e["ts_raw"], "L2CAP", e["ts"], e["name"], e["details"]) for e in l2cap_events]
+      + [(e["ts_raw"], "ATT",   e["ts"], e["name"], e["details"]) for e in att_meta]
+    )
+    all_ctrl.sort()
+
+    if not all_ctrl:
+        msg = "No LL Control, L2CAP, or ATT setup frames found."
+        lines.append(f"_{msg}_" if markdown else f"  {msg}")
+    elif markdown:
+        lines.append("| Time | Layer | PDU | Details |")
+        lines.append("|------|-------|-----|---------|")
+        for _, layer, ts, name, details in all_ctrl:
+            lines.append(f"| `{ts}` | {layer} | `{name}` | {details or '—'} |")
+    else:
+        lines.append(f"  {'Time':<12}  {'Layer':<6}  {'PDU':<35}  Details")
+        lines.append(f"  {'-'*12}  {'-'*6}  {'-'*35}  {'-'*30}")
+        for _, layer, ts, name, details in all_ctrl:
+            lines.append(f"  {ts:<12}  {layer:<6}  {name:<35}  {details or ''}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _get_adv_packets(tshark: str, pcapng: Path, mac: str) -> list:
     """Extract ADV_IND and SCAN_RSP advertising packets for the target MAC.
 
@@ -874,17 +1222,25 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     conn_events_md = _format_connection_events(
         connect_inds, directed_advs, mac, markdown=True)
 
+    # BLE control layer (LL PDUs, L2CAP signaling, ATT MTU/write-RSP)
+    ll_events   = _get_ll_control_events(tshark, pcapng)
+    l2cap_events = _get_l2cap_events(tshark, pcapng)
+    att_meta    = _get_att_meta_events(tshark, pcapng, mac, addr_field)
+    ctrl_plain  = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=False)
+    ctrl_md     = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=True)
+
     if args.raw:
         print(conn_events_plain)
+        print(ctrl_plain)
         for e in events:
             print(f"  {e['ts']:<12}  {e['direction']}  {e['type']:<30}  "
-                  f"handle={e['att_handle']}  {e['value']}")
+                  f"handle={e.get('att_handle', '')}  {e.get('value', '')}")
         return
 
     calls = _android_ble._collect_calls(events)
 
     if args.markdown:
-        md = conn_events_md + "\n" + _android_ble.render_markdown_android(
+        md = conn_events_md + "\n" + ctrl_md + "\n" + _android_ble.render_markdown_android(
             calls, pcapng, mac, "nRF52840 pcapng", att_count)
         if args.output:
             Path(args.output).write_text(md, encoding="utf-8")
@@ -892,7 +1248,7 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
         else:
             print(md)
     else:
-        _print_mera_table(calls, pcapng, mac, att_count, conn_events_plain)
+        _print_mera_table(calls, pcapng, mac, att_count, conn_events_plain + ctrl_plain)
 
 
 def _print_mera_table(calls, pcapng: Path, mac: str, att_count: int,
