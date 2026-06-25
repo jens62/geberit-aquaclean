@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.60.0b1
+mock-geberit-mera.py v1.62.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.61.0b1"
+_MOCK_VERSION = "1.62.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -668,6 +668,14 @@ class MeraService(Service):
                         _log("·", "A6 burst wait timed out — sending A5 response anyway")
                     ctx, proc, args = _parse_request(raw)
                     _log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
+                    # Connection 2 (Save) runs on the SAME BLE connection as Connection 1.
+                    # iOS re-subscribes CCCDs but BlueZ omits the external callback when
+                    # the value is unchanged → no new burst from _on_device_connected.
+                    # Fire A6 burst whenever proc 0x82 arrives and the initial burst is done.
+                    if proc == 0x82 and self._a6_burst_done.is_set():
+                        a6 = self._notify_a6_iface
+                        if a6 is not None and a6._notify:
+                            asyncio.ensure_future(_send_a6_reconnect_burst(self, _connection_gen))
                     frames = _dispatch(ctx, proc, args)
                     self._last_a5_frames = frames   # store for potential FlowControl retransmit
                     self._last_a5_proc = proc
@@ -1017,6 +1025,33 @@ async def _send_info_frame_burst(service: MeraService, gen: int) -> None:
         _button_pressed = False
         await _update_advert(0)      # await: HCI commands must finish before A5 responses start
     service._a6_burst_done.set()     # bursts complete — A5 responses may now proceed
+
+
+async def _send_a6_reconnect_burst(service: MeraService, gen: int) -> None:
+    """A6 InfoFrame burst for Connection 2 (same BLE connection, iOS re-subscribes CCCDs).
+
+    Connection 1 (button detection) and Connection 2 (Save/Speichern) share the same
+    BLE connection.  iOS re-writes the CCCDs at the Save phase start, but BlueZ omits
+    the external ccc_write_cb() when the value is unchanged (0x0001 → 0x0001), so
+    _send_info_frame_burst is never re-triggered.
+
+    Triggered from _handle_request when proc 0x82 arrives with _a6_burst_done already
+    set (i.e. the Connection 1 burst completed).  Clears _a6_burst_done to gate
+    concurrent A5 proc responses during the burst, same as the initial burst.
+    """
+    if not _connected or _connection_gen != gen:
+        return
+    a6 = service._notify_a6_iface
+    if a6 is None or not a6._notify:
+        return
+    service._a6_burst_done.clear()
+    _log("·", f"Connection 2: sending A6 InfoFrame burst (9×) for ConnectionState.Ready")
+    for _ in range(9):
+        if not _connected or _connection_gen != gen:
+            break
+        await service.push_notify_a6(_A6_INFO_FRAME)
+        await asyncio.sleep(0.05)
+    service._a6_burst_done.set()
 
 
 # ---- Main ----
