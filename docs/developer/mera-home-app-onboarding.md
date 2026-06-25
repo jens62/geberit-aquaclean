@@ -147,6 +147,24 @@ The Geberit Home App uses **two sequential BLE connections** for first-time onbo
 
 ### Connection 2 — onboarding (≥19 s, then continuous polling)
 
+**CCCD sequence and InfoFrame burst — detail from nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md:**
+
+| Capture time | Event | Notes |
+|---|---|---|
+| t=68.8s | CCCD-A5 write (enable notify) | First CCCD |
+| t=69.0s | CCCD-A6 write (enable notify) | |
+| t=69.1s | CCCD-A7 write (enable notify) | |
+| t=69.1s | **6× InfoFrame burst on A6** | Fires immediately after CCCD-A7; same 20-byte payload as Connection 1 |
+| t=69.2s | CCCD-A8 write (enable notify) | Fourth CCCD |
+| t=69.2s | **3× InfoFrame burst on A6** | Fires after CCCD-A8; same payload |
+
+Total InfoFrames on A6: **9**. The burst fires on A6 (not A5). This sets `ConnectionState = Ready`
+inside the app, which is required for `Connect()` to succeed (see "Fehler" investigation below).
+
+The nRF52840 sniffer `.md` captures **all** spontaneous device-initiated notifies, labelled as
+"Orphan Notify" (no preceding WRITE on the same characteristic). Confirmed at lines 60–65, 83–85,
+114, 141–142, 180–181, 205. The absence of a frame type from the file means it was NOT sent.
+
 Steps 1–6 (GATT discovery through SubscribeNotif) repeat identically. Then:
 
 7. **GetStoredProfileSetting × 10** (same settings, read again)
@@ -468,10 +486,16 @@ The factory routes on DeviceSeries:
 - `248` → `OldAquaCleanDevice`
 - else → base `GeberitDevice`
 
-**The mock must send a `DeviceStatusData` (CommandId=0xE0) notify** with
-`[version=2, DeviceSeries=250, DeviceVariant=0x0D, ...]` for the factory to create
-the correct `NewAquaCleanDevice`. The A6 INFO_FRAME burst (`80 01 30 14 0c...`) is
-a DIFFERENT format and does NOT trigger DeviceStatusChangedEventArgs.
+**DeviceStatusData is NOT sent by the real device during normal onboarding** —
+confirmed from `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md`: no frame
+with CommandId=0xE0 appears anywhere in Connection 2 (the nRF52840 sniffer captures all
+spontaneous notifies as "Orphan Notify" entries — if 0xE0 existed it would be there).
+Factory routing to `NewAquaCleanDevice` therefore happens via a different path (likely
+from proc 0x82 variant byte). The A6 INFO_FRAME burst (`80 01 30 14 0c...`) has
+CommandId=0x14 and is a different format. DeviceStatusChangedEventArgs is not triggered.
+
+**`ConnectionState.Ready` is set by InfoFrames received on A6** — not by DeviceStatusData.
+See the "Fehler" investigation below for proof.
 
 ### PostConnectTask (NewAquaCleanDevice)
 
@@ -506,11 +530,52 @@ If `_E004 = true` AND a DpId is in `m__E001`: `IBleProduct.ReadAsync([DataPointA
 
 ---
 
-## "Fehler / Ein Fehler ist aufgetreten" — root cause investigation (2026-06-25)
+## "Fehler / Ein Fehler ist aufgetreten" — root cause identified and fixed (2026-06-25)
 
-Capture: `mock-geberit-mera_2026-06-25_08-46.log` (mock v1.60.0b1 running)
+**Fixed in mock v1.61.0b1.** See also `docs/developer/mock-geberit-mera.md` "Error popup" section.
 
-### Observed timeline (mock)
+Capture used for analysis: `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md`
+(decoded from `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard.pcapng` using `nrf-ble-analyze`).
+
+### nRF capture completeness — proof
+
+The `nrf-ble-analyze` script captures **all** BLE RF frames, including spontaneous
+device-initiated notifies. These appear as **"Orphan Notify"** entries in the `.md` output
+(a notify not preceded by a WRITE on the same characteristic within the expected response window).
+
+Confirmed Orphan Notify entries in Connection 2 of the real device capture:
+
+| Line | Time | Channel | Content |
+|------|------|---------|---------|
+| 60–65 | t=69.1s | A6 | 6× InfoFrame burst (after CCCD-A7 enable) |
+| 83–85 | t=69.2s | A6 | 3× InfoFrame burst (after CCCD-A8 enable) |
+| 114 | t=70.0s | A8 | `16 0b 30 37 16 00 0c 30 37 12 00...` |
+| 141–142 | t=70.3s | A8 | `16 00 00 00...` × 2 |
+| 180–181 | t=79.9s | A5 | `70 00 0c 18...` and `11 05 00 00 07 62 cd...` |
+| 205 | t=81.1s | A5 | `11 05 00 00 07 ae 09 00 01 01 07 02 00...` |
+
+**The `.md` file is authoritative and complete.** No need to re-run tshark or nrf-ble-analyze
+on the original pcapng — the Orphan Notify entries prove all spontaneous frames are captured.
+
+### The 0.6-second gap — confirmed empty
+
+Lines 440–444 of the real device capture (t=94.0–94.6s): the gap between GetFilterStatus
+completion and State Poll #2 contains **no Orphan Notify entries**. There is no spontaneous
+frame sent by the real device at the moment the "Fehler" popup would appear on the mock.
+
+### Debunked hypotheses
+
+| Hypothesis | Status | Evidence |
+|---|---|---|
+| FilterStatus id=3/id=6 non-zero | ✗ error persists after v1.59.0b1 fix | mock log |
+| FilterStatus id=4/id=8 timestamps non-zero | ✗ error persists after v1.60.0b1 fix | mock log |
+| **DeviceStatusData (0xE0) missing** | **✗ DEBUNKED** | No 0xE0 frame anywhere in real device capture |
+
+The DeviceStatusData hypothesis was based on source code analysis showing `DeviceSeries`
+comes from CommandId=0xE0. However the nRF capture proves the real device never sends 0xE0
+during onboarding. The factory routing to `NewAquaCleanDevice` must happen another way.
+
+### Observed mock timeline
 
 | Time | Event |
 |------|-------|
@@ -523,87 +588,53 @@ Capture: `mock-geberit-mera_2026-06-25_08-46.log` (mock v1.60.0b1 running)
 | 08:47:47 | Proc 0x55, then 0x0D |
 | 08:47:49 | Proc 0x59 (second FilterStatus) |
 
-### Real device (nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md)
+The post-error mock sequence is IDENTICAL to the real device post-0x59 sequence. The BLE
+connection stays alive; background polling continues. This means `m__E006` (device reference,
+stored at step 7 of `Connect()`) IS set — it is `ConnectionState.Ready` (step 4 check) that
+fails, not the procs themselves.
 
-No error occurs on the real device. The corresponding point where the error would appear
-is at t≈94.0–94.6s (the 0.6-second gap after the first 0x59). The real device proceeds
-normally with State Poll #2 at t=94.6s. The error diagnostic window is this 0.6s gap.
-
-**After 0x59 (both real device and mock) — sequence comparison:**
+### Real device after GetFilterStatus
 
 | Step | Real device | Mock (post-error) |
 |------|------------|-------------------|
 | +0.6s | 0x0D (State Poll #2) | 0x0D at +3s |
-| +0.8s | 0x55 (GetDeviceRegistrationLevel) → `00` | 0x55 at +4s |
+| +0.8s | 0x55 → `00` | 0x55 at +4s |
 | +1.1–1.6s | 0x0D × 2 | 0x0D |
-| +1.8s | 0x59 (GetFilterStatus #2) | 0x59 at +6s |
-| +2.0s | 0x86 (GetDeviceInitialOperationDate) | 0x86 (expected) |
+| +1.8s | 0x59 (FilterStatus #2) | 0x59 at +6s |
 
-The post-error mock sequence is IDENTICAL to the real device sequence. The BLE connection
-and device remain active; background polling and post-connect steps all fire as expected.
+### Actual root cause: InfoFrame burst sent on A5 instead of A6
 
-### Ruling out fixed causes
+`GeberitDeviceCoreService.Connect()` checks `ConnectionState == Ready` after `EstablishAsync()`
+returns (step 4 in the state machine above). `ConnectionState` is set to `Ready` when InfoFrames
+are received on **A6** — not A5.
 
-| Version | Fix attempted | Outcome |
-|---------|--------------|---------|
-| v1.59.0b1 | FilterStatus id=3/6 non-zero | Error persists |
-| v1.60.0b1 | FilterStatus id=4/8 non-zero timestamps | Error persists |
+**Evidence:**
+- Real device: 9× InfoFrame burst on **A6** at t=69.1–69.2s (immediately after CCCD-A7/A8 enables).
+  No error occurs. `ConnectionState = Ready` by the time procs start.
+- Mock v1.60.0b1: burst on **A5** only (wrong characteristic). Procs all succeed (independent of
+  `ConnectionState`), but step 4 check finds `ConnectionState != Ready` → `TryResult.Fail` → error.
 
-v1.60.0b1 current FilterStatus values vs real device — all match:
-id=0(1) id=1(130) id=2(14) id=3(1) id=4(timestamp✓) id=5(0) id=6(3) id=7(348) id=8(timestamp✓) id=9(0) id=10(5).
+**Why the procs still run after the error:** `m__E006` is stored at step 7 (BEFORE PostConnectTask).
+Even when `Connect()` returns `TryResult.Fail`, the background poller already holds `m__E006` and
+continues running. This is why the mock log shows 0x0D/0x55/0x59 continuing after "Fehler".
 
-### Leading hypothesis
+### Fix — mock v1.61.0b1
 
-**The mock does not send `DeviceStatusData` (CommandId=0xE0) notification.**
+`_send_info_frame_burst()` (renamed from `_send_a5_info_frames`) now sends:
 
-The `IBleProduct.ConnectionState` transitions to `Ready` when this notification is received
-(it contains DeviceSeries, DeviceVariant, and device identity). Without it:
+1. **10× on A5** — fires when CCCD-A5 is written (keeps bridge `wait_for_info_frames_async` happy)
+2. **9× on A6** — fires once CCCD-A6 is set (~200 ms later, already set by time A5 burst completes)
 
-- If `ConnectionState != Ready` after `EstablishAsync` → Connect() line 175 check fails →
-  break → `_E007 = null` → `TryResult.Fail` → "Fehler" popup within ~1s of line 175 check.
-- The background poll continues because it runs on `m__E006` which is separate.
-
-The A6 INFO_FRAME burst (`80 01 30 14 0c 03 00 03 00 00 00 00 31 30 00 12 00 b7 08 00`)
-is **not** `DeviceStatusData`. It has a different CommandId (0x14, not 0xE0).
-
-### What the mock needs to send
-
-A spontaneous GATT notify (on A5 or A6) with a CrcMessage body:
-
-```
-CommandId: 0xE0 (224)
-Payload:
-  byte[0] = 0x02  (version)
-  byte[1] = 0xFA  (DeviceSeries = 250 = Mera Comfort)
-  byte[2] = 0x0D  (DeviceVariant = Mera Comfort)
-  byte[3–5] = device number (3 bytes LE)
-  byte[6–9] = device unique ID
-  byte[10] = device model (lower 4 bits)
-  byte[11–12] = IdcHash
-  byte[13–14] = flags
-```
-
-Timing: at connection setup, ideally immediately after CCCD-A5 or A6 is enabled — the same
-window as the A6 INFO_FRAME burst. The real device likely sends this during the
-0.6s gap between 0x59 completion and the first background 0x0D.
-
-### Investigation still needed
-
-1. **Confirm `ConnectionState.Ready` trigger** — search decompiled source for where
-   `ConnectionState` is set to `Ready`. Likely in `IBleProduct` implementation
-   (AquaClean RPC client layer).
-2. **Confirm `DeviceStatusData` (0xE0) timing** — analyze the raw btsnoop from the real
-   device (`nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.pcapng`) for any
-   A5/A6 frames with first payload byte `0xE0` between t=94.0s and t=94.6s.
-3. **Alternative: search decompiled source** for what sets `ConnectionState = ConnectionState.Ready`
-   in the AquaClean BLE product implementation.
+The `_a6_burst_done` event blocks proc responses during both bursts.
 
 ---
 
-## Write characteristics — real device has 4 (mock has 2)
+## Write characteristics — all four required (fixed in mock v1.40.0b1)
 
-The app's connection code discovers characteristics **a1, a2, a3, a4** (all WRITE_WITHOUT_RESPONSE).
-The mock only registers a1 (`5cb3a13e`) and a2 (`5cb3a23e`).
-The nRF52840 capture shows only handles 0x0003 and 0x0006 actively used during onboarding,
-so a3/a4 appear to be optional or used post-onboarding. Worth adding to the mock if the app
-fails after the identification phase.
+The app's `AquaCleanProduct.cs` (line 1062) checks all four write channels immediately after
+GATT discovery: **a1, a2, a3, a4** (all WRITE_WITHOUT_RESPONSE). If any is null, it throws
+"Bulk transfer characteristic missing" and shows "connection could not be established"
+before writing a single CCCD.
+
+The mock has all four (A1–A4) since v1.40.0b1. All four dispatch to `_handle_request`
+identically — only A1 and A2 are actively used by the real device in practice.
