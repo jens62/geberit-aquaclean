@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mock-geberit-mera.py v1.62.0b1
+mock-geberit-mera.py v1.63.0b1
 BLE peripheral mock for Geberit AquaClean Mera Comfort.
 
 Simulates the GATT service and AquaClean procedure protocol used by the
@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.62.0b1"
+_MOCK_VERSION = "1.63.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -346,11 +346,13 @@ def _dispatch(ctx: int, proc: int, args: bytes) -> list:
         result = b""
     elif proc == 0x07:            # GetPerNodeProfileSetting: value(1) + null(1)
         result = bytes([0, 0])
-    elif proc == 0x0A:            # GetActiveCommonSetting
-        result = bytes([0, 0])    # 16-bit value = 0
-    elif proc == 0x0B:            # SetActiveCommonSetting
+    elif proc == 0x0A:            # GetActiveProfileSetting
+        result = _proc_0a(args)
+    elif proc == 0x0B:            # SetActiveProfileSetting
         result = b""
-    elif proc in (0x51, 0x53):    # GetStoredCommonSetting / GetStoredProfileSetting
+    elif proc == 0x51:            # GetStoredCommonSetting
+        result = _proc_51(args)
+    elif proc == 0x53:            # GetStoredProfileSetting
         result = bytes([0, 0])
     elif proc == 0x55:            # GetDeviceRegistrationLevel
         result = bytes([0])
@@ -500,6 +502,25 @@ def _proc_0e(args: bytes) -> bytes:
 def _proc_86() -> bytes:
     """GetDeviceInitialOperationDate: UTF-8 date string."""
     return b"2023-01-01\x00"
+
+
+# Values from real Mera Comfort onboarding capture (onboarding-real-mera_timing.md).
+_ACTIVE_PROFILE_SETTINGS = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+_STORED_COMMON_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+
+
+def _proc_0a(args: bytes) -> bytes:
+    """GetActiveProfileSetting: args[0] = setting ID, returns 16-bit LE value."""
+    setting_id = args[0] if args else 0
+    value = _ACTIVE_PROFILE_SETTINGS.get(setting_id, 0)
+    return bytes([value & 0xFF, (value >> 8) & 0xFF])
+
+
+def _proc_51(args: bytes) -> bytes:
+    """GetStoredCommonSetting: args[0] = setting ID, returns 16-bit LE value."""
+    setting_id = args[0] if args else 0
+    value = _STORED_COMMON_SETTINGS.get(setting_id, 0)
+    return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
 
 # ---- GATT Service ----

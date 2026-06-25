@@ -23,7 +23,7 @@ The toilet advertises manufacturer-specific data only — no local name.
 Company `0x0100` = TomTom International BV (Bluetooth SIG assigned).
 Confirmed from `on-board-geberit-Home-app-to-mera.pcapng` (tshark: `company_id=0x0100`).
 
-Manufacturer-specific payload layout (11 bytes, confirmed from `AquaCleanProduct.cs`):
+Manufacturer-specific payload layout (11 bytes, confirmed from app source analysis):
 
 | Offset | Value | Name | Notes |
 |--------|-------|------|-------|
@@ -191,8 +191,7 @@ Connection 2 is the **onboarding cycle**: same init, then writes profile setting
 
 ## Button hold mechanism — confirmed from app source (2026-06-21)
 
-Source: `AquaCleanProduct.cs` (`UpdateAdvertisingData`, `Initialize`) +
-`AqCPressButtonProgressViewModel.cs` + nRF52840 capture `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1`.
+Source: app source analysis (v2.14.1) + nRF52840 capture `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1`.
 
 ### What "hold the button" actually does
 
@@ -434,10 +433,7 @@ For a `mock-geberit-mera.py` that satisfies the Geberit Home App:
 
 ---
 
-## `Connect()` state machine — decompiled internals (v2.14.1, 2026-06-25)
-
-Source: `GeberitDeviceCoreService.cs` + `NewAquaCleanDevice.cs` + `NewAqcDescaleState.cs` +
-`NewAqcFilterChangeState.cs` + `DeviceDataPoints.cs`.
+## `Connect()` state machine — app source analysis (v2.14.1, 2026-06-25)
 
 ### Full Connect() flow
 
@@ -468,7 +464,7 @@ on the mock even after the "Fehler" popup.
 ### DeviceSeries routing in the factory
 
 `DeviceSeries` comes from the **`DeviceStatusData` notification** (CommandId=0xE0=224) that
-the device sends spontaneously. Parsed in `FrameHandler.cs` → `DeviceStatusChangedEventArgs`:
+the device sends spontaneously. Parsed by the frame handler → `DeviceStatusChangedEventArgs`:
 
 | Byte | Field |
 |------|-------|
@@ -528,11 +524,289 @@ If `_E004 = true` AND a DpId is in `m__E001`: `IBleProduct.ReadAsync([DataPointA
 - If DpId not in `m__E001` → logs warning, no-op
 - If DpId in `m__E001` → calls `IBleProduct.WriteAsync(item)` → sends BLE write
 
+### PostConnectTask (OldAquaCleanDevice — DeviceSeries 248, Mera Comfort)
+
+Source: app source analysis (v2.14.1) + `mock-geberit-mera_2026-06-25_12-37.log` (Connection 2).
+
+`OldAquaCleanDevice` handles DeviceSeries=248 (Mera Comfort, classic AquaClean protocol).
+Its `PostConnectTask` uses direct AquaClean protocol procs — not DpId abstraction.
+It runs for the "Save" connection (`executePostConnectTasks=True`) but **not** for
+Connection 1 (button detection, `executePostConnectTasks=False`).
+
+**Confirmed sequence** (from mock log + app source analysis):
+
+| Step | Internal call | Proc | Args | Count |
+|------|--------------|------|------|-------|
+| 1 | `InitializeActiveCommonSettings()` | `0x0A` GetActiveCommonSetting | IDs 2,1,3,4,6,7,5,8,0,9 | ×10 |
+| 2 | `WriteSomeValuesToDevice()` | `0x0B` SetActiveCommonSetting | IDs 2,1,3 (Colour, Brightness, Mode) | ×3 |
+| 3 | `StoredCommonSettings.ReadFromDevice()` | `0x51` GetStoredCommonSetting | IDs 2,1,3,4,6,7,5,8,0,9 | ×10 |
+| 4 | `ReadDescaleStatisticsFromDevice()` | `0x0D` GetSystemParameterList | indices [0–11] | ×1 |
+| 5 | `FilterState.ReadFromDevice()` — probe | `0x59` GetFilterStatus | IDs [0–7] | ×1 |
+| 5 | `FilterState.ReadFromDevice()` — full | `0x59` GetFilterStatus | IDs [0–11] | ×1 |
+
+**Critical data requirements** for `PostConnectTask` to succeed — confirmed from real device
+capture `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-mapping-1.md`:
+
+**Confirmed from `onboarding-real-mera_timing.md` (new capture 2026-06-25):**
+
+| Proc | Setting / index | Mock (wrong) | Real device | Consequence of 0 |
+|------|-----------------|-------------|-------------|-------------------|
+| `0x51` | ID 0 WaterHardness | 0 | **1** | Dashboard segmented control at index `0−1=−1` → `ArgumentOutOfRangeException` → "Fehler" |
+| `0x51` | ID 1 Brightness | 0 | 3 | safe (0 = minimum) |
+| `0x51` | ID 2 Colour | 0 | 2 (Magenta) | safe (0 = Blue) |
+| `0x51` | ID 3 Mode | 0 | 2 (WhenApproached) | safe (0 = Off) |
+| `0x51` | ID 4–9 | 0 | 2,0,1,1,0,0 | largely safe |
+| `0x0A` | ID 2 AnalShowerPressure | 0 | **2** | Shower pressure display at index −1 → possible crash |
+| `0x0A` | ID 1 OscillatorState | 0 | **3** | same risk |
+| `0x0A` | IDs 0,3,4,6,7 | 0 | 1,2,2,1,1 | same risk |
+| `0x0D` | indices 8,9,10 | absent (9 items) | **also absent** (9 items) | ✅ mock is correct |
+| `0x59` | ID 11 | absent (11 items) | **also absent** (11 items) | ✅ mock is correct |
+
+**Critical correction from new capture:** the real device ALSO returns only 9 SPL items
+(skipping indices 8/9/10) and only 11 filter IDs. The mock's `_SPL_MERA_INDICES` and
+`_proc_59()` item count were already correct. The earlier hypothesis that these caused
+`KeyNotFoundException` is refuted.
+
+**Proc `0x0A` is GetActiveProfileSetting, NOT GetActiveCommonSetting** — confirmed from
+the new capture: proc 0x0A reads AnalShowerPressure, OscillatorState, LadyShowerPressure,
+etc. (profile settings), not orientation light / water hardness (common settings).
+The ble-protocol.md label "GetActiveCommonSetting" is incorrect for this proc.
+
+`0x0B` (SetActiveProfileSetting) writes come from the `0x0A` responses: since the mock
+returns 0 for all active settings, it writes AnalShowerPressure=0, OscillatorState=0,
+LadyShowerPressure=0. These may also trigger dashboard display crashes.
+
+`0x0B` (SetActiveCommonSetting) writes come from the `0x0A` responses: since the mock
+returns 0 for all active settings, it writes Colour=0 (Blue), Brightness=0, Mode=0 (Off) —
+all valid values, no crash at write time.
+
+---
+
+### GeberitDeviceSeries enum — full table
+
+Numeric values are byte 1 of the `DeviceStatusData` BLE notification (CommandId=0xE0=224),
+also used as the `deviceSeries` parameter to the device type dispatcher `_E020._E000()`.
+
+| Value | Enum name | Product family | `GeberitDeviceCoreService` factory |
+|---|---|---|---|
+| 248 | `AquaClean` | Mera Comfort, classic AquaClean | `_E004` → `OldAquaCleanDevice` |
+| 250 | `NewAquaClean` | Newer models (Sela, etc.) | `_E005` → `NewAquaCleanDevice` |
+| 252 | `Gam` | Geberit Gam faucets | `_E022` |
+| 244 | `MirrorCabinet` | Smart mirror cabinet | `_E023` |
+| 239 | `Monolith` | Monolith Plus | `_E024` |
+| 253 | `Bob` | Unknown product line | `_E025` (uses `variant` + `model`) |
+| 254 | `Nurs` | Healthcare/nursing products | `_E027` |
+| 249 | `WcFlush` | Toilet flush systems | `_E028` |
+| 247 | `SanitaryFlush` | Urinal/sanitary systems | `_E029` |
+| 245 | `Gateway` | Hub/gateway devices | `_E02A` |
+| 999 | `App` | Test/dev device | special case |
+| 1000 | `Unknown` | Fallback | returns `GeberitDeviceType.Unknown` |
+| 1001 | `Iot` | Generic IoT | — |
+
+The full dispatcher is in the device configuration module, method `_E020._E000`:
+```csharp
+// static GeberitDeviceType _E000(ushort series, ushort variant, int model = -1)
+switch (series) {
+  case 248: return _E020(variant);       // OldAquaClean / Mera Comfort
+  case 250: return _E021(variant);       // NewAquaClean
+  case 252: return _E022(variant);
+  case 244: return _E023(variant);
+  case 239: return _E024(variant);
+  case 253: return _E025(variant, model); // only case using model param
+  case 254: return _E027(variant);
+  case 249: return _E028(variant);
+  case 247: return _E029(variant);
+  case 245: return _E02A(variant);
+  case 999: return GeberitDeviceType.App;
+  default:  return GeberitDeviceType.Unknown;
+}
+```
+
+`_E020` class also holds `private Dictionary<GeberitDeviceType, GeberitDeviceConfig> m__E021`
+for reverse lookup from type to device configuration metadata.
+
+---
+
+### Device model class hierarchy
+
+```
+IGeberitDevice
+ └─ GeberitDevice
+      • m__E000: IDeviceConfigurationInfo   (private field, private setter → immutable)
+      • static FromBleProduct(IBleProduct, IDeviceConfigurationInfo?) → GeberitDevice
+        Creates DeviceConfigurationInfo(Uuid, DeviceUniqueId, DeviceSeries,
+          DeviceVariant, defaultName, isDemoModeDevice) if not supplied.
+      └─ BaseAquaCleanDevice
+           • exposes ConfigurationInfo (inherited)
+           ├─ NewAquaCleanDevice            (DeviceSeries 250 — PostConnectTask: DpIds 589/585/983/802)
+           └─ OldAquaCleanDevice            (DeviceSeries 248 — PostConnectTask: procs 0x0A/0x0B/0x51/0x0D/0x59)
+```
+
+**Factory in `GeberitDeviceCoreService`** (routes by `IBleProduct.DeviceSeries`):
+
+| Method | Series | Output |
+|--------|--------|--------|
+| `_E003(IBleProduct)` | — | router entry point |
+| `_E004(product, info)` | 248 | `OldAquaCleanDevice` wrapping `_E006` base |
+| `_E005(product, info)` | 250 | `NewAquaCleanDevice` wrapping `_E006` base |
+| `_E006(product, info?)` | other | base `GeberitDevice` |
+
+`_E006` creates the `GeberitDevice` base by calling `m__E001.GetDeviceInfo(uuid)` — retrieves
+previously stored `IDeviceConfigurationInfo` from local persistence (Core Data / SQLite).
+
+**DeviceType derivation** (`DeviceConfigurationInfo` constructor):
+```csharp
+DeviceType = _E020._E000(deviceSeries, deviceVariant);
+DeviceSeries = (GeberitDeviceSeries)deviceSeries;
+```
+
+**Null Object pattern** — `ConnectedDevice` property in `GeberitDeviceCoreService`:
+```csharp
+ConnectedDevice => m__E006 ?? NullGeberitDevice.Instance
+```
+- `NullGeberitDevice`: stub implementing `IGeberitDevice`; `ConfigurationInfo = NullDeviceConfigurationInfo.Instance`
+- `NullDeviceConfigurationInfo`: `DeviceType = GeberitDeviceType.Unknown` (sentinel for "no device
+  connected"); `string` properties → `string.Empty`; `Color` properties → `Color.Transparent`
+
+---
+
+### AquaCleanProduct — GATT initialization (DeviceSeries 248, legacy)
+
+**Device construction** (`AquaCleanProduct` constructor):
+- Hardcodes `DeviceSeries = 248`
+- Sets up `Capabilities`, `Flags`, `ArticleNumber`, characteristic arrays `cz`/`da`/`db`/`dc`
+
+**`Initialize` method** — strict 8-characteristic validation:
+
+1. Searches for service UUID `3334429d-90f3-4c41-a02d-5cb3a03e0000`
+2. Calls `GetCharacteristic(uuid)` for all 8 UUIDs below; throws `"Bulk transfer characteristic
+   missing"` if any returns `null`
+
+| Internal name | UUID (suffix) | Handle (mock) | Role |
+|---------------|---------------|---------------|------|
+| A1 write | `...a13e0000` | `0x0003` | Request WRITE |
+| A2 write | `...a23e0000` | `0x0006` | CONS continuation WRITE |
+| A3 write | `...a33e0000` | — | (not used in practice) |
+| A4 write | `...a43e0000` | — | (not used in practice) |
+| A5 notify (`cz`) | `...a53e0000` | `0x000F` | Primary response channel + bridge InfoFrame |
+| A6 notify (`da`) | `...a63e0000` | `0x0013` | InfoFrame burst → `ConnectionState.Ready` |
+| A7 notify (`db`) | `...a73e0000` | `0x0017` | CONS overflow channel |
+| A8 notify (`dc`) | `...a83e0000` | `0x001B` | CONS overflow channel |
+
+3. Enables notifications on `cz`, `da`, `db`, `dc` with a 4000 ms timeout.
+
+CONS channel rotation: A6 (byte1=`0x02`) → A7 (`0x04`) → A8 (`0x06`) → A5 (`0x00`).
+
+**The BlueZ GATT Read-By-Type bug prevents iOS from discovering all 8 characteristics**
+(see section below), causing `Initialize` to throw "Bulk transfer characteristic missing" and
+preventing `ConnectionState.Ready` — which in turn causes `Connect()` to return `TryResult.Fail`.
+
+---
+
+### BaseProduct / ConnectionState state machine
+
+**Architecture:** Geberit product code **observes** state changes from the underlying Arendi BLE
+library but does not control them. No direct `PeripheralState` assignments exist in any
+Geberit product file — state transitions are driven entirely by the library.
+
+**Key methods and properties:**
+
+| Name | Description |
+|------|-------------|
+| `ConnectionState` property | Auto-implemented, protected setter |
+| `EstablishAsync(token)` | Delegates to `base.EstablishAsync(token)`; unwraps `ComLibException` |
+| `c(object, PeripheralStateChangedEventArgs)` | Event handler from Arendi library |
+| — (guard) | Only transitions if `!UpdateInProgress` |
+| `SetState(d(b.PreviousState), d(b.NewState))` | Core state transition call |
+| `SetState(prev, next)` | Updates `ConnectionState` + fires `ConnectionStateChangedEventArgs` |
+| `IsConnected` | `true` when `ConnectionState` is `Ready`, `Initialize`, or `Update` |
+| `d(PeripheralState a)` | Switch expression mapping `PeripheralState` → `ConnectionState` |
+| re-sync path | Re-syncs after firmware update completes (`UpdateInProgress` → `false`) |
+
+**State progression:** Idle → EstablishLink → Negotiations → DiscoveringServices → Initialize → **Ready**
+
+**`PeripheralState.Ready` maps directly to `ConnectionState.Ready`** (line 912 switch).
+
+**`ConnectionState.Ready` is the precondition for all BLE operations.** Guards confirmed in multiple places:
+- `this.f.State != PeripheralState.Ready` (Arendi internal BLE state check)
+- `base.State != PeripheralState.Ready` (Ble20Product path)
+- `base.ConnectionState == ConnectionState.Ready` (Ble20Product path)
+
+**What triggers Ready on Mera Comfort:**
+The Arendi library fires `PeripheralStateChangedEventArgs(NewState=Ready)` after
+`Initialize()` completes successfully. `Initialize()` validates the 8 characteristics and
+enables notifications — it "succeeds" when the A6 InfoFrame burst is received (the library
+treats the first incoming notification as "initialization confirmed"). This is why the mock
+must send the InfoFrame burst on **A6** (not A5): the Arendi library only transitions to
+Ready after receiving a notification on the A6 characteristic.
+
+---
+
+### BlueZ 5.77 GATT Read-By-Type bug — characteristic discovery failure on iOS
+
+Source files: `bluez-5.77/src/shared/gatt-server.c`, `bluez-5.77/src/shared/gatt-db.c`
+(in `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/bluez-5.77/src/shared/`)
+
+**Symptom:** iOS discovers only 1 of 7 Geberit service characteristics (UUID `0x3A2B` only);
+macOS discovers all 7.
+
+**What is NOT the bug:** `gatt-db.c` `foreach_in_range` correctly queues all 7 characteristics
+for each Read-By-Type request. The database layer is correct.
+
+**The actual bug:** `process_read_by_type` in `gatt-server.c` receives the full 7-item queue
+but cannot pack attributes with **different `item_len` values** into a single PDU response:
+- Characteristic `0x3A2B`: `item_len = 7` bytes
+- Characteristics A5, A6, A7, A8, A1, A2: `item_len = 21` bytes
+
+The packing loop stops at the `item_len` size boundary and sends only the first same-size
+group. iOS receives only the `0x3A2B` entry and stops querying. macOS (MTU=515) compensates
+by issuing multiple continuation queries — eventually collecting all 7 characteristics.
+
+**Read-By-Type ranges triggered by iOS:**
+
+| Range | Characteristics queued | What iOS receives |
+|-------|----------------------|-------------------|
+| `[0x0015–0x0027]` | 7 (`0x3A2B` + A5/A6/A7/A8/A1/A2) | only `0x3A2B` (item_len=7 group) |
+| `[0x0021–0x0027]` | 3 (A6/A7/A8 or similar subset) | 0 (all item_len=21) |
+| `[0x0024–0x0027]` | 2 (A7/A8 or similar) | 0 |
+
+Result: iOS calls `GetCharacteristic(a53e0000)` → `null` → `Initialize` throws
+"Bulk transfer characteristic missing" → connection fails before any proc.
+
+**Fix location:** `process_read_by_type` packing loop in `gatt-server.c` — must handle
+multiple item sizes in one response or properly signal continuation for each size group.
+
+---
+
+### Ble20Product Initialize sequence (Alba / Ble20 — series 245, reference only)
+
+**Not Mera Comfort.** Documented here for reference — this is the Alba/Ble20 device path.
+
+**`Initialize` override:**
+
+| Step | Action | Exception on failure |
+|------|--------|----------------------|
+| 1 | Find service UUID `"FD48"` or `"559eb000-2390-11e8-b467-0ed5f89f718b"` | `"Service not found"` |
+| 2 | `GetCharacteristic(an/ao/ap)` → ca (rx), cb (tx), cc (capabilities) | `null` check |
+| 3 | Validate: ca must be `Readable`, cb must be `Writeable` | `"Rx not readable or tx not writable"` |
+| 4 | `ChangeNotification(enable: true)` on cb | — |
+| 5 | `bv.DataPointInventory(cancellationToken, bh)` — reads device parameter structure | — |
+| 6 | `bv.ListInventory(cancellationToken)` (series 245 only) | — |
+| 7 | `DataPointHelper.ReadRsTsVersion` → `RsVersion`, `TsVersion` | — |
+| 8 | `SynchronizeDateTime` — syncs device RTC | — |
+| 9 | Return `null` = success, no firmware update needed | — |
+
+All subsequent Ble20Product operations check `!base.IsInRecoveryMode` before executing.
+
 ---
 
 ## "Fehler / Ein Fehler ist aufgetreten" — root cause identified and fixed (2026-06-25)
 
-**Fixed in mock v1.61.0b1.** See also `docs/developer/mock-geberit-mera.md` "Error popup" section.
+**Partially fixed across two versions:**
+- `v1.61.0b1`: Fixed InfoFrame burst on A6 → `ConnectionState.Ready` (see below).
+- `v1.63.0b1` (planned): Fix `GetStoredCommonSetting` and `GetActiveProfileSetting` returning all-zeros.
+
+See also `docs/developer/mock-geberit-mera.md` "Error popup" section.
 
 Capture used for analysis: `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md`
 (decoded from `nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard.pcapng` using `nrf-ble-analyze`).
@@ -602,7 +876,7 @@ fails, not the procs themselves.
 | +1.1–1.6s | 0x0D × 2 | 0x0D |
 | +1.8s | 0x59 (FilterStatus #2) | 0x59 at +6s |
 
-### Actual root cause: InfoFrame burst sent on A5 instead of A6
+### Root cause 1 (fixed v1.61.0b1): InfoFrame burst on A5 instead of A6
 
 `GeberitDeviceCoreService.Connect()` checks `ConnectionState == Ready` after `EstablishAsync()`
 returns (step 4 in the state machine above). `ConnectionState` is set to `Ready` when InfoFrames
@@ -618,7 +892,50 @@ are received on **A6** — not A5.
 Even when `Connect()` returns `TryResult.Fail`, the background poller already holds `m__E006` and
 continues running. This is why the mock log shows 0x0D/0x55/0x59 continuing after "Fehler".
 
-### Fix — mock v1.61.0b1
+### Root cause 2 (fix planned v1.63.0b1): OldAquaCleanDevice PostConnectTask data mismatch
+
+After v1.61.0b1 fixed `ConnectionState.Ready`, `PostConnectTask` now runs to completion, but
+`OldAquaCleanDevice.PostConnectTask` receives incorrect data from the mock, causing the
+app to crash or show "Fehler" during dashboard initialization.
+
+Two confirmed data mismatches (verified against `onboarding-real-mera_timing.md`):
+
+1. **`GetStoredCommonSetting` (proc 0x51) — WaterHardness=0 (invalid)**
+   Mock returns `bytes([0, 0])` for all stored common settings. Real device returns
+   WaterHardness(ID 0)=1. When the dashboard segmented control tries to display
+   WaterHardness, it computes `selectedIndex = value - 1 = 0 - 1 = -1` →
+   `ArgumentOutOfRangeException` → "Fehler" ~0.8s after `PostConnectTask` completes.
+
+2. **`GetActiveProfileSetting` (proc 0x0A) — all-zeros (invalid)**
+   Mock returns `bytes([0, 0])` for all active profile settings. Real device returns
+   AnalShowerPressure(ID 2)=2, OscillatorState(ID 1)=3, etc. These values are written
+   back via 0x0B and displayed in the settings UI.
+
+**What was confirmed correct (new capture, no fix needed):**
+- `GetSystemParameterList` (0x0D): real device returns 9 items `[0,1,2,3,4,5,6,7,11]` — exactly matches mock `_SPL_MERA_INDICES`. No change needed.
+- `GetFilterStatus` (0x59): real device returns 11 items (IDs 0–10) — matches mock. No change needed.
+
+**Timeline confirming root cause 2:**
+
+| Time | Event |
+|------|-------|
+| 12:39:16 | `GetSystemParameterList` (9 items) ✅ mock correct |
+| 12:39:17 | `GetFilterStatus` (11 items) ✅ mock correct |
+| 12:39:17.8 | **"Fehler"** — 0.8 s after `PostConnectTask` finishes |
+| 12:39:21 | Background polling starts (0x0D, 0x55, 0x59) — `m__E006` still live |
+
+The 0.8 s gap = navigation animation (0.3 s) + dashboard UI init crash.
+
+**Fix in v1.63.0b1:**
+1. `_proc_51(args)` — return ID-specific values from real device capture:
+   WaterHardness(0)=1, Brightness(1)=3, Colour(2)=2, Mode(3)=2, id4=2, id5=0, id6=1, id7=1, id8=0, id9=0
+2. `_proc_0a(args)` — return ID-specific values from real device capture:
+   id0=1, id1=3, id2=2, id3=2, id4=2, id5=0, id6=1, id7=1, id8=0, id9=0
+3. Proc 0x55 response: return value 0 (not registered) instead of 1
+
+---
+
+### Fix v1.61.0b1 — A6 InfoFrame burst
 
 `_send_info_frame_burst()` (renamed from `_send_a5_info_frames`) now sends:
 
@@ -631,7 +948,7 @@ The `_a6_burst_done` event blocks proc responses during both bursts.
 
 ## Write characteristics — all four required (fixed in mock v1.40.0b1)
 
-The app's `AquaCleanProduct.cs` (line 1062) checks all four write channels immediately after
+The app checks all four write channels immediately after
 GATT discovery: **a1, a2, a3, a4** (all WRITE_WITHOUT_RESPONSE). If any is null, it throws
 "Bulk transfer characteristic missing" and shows "connection could not be established"
 before writing a single CCCD.

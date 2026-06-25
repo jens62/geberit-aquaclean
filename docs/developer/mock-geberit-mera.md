@@ -704,7 +704,7 @@ Always use this tool for btsnoop analysis — do not write ad-hoc decoders.
 
 ---
 
-## Current status — mock v1.61.0b1 (2026-06-25)
+## Current status — mock v1.63.0b1 (2026-06-25)
 
 Requires patched `bluetoothd` (BlueZ 5.77 `gatt-server.c` — see 2-char-decl bug section above).
 
@@ -732,7 +732,9 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | GetStatisticsDescale (proc `0x45`) | ✅ v1.56.0b1 — 16-byte struct; called only from descaling history screen (never during polling) |
 | Web UI button press + live state | ✅ |
 | Full Connection 1 → GetDeviceIdentification flow | ✅ v1.54.0b1 — confirmed iOS onboarding 2026-06-24 |
-| "Error" popup after first FilterStatus | ⚠️ fix applied v1.61.0b1 — A6 burst + FilterStatus timestamps; needs test confirmation |
+| "Error" popup after first FilterStatus | ⚠️ fix applied v1.61.0b1 + v1.63.0b1 — A6 burst + FilterStatus timestamps + correct proc 0x51/0x0A values; needs test confirmation |
+| GetActiveProfileSetting (proc `0x0A`) | ✅ v1.63.0b1 — per-ID values from real device capture (WaterHardness crash fix) |
+| GetStoredCommonSetting (proc `0x51`) | ✅ v1.63.0b1 — per-ID values from real device capture; WaterHardness(0)=1 (was 0, caused crash) |
 | "Descaling necessary" warning | ✅ v1.59.0b1 — confirmed fixed (2026-06-25); root cause was SPL index 13=0 |
 
 ---
