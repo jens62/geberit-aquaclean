@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime, timedelta, timezone
 import logging
 import time
@@ -43,6 +44,17 @@ _ALBA_SLOW_POLL_EVERY = 10
 # ConfigEntryNotReady causes HA to recreate the coordinator (fresh _consecutive_failures=0),
 # which would re-fire the restart indefinitely.  Module-level storage survives recreation.
 _onboarding_restart_fired: set = set()
+
+# One asyncio.Lock per ESPHome proxy host, shared across all coordinators on the same host.
+# The ESP32 firmware only allows one BLE advertisement subscription at a time — coordinators
+# on different config entries but pointing at the same proxy must serialize their polls.
+_esphome_proxy_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_proxy_lock(host: str) -> asyncio.Lock:
+    if host not in _esphome_proxy_locks:
+        _esphome_proxy_locks[host] = asyncio.Lock()
+    return _esphome_proxy_locks[host]
 
 
 class AquaCleanCoordinator(DataUpdateCoordinator):
@@ -278,7 +290,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
             )
             await asyncio.sleep(_CIRCUIT_OPEN_PROBE_SLEEP)
 
-        async with self._ble_lock:
+        _proxy_ctx = (
+            _get_proxy_lock(self._esphome_host)
+            if self._esphome_host and not self._use_ha_bluetooth
+            else contextlib.nullcontext()
+        )
+        async with _proxy_ctx, self._ble_lock:
             try:
                 result = await self._do_poll()
             except UpdateFailed as exc:
@@ -910,7 +927,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         """Write a user profile setting via BLE, serialised with the poll loop."""
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
-        async with self._ble_lock:
+        _proxy_ctx = (
+            _get_proxy_lock(self._esphome_host)
+            if self._esphome_host and not self._use_ha_bluetooth
+            else contextlib.nullcontext()
+        )
+        async with _proxy_ctx, self._ble_lock:
             if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
@@ -953,7 +975,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
 
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
-        async with self._ble_lock:
+        _proxy_ctx = (
+            _get_proxy_lock(self._esphome_host)
+            if self._esphome_host and not self._use_ha_bluetooth
+            else contextlib.nullcontext()
+        )
+        async with _proxy_ctx, self._ble_lock:
             if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
@@ -987,7 +1014,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         """Execute a device command via BLE, serialised with the poll loop."""
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
-        async with self._ble_lock:
+        _proxy_ctx = (
+            _get_proxy_lock(self._esphome_host)
+            if self._esphome_host and not self._use_ha_bluetooth
+            else contextlib.nullcontext()
+        )
+        async with _proxy_ctx, self._ble_lock:
             if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
@@ -1074,7 +1106,12 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         """Execute an Alba-specific command that requires a value parameter."""
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import ESPHomeConnectionError
 
-        async with self._ble_lock:
+        _proxy_ctx = (
+            _get_proxy_lock(self._esphome_host)
+            if self._esphome_host and not self._use_ha_bluetooth
+            else contextlib.nullcontext()
+        )
+        async with _proxy_ctx, self._ble_lock:
             if self._esphome_host and not self._use_ha_bluetooth:
                 connector = self._get_esphome_connector()
                 client = self._ensure_esphome_client(connector)
