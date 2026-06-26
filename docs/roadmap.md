@@ -8,11 +8,10 @@ Planned features, improvements, and known bugs to fix.
 
 ### Fix: SPL parameter mislabeling (LidOffset / ShowerArmOffset)
 
-**⚠️ PREREQUISITE before changing the bridge**: capture Geberit Home v2.14.1 OTA via
-PacketLogger on Mera Comfort. Verify whether the app requests SPL indices 12 and 13
-for the same data as v2.13.2 (UnpostedShowerCycles + DaysUntilNextDescale), or whether
-v2.14.1 requests different indices for LidOffset/ShowerArmOffset (~104/105).
-Do not change the SPL list until this capture confirms the mapping.
+**Prerequisite resolved (2026-06-26, nRF52840 capture)**: The iOS app sends SPL
+`[0,1,2,3,4,5,6,7,8,9,10,11]` — indices 12 and 13 are **not** in the iOS SPL list.
+LidOffset/ShowerArmOffset are at indices 104/105 (unconfirmed queryability). The fix
+below is unblocked.
 
 **Root cause**: `SPL_PARAMS_MERA_COMFORT = [0,1,2,3,4,5,6,7,12,13]` is queried correctly,
 but the bridge mislabels the results:
@@ -152,7 +151,7 @@ All three are **AcSela only** — must be guarded by model detection (see "HACS:
 
 | Feature | Protocol | Notes |
 |---------|----------|-------|
-| `StateOrientationLight` | SPL index 9 | Live on/off state; **⚠️ DO NOT query on Mera Comfort** — permanently corrupts `GetFilterStatus` until power-cycle |
+| `StateOrientationLight` | SPL index 9 | Live on/off state; AcSela only — returns 0 on Mera Comfort (safe, no corruption — confirmed nRF capture 2026-06-26) |
 | `ConnectedSsmDevices` | SPL index 100 | Bitmask: bit0=FlushTrigger, bit1=OdourExtraction, bit2=OrientationLight; AcSela fw≥4 / AcMeraComfort fw≥23 |
 | `ToggleOrientationLight` | `SetCommand` code 20 | Toggle on/off; **AcSela ONLY** — confirmed from factory source; does NOT work on Mera Comfort |
 

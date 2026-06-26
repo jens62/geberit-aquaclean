@@ -87,12 +87,17 @@ Reads live device state. **NOT** DpIds — separate index space.
 **Bridge current list**: `[0,1,2,3,4,5,6,7,12,13]` — 12 = UnpostedShowerCycles, 13 = DaysUntilNextDescale.
 ⚠️ **Mislabeling bug**: the bridge currently labels these as `LidOffsetPosition`/`ShowerArmOffsetPosition` — that is wrong.
 See `docs/roadmap.md` → "Fix: SPL parameter mislabeling" for the fix TODO.
-**iPhone v2.13.2 sends**: `[13, 12, 0, 1, 2, 3, 4, 5, 6, 7]` (OTA capture 2026-06-01, HB2304EU298413 fw RS146.21).
-Indices 12 and 13 in this capture = UnpostedShowerCycles and DaysUntilNextDescale (confirmed iOS app v2.14.1 DpId.cs).
-The real LidOffset/ShowerArmOffset are at SPL indices 104/105 — queryability unconfirmed; check v2.14.1 OTA.
+**iOS app sends**: `[0,1,2,3,4,5,6,7,8,9,10,11]` — confirmed from nRF52840 capture 2026-06-26
+(HB2304EU298413, RS146.21 fw). Indices 8–11 return 0 on Mera Comfort; no `GetFilterStatus`
+corruption observed. Earlier OTA capture (2026-06-01) showing `[13,12,0..7]` conflicts with this
+and was likely misread or truncated — trust the nRF result.
+Indices 12/13 are NOT in the iOS SPL list; iOS gets UnpostedShowerCycles/DaysUntilNextDescale
+via `GetStatisticsDescale` instead.
+The real LidOffset/ShowerArmOffset are at SPL indices 104/105 — queryability unconfirmed.
 
-**DANGER**: indices 8, 9, 10 are device-variant specific — sending them to a Mera Comfort
-permanently corrupts `GetFilterStatus` state until power-cycle. Do NOT add 8/9/10 to Mera Comfort list.
+**Indices 8, 9, 10 are device-variant specific** (return 0 on Mera Comfort) but querying them
+is safe — the earlier "permanently corrupts GetFilterStatus until power-cycle" claim is unverified
+and contradicted by the 2026-06-26 nRF capture. Do not rely on that warning.
 
 ### SPL parameter index definitions
 

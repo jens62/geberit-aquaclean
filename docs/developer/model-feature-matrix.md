@@ -47,24 +47,43 @@ tabs (`AqCPersonalSettingsViewModel._E002–_E007`).
 
 ## SPL parameter lists (proc 0x0D `GetSystemParameterList`)
 
-### DANGER — indices 8, 9, 10 are device-variant specific
+### Indices 8–11 — device-variant specific (DANGER claim revised 2026-06-26)
 
-Sending index 8, 9, or 10 to a device that does not support it **permanently corrupts
-`GetFilterStatus` state until power-cycle**. Never add these to the Mera Comfort list.
+**Revised finding (2026-06-26, nRF52840 capture of iOS app against HB2304EU298413 RS146.21 fw):**
+The iOS app sends `[0,1,2,3,4,5,6,7,8,9,10,11]` to a real Mera Comfort. The device returns
+zeros for indices 8–11 without error and without any observable `GetFilterStatus` corruption.
+The earlier "DANGER — permanently corrupts until power-cycle" claim is unverified for Mera Comfort
+with current firmware. Indices 8–11 appear safe to query; the device returns 0 for any index
+it does not support rather than erroring or corrupting state.
 
-| Model | Safe indices | Notes |
-|-------|-------------|-------|
-| Mera Comfort | `[0,1,2,3,4,5,6,7,12,13]` | no 8 (SprayCalibration), no 9 (OrientationLight), no 10 (Draining) |
-| **Mera Classic** | `[0,1,2,3,4,5,6,7,12,13]` | identical to Mera Comfort — no orientation light hardware |
+Indices 8–11 are still device-variant specific in meaning:
+
+| Index | Name | Applicable models |
+|-------|------|------------------|
+| 8 | `StateSprayCalibration` | non-Mera Comfort variants |
+| 9 | `StateOrientationLight` | AcSela |
+| 10 | `StateDraining` | AcCama / AcCamaTestset |
+| 11 | `EndiannessCheck` | all |
+
+| Model | iOS app indices | Notes |
+|-------|----------------|-------|
+| Mera Comfort | `[0,1,2,3,4,5,6,7,8,9,10,11]` | confirmed from nRF52840 capture 2026-06-26; 8–11 return 0 |
+| **Mera Classic** | `[0,1,2,3,4,5,6,7,12,13]` | from OTA capture; unverified with nRF sniffer |
 | **Sela** | `[0,1,2,3,4,5,6,7,9,12,13]` | adds index 9 (`StateOrientationLight`) |
 | Cama | `[0,1,2,3,4,5,6,7,10,12,13]` | adds index 10 (`StateDraining`) |
 
-Indices 12, 13 (`UnpostedShowerCycles`, `DaysUntilNextDescale`) are safe for all models.
+Note: an earlier OTA capture (2026-06-01, `ble-protocol.md`) showed the iPhone sending
+`[13,12,0,1,2,3,4,5,6,7]` to the same device. This conflicts with the nRF capture finding.
+The nRF52840 capture is lower-level and more reliable; the OTA capture may have been misread
+or truncated. Trust the nRF result.
 
 ### Bridge current state
 
 The bridge uses one list for all AquaClean protocol devices: `[0,1,2,3,4,5,6,7,12,13]`.
-This is correct for Mera Comfort and Mera Classic.
+This differs from the iOS app's `[0..11]` in two ways:
+- Missing indices 8, 9, 10, 11 (device returns 0 for these on Mera Comfort — safe gap)
+- Includes indices 12, 13 which the iOS app does not poll via SPL (it uses `GetStatisticsDescale` instead)
+
 **For Sela, index 9 (`StateOrientationLight`) is missing** — the bridge does not read or
 expose the live orientation light state for Sela devices.
 

@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.69.0b1"
+_MOCK_VERSION = "1.70.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -132,13 +132,9 @@ _VARIANT     = 0x0D   # Mera Comfort
 # Node IDs confirmed from real Mera onboarding capture
 _NODE_IDS = bytes([3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xe, 0xf])
 
-# SPL indices supported on Mera Comfort. Indices 8/9/10 permanently corrupt
-# GetFilterStatus state until power-cycle — never send them on Mera Comfort.
-# Indices 12+13 are only requested by iOS during first-time onboarding
-# (request=[13,12,0-7]); in the reconnect flow iOS requests [0-11] and
-# returning unrequested 12+13 triggers an iOS "Error". Keep this list
-# to indices 0-7 and 11 (all safe, all within the reconnect request set).
-_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 11]
+# iOS sends [0..11] (12 indices). Real Mera returns all 12; indices 8-11
+# return 0 (device-variant specific but safe — confirmed nRF capture 2026-06-26).
+_SPL_MERA_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
 # SPL values for indices that need non-zero defaults (none currently needed).
 _SPL_MERA_VALUES: dict = {}
@@ -418,9 +414,9 @@ def _proc_81() -> bytes:
 def _proc_0d(args: bytes) -> bytes:
     """GetSystemParameterList: count(1) + count×(index(1)+value_le(4)).
 
-    Real Mera Comfort skips indices 8/9/10 and returns 9 items for a 12-index request.
+    iOS sends [0..11] (12 indices). Real Mera returns all 12 with zeros for 8-11
+    (confirmed nRF52840 capture 2026-06-26 — no corruption). Mock mirrors this.
     Including index bytes is mandatory — iOS maps each value by its index field, not position.
-    Index 13 (DaysUntilNextDescale) must be non-zero or iOS shows "descaling necessary".
     """
     result = bytes([len(_SPL_MERA_INDICES)])
     for idx in _SPL_MERA_INDICES:

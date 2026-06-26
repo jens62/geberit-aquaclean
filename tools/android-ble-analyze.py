@@ -1081,7 +1081,8 @@ def _annotate_req(ctx: int, proc: int, args: bytes) -> str:
     if (ctx, proc) == (0x01, 0x0D):
         if args:
             n = args[0]; ids = list(args[1:1 + n])
-            return f"Polling {n} params: [{', '.join(str(i) for i in ids)}]"
+            suffix = "..." if len(ids) < n else ""
+            return f"Polling {n} params: [{', '.join(str(i) for i in ids)}{suffix}]"
         return "Polling live device state"
 
     if (ctx, proc) == (0x01, 0x0E):
