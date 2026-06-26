@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.74.0b1"
+_MOCK_VERSION = "1.75.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -499,19 +499,19 @@ def _proc_subscribenotif(proc: int, args: bytes) -> bytes:
 # Per-component firmware versions from real Mera Comfort onboarding-real-mera.md.
 # Format per record: (v1, v2, build) where version=chr(v1)+chr(v2), build=int.
 _FW_COMPONENT_VERSIONS = {
-    1:  (0x33, 0x30, 0xCE),  # "30", build=206  — must stay ≥ RS30; see docs/developer/firmware-version.md
-    3:  (0x30, 0x38, 0x1F),  # "08", build=31
-    4:  (0x30, 0x38, 0x25),  # "08", build=37
-    5:  (0x31, 0x31, 0x3C),  # "11", build=60
-    6:  (0x30, 0x38, 0x30),  # "08", build=48
-    7:  (0x31, 0x31, 0x29),  # "11", build=41
-    8:  (0x30, 0x39, 0x1F),  # "09", build=31
-    9:  (0x30, 0x37, 0x13),  # "07", build=19
-    10: (0x30, 0x37, 0x12),  # "07", build=18
-    11: (0x30, 0x37, 0x16),  # "07", build=22
-    12: (0x30, 0x37, 0x12),  # "07", build=18
-    14: (0x30, 0x37, 0x1B),  # "07", build=27
-    15: (0x30, 0x31, 0x00),  # "01", build=0
+    1:  (0x33, 0x30, 0xCE),  # RS30.0 TS206 — all components must report RS30 to avoid blocking firmware update UI
+    3:  (0x33, 0x30, 0xCE),
+    4:  (0x33, 0x30, 0xCE),
+    5:  (0x33, 0x30, 0xCE),
+    6:  (0x33, 0x30, 0xCE),
+    7:  (0x33, 0x30, 0xCE),
+    8:  (0x33, 0x30, 0xCE),
+    9:  (0x33, 0x30, 0xCE),
+    10: (0x33, 0x30, 0xCE),
+    11: (0x33, 0x30, 0xCE),
+    12: (0x33, 0x30, 0xCE),
+    14: (0x33, 0x30, 0xCE),
+    15: (0x33, 0x30, 0xCE),
 }
 
 
