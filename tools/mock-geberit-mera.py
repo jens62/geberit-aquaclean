@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.72.0b1"
+_MOCK_VERSION = "1.73.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -844,6 +844,39 @@ class BatteryService(Service):
         return bytes([100])
 
 
+class _DISService(Service):
+    """Device Information Service (0x180A) for Remote Control compatibility.
+
+    RC does FIND_BY_TYPE_VALUE UUID=0x180A before pairing, then reads the
+    Manufacturer Name String (0x2A29) characteristic.  Real Mera returns
+    b"3.60.101.860/0000\\x00" (17 bytes, from nRF52840 capture).
+    """
+
+    def __init__(self):
+        super().__init__("0000180a-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("00002a29-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def manufacturer_name(self, options):
+        return b"3.60.101.860/0000\x00"
+
+
+class _RCPairingService(Service):
+    """Remote Control pairing service stub (UUID 0xC526).
+
+    RC does FIND_BY_TYPE_VALUE UUID=0xC526 and verifies the service exists
+    before initiating BLE pairing (LL_ENC_REQ).  Contents beyond the service
+    declaration are unknown — stub characteristic returns empty bytes.
+    All post-pairing RC traffic is encrypted and not yet decoded.
+    """
+
+    def __init__(self):
+        super().__init__("0000c526-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("0000c527-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def rc_stub(self, options):
+        return b""
+
+
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
     """Advertisement matching the real Mera Comfort BLE payload (11-byte total).
@@ -994,6 +1027,8 @@ async def _handle_button(request, service: MeraService):
         raise web.HTTPFound("/")
     _button_pressed = True
     _log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
+    subprocess.run(["btmgmt", "-i", "0", "pairable", "on"], capture_output=True)
+    _log("·", "Adapter set to pairable=on (RC pairing window open)")
     await _update_advert(1)
     raise web.HTTPFound("/")
 
@@ -1096,6 +1131,8 @@ async def _send_info_frame_burst(service: MeraService, gen: int) -> None:
     global _button_pressed
     if _button_pressed:
         _button_pressed = False
+        subprocess.run(["btmgmt", "-i", "0", "pairable", "off"], capture_output=True)
+        _log("·", "Adapter set to pairable=off (RC pairing window closed)")
         await _update_advert(0)      # await: HCI commands must finish before A5 responses start
     service._a6_burst_done.set()     # bursts complete — A5 responses may now proceed
 
@@ -1231,8 +1268,18 @@ async def main(web_port: int = 8765) -> None:
     # RegisterApplication, leaving only 3a2b + A5 visible to iOS.
     try:
         _gatt_manager = adapter_wrapper._proxy.get_interface("org.bluez.GattManager1")
-        await _gatt_manager.call_unregister_application("/org/bluez/example/mera")
-        logger.info("Pre-cleanup: removed stale GATT application /org/bluez/example/mera")
+        _stale_cleaned = []
+        for _app_path in ["/org/bluez/example/mera", "/org/bluez/example/battery",
+                          "/org/bluez/example/dis", "/org/bluez/example/rc_pairing"]:
+            try:
+                await _gatt_manager.call_unregister_application(_app_path)
+                _stale_cleaned.append(_app_path.split("/")[-1])
+            except Exception:
+                pass
+        if _stale_cleaned:
+            logger.info("Pre-cleanup: removed stale GATT apps: %s", _stale_cleaned)
+        else:
+            logger.debug("Pre-cleanup: no stale GATT app (OK on first run)")
     except Exception as _e:
         logger.debug("Pre-cleanup: no stale GATT app (OK on first run): %s", _e)
 
@@ -1247,10 +1294,14 @@ async def main(web_port: int = 8765) -> None:
     _MB._emit_interface_added = _counting_emit
     service = MeraService()
     battery_service = BatteryService()
+    dis_service = _DISService()
+    rc_pairing_service = _RCPairingService()
     try:
         try:
             await service.register(bus, "/org/bluez/example/mera", adapter_wrapper)
             await battery_service.register(bus, "/org/bluez/example/battery", adapter_wrapper)
+            await dis_service.register(bus, "/org/bluez/example/dis", adapter_wrapper)
+            await rc_pairing_service.register(bus, "/org/bluez/example/rc_pairing", adapter_wrapper)
         finally:
             _MB._emit_interface_added = _orig_emit
         logger.info("GATT service registered (suppressed %d InterfacesAdded signals)", _emit_count[0])
@@ -1376,8 +1427,16 @@ async def main(web_port: int = 8765) -> None:
             await asyncio.sleep(0.5)
             try:
                 _gm = adapter_wrapper._proxy.get_interface("org.bluez.GattManager1")
+                for _app in ["/org/bluez/example/mera", "/org/bluez/example/battery",
+                              "/org/bluez/example/dis", "/org/bluez/example/rc_pairing"]:
+                    try:
+                        await _gm.call_unregister_application(_app)
+                    except Exception:
+                        pass
                 await _gm.call_register_application("/org/bluez/example/mera", {})
                 await _gm.call_register_application("/org/bluez/example/battery", {})
+                await _gm.call_register_application("/org/bluez/example/dis", {})
+                await _gm.call_register_application("/org/bluez/example/rc_pairing", {})
                 _log("·", "GATT apps re-registered — ready for Connection 2")
             except Exception as _exc:
                 _log("!", f"GATT re-registration failed: {_exc}")
