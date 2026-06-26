@@ -198,6 +198,94 @@ Per project policy, any new capability must be updated across all interfaces:
 
 ---
 
+## iOS app — firmware update check mechanism (from decompiled source)
+
+Investigated 2026-06-26 from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/`.
+
+### How the app decides to show the "update firmware" prompt
+
+The app uses a **cloud-based firmware service** (`FirmwareServiceClient`) — not local version
+comparison. The check calls Geberit's cloud API to fetch a list of `FirmwareDto` objects,
+each with per-node firmware files and a `RuleSet`. The rule set is then evaluated against the
+LIVE DEVICE (DataPoint reads over BLE).
+
+Flow:
+1. `FirmwareServiceClient.RefreshCacheAsync()` — fetches `FirmwareDto[]` from cloud, keyed by `ContentId`. Cached in `FirmwareServiceCacheData.json` on the device. If the cache is fresh (`ContentId` unchanged) the network call is skipped.
+2. `IsUpdateAvailableAsync(product)` → `e.e()` filters cloud entries by `product.DeviceSeries == 248` AND `product.DeviceVariant` (derived from article number via `AcDeviceTypeHelper`).
+3. For each matching cloud `FirmwareDto` with `PackageVersion > current`, checks `nodeFirmware.RuleSet` against the device via `FirmwareRuleVerification.CheckFirmwareRuleSet`.
+4. If any RuleSet passes → `FirmwareForceUpdateViewModel` is shown (blocking screen, blocks onboarding completion).
+
+### Device identity → DeviceVariant mapping
+
+From `AcDeviceTypeHelper.GetDeviceType(articleNumber, serialNumber)`:
+
+| Article prefix | SAP first char | `AquacleanOldVariant` |
+|---|---|---|
+| `146.21` | `H` | `AcMeraComfort` |
+| `146.21` | `G` | `AcMeraClassic` |
+| `146.20` | any | `AcMeraClassic` |
+| `146.22`, `243.64`, `243.71` | any | `AcSela` |
+| `146.19`, `146.24` | any | `AcMeraFloorstanding` |
+
+Mock article `146.21x.xx.1` + SAP `HB2304EU298414` (starts with 'H') → `AcMeraComfort`.
+Real device article `146.21x.xx.1` + SAP `HB2304EU298413` (starts with 'H') → `AcMeraComfort`.
+
+Both map to the same variant — the cloud firmware lookup is identical for mock and real.
+
+### SAP/serial number interpretation — `ProductIdentifier`
+
+The SAP string (`HB2304EU298413`) is used in two ways:
+
+1. **First character check** (`AcDeviceTypeHelper.b()`):
+   - starts with `'G'` → `AcMeraClassic`
+   - starts with `'H'` (or anything else) → `AcMeraComfort`
+   (for article prefix `146.21` only)
+
+2. **CRC32 → `UniqueId`** (`AquaCleanProduct.c()`):
+   ```csharp
+   uint value = new Crc32(Crc32Algorithm.Standard).Calculate(Encoding.ASCII.GetBytes(serialNumber));
+   return new ProductIdentifier(series, variant, 0u, value);
+   ```
+   The full SAP string is CRC32'd (ASCII) to produce the `UniqueId` field.
+   The resulting `ProductIdentifier` format is `{Series:X2}{Variant:X2}-0000000[{CRC32:X8}]`.
+   This identifier is the app's **unique per-device key** in local storage — it tracks
+   onboarding state, connection history, and firmware update flow status.
+
+So:
+- `HB2304EU298413` (real device) → CRC32 → unique ID `A` — known to app from prior pairing
+- `HB2304EU298414` (mock) → CRC32 → unique ID `B` (different) — unknown to app, fresh state
+
+### Why mock RS28.0 TS199 triggers the update prompt but real device does not
+
+The cloud firmware service lists RS30.0 TS206 as an active update for `AcMeraComfort`
+(Series 248). Its `NodeFirmware.RuleSet` for Node `0x01` contains a `LessThan` predicate:
+the update applies when the device's current firmware is below RS30.0. RS28.0 < RS30.0 →
+rule fires → update prompt shown.
+
+The real device with the same RS28.0 TS199 does NOT show the blocking prompt because of
+**per-device state keyed by `ProductIdentifier` (= CRC32 of SAP)**:
+
+The blocking `FirmwareForceUpdateViewModel` fires only during the first-time onboarding flow
+(unknown `ProductIdentifier`, never seen before by the app). The real Mera (`HB2304EU298413`)
+is already in the app's local device database from a prior pairing session → onboarding takes
+the reconnect path, which skips the blocking firmware gate. The mock (`HB2304EU298414`) has
+a different CRC32 → different `ProductIdentifier` → always unknown to the app → always
+first-time-pairing path → blocking screen fires whenever RS28 < RS30.
+
+### Practical fix for the mock
+
+**Revert `_FW_COMPONENT_VERSIONS` in `mock-geberit-mera.py` back to RS30.0 TS206.**
+
+The original "Fehler" popup (fixed separately via WaterHardness=0 in v1.63.0b1/v1.64.0b1)
+was NOT caused by the RS30 firmware version string. RS30.0 TS206 is above Geberit's current
+minimum → no update prompt. RS28.0 TS199 is below minimum → blocking update screen during
+first-time onboarding.
+
+Since the mock always appears as a first-time device, the only stable approach is to report
+RS30.0 TS206 (or any version ≥ current cloud minimum) from proc 0x0E.
+
+---
+
 ## Open questions
 
 1. **What are `arg1` and `arg2` in `GetFirmwareVersionList`?**

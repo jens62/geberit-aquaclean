@@ -714,6 +714,18 @@ Node IDs: `[03, 04, 05, 06, 07, 08, 09, 0A, 0B, 0C, 0E, 0F]` (12 nodes)
 
 All components: version `"30"`, build `206` → `RS30.0 TS206`
 
+**MUST stay at RS30.0 TS206 — do NOT lower to RS28.0 TS199.**
+The app checks firmware version against Geberit's cloud and gates onboarding behind a
+blocking `FirmwareForceUpdateViewModel` when `current < minimum`. RS28.0 is below the
+cloud minimum → blocking screen appears and prevents completing onboarding against the mock.
+RS30.0 is at or above the minimum → no prompt.
+
+The real Mera RS28.0 device does NOT show this screen because its SAP `HB2304EU298413`
+is already in the app's local database (prior pairing) → reconnect path skips the gate.
+The mock's SAP (`HB2304EU298414`) always appears fresh (CRC32 of SAP = unique device key
+in app storage) → first-time pairing path → firmware gate always fires. See
+`docs/developer/firmware-version.md` § "iOS app — firmware update check mechanism".
+
 ### GetDeviceInitialOperationDate (proc `0x86`)
 
 `2023-01-01`
