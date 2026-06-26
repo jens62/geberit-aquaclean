@@ -255,22 +255,65 @@ So:
 - `HB2304EU298413` (real device) → CRC32 → unique ID `A` — known to app from prior pairing
 - `HB2304EU298414` (mock) → CRC32 → unique ID `B` (different) — unknown to app, fresh state
 
+### HAR-confirmed: active RS30.0 TS206 package NodeFirmware details
+
+Confirmed 2026-06-26 from `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit app installieren und in betrieb nehmen.har`:
+
+Active package: `series=248, variants=[1,2,3], packageVersion=30.0.206.250722, isActive=True, 15 NodeFirmwares`
+
+| NodeId | rsTsVersion | deployContract | RuleSet |
+|--------|-------------|----------------|---------|
+| 0x01 | 30.206 | AquaCleanV1 | **(empty)** |
+| 0x03 | 8.31 | AquaCleanV1 | (empty) |
+| 0x04 | 8.37 | AquaCleanV1 | (empty) |
+| 0x05 | 11.60 | AquaCleanV1 | (empty) |
+| 0x06 | 8.48 | AquaCleanV1 | (empty) |
+| 0x07 | 11.41 | AquaCleanV1 | (empty) |
+| 0x08 | 9.31 | AquaCleanV1 | (empty) |
+| 0x09 | 7.19 | AquaCleanV1 | (empty) |
+| 0x0A | 7.18 | AquaCleanV1 | (empty) |
+| 0x0B | 8.23 | AquaCleanV1 | (empty) |
+| 0x0C | 7.18 | AquaCleanV1 | (empty) |
+| 0x0D | 5.9 | AquaCleanV1 | (empty) |
+| 0x0D | 1.12 | AquaCleanV2 | (empty) |
+| 0x0E | 7.27 | AquaCleanV1 | (empty) |
+
+**Key findings:**
+
+1. **RuleSets are all empty** — no DataPoint predicates. The update check is purely
+   version-based. No BLE reads to device are needed for the rule evaluation.
+2. **All nodes use `deployContract=AquaCleanV1`** — the decompiled `e.e()` filter
+   requires `Ble2V1 || EspV1 || GatewayV1`. Since every Mera node is `AquaCleanV1`,
+   none would pass that filter. The update prompt for Mera must be triggered by a
+   separate code path (likely `FirmwareServiceLocal.cs`, which handles the legacy
+   `AquaCleanV1` contract differently — possibly comparing against a firmware bundle
+   packaged with the app itself).
+
 ### Why mock RS28.0 TS199 triggers the update prompt but real device does not
 
-The cloud firmware service lists RS30.0 TS206 as an active update for `AcMeraComfort`
-(Series 248). Its `NodeFirmware.RuleSet` for Node `0x01` contains a `LessThan` predicate:
-the update applies when the device's current firmware is below RS30.0. RS28.0 < RS30.0 →
-rule fires → update prompt shown.
+The update mechanism for `AquaCleanV1` devices is version comparison only (empty RuleSets
+confirmed). RS28.0 (mock) < RS30.0 (active cloud minimum) → update prompt fires.
 
-The real device with the same RS28.0 TS199 does NOT show the blocking prompt because of
-**per-device state keyed by `ProductIdentifier` (= CRC32 of SAP)**:
+The real device at the same RS28.0 TS199 does NOT trigger the prompt. The most coherent
+explanation consistent with all observations (including re-onboarding after device delete
++ iPad reboot NOT showing the prompt):
 
-The blocking `FirmwareForceUpdateViewModel` fires only during the first-time onboarding flow
-(unknown `ProductIdentifier`, never seen before by the app). The real Mera (`HB2304EU298413`)
-is already in the app's local device database from a prior pairing session → onboarding takes
-the reconnect path, which skips the blocking firmware gate. The mock (`HB2304EU298414`) has
-a different CRC32 → different `ProductIdentifier` → always unknown to the app → always
-first-time-pairing path → blocking screen fires whenever RS28 < RS30.
+**`FirmwareServiceCacheData.json` is keyed per `ProductIdentifier` (= CRC32 of SAP)**
+and stores per-device firmware update state. This file lives in the app's persistent
+data directory — it is NOT cleared by deleting the device from the in-app device list,
+and NOT cleared by rebooting the iPad. Only clearing the app's data or reinstalling
+would wipe it.
+
+- Real device SAP `HB2304EU298413` → CRC32 → ProductIdentifier already in cache from
+  a prior session when RS30 was not yet the active cloud minimum. The firmware update
+  state for that identifier reads "no update required" (cached before RS30 was published,
+  `ContentId` unchanged → cache not refreshed).
+- Mock SAP `HB2304EU298414` → different CRC32 → ProductIdentifier not in cache → always
+  fresh check → RS28 < RS30 → blocking update prompt every time.
+
+Verified: `packageVersion=30.0.206.250722` — the `250722` suffix indicates 2025-07-22 as
+the publication date. The real device was paired before this date; the cache ContentId has
+not changed since → cache was never invalidated → real device still sees the pre-RS30 state.
 
 ### Practical fix for the mock
 
