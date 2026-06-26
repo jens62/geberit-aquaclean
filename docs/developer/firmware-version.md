@@ -446,6 +446,27 @@ Ble2V1 package's target for that node, the update is considered available → no
 With all components at RS30.0 TS206: no per-node delta → null → dismissible "Fehler"
 popup only. Mock is fully operational after confirming the Fehler.
 
+**Real Mera HB2304EU298413 proc 0x0E response** (source: `onboarding-real-mera.md` lines 763–764):
+
+| Component | v1 v2 build | RS/TS |
+|-----------|-------------|-------|
+| 1 | `32 38 c7` | RS28.0 TS199 |
+| 3 | `30 38 1f` | RS08 TS31 |
+| 4 | `30 38 25` | RS08 TS37 |
+| 5 | `31 31 3c` | RS11 TS60 |
+| 6 | `30 38 30` | RS08 TS48 |
+| 7 | `31 31 29` | RS11 TS41 |
+| 8 | `30 39 1f` | RS09 TS31 |
+| 9 | `30 37 13` | RS07 TS19 |
+| 10 | `30 37 12` | RS07 TS18 |
+| 11 | `30 37 16` | RS07 TS22 |
+| 12 | `30 37 12` | RS07 TS18 |
+| 14 | `30 37 1b` | RS07 TS27 |
+| 15 | `30 31 00` | RS01 TS0 |
+
+The real device sends RS28.0 TS199 for component 1 and real sub-node versions for 3–15 —
+yet does NOT trigger the blocking update UI. This is an open question; see the analysis file.
+
 **Full analysis with call chain, decompiled source, and empirical log comparison:**
 `local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md` —
 section "v1.75.0b1 empirical finding: component 1 alone at RS30.0 is NOT sufficient".
