@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.73.0b1"
+_MOCK_VERSION = "1.74.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -123,8 +123,8 @@ _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B —
 # ---- Device identity ----
 _ARTICLE      = "14621"          # BLE advertisement article prefix (model lookup)
 _ARTICLE_FULL = "146.21x.xx.1"  # proc 0x82 ArticleNumber field: 12-char fixed-width
-_SAP_NUMBER      = "HB2304EU298414"
-_SERIAL          = "HB2304EU298414"
+_SAP_NUMBER      = "HB2300EU000001"
+_SERIAL          = "HB2300EU000001"
 _PRODUCTION_DATE = "11.04.2023"  # real device format: DD.MM.YYYY
 _DESCRIPTION     = "AquaClean Mera Comfort"
 _VARIANT     = 0x0D   # Mera Comfort
