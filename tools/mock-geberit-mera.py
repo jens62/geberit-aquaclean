@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.70.0b1"
+_MOCK_VERSION = "1.71.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -123,9 +123,9 @@ _READ_UUID      = "3a2b"   # handle 0x0020 (button-state, 16-bit UUID 0x3A2B —
 # ---- Device identity ----
 _ARTICLE      = "14621"          # BLE advertisement article prefix (model lookup)
 _ARTICLE_FULL = "146.21x.xx.1"  # proc 0x82 ArticleNumber field: 12-char fixed-width
-_SAP_NUMBER      = "HB2300EU000001"
-_SERIAL          = "GB2000EU000001"
-_PRODUCTION_DATE = "01.01.2023"  # real device format: DD.MM.YYYY
+_SAP_NUMBER      = "HB2304EU298414"
+_SERIAL          = "HB2304EU298414"
+_PRODUCTION_DATE = "11.04.2023"  # real device format: DD.MM.YYYY
 _DESCRIPTION     = "AquaClean Mera Comfort"
 _VARIANT     = 0x0D   # Mera Comfort
 
@@ -496,12 +496,30 @@ def _proc_subscribenotif(proc: int, args: bytes) -> bytes:
     return result
 
 
+# Per-component firmware versions from real Mera Comfort onboarding-real-mera.md.
+# Format per record: (v1, v2, build) where version=chr(v1)+chr(v2), build=int.
+_FW_COMPONENT_VERSIONS = {
+    1:  (0x32, 0x38, 0xC7),  # "28", build=199
+    3:  (0x30, 0x38, 0x1F),  # "08", build=31
+    4:  (0x30, 0x38, 0x25),  # "08", build=37
+    5:  (0x31, 0x31, 0x3C),  # "11", build=60
+    6:  (0x30, 0x38, 0x30),  # "08", build=48
+    7:  (0x31, 0x31, 0x29),  # "11", build=41
+    8:  (0x30, 0x39, 0x1F),  # "09", build=31
+    9:  (0x30, 0x37, 0x13),  # "07", build=19
+    10: (0x30, 0x37, 0x12),  # "07", build=18
+    11: (0x30, 0x37, 0x16),  # "07", build=22
+    12: (0x30, 0x37, 0x12),  # "07", build=18
+    14: (0x30, 0x37, 0x1B),  # "07", build=27
+    15: (0x30, 0x31, 0x00),  # "01", build=0
+}
+
+
 def _proc_0e(args: bytes) -> bytes:
     """GetFirmwareVersionList: 5-byte records per requested component.
 
-    Format: [count] + per component: [comp_id, v1, v2, build, reserved]
-    Bridge parses: version=chr(v1)+chr(v2), main="RS{version}.0 TS{build}"
-    Returning "RS30.0 TS206" for all components (consistent with _proc_81).
+    Format: [count] + per component: [comp_id, v1, v2, build, 0x00]
+    Values from real Mera Comfort capture (onboarding-real-mera.md 2026-06-26).
     """
     if not args:
         return b""
@@ -509,7 +527,8 @@ def _proc_0e(args: bytes) -> bytes:
     comp_ids = list(args[1:1 + count])
     records = bytes([len(comp_ids)])
     for cid in comp_ids:
-        records += bytes([cid, 0x33, 0x30, 206, 0])  # version="30", build=206
+        v1, v2, build = _FW_COMPONENT_VERSIONS.get(cid, (0x30, 0x30, 0))
+        records += bytes([cid, v1, v2, build, 0])
     return records + bytes(max(0, 61 - len(records)))  # always pad to 61 bytes
 
 
