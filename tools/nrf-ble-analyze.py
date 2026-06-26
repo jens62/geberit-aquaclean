@@ -17,7 +17,9 @@ Usage:
 """
 
 import argparse
+import datetime
 import importlib.util
+import re
 import shutil
 import subprocess
 import sys
@@ -218,6 +220,58 @@ def _ts_display(ts_str: str) -> str:
         return f"t={float(ts_str):.1f}s"
     except (ValueError, TypeError):
         return ts_str.strip()
+
+
+def _get_capture_start(tshark: str, pcapng: Path) -> tuple:
+    """
+    Return (epoch_base, tz, start_str) from the first packet of a pcapng.
+
+    epoch_base — float Unix epoch seconds (microsecond precision)
+    tz         — datetime.timezone parsed from the capture's local clock, or None
+    start_str  — formatted header string e.g. "2026-06-26 04:29:26.649 +0200"
+    """
+    rows = _run_tshark(tshark, pcapng, "frame.number == 1",
+                       ["frame.time_epoch", "frame.time"])
+    if not rows or not rows[0][0].strip():
+        return (0.0, None, "")
+
+    try:
+        epoch_base = float(rows[0][0].strip())
+    except ValueError:
+        return (0.0, None, "")
+
+    tz = None
+    start_str = ""
+    if len(rows[0]) > 1:
+        raw = rows[0][1].strip()   # e.g. "2026-06-26T04:29:26.649664000+0200"
+        m = re.search(r'([+-])(\d{2})(\d{2})$', raw)
+        if m:
+            sign = 1 if m.group(1) == "+" else -1
+            offset = datetime.timedelta(hours=int(m.group(2)),
+                                        minutes=int(m.group(3)))
+            tz = datetime.timezone(sign * offset)
+
+    if tz is not None:
+        dt = datetime.datetime.fromtimestamp(epoch_base, tz=tz)
+        ms  = dt.microsecond // 1000
+        tz_str = dt.strftime("%z")
+        start_str = dt.strftime(f"%Y-%m-%d %H:%M:%S.{ms:03d} {tz_str}")
+
+    return (epoch_base, tz, start_str)
+
+
+def _abs_ts(epoch_base: float, rel_s: float,
+            tz: "datetime.timezone | None") -> str:
+    """
+    Convert a relative timestamp (seconds since capture start) to HH:MM:SS.mmm
+    using the capture's local timezone.  Returns empty string if unavailable.
+    """
+    if not tz or not epoch_base:
+        return ""
+    dt  = datetime.datetime.fromtimestamp(epoch_base + rel_s, tz=tz)
+    ms  = dt.microsecond // 1000
+    return dt.strftime(f"%H:%M:%S.{ms:03d}")
+
 
 # ---------------------------------------------------------------------------
 # Connection Events — CONNECT_IND timeline + ADV_DIRECT_IND (displacement)
@@ -1162,11 +1216,14 @@ def _decode_notif_payload(v: bytes) -> str:
 
 
 def _get_geberit_traffic(tshark: str, pcapng: Path,
-                          mac: str, addr_field: str) -> list:
+                          mac: str, addr_field: str,
+                          epoch_base: float = 0.0,
+                          tz=None) -> list:
     """
     Return every ATT WRITE and NOTIF frame in chronological order with decoded payload.
     Covers both directions: App→Dev (writes) and Dev→App (notifies + WRITE_RSP acks).
-    Each dict: ts, ts_str, direction, opcode, handle, decoded, raw_hex.
+    Each dict: ts, ts_str, abs_ts, direction, opcode, handle, decoded, raw_hex.
+    abs_ts is HH:MM:SS.mmm when epoch_base/tz are provided, else empty string.
     """
     _MERA_WRITE_H = 0x0003
     _MERA_A5_H    = 0x000F
@@ -1240,6 +1297,7 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
         frames.append({
             "ts":        _ts,
             "ts_str":    _ts_display(ts_raw),
+            "abs_ts":    _abs_ts(epoch_base, _ts, tz),
             "direction": direction,
             "opcode":    opcode,
             "handle":    handle,
@@ -1251,7 +1309,9 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
 
 
 def _format_traffic_log(frames: list, markdown: bool) -> str:
-    """Render the chronological ATT traffic log as markdown or plain text."""
+    """Render the chronological ATT traffic log as markdown or plain text.
+    Uses abs_ts (HH:MM:SS.mmm) when available, falls back to relative ts_str."""
+    has_abs = bool(frames and frames[0].get("abs_ts"))
     lines: list[str] = []
     if markdown:
         lines.append("## Raw ATT Traffic\n")
@@ -1261,20 +1321,23 @@ def _format_traffic_log(frames: list, markdown: bool) -> str:
         lines.append("| Time | Dir | Handle | Decoded |")
         lines.append("|------|-----|--------|---------|")
         for f in frames:
-            h_str = f"0x{f['handle']:04X}"
-            lines.append(f"| `{f['ts_str']}` | {f['direction']} | `{h_str}` | {f['decoded']} |")
+            h_str  = f"0x{f['handle']:04X}"
+            t_str  = f["abs_ts"] if has_abs else f["ts_str"]
+            lines.append(f"| `{t_str}` | {f['direction']} | `{h_str}` | {f['decoded']} |")
     else:
         lines.append("Raw ATT Traffic")
         lines.append("-" * 100)
         if not frames:
             lines.append("  No ATT write or notify frames found.")
         else:
-            lines.append(f"  {'Time':<12}  {'Dir':<9}  {'Handle':<8}  Decoded")
-            lines.append(f"  {'-'*12}  {'-'*9}  {'-'*8}  {'-'*50}")
+            col_t = 12 if has_abs else 12
+            lines.append(f"  {'Time':<{col_t}}  {'Dir':<9}  {'Handle':<8}  Decoded")
+            lines.append(f"  {'-'*col_t}  {'-'*9}  {'-'*8}  {'-'*50}")
             for f in frames:
                 h_str = f"0x{f['handle']:04X}"
+                t_str = f["abs_ts"] if has_abs else f["ts_str"]
                 lines.append(
-                    f"  {f['ts_str']:<12}  {f['direction']:<9}  {h_str:<8}  {f['decoded']}")
+                    f"  {t_str:<{col_t}}  {f['direction']:<9}  {h_str:<8}  {f['decoded']}")
     lines.append("")
     return "\n".join(lines)
 
@@ -1415,7 +1478,8 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     ctrl_md     = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=True)
 
     # Bidirectional raw traffic log (every write + notify, decoded)
-    traffic      = _get_geberit_traffic(tshark, pcapng, mac, addr_field)
+    epoch_base, tz, start_str = _get_capture_start(tshark, pcapng)
+    traffic      = _get_geberit_traffic(tshark, pcapng, mac, addr_field, epoch_base, tz)
     traffic_plain = _format_traffic_log(traffic, markdown=False)
     traffic_md    = _format_traffic_log(traffic, markdown=True)
 
@@ -1431,7 +1495,8 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     calls = _android_ble._collect_calls(events)
 
     if args.markdown:
-        md = (conn_events_md + "\n" + ctrl_md + "\n"
+        capture_header = f"**Capture start:** `{start_str}`\n\n" if start_str else ""
+        md = (capture_header + conn_events_md + "\n" + ctrl_md + "\n"
               + traffic_md + "\n"
               + _android_ble.render_markdown_android(
                   calls, pcapng, mac, "nRF52840 pcapng", att_count))
