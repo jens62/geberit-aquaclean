@@ -693,13 +693,49 @@ Download current mock:
 curl -fsSL https://raw.githubusercontent.com/jens62/geberit-aquaclean/9dd3b2f0a01d1c4e2c856cc6dc1ba75290a9447c/tools/mock-geberit-mera.py -o tools/mock-geberit-mera.py
 ```
 
+### Device identity constants — how the iOS app interprets them
+
+The app interprets the proc `0x82` payload in two ways that directly affect mock behavior:
+
+**1. First character of SerialNumber → device variant (article `146.21` only)**
+
+`AcDeviceTypeHelper.GetDeviceType(articleNumber, serialNumber)` checks `serialNumber[0]`:
+- `'H'` → `AcMeraComfort` (DeviceVariant used for cloud firmware lookup + ProductIdentifier)
+- `'G'` → `AcMeraClassic`
+
+The mock SAP `HB2304EU298414` starts with `'H'` → correctly identified as `AcMeraComfort`. ✅
+
+**2. Full SerialNumber string → CRC32 → `ProductIdentifier.UniqueId`**
+
+```csharp
+// AquaCleanProduct.c()
+uint value = new Crc32(Crc32Algorithm.Standard).Calculate(Encoding.ASCII.GetBytes(serialNumber));
+return new ProductIdentifier(series=248, variant, deviceNumber=0, uniqueId=value);
+```
+
+The full SAP string is CRC32'd (standard, ASCII) → `UniqueId`. The `ProductIdentifier`
+(`{Series:X2}{Variant:X2}-0000000[{CRC32(SAP):X8}]`) is the app's **per-device local storage key**:
+onboarding state, connection history, and firmware update flow are all indexed by it.
+
+**Consequences for the mock:**
+
+| SAP | CRC32 | App sees |
+|-----|-------|---------|
+| `HB2304EU298413` (real device) | some uint A | Known device → reconnect path |
+| `HB2304EU298414` (mock) | some uint B ≠ A | Unknown device → first-time pairing path |
+
+The mock's SAP was intentionally offset by one digit from the real device's SAP to avoid
+conflicts when both are in range. The tradeoff: the mock always takes the first-time-pairing
+path, which is why proc `0x0E` must return RS30.0 TS206 (above the cloud firmware minimum)
+to avoid the blocking firmware update screen. See § GetFirmwareVersionList below.
+
 ### GetDeviceIdentification (proc `0x82`) — 82 bytes
 
 | Field | Value |
 |---|---|
 | ArticleNumber | `146.21x.xx.1` |
-| SerialNumber (SAP) | `HB2300EU000001` |
-| ProductionDate | `01.01.2023` |
+| SerialNumber (SAP) | `HB2304EU298414` |
+| ProductionDate | `11.04.2023` |
 | Description | `AquaClean Mera Comfort` |
 
 ### GetNodeList (proc `0x05`) — 129 bytes
