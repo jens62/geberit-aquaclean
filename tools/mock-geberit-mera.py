@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.71.0b1"
+_MOCK_VERSION = "1.72.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -499,7 +499,7 @@ def _proc_subscribenotif(proc: int, args: bytes) -> bytes:
 # Per-component firmware versions from real Mera Comfort onboarding-real-mera.md.
 # Format per record: (v1, v2, build) where version=chr(v1)+chr(v2), build=int.
 _FW_COMPONENT_VERSIONS = {
-    1:  (0x32, 0x38, 0xC7),  # "28", build=199
+    1:  (0x33, 0x30, 0xCE),  # "30", build=206  — must stay ≥ RS30; see docs/developer/firmware-version.md
     3:  (0x30, 0x38, 0x1F),  # "08", build=31
     4:  (0x30, 0x38, 0x25),  # "08", build=37
     5:  (0x31, 0x31, 0x3C),  # "11", build=60
