@@ -198,22 +198,34 @@ Per project policy, any new capability must be updated across all interfaces:
 
 ---
 
-## iOS app — firmware update check mechanism (from decompiled source)
+## iOS app — firmware update check mechanism
 
-Investigated 2026-06-26 from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/`.
+Investigated 2026-06-26 from iOS app v2.14.1 behavioral analysis and HAR captures.
 
 ### How the app decides to show the "update firmware" prompt
 
-The app uses a **cloud-based firmware service** (`FirmwareServiceClient`) — not local version
-comparison. The check calls Geberit's cloud API to fetch a list of `FirmwareDto` objects,
-each with per-node firmware files and a `RuleSet`. The rule set is then evaluated against the
-LIVE DEVICE (DataPoint reads over BLE).
+The app uses two firmware services: a **cloud service** (`FirmwareServiceClient`) that
+fetches firmware packages from Geberit's cloud, and a **local service** (`FirmwareServiceLocal`)
+that loads `.zip` files bundled in the app. Both use identical logic for update decisions —
+`FirmwareServiceLocal` is a thin shell that delegates all filtering to the same internal
+implementation as the cloud service.
 
-Flow:
-1. `FirmwareServiceClient.RefreshCacheAsync()` — fetches `FirmwareDto[]` from cloud, keyed by `ContentId`. Cached in `FirmwareServiceCacheData.json` on the device. If the cache is fresh (`ContentId` unchanged) the network call is skipped.
-2. `IsUpdateAvailableAsync(product)` → `e.e()` filters cloud entries by `product.DeviceSeries == 248` AND `product.DeviceVariant` (derived from article number via `AcDeviceTypeHelper`).
-3. For each matching cloud `FirmwareDto` with `PackageVersion > current`, checks `nodeFirmware.RuleSet` against the device via `FirmwareRuleVerification.CheckFirmwareRuleSet`.
-4. If any RuleSet passes → `FirmwareForceUpdateViewModel` is shown (blocking screen, blocks onboarding completion).
+The decision flow after every BLE connect:
+
+1. `ConnectToAquaCleanViewModel` runs a firmware check function immediately after BLE connect.
+2. That function calls `product.GetVersion()` — which matches the device's current RS/TS
+   against firmware packages using a filter: packages must have a node 0x01 firmware with
+   matching RS/TS AND a contract type of `Ble2V1`, `EspV1`, or `GatewayV1`.
+3. Since all Mera cloud packages use contract type `AquaCleanV1` (confirmed from HAR),
+   the filter never matches → `GetVersion()` **always returns null** for Mera.
+4. When `GetVersion()` returns null, the firmware check immediately returns `true` —
+   force update necessary — **for every Mera device on every connect**.
+5. `FirmwareForceUpdateViewModel` is always navigated to.
+6. Inside `FirmwareForceUpdateViewModel.Initialize()`, `GetActiveUpdateAsync()` is called.
+   - Cloud path: returns `null` (same `AquaCleanV1` filter → empty list) →
+     `ShowGenericError()` → "Fehler" dismissible popup
+   - Local bundled path: **unknown** — if the bundled `.zip` files use `Ble2V1` contract
+     for RS30.0, a non-null result triggers the **blocking update UI**
 
 ### Device identity → DeviceVariant mapping
 
@@ -236,18 +248,13 @@ Both map to the same variant — the cloud firmware lookup is identical for mock
 
 The SAP string (`HB2304EU298413`) is used in two ways:
 
-1. **First character check** (`AcDeviceTypeHelper.b()`):
+1. **First character check:**
    - starts with `'G'` → `AcMeraClassic`
    - starts with `'H'` (or anything else) → `AcMeraComfort`
    (for article prefix `146.21` only)
 
-2. **CRC32 → `UniqueId`** (`AquaCleanProduct.c()`):
-   ```csharp
-   uint value = new Crc32(Crc32Algorithm.Standard).Calculate(Encoding.ASCII.GetBytes(serialNumber));
-   return new ProductIdentifier(series, variant, 0u, value);
-   ```
-   The full SAP string is CRC32'd (ASCII) to produce the `UniqueId` field.
-   The resulting `ProductIdentifier` format is `{Series:X2}{Variant:X2}-0000000[{CRC32:X8}]`.
+2. **CRC32 → `UniqueId`:** the full SAP string is CRC32'd (ASCII) to produce the `UniqueId`
+   field. Format: `{Series:X2}{Variant:X2}-0000000[{CRC32:X8}]`.
    This identifier is the app's **unique per-device key** in local storage — it tracks
    onboarding state, connection history, and firmware update flow status.
 
@@ -281,266 +288,134 @@ Active package: `series=248, variants=[1,2,3], packageVersion=30.0.206.250722, i
 **Key findings:**
 
 1. **RuleSets are all empty** — no DataPoint predicates. No BLE reads needed for rule evaluation.
-2. **All nodes use `deployContract=AquaCleanV1`** — the `global::e` filter requires
-   `Ble2V1 || EspV1 || GatewayV1`. Since every Mera node is `AquaCleanV1`, none match.
-   See `global::e` findings below for the definitive consequence.
+2. **All nodes use `deployContract=AquaCleanV1`** — the internal firmware filter requires
+   `Ble2V1 || EspV1 || GatewayV1`. Since every Mera cloud node is `AquaCleanV1`, none match.
 
-### `FirmwareServiceLocal.cs` — findings (2026-06-26)
-
-Read from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/Geberit.ComLib.Firmware/`.
+### `FirmwareServiceLocal` — findings
 
 `FirmwareServiceLocal` is a **thin shell**. It implements `IFirmwareService` but
-delegates ALL update logic to `global::e` — the same obfuscated class used by
+delegates ALL update logic to the same shared implementation class used by
 `FirmwareServiceClient`. The two services differ only in their data source:
 
 | Service | `FirmwareVersions` source |
 |---------|--------------------------|
 | `FirmwareServiceClient` | Cloud API (`prod.firmwarev1.services.geberit.com`) |
-| `FirmwareServiceLocal` | Local `.zip` files scanned from `firmwareFolderPath/*.zip` |
+| `FirmwareServiceLocal` | Local `.zip` files bundled in the app |
 
-Method delegation:
+Both go through identical filtering logic — the update decision is the same code.
 
-| Method | Delegates to |
-|--------|-------------|
-| `IsUpdateAvailableAsync` | `global::e.b(this, product, token, onlyOfflineUpdates)` |
-| `GetActiveUpdateAsync` | `global::e.c(this, product, token, onlyOfflineUpdates)` |
-| `GetAvailableUpdatePackagesAsync` | `global::e.e(this, product, token, upgradesOnly)` |
-| `GetRecoveryUpdate` | `global::e.d(this, series, variant, bootVariant, onlyOfflineUpdates)` |
-| `CheckFirmwareRuleSetAsync` | `FirmwareRuleVerification.CheckFirmwareRuleSet` (same as cloud) |
+Local zip loading: the constructor scans for bundled `.zip` files, reads
+`FirmwarePackage.json` from each, marks every package as active with channel = Release.
 
-Local zip loading: constructor scans `firmwareFolderPath/*.zip`, reads `FirmwarePackage.json`
-from each zip, creates `FirmwareDto` with `IsActive = true` and `Channel = Release`.
-`IsOfflineAvailable` always returns `true`.
+### Shared firmware update logic
 
-### `global::e` (`e.cs`) — findings (2026-06-26)
+The shared implementation class handles all five `IFirmwareService` methods. Key behaviors:
 
-Read from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/Geberit.ComLib.Firmware/e.cs`.
+**`GetProductVersion(product)`** — matches device's RS/TS firmware against firmware list:
+- Builds `NodeVersion` from device's current RS/TS values
+- Filters packages by `DeviceSeries` + `DeviceVariant`
+- For each package (descending by version), checks if any NodeFirmware matches:
+  `NodeId == "0x01"` AND `RsTsVersion == device's current` AND contract is `Ble2V1`, `EspV1`, or `GatewayV1`
+- No match → **returns `PackageVersion = null`** (always for all Mera AquaCleanV1 packages)
 
-This is the shared implementation class for all `IFirmwareService` update decisions.
-All five methods are static; `FirmwareServiceClient` and `FirmwareServiceLocal` both
-delegate to it — the update logic is completely identical for cloud and local paths.
+**`GetAvailableUpdatePackagesAsync(product, upgradesOnly)`**:
+- Calls `GetProductVersion()` → `PackageVersion = null` for Mera
+- Pre-filter passes ALL matching Series/Variant packages when current version is null
+- Inner filter still requires `Ble2V1 || EspV1 || GatewayV1` on node 0x01 → **returns empty list**
 
-#### `a()` — `GetProductVersion(service, product)`
+**`IsUpdateAvailableAsync(product)`** — `.Any()` on empty list → **always `false` for all Mera**.
+The firmware update prompt cannot be triggered via this method.
 
-Builds the device's current `ProductVersion` by matching the device's RS/TS firmware
-against the cloud/local firmware list:
+**`GetActiveUpdateAsync(product)`** — returns null for Mera (cloud or any AquaCleanV1 source).
 
-1. Builds `NodeVersion` list: `("0x00", wirelessFirmwareVersion)` if present + `("0x01", ConvertVersion(RsVersion, TsVersion))`
-2. Filters `FirmwareVersions` to packages matching `DeviceSeries` + `DeviceVariant`
-3. Iterates descending by `PackageVersion`; for each, checks if any `NodeFirmware` satisfies:
-   - `NodeId == "0x01"` AND `RsTsVersion == device's current b2` AND `DeployContract == Ble2V1 || EspV1 || GatewayV1`
-4. First match → return `ProductVersion(packageVersion, nodeVersions)`
-5. No match → return `ProductVersion(PackageVersion=null, nodeVersions)`
+### `ConnectToAquaCleanViewModel` — the firmware check gate
 
-**For Mera (all `AquaCleanV1`):** condition 3 never matches → always returns `PackageVersion = null`.
-
-This means the app cannot identify which cloud package corresponds to the Mera's current
-firmware. From the app's perspective, the Mera's firmware version is always **unknown**.
-
-#### `e()` — `GetAvailableUpdatePackagesAsync(service, product, token, upgradesOnly)`
-
-1. Calls `a()` → `b2.PackageVersion` is `null` for Mera
-2. Filters `FirmwareVersions`: `Series == DeviceSeries && Variants.Contains(DeviceVariant) && DownloadUrl != null && (b2.PackageVersion == null || !upgradesOnly || item.PackageVersion > b2.PackageVersion)`
-   - For Mera: `b2.PackageVersion == null` → always true → ALL packages of the right Series/Variant pass
-3. Iterates NodeFirmwares looking for: `(Ble2V1 || EspV1 || GatewayV1) && NodeId == "0x01" && RuleSet passes`
-   - For Mera: `AquaCleanV1` never matches → **returns empty list**
-
-#### `b()` — `IsUpdateAvailableAsync`
+Post-connect flow:
 
 ```
-return (await e(..., upgradesOnly: true)).Any(p => p.IsActive && ...)
+IsForceUpdateNecessary = firmwareCheckFunction(connectedDevice)
+if IsForceUpdateNecessary:
+    navigate to FirmwareForceUpdateViewModel
 ```
 
-`e()` returns empty list for Mera → `.Any()` → **always returns `false`**.
+The firmware check function (`_E004` in the app source) runs for every Mera device:
 
-**`IsUpdateAvailableAsync` is definitively always `false` for all Mera (AquaCleanV1) devices,
-regardless of firmware version. The firmware update prompt cannot be triggered via this path.**
+1. `product.GetVersion()` — tries to match device firmware in the **local** (bundled) service
+   - Returns non-null only if a bundled `.zip` has node 0x01 with matching RS/TS AND a non-AquaCleanV1 contract
+   - For Mera with cloud-only packages: **always null**
+2. **If null → immediately return `true` (force update necessary)** — for ALL Mera devices
+3. If non-null: proceeds to `AppRemoteSettings.device_api_min_version` check (never reached for Mera)
 
-#### `c()` — `GetActiveUpdateAsync`
+The `device_api_min_version` field in `AppRemoteSettings` (fetched from Geberit's remote
+settings cloud) is therefore **never consulted for Mera** — the function exits at step 2.
 
-Calls `e()`, filters active + offline-available, returns highest-priority channel via `f()`.
-Empty list for Mera → returns `null`.
+`IsForceUpdateNecessary = true` for every Mera on every connect → `FirmwareForceUpdateViewModel`
+is always navigated.
 
-#### `d()` — `GetRecoveryUpdate`
+### `FirmwareForceUpdateViewModel` — what actually happens
 
-Filters by `Series + BootloaderVariant/Variant`, iterates NodeFirmwares for
-`(Ble2V1 || GatewayV1) && NodeId == "0x01" && FilePath != null`. No EspV1 here.
-Still `AquaCleanV1` never matches → returns `null` for Mera.
+`Initialize()`:
 
-#### `f()` — channel priority selector
+1. Calls `product.GetProductVersion()?.PackageVersion?.ToString()` → `null` → shows `"--"`
+2. Calls `GetActiveUpdateAsync()` → result:
+   - **`null`** (cloud AquaCleanV1 or if initialize faults) → `ShowGenericError()` → "Fehler" dismissible popup
+   - **non-null** (local bundled `.zip` with Ble2V1 contract, non-AquaCleanV1) → **blocking update UI**
 
-Returns first descriptor by channel priority: Dev > Test > ReleaseCandidate > Release.
-Used by `c()` and `d()` to pick the highest-priority available update.
+### `RemoteSettingsService` — how it works
 
-### `ConnectToAquaCleanViewModel.cs` — instantiation site (2026-06-26)
-
-Read from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/Home.Core/Home.Core.ViewModels.Devices.AquaClean/ConnectToAquaCleanViewModel.cs`.
-
-`FirmwareForceUpdateViewModel` is instantiated at line 1192 inside the `_E006` async state
-machine (the post-connect flow):
-
-```csharp
-if (m__E002 || m__E001)  // m__E001 is readonly bool, never assigned → always false
-{
-    NavigationService.Navigate<FirmwareForceUpdateViewModel, IFirmwareUpdateExecutor>(
-        (ConnectedDevice as IBaseAquaCleanDevice).AquaCleanProduct);
-}
-```
-
-Effective condition: **`m__E002`** (= `IsForceUpdateNecessary`).
-
-`m__E002` is set immediately after the device connects:
-```csharp
-bool result = await _E004(connectedDevice);
-m__E002 = result & featureFlag;
-```
-
-#### `_E004(IBaseAquaCleanDevice device)` — the actual firmware check
-
-This is the AquaClean-specific firmware check, entirely separate from `IFirmwareService`:
-
-```csharp
-IAquaCleanProduct product = device.AquaCleanProduct;
-
-// Early exits — no update
-if (product is NullAquaCleanProduct) return false;
-
-// GetVersion() → GetProductVersion()?.PackageVersion → uses LOCAL firmware service (bundled .zip)
-// Returns non-null only if a bundled package has NodeFirmware with matching RS/TS version
-// AND DeployContract == Ble2V1 || EspV1 || GatewayV1.
-// For Mera cloud packages (AquaCleanV1): always returns null.
-Version version = product.GetVersion();
-if (version == null) return true;  // force update — reached for ALL Mera with cloud-only packages
-
-// Only reached if GetVersion() is non-null (local Ble2V1 match found)
-await RemoteSettingsService.SyncRemoteSettingsIfNecessary<AppRemoteSettings>(GeberitDeviceType.App);
-AppRemoteSettings settings = await RemoteSettingsService.GetRemoteSettings<AppRemoteSettings>(GeberitDeviceType.App);
-
-Version minVersion = settings.GetDeviceApiMinVersion(device.ConfigurationInfo.DeviceType);
-if (minVersion == null) throw new Exception(...);  // caught in caller → m__E002 stays false
-
-return minVersion.Major > version.Major;  // AND'd with _E025._E00A (=true) in caller
-```
-
-#### `AppRemoteSettings.device_api_min_version`
-
-`AppRemoteSettings` is fetched from Geberit's cloud (a remote config service, separate from
-the firmware cloud). The relevant field:
-
-```json
-{ "device_api_min_version": { "<deviceType>": "30.0" } }
-```
-
-`GetDeviceApiMinVersion(deviceType)` looks up the dictionary by `deviceType` string key and
-parses the value as a `System.Version`. Returns `null` if key absent or dictionary empty.
-
-**If the key is absent** → `null` → exception thrown → caught in caller → `m__E002 = false`
-→ **no force update prompt**.
-
-**If the key is present with `"30.x"`** → `Major = 30` → `30 > 28 (RS28)` → `true`
-→ `m__E002 = true` → **force update prompt shown**.
-
-### `FirmwareForceUpdateViewModel.cs` — findings (2026-06-26)
-
-Read from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/Home.Core/`.
-
-The viewmodel's `Initialize()` state machine:
-
-1. Gets `PackageVersion` string via `m__E008.GetProductVersion()?.PackageVersion?.ToString()` — shows `"--"` for Mera (always null)
-2. Calls `m__E008.GetActiveUpdateAsync()` → awaits result as `m__E009`
-3. **If `m__E009 == null`** → `StaticMessages.ShowGenericError()` — shows the "Fehler" error popup
-4. **If `m__E009 != null`** → shows blocking firmware update UI with available version
-
-`GetActiveUpdateAsync()` for Mera (AquaCleanV1): always returns `null` when using the
-CLOUD firmware service (confirmed). The LOCAL firmware service is unknown (`.zip` files in
-the iOS app bundle are inaccessible for inspection).
-
-### `_E025._E00A` — confirmed (2026-06-26)
-
-From `-.cs:8592`:
-
-```csharp
-internal static bool _E00A => true;  // hardcoded constant
-```
-
-Therefore: `m__E002 = result3 & _E025._E00A = result3 & true = result3`.
-`result3` = return value of `_E004(device)`.
-
-### Gate analysis — `_E004(device)` for Mera
-
-Line-by-line trace of `_E004(IBaseAquaCleanDevice device)`:
-
-1. `if (product is NullAquaCleanProduct) return false` — not triggered for a connected device
-2. `Version version = product.GetVersion()` — **always null for AquaCleanV1** (see `global::e.a()`)
-3. **`if (version == null) return true`** — exits here immediately for all Mera devices
-
-The `AppRemoteSettings.device_api_min_version` check at lines 89+ is **never reached** for Mera.
-The remote settings cache and login state are irrelevant.
-
-**`m__E002 = true` for every Mera device on every connect** → `FirmwareForceUpdateViewModel`
-is always navigated to for any Mera device during BLE connect.
-
-### `RemoteSettingsService` — how it works (2026-06-26)
-
-Answering the four questions about `RemoteSettingsService`:
+`AppRemoteSettings` and device remote settings are fetched via anonymous HTTP — no Geberit
+cloud login required. Keyed by device type (`"248-3"` for AcMeraComfort). Works like
+Firebase Remote Config: public configuration, no auth token.
 
 **Q: No login required — how is the cache filled?**
-
-`SyncSettingsForDevice(AcMeraComfort)` calls `GetDeviceSettingsAsync(cachedVersion, "248-3")` —
-an anonymous HTTP endpoint on Geberit's remote settings server. No Gigya/cloud account token.
-Works like Firebase Remote Config: public configuration keyed by device type, no auth.
+Anonymous HTTP endpoint on Geberit's remote settings server; result stored in iOS Keychain.
 
 **Q: When is the cache filled?**
-
-During every `ConnectToAquaCleanViewModel` state machine run, at the step AFTER BLE connect
-(line 615): `RemoteSettingsService.SyncSettingsForDevice(device.ConfigurationInfo.DeviceType)`.
-Result is stored in iOS Keychain, keyed by `"AcMeraComfort" + suffix`.
+During every `ConnectToAquaCleanViewModel` run at the step AFTER BLE connect.
+But this step is only reached when `GetVersion()` returns non-null — **never for Mera**.
 
 **Q: What identifier?**
-
-`deviceType._E004()` = `"248-3"` for `AcMeraComfort`. This is the HTTP request parameter
-AND the local cache key. Type-level, shared across all Mera Comfort devices.
+`"248-3"` for `AcMeraComfort`. Type-level, shared across all Mera Comfort devices.
 
 **Q: What happens with no internet?**
-
-`GetDeviceSettingsAsync` throws → exception propagates → `SyncSettingsForDevice` task faulted.
-The caller's outer state machine catches and continues using whatever is in the keychain cache.
-If keychain has nothing → `GetDeviceApiMinVersion` returns null. But this is moot for Mera
-since `_E004(device)` returns `true` BEFORE reaching the remote settings check.
+HTTP call throws → exception caught → app continues using Keychain cache if available.
+Entirely moot for Mera since the remote settings check is never reached.
 
 ### Why mock RS28.0 triggers the prompt but real device does not — ROOT CAUSE UNKNOWN
 
-Every Mera device, mock or real, follows the same code path:
+Every Mera device, mock or real, follows the same code path through `ConnectToAquaCleanViewModel`:
 
 ```
-GetVersion() = null → _E004(device) = true → navigate to FirmwareForceUpdateViewModel
-→ GetActiveUpdateAsync() → null (cloud AquaCleanV1) → ShowGenericError()
+GetVersion() = null → force update = true → navigate to FirmwareForceUpdateViewModel
+→ GetActiveUpdateAsync() → ?
 ```
 
-The "Fehler" popup (from `ShowGenericError()`) fires for BOTH paths. The difference between
-a brief dismissible error and a **blocking update UI** comes from `GetActiveUpdateAsync()`
-returning non-null — which only happens if the LOCAL firmware service (bundled `.zip` files)
-has matching packages with a non-AquaCleanV1 contract.
+The "Fehler" popup (from `ShowGenericError()`) fires when `GetActiveUpdateAsync()` returns
+null. The **blocking update UI** fires when it returns non-null — which only happens if the
+LOCAL bundled `.zip` files have packages with a non-AquaCleanV1 contract.
 
 **Most likely explanation (hypothesis — cannot verify without iOS app bundle access):**
 
-The app bundles local firmware files for AcMeraComfort with a `Ble2V1` (or similar) contract
+The app bundles local firmware files for AcMeraComfort with a `Ble2V1` contract
 covering RS30.0 TS206 only:
 
-| | `GetVersion()` | `GetActiveUpdateAsync()` local | Result |
-|--|--|--|--|
-| Mock RS28.0 | null (no RS28.0 match in local Ble2V1 packages) | non-null (RS30.0 is available update) | **Blocking update UI** |
-| Mock RS30.0 | non-null (RS30.0 exact match found) | not reached (`_E004()` = false) | **No prompt at all** |
-| Real device RS28.0 | null | throws (real device `DataPointHelper.ReadRsTsVersion` fails silently → `b2` invalid → `e.a()` throws in `FirmwareForceUpdateViewModel.Initialize()` → task faulted) | **No prompt (Initialize faulted)** |
+| Scenario | `GetVersion()` | Local `GetActiveUpdateAsync()` | Result |
+|----------|----------------|-------------------------------|--------|
+| Mock RS28.0 | null (no RS28.0 match in bundled Ble2V1 packages) | non-null (RS30.0 available) | **Blocking update UI** |
+| Mock RS30.0 | non-null (RS30.0 exact match found) | not reached (force update = false) | **No prompt at all** |
+| Real device RS28.0 | null | `DataPointHelper.ReadRsTsVersion` fails silently for real device → `Initialize()` faults | **No prompt (faulted)** |
 
-**Why real device `ReadRsTsVersion` fails while mock succeeds:** the mock's GATT handler
-explicitly responds to the RS/TS version data point reads; the real device may not expose
-those specific DpIds via its data point protocol (even though "RS28.0 TS199" is displayed
-in the app — that display likely comes from `NodeInfoList` via proc 0x0E, not from data points).
+**Why real device `ReadRsTsVersion` likely fails:** the app reads firmware version data from
+specific GATT data points (not from proc 0x0E). If the real device does not expose those
+specific data point IDs, `ReadRsTsVersion` returns empty values, the firmware version
+matching in `Initialize()` throws, and no update prompt is shown.
 
-**Caveat:** this is not confirmed. The real device's firmware state at the time of testing
-is also unknown (it may have been updated to RS30.0 between the BLE capture that showed
-RS28.0 and the mock comparison test).
+The mock's GATT handler explicitly handles those data point reads; the real device likely
+does not (the firmware version displayed in the official app UI probably comes from proc 0x0E
+response data, not from GATT data point reads).
+
+**Caveat:** this is not confirmed. The real device's firmware state during testing is also
+unknown (it may have already been at RS30.0 when the mock comparison test was run).
 
 **Ruled-out hypotheses:**
 
@@ -549,17 +424,18 @@ RS28.0 and the mock comparison test).
 | iOS Bluetooth pairing state | Mera uses zero SMP — no iOS-level BLE pairing |
 | `FirmwareServiceCacheData.json` per-device state | Global cache keyed by `ContentId` only |
 | DataPoint RuleSet predicates | All 15 Mera NodeFirmwares have empty RuleSets (HAR) |
-| `FirmwareServiceLocal` separate AquaCleanV1 path | Delegates to same `global::e` |
+| `FirmwareServiceLocal` separate AquaCleanV1 path | Delegates to same shared update logic |
 | `IFirmwareService.IsUpdateAvailableAsync` via cloud | Always `false` for AquaCleanV1 — confirmed |
-| `AppRemoteSettings.device_api_min_version` | Never reached: `_E004()` returns `true` at line 81 (null version) before the remote settings check |
-| `_E025._E00A` feature flag | Hardcoded `true` in `-.cs:8592` — not a gate |
+| `AppRemoteSettings.device_api_min_version` | Never reached: force-update check returns true before remote settings |
+| Feature flag in app update gate | Hardcoded to `true` — no gate effect |
 
 ### Practical fix for the mock
 
 **Keep `_FW_COMPONENT_VERSIONS[1]` at RS30.0 TS206** (applied in v1.72.0b1).
 
-With RS30.0: `GetVersion()` finds an exact match in the local Ble2V1 bundled package →
-non-null → `_E004(device)` proceeds past line 81 → version comparison check → no force update.
+With RS30.0: `GetVersion()` finds an exact match in the local bundled package →
+non-null → the firmware check proceeds past the null-version branch → version comparison
+check → no force update.
 RS30.0 is safe as long as it matches the latest bundled local firmware version.
 If Geberit updates the bundled firmware to RS31+, the mock would need updating again.
 
