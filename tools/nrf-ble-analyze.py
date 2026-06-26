@@ -1495,11 +1495,19 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     calls = _android_ble._collect_calls(events)
 
     if args.markdown:
+        _rel_re = re.compile(r'^t=(\d+\.?\d*)s$')
+        def _ts_to_abs(rel: str) -> str:
+            m = _rel_re.match(rel)
+            if m and tz:
+                return _abs_ts(epoch_base, float(m.group(1)), tz)
+            return rel
+
         capture_header = f"**Capture start:** `{start_str}`\n\n" if start_str else ""
         md = (capture_header + conn_events_md + "\n" + ctrl_md + "\n"
               + traffic_md + "\n"
               + _android_ble.render_markdown_android(
-                  calls, pcapng, mac, "nRF52840 pcapng", att_count))
+                  calls, pcapng, mac, "nRF52840 pcapng", att_count,
+                  ts_fmt=_ts_to_abs if tz else None))
         if args.output:
             Path(args.output).write_text(md, encoding="utf-8")
             print(f"[+] Markdown written to {args.output}", file=sys.stderr)

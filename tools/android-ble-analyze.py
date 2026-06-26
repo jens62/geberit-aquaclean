@@ -1241,14 +1241,21 @@ def _get_phase(ctx: int, proc: int, args: bytes = b"") -> str:
     return _PHASE_MD.get((ctx, proc), f"Proc(0x{ctx:02x}, 0x{proc:02x})")
 
 
-def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_count: int) -> str:
-    """Render Android BLE session as annotated markdown grouped by logical phase."""
+def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_count: int,
+                             ts_fmt=None) -> str:
+    """Render Android BLE session as annotated markdown grouped by logical phase.
+
+    ts_fmt: optional callable (rel_ts: str) -> str to convert relative timestamps
+    like 't=53.3s' to absolute 'HH:MM:SS.mmm'. When None, relative times are kept.
+    """
     if not calls:
         return "*(no Geberit procedure calls decoded)*\n"
 
+    _tf = ts_fmt if ts_fmt is not None else (lambda s: s)
+
     out = []
-    ts_first = calls[0].req_ts
-    ts_last  = next((c.resp_ts or c.req_ts for c in reversed(calls) if c.resp_ts or c.req_ts), ts_first)
+    ts_first = _tf(calls[0].req_ts)
+    ts_last  = _tf(next((c.resp_ts or c.req_ts for c in reversed(calls) if c.resp_ts or c.req_ts), calls[0].req_ts))
 
     out.append(f"# BLE Traffic Analysis: {path.name}")
     out.append(
@@ -1278,8 +1285,8 @@ def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_cou
         phase_seen[phase_name] = phase_seen.get(phase_name, 0) + 1
         occ = phase_seen[phase_name]
         suffix = f" #{occ}" if occ > 1 else ""
-        ts0 = phase_calls[0].req_ts
-        ts1 = phase_calls[-1].resp_ts or phase_calls[-1].req_ts
+        ts0 = _tf(phase_calls[0].req_ts)
+        ts1 = _tf(phase_calls[-1].resp_ts or phase_calls[-1].req_ts)
         ts_range = ts0 if ts0 == ts1 else f"{ts0} – {ts1}"
         n = len(phase_calls)
 
@@ -1305,7 +1312,7 @@ def render_markdown_android(calls: list, path: Path, mac: str, fmt: str, pkt_cou
                          if call.req_raw else "")
             resp_hex  = (" ".join(f"{b:02x}" for b in call.resp_result)
                          if call.resp_result else "")
-            out.append(f"| {call.req_ts} | {proc_name} | {req_ann} | {resp_ann} | `{req_hex}` | `{resp_hex}` |")
+            out.append(f"| {_tf(call.req_ts)} | {proc_name} | {req_ann} | {resp_ann} | `{req_hex}` | `{resp_hex}` |")
         out.append("")
 
     return "\n".join(out)
