@@ -982,7 +982,8 @@ def _get_att_meta_events(tshark: str, pcapng: Path,
 
 
 def _format_ctrl_section(ll_events: list, l2cap_events: list,
-                          att_meta: list, markdown: bool) -> str:
+                          att_meta: list, markdown: bool,
+                          epoch_base: float = 0.0, tz=None) -> str:
     """Render LL Control + L2CAP + ATT meta as a markdown or plain-text section."""
     lines: list[str] = []
     if markdown:
@@ -991,7 +992,7 @@ def _format_ctrl_section(ll_events: list, l2cap_events: list,
         lines.append("BLE Control Layer")
         lines.append("-" * 72)
 
-    # Merge and sort all control-layer events
+    # Merge and sort all control-layer events; tuple: (ts_raw_f, layer, rel_ts, name, details)
     all_ctrl = (
         [(e["ts_raw"], "LL",    e["ts"], e["name"], e["details"]) for e in ll_events]
       + [(e["ts_raw"], "L2CAP", e["ts"], e["name"], e["details"]) for e in l2cap_events]
@@ -1005,12 +1006,14 @@ def _format_ctrl_section(ll_events: list, l2cap_events: list,
     elif markdown:
         lines.append("| Time | Layer | PDU | Details |")
         lines.append("|------|-------|-----|---------|")
-        for _, layer, ts, name, details in all_ctrl:
+        for ts_f, layer, rel_ts, name, details in all_ctrl:
+            ts = _abs_ts(epoch_base, ts_f, tz) or rel_ts
             lines.append(f"| `{ts}` | {layer} | `{name}` | {details or '—'} |")
     else:
         lines.append(f"  {'Time':<12}  {'Layer':<6}  {'PDU':<35}  Details")
         lines.append(f"  {'-'*12}  {'-'*6}  {'-'*35}  {'-'*30}")
-        for _, layer, ts, name, details in all_ctrl:
+        for ts_f, layer, rel_ts, name, details in all_ctrl:
+            ts = _abs_ts(epoch_base, ts_f, tz) or rel_ts
             lines.append(f"  {ts:<12}  {layer:<6}  {name:<35}  {details or ''}")
 
     lines.append("")
@@ -1534,15 +1537,19 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     conn_events_md = _format_connection_events(
         connect_inds, directed_advs, mac, markdown=True)
 
+    # Absolute timestamp base — used by both ctrl section and traffic log
+    epoch_base, tz, start_str = _get_capture_start(tshark, pcapng)
+
     # BLE control layer (LL PDUs, L2CAP signaling, ATT MTU/write-RSP)
     ll_events   = _get_ll_control_events(tshark, pcapng)
     l2cap_events = _get_l2cap_events(tshark, pcapng)
     att_meta    = _get_att_meta_events(tshark, pcapng, mac, addr_field)
-    ctrl_plain  = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=False)
-    ctrl_md     = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=True)
+    ctrl_plain  = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=False,
+                                        epoch_base=epoch_base, tz=tz)
+    ctrl_md     = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=True,
+                                        epoch_base=epoch_base, tz=tz)
 
     # Bidirectional raw traffic log (every write + notify, decoded)
-    epoch_base, tz, start_str = _get_capture_start(tshark, pcapng)
     traffic      = _get_geberit_traffic(tshark, pcapng, mac, addr_field, epoch_base, tz)
     traffic_plain = _format_traffic_log(traffic, markdown=False)
     traffic_md    = _format_traffic_log(traffic, markdown=True)
