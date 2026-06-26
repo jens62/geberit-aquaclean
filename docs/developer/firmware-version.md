@@ -405,17 +405,21 @@ IAquaCleanProduct product = device.AquaCleanProduct;
 // Early exits — no update
 if (product is NullAquaCleanProduct) return false;
 
-Version version = product.GetVersion();  // parsed from proc 0x0E RS version
-if (version == null || string.IsNullOrEmpty(version.ToString())) return true;  // force update
+// GetVersion() → GetProductVersion()?.PackageVersion → uses LOCAL firmware service (bundled .zip)
+// Returns non-null only if a bundled package has NodeFirmware with matching RS/TS version
+// AND DeployContract == Ble2V1 || EspV1 || GatewayV1.
+// For Mera cloud packages (AquaCleanV1): always returns null.
+Version version = product.GetVersion();
+if (version == null) return true;  // force update — reached for ALL Mera with cloud-only packages
 
-// Fetch cloud-synced remote settings (honours cache: only syncs if stale)
+// Only reached if GetVersion() is non-null (local Ble2V1 match found)
 await RemoteSettingsService.SyncRemoteSettingsIfNecessary<AppRemoteSettings>(GeberitDeviceType.App);
 AppRemoteSettings settings = await RemoteSettingsService.GetRemoteSettings<AppRemoteSettings>(GeberitDeviceType.App);
 
 Version minVersion = settings.GetDeviceApiMinVersion(device.ConfigurationInfo.DeviceType);
 if (minVersion == null) throw new Exception(...);  // caught in caller → m__E002 stays false
 
-return minVersion.Major > version.Major;  // AND'd with featureFlag in caller
+return minVersion.Major > version.Major;  // AND'd with _E025._E00A (=true) in caller
 ```
 
 #### `AppRemoteSettings.device_api_min_version`
@@ -436,22 +440,109 @@ parses the value as a `System.Version`. Returns `null` if key absent or dictiona
 **If the key is present with `"30.x"`** → `Major = 30` → `30 > 28 (RS28)` → `true`
 → `m__E002 = true` → **force update prompt shown**.
 
-### Why mock RS28.0 triggers the prompt but real device does not — ROOT CAUSE FOUND
+### `FirmwareForceUpdateViewModel.cs` — findings (2026-06-26)
 
-The trigger is **`AppRemoteSettings.device_api_min_version`**, synced from Geberit's remote
-config cloud (separate from the firmware API). `SyncRemoteSettingsIfNecessary` honours an
-internal TTL cache — it only hits the network when the cached value is stale.
+Read from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/Home.Core/`.
 
-| | Mock (RS28.0) | Real device (RS28.0) |
-|--|--|--|
-| `RemoteSettingsService` cache | Fresh / recently expired → network fetch → current Geberit settings → `device_api_min_version["AquaClean"] = "30.0"` present | Stale / from before Geberit added the key → key absent → `GetDeviceApiMinVersion` returns `null` → exception → `m__E002 = false` |
-| Force update fires? | **Yes** — `30 > 28` | **No** — `null` key |
+The viewmodel's `Initialize()` state machine:
 
-Deleting the device from the app and rebooting the iPad does **not** clear the
-`RemoteSettingsService` cache — it lives in the app's persistent storage independently of
-the device list. Only a cache expiry or app reinstall would force a fresh fetch.
+1. Gets `PackageVersion` string via `m__E008.GetProductVersion()?.PackageVersion?.ToString()` — shows `"--"` for Mera (always null)
+2. Calls `m__E008.GetActiveUpdateAsync()` → awaits result as `m__E009`
+3. **If `m__E009 == null`** → `StaticMessages.ShowGenericError()` — shows the "Fehler" error popup
+4. **If `m__E009 != null`** → shows blocking firmware update UI with available version
 
-**Ruled-out hypotheses (complete list):**
+`GetActiveUpdateAsync()` for Mera (AquaCleanV1): always returns `null` when using the
+CLOUD firmware service (confirmed). The LOCAL firmware service is unknown (`.zip` files in
+the iOS app bundle are inaccessible for inspection).
+
+### `_E025._E00A` — confirmed (2026-06-26)
+
+From `-.cs:8592`:
+
+```csharp
+internal static bool _E00A => true;  // hardcoded constant
+```
+
+Therefore: `m__E002 = result3 & _E025._E00A = result3 & true = result3`.
+`result3` = return value of `_E004(device)`.
+
+### Gate analysis — `_E004(device)` for Mera
+
+Line-by-line trace of `_E004(IBaseAquaCleanDevice device)`:
+
+1. `if (product is NullAquaCleanProduct) return false` — not triggered for a connected device
+2. `Version version = product.GetVersion()` — **always null for AquaCleanV1** (see `global::e.a()`)
+3. **`if (version == null) return true`** — exits here immediately for all Mera devices
+
+The `AppRemoteSettings.device_api_min_version` check at lines 89+ is **never reached** for Mera.
+The remote settings cache and login state are irrelevant.
+
+**`m__E002 = true` for every Mera device on every connect** → `FirmwareForceUpdateViewModel`
+is always navigated to for any Mera device during BLE connect.
+
+### `RemoteSettingsService` — how it works (2026-06-26)
+
+Answering the four questions about `RemoteSettingsService`:
+
+**Q: No login required — how is the cache filled?**
+
+`SyncSettingsForDevice(AcMeraComfort)` calls `GetDeviceSettingsAsync(cachedVersion, "248-3")` —
+an anonymous HTTP endpoint on Geberit's remote settings server. No Gigya/cloud account token.
+Works like Firebase Remote Config: public configuration keyed by device type, no auth.
+
+**Q: When is the cache filled?**
+
+During every `ConnectToAquaCleanViewModel` state machine run, at the step AFTER BLE connect
+(line 615): `RemoteSettingsService.SyncSettingsForDevice(device.ConfigurationInfo.DeviceType)`.
+Result is stored in iOS Keychain, keyed by `"AcMeraComfort" + suffix`.
+
+**Q: What identifier?**
+
+`deviceType._E004()` = `"248-3"` for `AcMeraComfort`. This is the HTTP request parameter
+AND the local cache key. Type-level, shared across all Mera Comfort devices.
+
+**Q: What happens with no internet?**
+
+`GetDeviceSettingsAsync` throws → exception propagates → `SyncSettingsForDevice` task faulted.
+The caller's outer state machine catches and continues using whatever is in the keychain cache.
+If keychain has nothing → `GetDeviceApiMinVersion` returns null. But this is moot for Mera
+since `_E004(device)` returns `true` BEFORE reaching the remote settings check.
+
+### Why mock RS28.0 triggers the prompt but real device does not — ROOT CAUSE UNKNOWN
+
+Every Mera device, mock or real, follows the same code path:
+
+```
+GetVersion() = null → _E004(device) = true → navigate to FirmwareForceUpdateViewModel
+→ GetActiveUpdateAsync() → null (cloud AquaCleanV1) → ShowGenericError()
+```
+
+The "Fehler" popup (from `ShowGenericError()`) fires for BOTH paths. The difference between
+a brief dismissible error and a **blocking update UI** comes from `GetActiveUpdateAsync()`
+returning non-null — which only happens if the LOCAL firmware service (bundled `.zip` files)
+has matching packages with a non-AquaCleanV1 contract.
+
+**Most likely explanation (hypothesis — cannot verify without iOS app bundle access):**
+
+The app bundles local firmware files for AcMeraComfort with a `Ble2V1` (or similar) contract
+covering RS30.0 TS206 only:
+
+| | `GetVersion()` | `GetActiveUpdateAsync()` local | Result |
+|--|--|--|--|
+| Mock RS28.0 | null (no RS28.0 match in local Ble2V1 packages) | non-null (RS30.0 is available update) | **Blocking update UI** |
+| Mock RS30.0 | non-null (RS30.0 exact match found) | not reached (`_E004()` = false) | **No prompt at all** |
+| Real device RS28.0 | null | throws (real device `DataPointHelper.ReadRsTsVersion` fails silently → `b2` invalid → `e.a()` throws in `FirmwareForceUpdateViewModel.Initialize()` → task faulted) | **No prompt (Initialize faulted)** |
+
+**Why real device `ReadRsTsVersion` fails while mock succeeds:** the mock's GATT handler
+explicitly responds to the RS/TS version data point reads; the real device may not expose
+those specific DpIds via its data point protocol (even though "RS28.0 TS199" is displayed
+in the app — that display likely comes from `NodeInfoList` via proc 0x0E, not from data points).
+
+**Caveat:** this is not confirmed. The real device's firmware state at the time of testing
+is also unknown (it may have been updated to RS30.0 between the BLE capture that showed
+RS28.0 and the mock comparison test).
+
+**Ruled-out hypotheses:**
 
 | Hypothesis | Ruled out because |
 |------------|------------------|
@@ -459,15 +550,18 @@ the device list. Only a cache expiry or app reinstall would force a fresh fetch.
 | `FirmwareServiceCacheData.json` per-device state | Global cache keyed by `ContentId` only |
 | DataPoint RuleSet predicates | All 15 Mera NodeFirmwares have empty RuleSets (HAR) |
 | `FirmwareServiceLocal` separate AquaCleanV1 path | Delegates to same `global::e` |
-| `IFirmwareService.IsUpdateAvailableAsync` | Always `false` for AquaCleanV1 — confirmed in `e.cs` |
+| `IFirmwareService.IsUpdateAvailableAsync` via cloud | Always `false` for AquaCleanV1 — confirmed |
+| `AppRemoteSettings.device_api_min_version` | Never reached: `_E004()` returns `true` at line 81 (null version) before the remote settings check |
+| `_E025._E00A` feature flag | Hardcoded `true` in `-.cs:8592` — not a gate |
 
 ### Practical fix for the mock
 
 **Keep `_FW_COMPONENT_VERSIONS[1]` at RS30.0 TS206** (applied in v1.72.0b1).
 
-With RS30.0: `30 > 30 = false` → no force update, regardless of what the remote settings say.
-RS30.0 is always safe as long as it matches or exceeds the `device_api_min_version` major.
-If Geberit ever bumps the minimum to RS31, the mock would need updating again.
+With RS30.0: `GetVersion()` finds an exact match in the local Ble2V1 bundled package →
+non-null → `_E004(device)` proceeds past line 81 → version comparison check → no force update.
+RS30.0 is safe as long as it matches the latest bundled local firmware version.
+If Geberit updates the bundled firmware to RS31+, the mock would need updating again.
 
 ---
 
