@@ -1215,6 +1215,52 @@ def _decode_notif_payload(v: bytes) -> str:
     return f"NOTIF byte0=0x{h:02x}"
 
 
+# GATT discovery + READ_BLOB opcodes — included in the Raw ATT Traffic table
+_GATT_OPCODES = {0x04, 0x05, 0x06, 0x07, 0x0c, 0x0d, 0x10, 0x11}
+
+
+def _decode_gatt_frame(opcode: int, handle_raw: str,
+                       raw_bytes: bytes, offset_val: int) -> tuple:
+    """Decode a GATT service-discovery or READ_BLOB frame.
+    Returns (direction, decoded_str).
+    handle_raw may be a comma-separated list (tshark multi-value for RSP frames).
+    """
+    def _ph(s):
+        try:
+            return _parse_int(s.strip())
+        except (ValueError, TypeError):
+            return 0
+
+    parts = [p for p in handle_raw.split(",") if p.strip()]
+    first_h = _ph(parts[0]) if parts else 0
+
+    if opcode == 0x04:   # FIND_INFO_REQ
+        return "App→Dev", "GATT  FIND_INFO_REQ"
+    if opcode == 0x05:   # FIND_INFO_RSP — handle field = descriptor handles found
+        hdls = "  ".join(f"0x{_ph(p):04X}" for p in parts)
+        return "Dev→App", f"GATT  FIND_INFO_RSP  descriptors={hdls}"
+    if opcode == 0x06:   # FIND_BY_TYPE_VALUE_REQ — value field = UUID (2 bytes LE)
+        uuid = int.from_bytes(raw_bytes[:2], "little") if len(raw_bytes) >= 2 else 0
+        return "App→Dev", f"GATT  FIND_BY_TYPE_VALUE_REQ  UUID=0x{uuid:04X}"
+    if opcode == 0x07:   # FIND_BY_TYPE_VALUE_RSP — handle field = found handle
+        return "Dev→App", f"GATT  FIND_BY_TYPE_VALUE_RSP  found=0x{first_h:04X}"
+    if opcode == 0x0c:   # READ_BLOB_REQ
+        return "App→Dev", f"READ_BLOB_REQ  handle=0x{first_h:04X}  offset={offset_val}"
+    if opcode == 0x0d:   # READ_BLOB_RSP
+        hex_str = raw_bytes.hex() if raw_bytes else ""
+        try:
+            label = f"  ({raw_bytes.decode('ascii')!r})" if all(0x20 <= b < 0x7f for b in raw_bytes) else ""
+        except Exception:
+            label = ""
+        return "Dev→App", f"READ_BLOB_RSP  {hex_str}{label}"
+    if opcode == 0x10:   # READ_BY_GROUP_TYPE_REQ
+        return "App→Dev", "GATT  READ_BY_GROUP_TYPE_REQ"
+    if opcode == 0x11:   # READ_BY_GROUP_TYPE_RSP — handle field = service start handles
+        hdls = "  ".join(f"0x{_ph(p):04X}" for p in parts)
+        return "Dev→App", f"GATT  READ_BY_GROUP_TYPE_RSP  services={hdls}"
+    return ("App→Dev" if opcode % 2 == 0 else "Dev→App"), f"GATT  opcode=0x{opcode:02x}"
+
+
 def _get_geberit_traffic(tshark: str, pcapng: Path,
                           mac: str, addr_field: str,
                           epoch_base: float = 0.0,
@@ -1230,28 +1276,28 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
     _SIDE_HANDLES = {0x0013, 0x0017, 0x001B}
     _CCCD_HANDLES = {0x0010, 0x0014, 0x0018, 0x001C}
 
-    dfilter = ("btatt.opcode == 0x12 || btatt.opcode == 0x52"
+    dfilter = ("btatt.opcode == 0x04 || btatt.opcode == 0x05"
+               " || btatt.opcode == 0x06 || btatt.opcode == 0x07"
+               " || btatt.opcode == 0x0c || btatt.opcode == 0x0d"
+               " || btatt.opcode == 0x10 || btatt.opcode == 0x11"
+               " || btatt.opcode == 0x12 || btatt.opcode == 0x52"
                " || btatt.opcode == 0x1b || btatt.opcode == 0x13")
     if mac:
         dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
 
     rows = _run_tshark(tshark, pcapng, dfilter,
                        ["frame.time_relative", "btatt.opcode",
-                        "btatt.handle", "btatt.value"])
+                        "btatt.handle", "btatt.value", "btatt.offset"])
 
     frames = []
     for row in rows:
-        padded = (row + [""] * 4)[:4]
-        ts_raw, op_raw, handle_raw, value_raw = padded
+        padded = (row + [""] * 5)[:5]
+        ts_raw, op_raw, handle_raw, value_raw, offset_raw = padded
         try:
             opcode = _parse_int(op_raw)
             _ts    = float(ts_raw.strip())
         except (ValueError, TypeError):
             continue
-        try:
-            handle = _parse_int(handle_raw)
-        except (ValueError, TypeError):
-            handle = 0
 
         raw_hex = _value_hex(value_raw)
         try:
@@ -1259,40 +1305,58 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
         except Exception:
             raw_bytes = b""
 
-        handle_label = _android_ble.GEBERIT_HANDLES.get(handle, f"0x{handle:04X}")
+        if opcode in _GATT_OPCODES:
+            try:
+                offset_val = int(offset_raw.strip()) if offset_raw.strip() else 0
+            except ValueError:
+                offset_val = 0
+            direction, decoded = _decode_gatt_frame(opcode, handle_raw, raw_bytes, offset_val)
+            # first handle for the Handle column; may be 0 when tshark returns nothing
+            parts = [p for p in handle_raw.split(",") if p.strip()]
+            try:
+                handle = _parse_int(parts[0]) if parts else 0
+            except (ValueError, TypeError):
+                handle = 0
+        else:
+            try:
+                handle = _parse_int(handle_raw)
+            except (ValueError, TypeError):
+                handle = 0
 
-        if opcode in (0x12, 0x52):        # WRITE_REQ / WRITE_CMD  (App→Dev)
-            direction = "App→Dev"
-            if handle in _CCCD_HANDLES:
-                val   = int.from_bytes(raw_bytes[:2], "little") if len(raw_bytes) >= 2 else 0
-                state = "enable" if val & 1 else "disable"
-                decoded = f"CCCD {state} notif  {handle_label}"
-            else:
-                # Try Geberit protocol decode on any write handle (real=0x0003, mock varies)
-                geberit_decoded = _decode_write_payload(raw_bytes)
-                if geberit_decoded.startswith("WRITE  byte0=") or geberit_decoded == "(empty)":
-                    decoded = f"write → {handle_label}  {geberit_decoded}"
+            handle_label = _android_ble.GEBERIT_HANDLES.get(handle, f"0x{handle:04X}")
+
+            if opcode in (0x12, 0x52):        # WRITE_REQ / WRITE_CMD  (App→Dev)
+                direction = "App→Dev"
+                if handle in _CCCD_HANDLES:
+                    val   = int.from_bytes(raw_bytes[:2], "little") if len(raw_bytes) >= 2 else 0
+                    state = "enable" if val & 1 else "disable"
+                    decoded = f"CCCD {state} notif  {handle_label}"
                 else:
-                    decoded = geberit_decoded
-        elif opcode == 0x13:              # WRITE_RSP  (Dev→App, ack)
-            direction = "Dev→App"
-            decoded   = "WRITE_RSP ack"
-        else:                             # 0x1B NOTIF  (Dev→App)
-            direction = "Dev→App"
-            if handle == _MERA_A5_H or handle in _SIDE_HANDLES:
-                # Real device: A5=0x000F, side=0x0013/17/1B
-                if handle in _SIDE_HANDLES:
-                    seq     = raw_bytes[0] if raw_bytes else 0
-                    decoded = f"CONS  seq=0x{seq:02x}  {handle_label}"
+                    # Try Geberit protocol decode on any write handle (real=0x0003, mock varies)
+                    geberit_decoded = _decode_write_payload(raw_bytes)
+                    if geberit_decoded.startswith("WRITE  byte0=") or geberit_decoded == "(empty)":
+                        decoded = f"write → {handle_label}  {geberit_decoded}"
+                    else:
+                        decoded = geberit_decoded
+            elif opcode == 0x13:              # WRITE_RSP  (Dev→App, ack)
+                direction = "Dev→App"
+                decoded   = "WRITE_RSP ack"
+            else:                             # 0x1B NOTIF  (Dev→App)
+                direction = "Dev→App"
+                if handle == _MERA_A5_H or handle in _SIDE_HANDLES:
+                    # Real device: A5=0x000F, side=0x0013/17/1B
+                    if handle in _SIDE_HANDLES:
+                        seq     = raw_bytes[0] if raw_bytes else 0
+                        decoded = f"CONS  seq=0x{seq:02x}  {handle_label}"
+                    else:
+                        decoded = _decode_notif_payload(raw_bytes)
                 else:
-                    decoded = _decode_notif_payload(raw_bytes)
-            else:
-                # Try Geberit protocol decode on any notif handle (mock uses different handles)
-                geberit_decoded = _decode_notif_payload(raw_bytes)
-                if geberit_decoded.startswith("NOTIF byte0=") or geberit_decoded == "(empty)":
-                    decoded = f"notif on {handle_label}  {geberit_decoded}"
-                else:
-                    decoded = geberit_decoded
+                    # Try Geberit protocol decode on any notif handle (mock uses different handles)
+                    geberit_decoded = _decode_notif_payload(raw_bytes)
+                    if geberit_decoded.startswith("NOTIF byte0=") or geberit_decoded == "(empty)":
+                        decoded = f"notif on {handle_label}  {geberit_decoded}"
+                    else:
+                        decoded = geberit_decoded
 
         frames.append({
             "ts":        _ts,
