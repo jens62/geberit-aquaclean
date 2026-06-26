@@ -284,36 +284,64 @@ Active package: `series=248, variants=[1,2,3], packageVersion=30.0.206.250722, i
    version-based. No BLE reads to device are needed for the rule evaluation.
 2. **All nodes use `deployContract=AquaCleanV1`** — the decompiled `e.e()` filter
    requires `Ble2V1 || EspV1 || GatewayV1`. Since every Mera node is `AquaCleanV1`,
-   none would pass that filter. The update prompt for Mera must be triggered by a
-   separate code path (likely `FirmwareServiceLocal.cs`, which handles the legacy
-   `AquaCleanV1` contract differently — possibly comparing against a firmware bundle
-   packaged with the app itself).
+   none would pass that filter. The exact code path that triggers the update prompt
+   for `AquaCleanV1` devices is not yet determined — see open question below.
+
+### `FirmwareServiceLocal.cs` — findings (2026-06-26)
+
+Read from `local-assets/geberit-home-v2.14.1-from-iOS/decompiled/Geberit.ComLib.Firmware/`.
+
+`FirmwareServiceLocal` is a **thin shell**. It implements `IFirmwareService` but
+delegates ALL update logic to `global::e` — the same obfuscated class used by
+`FirmwareServiceClient`. The two services differ only in their data source:
+
+| Service | `FirmwareVersions` source |
+|---------|--------------------------|
+| `FirmwareServiceClient` | Cloud API (`prod.firmwarev1.services.geberit.com`) |
+| `FirmwareServiceLocal` | Local `.zip` files scanned from `firmwareFolderPath/*.zip` |
+
+Method delegation:
+
+| Method | Delegates to |
+|--------|-------------|
+| `IsUpdateAvailableAsync` | `global::e.b(this, product, token, onlyOfflineUpdates)` |
+| `GetActiveUpdateAsync` | `global::e.c(this, product, token, onlyOfflineUpdates)` |
+| `GetAvailableUpdatePackagesAsync` | `global::e.e(this, product, token, upgradesOnly)` |
+| `GetRecoveryUpdate` | `global::e.d(this, series, variant, bootVariant, onlyOfflineUpdates)` |
+| `CheckFirmwareRuleSetAsync` | `FirmwareRuleVerification.CheckFirmwareRuleSet` (same as cloud) |
+
+Local zip loading: constructor scans `firmwareFolderPath/*.zip`, reads `FirmwarePackage.json`
+from each zip, creates `FirmwareDto` with `IsActive = true` and `Channel = Release`.
+`IsOfflineAvailable` always returns `true`.
+
+**Consequence**: `FirmwareServiceLocal` uses the SAME `DeployContract` filter and RuleSet
+evaluation as `FirmwareServiceClient`. It is NOT a separate code path. Whatever the actual
+trigger for the Mera update prompt is, it applies equally to both local and cloud paths.
+
+The next file to read is `e.cs` (`global::e`) — this contains the actual filter logic
+(`b()`, `c()`, `d()`, `e()` methods) and is the root of the update decision for all paths.
 
 ### Why mock RS28.0 TS199 triggers the update prompt but real device does not
 
-The update mechanism for `AquaCleanV1` devices is version comparison only (empty RuleSets
-confirmed). RS28.0 (mock) < RS30.0 (active cloud minimum) → update prompt fires.
+**Root cause: UNKNOWN.** The following explanations have been investigated and ruled out:
 
-The real device at the same RS28.0 TS199 does NOT trigger the prompt. The most coherent
-explanation consistent with all observations (including re-onboarding after device delete
-+ iPad reboot NOT showing the prompt):
+| Hypothesis | Status | Why ruled out |
+|------------|--------|---------------|
+| iOS Bluetooth pairing state persists across app delete | **Ruled out** | Mera uses zero SMP — no iOS-level BLE pairing occurs; device never appears in iOS Settings → Bluetooth |
+| `FirmwareServiceCacheData.json` stores per-device state keyed by CRC32(SAP) | **Ruled out** | File is a global cache keyed by `ContentId` (the API's content hash), not per device |
+| DataPoint RuleSet predicates gate the update to specific device states | **Ruled out** | HAR confirms all 15 NodeFirmwares in the RS30 package have empty RuleSets |
+| `FirmwareServiceLocal` has separate AquaCleanV1 handling | **Ruled out** | It delegates to the same `global::e` as `FirmwareServiceClient` |
 
-**`FirmwareServiceCacheData.json` is keyed per `ProductIdentifier` (= CRC32 of SAP)**
-and stores per-device firmware update state. This file lives in the app's persistent
-data directory — it is NOT cleared by deleting the device from the in-app device list,
-and NOT cleared by rebooting the iPad. Only clearing the app's data or reinstalling
-would wipe it.
+**What is known:**
+- The update prompt fires on mock (RS28.0) but not on the real device (RS28.0) even
+  after: deleting the device from the app + rebooting the iPad + re-onboarding from scratch
+- All Mera NodeFirmwares use `deployContract=AquaCleanV1`; the `e.e()` filter in `global::e`
+  requires `Ble2V1 || EspV1 || GatewayV1` — meaning no Mera node matches that filter
+- If the `e.e()` filter is the only path, `IsUpdateAvailableAsync` should return false for
+  ALL Mera devices regardless of firmware version — contradicting the observed mock behaviour
 
-- Real device SAP `HB2304EU298413` → CRC32 → ProductIdentifier already in cache from
-  a prior session when RS30 was not yet the active cloud minimum. The firmware update
-  state for that identifier reads "no update required" (cached before RS30 was published,
-  `ContentId` unchanged → cache not refreshed).
-- Mock SAP `HB2304EU298414` → different CRC32 → ProductIdentifier not in cache → always
-  fresh check → RS28 < RS30 → blocking update prompt every time.
-
-Verified: `packageVersion=30.0.206.250722` — the `250722` suffix indicates 2025-07-22 as
-the publication date. The real device was paired before this date; the cache ContentId has
-not changed since → cache was never invalidated → real device still sees the pre-RS30 state.
+**Next investigative step**: read `e.cs` (`global::e`) to understand the actual `b()` and
+`e()` method logic and resolve why RS28.0 on mock triggers the prompt.
 
 ### Practical fix for the mock
 
