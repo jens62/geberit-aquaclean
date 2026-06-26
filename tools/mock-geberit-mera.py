@@ -448,9 +448,13 @@ def _proc_45() -> bytes:
 
 
 def _proc_59() -> bytes:
-    """GetFilterStatus: count(1) + count×(id(1)+value_le(4)).
-    Real device returns 11 items. Values matched to real Mera Comfort capture
-    (nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-2.md).
+    """GetFilterStatus: a_byte(1) + a_byte×(id(1)+value_le(4)).
+
+    iOS requests IDs [0..11] via FIRST+CONS. Real Mera responds with a_byte=11
+    (11 valid records, IDs 0–10) plus one zero-padded slot — ID 11 is not a real
+    entry (confirmed onboarding-real-mera.md). Mock mirrors this exactly.
+
+    Values matched to real Mera Comfort capture (onboarding-real-mera.md 2026-06-26):
     id=4 and id=8 are Unix timestamps (TimestampAtLastFilterChange /
     TimestampAtLastFilterChangePrompt). Returning 0 for these while id=7 and
     id=10 are non-zero triggers the "Fehler / Ein Fehler ist aufgetreten" popup —
