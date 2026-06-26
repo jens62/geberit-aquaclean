@@ -722,19 +722,19 @@ onboarding state, connection history, and firmware update flow are all indexed b
 | SAP | CRC32 | App sees |
 |-----|-------|---------|
 | `HB2304EU298413` (real device) | some uint A | Known device → reconnect path |
-| `HB2304EU298414` (mock) | some uint B ≠ A | Unknown device → first-time pairing path |
+| `HB2300EU000001` (mock) | some uint B ≠ A | Unknown device → first-time pairing path |
 
-The mock's SAP was intentionally offset by one digit from the real device's SAP to avoid
-conflicts when both are in range. The tradeoff: the mock always takes the first-time-pairing
-path, which is why proc `0x0E` must return RS30.0 TS206 (above the cloud firmware minimum)
-to avoid the blocking firmware update screen. See § GetFirmwareVersionList below.
+The mock uses a fictional SAP to avoid conflicts with any real device in range. The tradeoff:
+the mock always takes the first-time-pairing path, which is why proc `0x0E` must return
+RS30.0 TS206 for ALL components to avoid the blocking firmware update screen.
+See § GetFirmwareVersionList below.
 
 ### GetDeviceIdentification (proc `0x82`) — 82 bytes
 
 | Field | Value |
 |---|---|
 | ArticleNumber | `146.21x.xx.1` |
-| SerialNumber (SAP) | `HB2304EU298414` |
+| SerialNumber (SAP) | `HB2300EU000001` |
 | ProductionDate | `11.04.2023` |
 | Description | `AquaClean Mera Comfort` |
 
@@ -750,17 +750,20 @@ Node IDs: `[03, 04, 05, 06, 07, 08, 09, 0A, 0B, 0C, 0E, 0F]` (12 nodes)
 
 All components: version `"30"`, build `206` → `RS30.0 TS206`
 
-**MUST stay at RS30.0 TS206 — do NOT lower to RS28.0 TS199.**
-The app checks firmware version against Geberit's cloud and gates onboarding behind a
-blocking `FirmwareForceUpdateViewModel` when `current < minimum`. RS28.0 is below the
-cloud minimum → blocking screen appears and prevents completing onboarding against the mock.
-RS30.0 is at or above the minimum → no prompt.
+**ALL components MUST return RS30.0 TS206 — including sub-nodes 3–15.**
+Setting only component 1 to RS30.0 while sub-nodes return real per-device versions
+(RS07–RS11) still triggers the blocking firmware update UI. `FirmwareForceUpdateViewModel`
+performs a per-node update check against the local bundled Ble2V1 package; any sub-node
+below its target version makes `GetActiveUpdateAsync()` return non-null → blocking screen.
 
-The real Mera RS28.0 device does NOT show this screen because its SAP `HB2304EU298413`
-is already in the app's local database (prior pairing) → reconnect path skips the gate.
-The mock's SAP (`HB2304EU298414`) always appears fresh (CRC32 of SAP = unique device key
-in app storage) → first-time pairing path → firmware gate always fires. See
-`docs/developer/firmware-version.md` § "iOS app — firmware update check mechanism".
+With all components at RS30.0: no per-node delta → null → dismissible "Fehler" popup only
+→ mock is fully operational.
+
+The real Mera HB2304EU298413 sends component 1 = RS28.0 TS199 (`32 38 c7`) and the same
+real sub-node versions, yet does NOT trigger the blocking screen. This discrepancy is
+unexplained — see `docs/developer/firmware-version.md` § "iOS app — firmware update check
+mechanism" and `local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md`
+§ "v1.75.0b1 empirical finding" for the full analysis.
 
 ### GetDeviceInitialOperationDate (proc `0x86`)
 

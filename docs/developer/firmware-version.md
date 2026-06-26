@@ -431,11 +431,25 @@ unknown (it may have already been at RS30.0 when the mock comparison test was ru
 
 ### Practical fix for the mock
 
-**Keep `_FW_COMPONENT_VERSIONS[1]` at RS30.0 TS206** (applied in v1.72.0b1).
+**ALL entries in `_FW_COMPONENT_VERSIONS` must return RS30.0 TS206** (fixed in v1.75.0b1).
 
-With RS30.0: `GetVersion()` finds an exact match in the local bundled package →
-non-null → the firmware check proceeds past the null-version branch → version comparison
-check → no force update.
+Setting only component 1 (main controller) to RS30.0 is **not sufficient** —
+confirmed empirically 2026-06-26 by comparing BLE logs from v1.64.0b1 (all RS30.0,
+dismissible Fehler only) vs v1.74.0b1 (component 1 = RS30.0, components 3–15 = real
+per-device RS07–RS11 → blocking update UI).
+
+`GetActiveUpdateAsync()` in `FirmwareForceUpdateViewModel` performs a per-component
+version check. When any sub-node (3–15) reports a version below the local bundled
+Ble2V1 package's target for that node, the update is considered available → non-null
+→ blocking update UI that cannot be dismissed without completing the firmware update.
+
+With all components at RS30.0 TS206: no per-node delta → null → dismissible "Fehler"
+popup only. Mock is fully operational after confirming the Fehler.
+
+**Full analysis with call chain, decompiled source, and empirical log comparison:**
+`local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md` —
+section "v1.75.0b1 empirical finding: component 1 alone at RS30.0 is NOT sufficient".
+
 RS30.0 is safe as long as it matches the latest bundled local firmware version.
 If Geberit updates the bundled firmware to RS31+, the mock would need updating again.
 
