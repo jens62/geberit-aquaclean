@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.68.0b1"
+_MOCK_VERSION = "1.69.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -514,8 +514,8 @@ def _proc_0e(args: bytes) -> bytes:
 
 
 def _proc_86() -> bytes:
-    """GetDeviceInitialOperationDate: UTF-8 date string."""
-    return b"2023-01-01\x00"
+    """GetDeviceInitialOperationDate: UTF-8 date string, no null terminator (real device: 31.05.2024)."""
+    return b"31.05.2024"
 
 
 # Values from real Mera Comfort onboarding capture (onboarding-real-mera_timing.md).
