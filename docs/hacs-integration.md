@@ -259,6 +259,74 @@ and what you'd like to do with it.
 
 ---
 
+## Firmware update check
+
+### How the Geberit Home app checks for firmware
+
+When you launch the Geberit Home app, it connects to the Geberit cloud to check
+whether new firmware is available for your toilet. This happens automatically on
+every launch — no Geberit account or login is required.
+
+You can observe this behaviour directly: disable Wi-Fi and mobile data while the
+app is running, then restart it. The app will prompt you to connect to the internet.
+This prompt is not required for everyday use — the toilet works entirely over
+Bluetooth — but the app cannot perform the firmware check without internet access.
+
+If a newer firmware version is available, the app downloads it from the cloud and
+transfers it to the toilet over Bluetooth. This is the only reason the app requires
+internet access.
+
+### How the HACS integration checks for firmware
+
+The HACS integration performs the same cloud-based firmware check. After the first
+successful Bluetooth connection to your toilet, the integration queries the Geberit
+firmware service to determine:
+
+- The currently installed firmware version (read from the device over Bluetooth)
+- The latest available firmware version in the Geberit cloud
+- Whether an update is available
+
+This information is exposed as Home Assistant sensors. All five sensors are available
+for every supported model (AquaClean Mera Comfort, Mera Classic, Sela, and Alba):
+
+| Entity | Description |
+|--------|-------------|
+| **Installed Firmware** | Firmware version currently on the device (e.g. `RS28.0 TS199`) |
+| **Installed Firmware Release Date** | Release date of the installed version |
+| **Cloud Firmware** | Latest version available in the Geberit cloud (e.g. `RS30.0 TS206`) |
+| **Cloud Firmware Release Date** | Release date of the latest cloud version |
+| **Firmware Update Available** | Binary sensor — `on` when a newer version exists |
+
+The check runs once after the first Bluetooth connect and then repeats every hour.
+The result is cached between checks, so it does not generate network traffic on
+every poll.
+
+> **Note:** The HACS integration only *reports* firmware update availability. It
+> does not download or install firmware. To update the firmware on your toilet,
+> use the official Geberit Home app.
+>
+> A button to manually trigger an immediate firmware check is planned —
+> see the [roadmap](roadmap.md#hacs-open-items).
+
+### Logging
+
+The firmware check result is logged at `INFO` level. Home Assistant's default log
+level for custom components is `WARNING`, so a successful check produces no visible
+log output. To see firmware check results in `home-assistant.log`, add the following
+to your `configuration.yaml`:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.geberit_aquaclean: info
+```
+
+A failed check (e.g. no internet access) is always logged at `WARNING` level and
+visible in the default log output.
+
+---
+
 ## Dashboard
 
 A ready-to-use Lovelace dashboard is included in the repository at [`lovelace/dashboard.yaml`](../lovelace/dashboard.yaml).
