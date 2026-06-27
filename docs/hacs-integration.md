@@ -186,7 +186,7 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Binary sensor | User Sitting, Anal Shower Running, Lady Shower Running, Dryer Running |
 | Sensor | **BLE Connection** — shows `{BLE device name} (MAC)` after the first successful poll, or just the MAC until then |
 | Sensor | Model, Serial Number, SAP Number, Production Date, Initial Operation Date, SOC Versions, **Firmware Version** (e.g. `RS28.0 TS199`), **Firmware Release Date**, **Cloud Firmware Version**, **Cloud Firmware Release Date** |
-| Binary sensor | **Firmware Update Available** — `True` when the Geberit cloud has a newer firmware than the device; checked on first poll and every hour thereafter |
+| Binary sensor | **Firmware Update Available** — `True` when the Geberit cloud has a newer firmware than the device; checked once per hour (failed checks are also cached — no retry until the next hour) |
 | Sensor (descale) | Days Until Next Descale, Days Until Shower Restricted, Shower Cycles Until Confirmation, Number of Descale Cycles, Last Descale, Unposted Shower Cycles |
 | Sensor (filter) | **Days Until Filter Change**, **Last Filter Reset** (timestamp), **Filter Reset Count** |
 | Button | Toggle Lid, Toggle Anal Shower, Toggle Lady Shower |
@@ -299,7 +299,7 @@ for every supported model (AquaClean Mera Comfort, Mera Classic, Sela, and Alba)
 
 ![Device Information panel showing firmware update available](hacs-device-information-firmware-update.png)
 
-The check runs once after the first Bluetooth connect and then repeats every hour.
+The check runs after the first successful Bluetooth connect and then once per hour. A failed check (no internet, unrecognised firmware version) is also cached — it will not retry until the next hourly slot. Restarting HA resets the cache and forces an immediate re-check on the next poll.
 The result is cached between checks, so it does not generate network traffic on
 every poll.
 
