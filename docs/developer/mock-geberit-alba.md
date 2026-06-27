@@ -14,6 +14,9 @@ modes:
 For a purely in-process crypto test (no BLE hardware at all) see
 **`tests/test_arendi_security.py`** below.
 
+A demo of `--mode ble20` running against the Geberit Home app is available at
+[`docs/developer/videos/Alba-Mock-Server_with_Home-App_redacted.mp4`](videos/Alba-Mock-Server_with_Home-App_redacted.mp4).
+
 ---
 
 ## Requirements
