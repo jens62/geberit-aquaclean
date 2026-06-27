@@ -349,12 +349,16 @@ all hardware sub-models (e.g. variant 0 / kstr 250 has no lady shower or dryer).
 coordinator result. It could be stored in the config entry (alongside `CONF_DEVICE_TYPE`)
 and used to select a variant-specific frozenset.
 
-**Blocker — mapping unknown.** Only one Alba variant is confirmed:
+**Blocker — mapping unknown.** Only one Alba variant is confirmed, and it is unknown
+whether other variants exist at all. That said, it is not unlikely: `DP_DRY_RUN_MODE`
+(DpId 810), `DP_STATISTIC_COUNTER_TOTAL` instances for lady shower and dryer (DpIds 33/34),
+and the lady-shower / dryer toggle DpIds are all present in the firmware's service
+discovery — meaning the hardware was designed to support them on at least some Alba variants.
 
 | Variant | Lady shower | Dryer | Dry run mode | Confirmed by |
 |---------|------------|-------|--------------|--------------|
 | 0       | ❌          | ❌     | ❌            | MuusLee (kstr Alba 250, series=250, 2026-06-27) |
-| other   | ❓          | ❓     | ❓            | not yet reported |
+| other   | ❓          | ❓     | ❓            | no other variant reported yet |
 
 To extend the table, ask an Alba user with a different variant to answer two questions:
 
