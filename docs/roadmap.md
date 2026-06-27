@@ -796,6 +796,39 @@ cannot be put back to RS28.0 after the update.
 
 ---
 
+### Mock Mera: RC pairing follow-up — clear bond and test (from commit 2b565b0) ★ NEXT
+
+**Context:** commit 2b565b0 (2026-06-26, v1.73.0b1) added everything the RC needs to
+attempt pairing with the mock:
+- Device Information Service (0x180A) returning the real Mera version string
+- RC pairing service stub (0xC526) that the RC verifies exists before SMP
+- `btmgmt pairable on/off` toggled by the mock's button-press handler so the RC can
+  complete SMP without sending unsolicited Security Requests to the iOS app
+- "Already Exists" GATT re-registration race fixed (`_force_remove_and_reregister`)
+
+**One remaining blocker:** the RC (`B0:10:A0:68:5C:8B`) still holds a bond (LTK) with
+the real toilet (`38:AB:41:2A:0D:67`). On connect it immediately sends `LL_ENC_REQ` with
+the stored EDIV+Rand — the mock VM has no matching LTK → encryption fails → disconnect
+before GATT is reached.
+
+**Next step — clear the RC bond on raspi5** (bridge must be stopped first):
+
+```bash
+bluetoothctl remove B0:10:A0:68:5C:8B
+```
+
+After clearing: the RC has no stored LTK → performs fresh SMP with the mock → BlueZ
+handles Just Works pairing → new LTK established → ATT frames visible decrypted in btmon.
+
+**Then verify:**
+1. RC connects to mock and completes SMP pairing
+2. RC sends `SetCommand` proc 0x09 codes (ToggleLidPosition etc.) over GATT
+3. Mock responds correctly and the RC's physical buttons trigger the expected mock actions
+4. Capture with btmon to confirm decrypted ATT frames match the reference:
+   `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/toogle-lid-with-remote-without-running-bridge.md`
+
+---
+
 ### Mock Mera: pair Geberit Remote Control with mock — blocked by pre-existing bond
 
 **Goal:** connect the physical Geberit Remote Control (`B0:10:A0:68:5C:8B`) to
