@@ -482,21 +482,28 @@ If Geberit updates the bundled firmware to RS31+, the mock would need updating a
 including reconnects with a saved/existing configuration — not only on first-time onboarding.
 The real Mera never shows the Fehler after initial setup.
 
-**Hypothesis:** The app stores a per-device "firmware update flow completed/acknowledged"
-flag in persistent local storage, keyed by CRC32 of the SAP number. For the real Mera
-(`HB2304EU298413`) this flag was written once during first setup and survives across
-reconnects. For the mock (`HB2300EU000001`) the flag is never written because the mock does
-not implement the firmware update protocol (proc 0x00 / proc 0x01). The app starts the
-update flow, the mock returns zeros, the update never completes or fails cleanly, the
-completion state is never persisted → on every subsequent connect the flow re-runs →
-`GetActiveUpdateAsync()` returns null → Fehler again.
+**What the decompiled code confirmed:**
+- The app computes a `UniqueId` as CRC32 of the SAP string — the per-device key in local
+  storage (confirmed from `ProductIdentifier` source analysis).
+- `FirmwareForceUpdateViewModel` has an `_E012` instance field set to `true` after the
+  firmware update completion/failure flow. However, `_E012` is an **instance field** — it
+  resets to `false` every time the ViewModel is recreated and does NOT persist across
+  reconnects on its own.
+
+**Behavioral inference — NOT seen in decompiled code:**
+The real Mera never shows the Fehler after initial setup; the mock shows it on every connect
+including reconnects with a saved configuration. This suggests the app writes a persistent
+"update flow completed" state after proc 0x00 / proc 0x01 finish successfully. The mock
+returns zeros for those procedures; the update never completes cleanly; the persistent flag
+(if it exists) is never written → flow re-runs on every connect → Fehler. The actual
+persistence write was NOT found in the analyzed source.
 
 **What would confirm this:** Implementing proc 0x00 (ctx=0x40) and proc 0x01 (ctx=0x00)
-with the correct "update complete" byte values so the app writes the completion flag. After
-that, the Fehler should stop appearing on reconnects. The correct response values are unknown
-without a real firmware update BLE capture.
+with the correct "update complete" byte values. If the Fehler stops appearing on subsequent
+reconnects, the hypothesis is confirmed. The correct response values are unknown without a
+real firmware update BLE capture.
 
-**Status: hypothesis only** — not confirmed until proc 0x00 / 0x01 are implemented and tested.
+**Status: behavioral inference only** — not code-confirmed, not confirmed by testing.
 
 ---
 
