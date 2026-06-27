@@ -1,3 +1,6 @@
+## Memory snapshot 2026-06-27
+Active memory entries: 46  |  Pruned: 0  |  Added: `mock-firmware-all-components-rs30.md` (all _FW_COMPONENT_VERSIONS must be RS30.0 TS206 — confirmed v1.64 vs v1.74 log comparison, fixed v1.75.0b1)  |  Snapshot taken by /compress-memory
+
 ## Memory snapshot 2026-06-25
 Active memory entries: 45  |  Pruned: 1 (`feedback_prerelease_before_stable.md` — verbatim duplicate of `.claude/rules/release-process.md` MANDATORY pre-release rule)  |  Snapshot taken by /compress-memory
 
