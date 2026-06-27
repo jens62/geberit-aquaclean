@@ -811,7 +811,7 @@ the real toilet (`38:AB:41:2A:0D:67`). On connect it immediately sends `LL_ENC_R
 the stored EDIV+Rand — the mock VM has no matching LTK → encryption fails → disconnect
 before GATT is reached.
 
-**Next step — clear the RC bond on raspi5** (bridge must be stopped first):
+**Next step — clear the RC bond on the machine running mera-mock** (mock must be stopped first):
 
 ```bash
 bluetoothctl remove B0:10:A0:68:5C:8B
