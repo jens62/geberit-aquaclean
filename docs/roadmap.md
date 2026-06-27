@@ -360,7 +360,7 @@ To extend the table, ask an Alba user with a different variant to answer two que
 1. **What is your device variant?**
    Enable debug logging for `custom_components.geberit_aquaclean` in HA, trigger a poll,
    then search the log for `variant=`. The identification line looks like:
-   `series=250 variant=0 model=None name='AcAlba'`
+   `Ble20: identification — series=250 variant=0 model=None name=None fw_rs=03 sap=… product_serial=…`
 
 2. **Which of these HACS entities show a real value (not "unavailable")?**
    - `binary_sensor.*_dry_run_mode` — on/off
