@@ -297,6 +297,8 @@ for every supported model (AquaClean Mera Comfort, Mera Classic, Sela, and Alba)
 | **Cloud Firmware Release Date** | Release date of the latest cloud version |
 | **Firmware Update Available** | Binary sensor — `on` when a newer version exists |
 
+![Device Information panel showing firmware update available](hacs-device-information-firmware-update.png)
+
 The check runs once after the first Bluetooth connect and then repeats every hour.
 The result is cached between checks, so it does not generate network traffic on
 every poll.
