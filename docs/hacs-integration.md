@@ -220,6 +220,43 @@ After setup, HA registers three devices under Settings → Devices & Services:
 | Sensor (diagnostic) | **Max WiFi RSSI** — session best ESP32 WiFi signal (dBm; `Unavailable` in ETH mode) |
 | Button | Restart AquaClean Proxy |
 
+### Alba — checking which DpIds are wired
+
+The Alba uses a DpId-based protocol with 79 known data points. Not all of them are exposed as
+Home Assistant entities yet. A dedicated diagnostic sensor shows the current wiring coverage
+and lists every unwired DpId by name.
+
+**To check coverage:**
+
+1. Go to **Settings → Developer Tools → States**
+2. In the **Filter entities** box, type `dpid`
+3. Select `sensor.geberit_aquaclean_alba_dpid_coverage`
+
+The **State** column shows how many DpIds are currently wired (e.g. `47 / 79 wired`).
+
+The **Attributes** panel on the right lists every known DpId with its name and wiring status:
+
+```
+0:
+  name: DEVICE_SERIES
+  wired: false
+1:
+  name: DEVICE_VARIANT
+  wired: false
+...
+564:
+  name: ANAL_SHOWER_STATUS
+  wired: true
+```
+
+DpIds with `wired: false` are known to the protocol but not yet exposed as HA entities.
+
+![Alba DpId coverage sensor in HA Developer Tools — attributes show which DpIds are not yet wired](hacs-alba-dpid-coverage.png)
+
+If a specific DpId you need is not yet wired, open a
+[GitHub issue](https://github.com/jens62/geberit-aquaclean/issues) with the DpId number
+and what you'd like to do with it.
+
 ---
 
 ## Dashboard
