@@ -755,6 +755,47 @@ Implementation notes:
 
 ---
 
+### Mock Mera: capture real Mera firmware update — proc 0x00/0x01 protocol + Fehler hypothesis ★ NEXT
+
+**Goal:** Capture the full first-time onboarding + firmware update flow on the real Mera with
+a fresh Geberit Home App install. Answers three open questions simultaneously.
+
+**Why fresh app install (delete + reinstall on iPad):**
+With local storage cleared, the real Mera's SAP CRC32 UniqueId is unknown → app takes the
+first-time pairing path, behaving toward the real device exactly as it behaves toward the
+mock. This exposes:
+
+1. **Does the real Mera trigger the blocking firmware update UI on a genuine first-ever
+   connection?** The code path says it should (RS28.0 → `GetVersion()` null → `_E004()` true
+   → `GetActiveUpdateAsync()` finds RS30.0 Ble2V1 package → non-null → blocking UI). If it
+   does NOT → something not yet found in the source is short-circuiting the flow.
+2. **proc 0x00 (ctx=0x40) and proc 0x01 (ctx=0x00) byte sequences** — the firmware update
+   protocol the mock needs to implement to eliminate the Fehler on every reconnect.
+3. **Fehler persistence hypothesis confirmed or denied** — after the update completes,
+   reconnect. If Fehler stops → hypothesis confirmed (persistent completion flag written).
+   If Fehler continues → wrong hypothesis.
+
+**Bonus:** after the update the real Mera is at RS30.0, matching mock v1.75.0b1 exactly.
+
+**Capture checklist (Wireshark + nRF52840 on Apple Laptop):**
+1. Start Wireshark with the nRF52840 sniffer
+2. Let it scan until it shows the Mera's BLE address
+3. Click **Follow** on that address — sniffer tracks all channel hops automatically
+4. Enable continuous file saving in Wireshark (Capture → Options → Output → save to file,
+   auto-rotate every 50 MB or 5 min) as safety net against crash mid-capture
+5. Delete and reinstall Geberit Home App on iPad (clears all local storage)
+6. Open the app → onboard the real Mera → let the firmware update run to completion
+7. After update: reconnect once more to observe whether Fehler still appears
+
+**Risk:** one shot — firmware is updated regardless of capture success. The real Mera
+cannot be put back to RS28.0 after the update.
+
+**Detailed analysis background:**
+`local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md`
+§ "Fehler on every mock connect — hypothesis" and § "v1.75.0b1 empirical finding".
+
+---
+
 ### Mock Mera: pair Geberit Remote Control with mock — blocked by pre-existing bond
 
 **Goal:** connect the physical Geberit Remote Control (`B0:10:A0:68:5C:8B`) to
