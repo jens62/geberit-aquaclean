@@ -46,7 +46,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.18.6"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.19.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -162,7 +162,7 @@ class _Ble20AppLayer:
         (2,   None,  0,  9, 0,         9999999,    4, struct.pack('<I', 35225)),      # DEVICE_NUMBER (obf)
         (3,   None,  0, 13, 0,         0,          4, struct.pack('<I', 1757175271)), # DEVICE_PRODUCTION_DATE (obf)
         (4,   None,  0,  8, 0,         12,         4, b'828.860.00.X'),               # DEVICE_SAP_NUMBER (obf)
-        (8,   None,  0,  8, 2,         2,          0, b'03'),                         # FW_RS_VERSION → RS03TS89
+        (8,   None,  0,  8, 2,         2,          0, struct.pack('<I', 3)),          # FW_RS_VERSION = 3 → RS03.0 TS89
         (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
         (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
         (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (real kstr=7080; 0000 for testing)

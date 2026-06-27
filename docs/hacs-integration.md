@@ -328,6 +328,7 @@ A failed check (e.g. no internet access) is always logged at `WARNING` level and
 visible in the default log output. Look for one of these lines:
 
 ```
+WARNING ... Firmware update check: Device firmware X.Y not found in Geberit cloud
 WARNING ... Firmware cloud check failed: <reason>
 WARNING ... Firmware update check error: <reason>
 ```
