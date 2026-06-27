@@ -353,7 +353,8 @@ and used to select a variant-specific frozenset.
 
 | Variant | Lady shower | Dryer | Dry run mode | Confirmed by |
 |---------|------------|-------|--------------|--------------|
-| 0       | ❓          | ❓     | ❓            | MuusLee (kstr Alba 250, 2026-06-27) |
+| 0       | ❌          | ❌     | ❌            | MuusLee (kstr Alba 250, series=250, 2026-06-27) |
+| other   | ❓          | ❓     | ❓            | not yet reported |
 
 To extend the table, ask an Alba user with a different variant to answer two questions:
 
