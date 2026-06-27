@@ -338,6 +338,48 @@ the bridge cannot detect automatically).
 ---
 
 
+### HACS Alba: variant-based entity filtering
+
+The coordinator already filters entities by device model using `DEVICE_TYPE_FEATURE_SETS`
+(12 `FS_*` constants, one frozenset per model). Alba currently has a single feature set
+(`FS_ALBA_ONLY`) that applies to all Alba variants — some entities may not be present on
+all hardware sub-models (e.g. variant 0 / kstr 250 has no lady shower or dryer).
+
+`DP_DEVICE_VARIANT` (DpId 1) is read during identification and is available in the
+coordinator result. It could be stored in the config entry (alongside `CONF_DEVICE_TYPE`)
+and used to select a variant-specific frozenset.
+
+**Blocker — mapping unknown.** Only one Alba variant is confirmed:
+
+| Variant | Lady shower | Dryer | Dry run mode | Confirmed by |
+|---------|------------|-------|--------------|--------------|
+| 0       | ❓          | ❓     | ❓            | MuusLee (kstr Alba 250, 2026-06-27) |
+
+To extend the table, ask an Alba user with a different variant to answer two questions:
+
+1. **What is your device variant?**
+   Enable debug logging for `custom_components.geberit_aquaclean` in HA, trigger a poll,
+   then search the log for `variant=`. The identification line looks like:
+   `series=250 variant=0 model=None name='AcAlba'`
+
+2. **Which of these HACS entities show a real value (not "unavailable")?**
+   - `binary_sensor.*_dry_run_mode` — on/off
+   - `sensor.*_total_lady_shower_uses` — number > 0 or always 0?
+   - `sensor.*_total_dryer_uses` — number > 0 or always 0?
+   - `switch.*_lady_shower` — does toggling it do anything on the device?
+   - `switch.*_dryer` — same
+
+   Cross-check: **Does the Geberit Home App show a lady shower button and a dryer button
+   for your device?** If the app hides them, the hardware is absent.
+
+Once variant-to-capability data exists for 2+ variants, add variant-specific `FS_ALBA_VARIANT_X`
+constants and store the detected variant in the config entry (same mechanism as `CONF_DEVICE_TYPE`).
+
+**Precedent:** Sela support (variant=6) was confirmed by a real user in issue #27 before
+any variant-specific filtering was implemented — the same approach applies here.
+
+---
+
 ### HACS Alba: configurable DpId polling frequency
 
 `_ALBA_SLOW_POLL_EVERY = 10` is hardcoded.
