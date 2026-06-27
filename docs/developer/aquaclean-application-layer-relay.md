@@ -513,19 +513,77 @@ real-device round-trip. Cache is updated by:
 
 ---
 
-## 11 Status and Next Steps
+## 11 Mock and Development Infrastructure Performance
+
+The mocks (`tools/mock-geberit-mera.py`, `tools/mock-geberit-alba.py`) share the same
+BlueZ-based peripheral stack that the Hub peripheral side will reuse. Their observed
+latency is therefore a direct proxy for the Hub's own peripheral-side round-trip budget.
+
+### 11.1 Measured Latency
+
+Confirmed timing from `mock-geberit-mera_2026-06-25_07-22.log` (v1.57.0b1), Geberit
+Home App v2.14.1:
+
+| Environment | Per-request latency | 60-request sequence |
+|---|---|---|
+| Real device (hardware BLE) | ~100 ms | ~6 s |
+| Mock — UTM VM + USB-BT500 + BlueZ | ~1,000 ms | ~60 s |
+
+Practical consequence: the "Remote Control" screen takes ~60 s to open against the mock;
+~6 s against a real device.
+
+### 11.2 Root Cause — UTM VM USB Passthrough
+
+The dominant bottleneck is virtualisation, not BlueZ itself. Every ATT write→notify
+round-trip crosses:
+
+```
+Mac host → USB passthrough → UTM VM → BlueZ → HCI → USB → radio
+                                                            ↕
+iOS       ← USB ← BlueZ ← VM ← USB passthrough ← Mac ← radio
+```
+
+BlueZ on bare-metal Linux does not have the VM and USB-passthrough hops, and is not the
+primary source of latency.
+
+### 11.3 Infrastructure Options
+
+| Option | Code changes | Expected latency | Notes |
+|--------|-------------|-----------------|-------|
+| **Bare-metal Linux (Raspberry Pi)** | None | ~100–200 ms | Plug USB-BT500 directly into Pi; BlueZ runs natively. Fastest path to a usable mock. |
+| nRF52840 as HCI dongle on bare-metal Pi | None | ~80–150 ms | Flash Zephyr `hci_usb` sample firmware onto an nRF52840 USB dongle (e.g. Nordic PCA10059); BlueZ sees it as a standard `/dev/hciX` adapter. More deterministic at the controller level, lower jitter. BlueZ/D-Bus still in the path — not significantly faster than Pi + USB-BT500. **Note:** the PCA10059 already used for BLE captures runs nRF Sniffer firmware — the two roles are mutually exclusive on the same dongle; a second unit or a reflash is required. Adapter swap only helps on bare-metal Linux — inside a UTM VM the USB-passthrough latency dominates regardless of adapter. |
+| macOS CoreBluetooth peripheral | Full rewrite of peripheral layer | ~50–150 ms | `bluez_peripheral` is BlueZ-specific; requires `pyobjc` or Swift helper. Several days of work. |
+| nRF52840 native Zephyr firmware | Port entire mock to C | ~15–30 ms | Connection-interval limited only. Arendi ECDH/AES-CTR must be ported to C (PSA Crypto / CryptoCell CC310). Loses Python flexibility. Not justified for a test mock. |
+
+**Recommendation:** move the mock from UTM VM to a Raspberry Pi (Option 1). Zero code
+changes; the USB-BT500 plugs straight in. The 60-second delay drops to ~6–12 seconds —
+comparable to real hardware. If marginal further improvement is needed, swap the adapter
+for an nRF52840-based HCI dongle (Option 2), still with no code changes.
+
+The nRF52840 native option (Option 4) is only worth considering if the mock needs to run
+as a permanent embedded fixture rather than a developer testing tool.
+
+### 11.4 Implication for Hub Production Deployment
+
+The Hub itself runs on bare-metal Linux (UTM VM is a development-only constraint). On a
+Raspberry Pi or any native Linux host, the peripheral-side latency will be in the
+100–200 ms range — well within the threshold for imperceptible user response.
+
+---
+
+## 12 Status and Next Steps
 
 **Status:** Architecture defined. Implementation not yet started.
 
-### 11.1 Immediate Next Steps (Unlocking Information)
+### 12.1 Immediate Next Steps (Unlocking Information)
 
 | Step | Action | Outcome |
 |------|--------|---------|
-| ~~11.1.1~~ | ~~Sniffer capture of Mera remote~~ | **Done 2026-06-19** — remote uses BLE LL encryption; sniffer cannot reveal ATT. See section 8.4. |
-| 11.1.2 | keyset_id=1 experiment in mock (section 7.2.3) | Tests Alba remote PSK hypotheses |
-| 11.1.3 | Mera: pair remote with Hub peripheral on UTM VM, capture via btmon (section 8.5) | Reveals Mera remote application protocol in plaintext |
+| ~~12.1.1~~ | ~~Sniffer capture of Mera remote~~ | **Done 2026-06-19** — remote uses BLE LL encryption; sniffer cannot reveal ATT. See section 8.4. |
+| 12.1.2 | keyset_id=1 experiment in mock (section 7.2.3) | Tests Alba remote PSK hypotheses |
+| 12.1.3 | Mera: pair remote with Hub peripheral on UTM VM, capture via btmon (section 8.5) | Reveals Mera remote application protocol in plaintext |
 
-### 11.2 Implementation Order (Once Unblocked)
+### 12.2 Implementation Order (Once Unblocked)
 
 | Phase | What | Depends On |
 |-------|------|-----------|
@@ -536,7 +594,7 @@ real-device round-trip. Cache is updated by:
 | 5 | HACS REST-mode integration (~100–150 lines) | Phase 4 |
 | 6 | keyset_id=1 (Remote support) | PSK resolved (section 7.2) |
 
-### 11.3 Related Files
+### 12.3 Related Files
 
 | File | Relevance |
 |------|-----------|
