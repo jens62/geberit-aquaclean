@@ -476,6 +476,30 @@ If Geberit updates the bundled firmware to RS31+, the mock would need updating a
 
 ---
 
+## Fehler on every mock connect — hypothesis (unconfirmed)
+
+**Observation (2026-06-27):** The "Fehler" popup appears on every connect to the mock,
+including reconnects with a saved/existing configuration — not only on first-time onboarding.
+The real Mera never shows the Fehler after initial setup.
+
+**Hypothesis:** The app stores a per-device "firmware update flow completed/acknowledged"
+flag in persistent local storage, keyed by CRC32 of the SAP number. For the real Mera
+(`HB2304EU298413`) this flag was written once during first setup and survives across
+reconnects. For the mock (`HB2300EU000001`) the flag is never written because the mock does
+not implement the firmware update protocol (proc 0x00 / proc 0x01). The app starts the
+update flow, the mock returns zeros, the update never completes or fails cleanly, the
+completion state is never persisted → on every subsequent connect the flow re-runs →
+`GetActiveUpdateAsync()` returns null → Fehler again.
+
+**What would confirm this:** Implementing proc 0x00 (ctx=0x40) and proc 0x01 (ctx=0x00)
+with the correct "update complete" byte values so the app writes the completion flag. After
+that, the Fehler should stop appearing on reconnects. The correct response values are unknown
+without a real firmware update BLE capture.
+
+**Status: hypothesis only** — not confirmed until proc 0x00 / 0x01 are implemented and tested.
+
+---
+
 ## Open questions
 
 1. **What are `arg1` and `arg2` in `GetFirmwareVersionList`?**
