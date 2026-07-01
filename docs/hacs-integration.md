@@ -490,6 +490,9 @@ Useful when reporting a bug — attach the saved log file to the GitHub issue.
 
 #### HA core log
 
+> **Precondition:** The **Terminal & SSH** add-on must be installed and running on your Home Assistant instance.
+> Install it via **Settings → Add-ons → Add-on Store**, search for `Terminal & SSH` (by Home Assistant), set a password in the Configuration tab, set the SSH port to `22`, enable **Start on boot**, and start it. The username is `root`.
+
 **Windows PowerShell:**
 
 ```powershell
