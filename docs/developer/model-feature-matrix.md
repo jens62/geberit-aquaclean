@@ -7,6 +7,11 @@ All models in this document use the **AquaClean protocol** (proc 0x82, 0x0D, 0x0
 0x51, …) over the Standard GATT profile (`3334429d-…`). They are identified as variant
 codes of the **AquacleanOld** device series in proc 0x82 `GetDeviceIdentification`.
 
+**Tuma Comfort and Mera Comfort share the same GATT UUIDs and the same protocol.** The
+bridge code connects to and operates a Tuma Comfort without modification. The only
+differences are two missing hardware features: no orientation light and no lid approach
+sensor (auto open/close). See [Bridge gaps for Tuma Comfort](#bridge-gaps-for-tuma-comfort).
+
 ---
 
 ## Proc 0x82 variant byte → device type
@@ -128,7 +133,7 @@ factory — does NOT work on any other model.
 | 8 | DryerTemperature | ✅ | ✅ | ❌ no dryer |
 | 9 | DryerState | ✅ | ✅ | ❌ no dryer |
 | 10 | SystemFlush | ✅ | ✅ | ✅ |
-| 11 | SeatHeating | ❌ Tuma Comfort only | ❌ | ❌ |
+| 11 | SeatHeating | ❌ not on Mera Comfort | ❌ | ❌ |
 | 12 | WaterHeating | ✅ | ❌ no heater | ❌ |
 | 13 | DryerFanPower | ✅ (fw ≥20) | ✅ (fw ≥20) | ❌ no dryer |
 | 14 | LadyOscillation | ✅ | ✅ | ✅ |
@@ -210,3 +215,21 @@ Sela works with the bridge but several features are not exposed:
 | Bridge exposes OdourExtraction command | Sela has no OE — command ignored | Cosmetic; low priority |
 | Bridge reads DryerTemperature/DryerState profile settings | Returns 0 on Sela | Low priority |
 | Bridge reads OdourExtraction profile setting (ID 0) | Returns 0 on Sela | Low priority |
+
+---
+
+## Bridge gaps for Tuma Comfort
+
+Tuma Comfort uses the same GATT UUIDs and AquacleanOld protocol as Mera Comfort — the
+bridge connects and all core functions (shower, dryer, lid, flush, descaling, filter) work
+correctly out of the box. The gaps below are cosmetic or expose non-existent hardware.
+
+| Gap | Impact | Fix needed |
+|-----|--------|------------|
+| **ProfileSettings ID 11 (`SeatHeating`) not read or exposed** | Tuma Comfort-only setting not surfaced in bridge / HACS | Add ID 11 to profile settings reads for Tuma Comfort |
+| Bridge exposes orientation light commands (proc 0x0B, CommonSettings IDs 1–3) | Tuma Comfort has no orientation light hardware; reads return 0, writes harmless | Cosmetic; low priority |
+| Bridge exposes `LidSensorRange` (CS 4), `LidAutoOpen` (CS 6), `LidAutoClose` (CS 7) | Tuma Comfort has no lid approach sensor; reads return 0 | Cosmetic; low priority |
+
+Note: `WcSeatHeat` (ProfileSettings ID 7 — seat temperature) is present on Tuma Comfort
+just as on Mera Comfort. `SeatHeating` (ID 11) is a separate Tuma Comfort-only setting
+(seat heating toggle / mode), not a duplicate.
