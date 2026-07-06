@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
 )
+from .coordinator import _get_proxy_lock
 
 
 # Known AquaClean Alba (Variant A / Ble20) GATT characteristic UUIDs.
@@ -96,41 +98,47 @@ async def _test_connection(
     from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
     from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
 
-    connector = BluetoothLeConnector(esphome_host, esphome_port, noise_psk, hass=hass)
-    client = AquaCleanClientFactory(connector).create_client()
-    try:
-        await client.connect_ble_only(device_id)
-        _LOGGER.info("[AquaClean] Config flow: connection test succeeded")
-        profile = connector.get_gatt_profile()
-        profile.dis_info = connector.ble_dis_info
-        profile.arendi_handshake_done = connector.arendi_handshake_done
-        _LOGGER.info(
-            "[AquaClean] Config flow: GATT profile — is_standard=%s arendi_ok=%s svc_uuid=%s dis=%s",
-            profile.is_standard, profile.arendi_handshake_done, profile.svc_uuid, profile.dis_info,
-        )
-        return profile
-    except Exception:
-        # connect_ble_only() may have partially succeeded: BLE connected but
-        # subscribe_notifications_async() failed because the device uses a
-        # non-standard GATT profile (e.g. AquaClean Alba).  In that case
-        # connector.client is still set and we can read the GATT services to
-        # return a useful unsupported_device abort instead of cannot_connect.
-        profile = connector.get_gatt_profile()
-        profile.dis_info = connector.ble_dis_info
-        if not profile.is_standard:
-            _LOGGER.warning(
-                "[AquaClean] Config flow: BLE connected but non-standard GATT profile "
-                "detected after init failure — svc=%s write=%s notify=%s dis=%s",
-                profile.svc_uuid, profile.write_uuids, profile.notify_uuids, profile.dis_info,
-                exc_info=True,
+    # Serialize against any coordinator already polling another device on the same
+    # ESP32 proxy — the firmware only allows one BLE advertisement subscription at a
+    # time (see CLAUDE.md trap 12). Without this, testing/adding a second device on a
+    # shared proxy can race an existing coordinator's poll cycle.
+    proxy_ctx = _get_proxy_lock(esphome_host) if esphome_host else contextlib.nullcontext()
+    async with proxy_ctx:
+        connector = BluetoothLeConnector(esphome_host, esphome_port, noise_psk, hass=hass)
+        client = AquaCleanClientFactory(connector).create_client()
+        try:
+            await client.connect_ble_only(device_id)
+            _LOGGER.info("[AquaClean] Config flow: connection test succeeded")
+            profile = connector.get_gatt_profile()
+            profile.dis_info = connector.ble_dis_info
+            profile.arendi_handshake_done = connector.arendi_handshake_done
+            _LOGGER.info(
+                "[AquaClean] Config flow: GATT profile — is_standard=%s arendi_ok=%s svc_uuid=%s dis=%s",
+                profile.is_standard, profile.arendi_handshake_done, profile.svc_uuid, profile.dis_info,
             )
             return profile
-        raise
-    finally:
-        try:
-            await connector.disconnect()
         except Exception:
-            pass
+            # connect_ble_only() may have partially succeeded: BLE connected but
+            # subscribe_notifications_async() failed because the device uses a
+            # non-standard GATT profile (e.g. AquaClean Alba).  In that case
+            # connector.client is still set and we can read the GATT services to
+            # return a useful unsupported_device abort instead of cannot_connect.
+            profile = connector.get_gatt_profile()
+            profile.dis_info = connector.ble_dis_info
+            if not profile.is_standard:
+                _LOGGER.warning(
+                    "[AquaClean] Config flow: BLE connected but non-standard GATT profile "
+                    "detected after init failure — svc=%s write=%s notify=%s dis=%s",
+                    profile.svc_uuid, profile.write_uuids, profile.notify_uuids, profile.dis_info,
+                    exc_info=True,
+                )
+                return profile
+            raise
+        finally:
+            try:
+                await connector.disconnect()
+            except Exception:
+                pass
 
 
 def _normalise(user_input: dict) -> dict:

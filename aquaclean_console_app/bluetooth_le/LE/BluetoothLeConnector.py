@@ -20,6 +20,19 @@ from typing import Dict, Callable
 
 logger = logging.getLogger(__name__)
 
+# Per-ESPHome-host registry of the most recent advertisement-subscription unsub
+# callable, shared across BluetoothLeConnector instances. The ESP32 firmware only
+# allows one BLE advertisement subscription at a time across ALL TCP connections
+# (CLAUDE.md trap 12). A single instance's own _esphome_unsub_adv only covers
+# reuse by that same instance (e.g. a persistent coordinator connector polling
+# repeatedly); it is invisible to a *different* connector instance (e.g. another
+# device's coordinator, or a config-flow connection test) sharing the same host.
+# Safe to release cross-instance ONLY when the caller holds that host's proxy
+# lock (see coordinator._get_proxy_lock / config_flow._test_connection) — that
+# guarantees the previous holder's BLE session has already finished and only the
+# deliberately-retained subscription flag remains.
+_host_pending_adv_unsub: Dict[str, Callable] = {}
+
 
 class ESPHomeConnectionError(Exception):
     """Raised when the app cannot reach the ESP32 API (TCP port 6053).
@@ -441,6 +454,14 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except Exception as e:
             logger.debug(f"Failed to read ESP32 diagnostic sensors: {e}")
 
+    def _clear_esphome_unsub_adv(self):
+        """Null self._esphome_unsub_adv and drop the shared per-host registry entry
+        if it still points at our own callable (another connector may have already
+        replaced it — see _host_pending_adv_unsub)."""
+        if _host_pending_adv_unsub.get(self.esphome_host) is self._esphome_unsub_adv:
+            _host_pending_adv_unsub.pop(self.esphome_host, None)
+        self._esphome_unsub_adv = None
+
     async def _connect_via_esphome(self, device_id):
         from aquaclean_console_app.bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
 
@@ -457,7 +478,19 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 logger.debug("Cleaned up leftover advertisement subscription before scan")
             except Exception as e:
                 logger.debug(f"Advertisement unsubscribe (pre-scan cleanup): {e}")
-            self._esphome_unsub_adv = None
+            self._clear_esphome_unsub_adv()
+
+        # Cross-instance cleanup: another connector (e.g. a different device's
+        # coordinator, or an earlier config-flow test) sharing this same ESP32 host
+        # may have left its own subscription open — see _host_pending_adv_unsub
+        # comment above for why this is safe here.
+        _leftover_unsub = _host_pending_adv_unsub.pop(self.esphome_host, None)
+        if _leftover_unsub is not None:
+            try:
+                _leftover_unsub()
+                logger.debug("Cleaned up leftover advertisement subscription from another connector before scan")
+            except Exception as e:
+                logger.debug(f"Advertisement unsubscribe (cross-instance pre-scan cleanup): {e}")
 
         try:
             api = await self._ensure_esphome_api_connected()
@@ -497,6 +530,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         # ESP32 that blocks the next bridge startup with "Only one API subscription
         # is allowed at a time".
         self._esphome_unsub_adv = unsub_adv
+        _host_pending_adv_unsub[self.esphome_host] = unsub_adv
         try:
             await asyncio.wait_for(found_event.wait(), timeout=self.SCAN_TIMEOUT_S)
             logger.debug(
@@ -505,7 +539,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             )
         except asyncio.TimeoutError:
             unsub_adv()
-            self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
+            self._clear_esphome_unsub_adv()  # already called; prevent double-unsubscribe in disconnect()
             # Log unique addresses seen — helps diagnose MAC format mismatches or missing advertisements
             top = sorted(seen_addresses.items(), key=lambda x: -x[1])[:8]
             addr_strs = ", ".join(f"{a:#014x}({c})" for a, c in top)
@@ -543,7 +577,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except Exception as e:
             logger.warning(f"BLE connection failed with address_type={address_type}: {e}")
             unsub_adv()
-            self._esphome_unsub_adv = None
+            self._clear_esphome_unsub_adv()
             raise
 
         self.last_ble_ms = int((time.perf_counter() - t_ble) * 1000)
@@ -944,7 +978,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                         # guaranteed by the asyncio transport contract.
                     except Exception:
                         pass
-                    self._esphome_unsub_adv = None
+                    self._clear_esphome_unsub_adv()
                 if self._esphome_api is not None:
                     try:
                         _disc = self._esphome_api.disconnect()  # sync in newer aioesphomeapi
@@ -973,7 +1007,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                     self._esphome_unsub_adv()
                 except Exception:
                     pass
-                self._esphome_unsub_adv = None
+                self._clear_esphome_unsub_adv()
             if self._esphome_api is not None:
                 try:
                     _disc = self._esphome_api.disconnect()  # sync in newer aioesphomeapi
@@ -991,7 +1025,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 self._esphome_unsub_adv()
             except Exception:
                 pass
-            self._esphome_unsub_adv = None
+            self._clear_esphome_unsub_adv()
 
         # Reset Arendi Security state so the next connect gets a fresh handshake
         self._arendi_security = None
