@@ -1,3 +1,6 @@
+## Memory snapshot 2026-06-27 (session 2)
+Active memory entries: 46  |  Pruned: 1 (`hacs-pre-release-checklist.md` — explicitly OBSOLETE, v3.1.2 released)  |  Updated: `alba-esphome-probe-status.md` (branch merged in v3.1.0, not "NOT merged to main"), `mock-alba-jetzt-verbinden.md` (description version 2.17.0 → 2.19.0)  |  Added MEMORY.md inline: Alba variant=0 mapping confirmed  |  Snapshot taken by /compress-memory
+
 ## Memory snapshot 2026-06-27
 Active memory entries: 46  |  Pruned: 0  |  Added: `mock-firmware-all-components-rs30.md` (all _FW_COMPONENT_VERSIONS must be RS30.0 TS206 — confirmed v1.64 vs v1.74 log comparison, fixed v1.75.0b1)  |  Snapshot taken by /compress-memory
 
