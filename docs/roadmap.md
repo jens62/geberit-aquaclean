@@ -357,7 +357,7 @@ discovery — meaning the hardware was designed to support them on at least some
 
 | Variant | Lady shower | Dryer | Dry run mode | Confirmed by |
 |---------|------------|-------|--------------|--------------|
-| 0       | ❌          | ❌     | ❌            | MuusLee (kstr Alba 250, series=250, 2026-06-27) |
+| 0       | ❌          | ❌     | ❌            | MuusLee (kstr Alba 250, series=250, 2026-06-27); eodabas (series=250, 3 devices: SB2501EU139773/139775/139776, 2026-06-29) |
 | other   | ❓          | ❓     | ❓            | no other variant reported yet |
 
 To extend the table, ask an Alba user with a different variant to answer two questions:
@@ -382,6 +382,35 @@ constants and store the detected variant in the config entry (same mechanism as 
 
 **Precedent:** Sela support (variant=6) was confirmed by a real user in issue #27 before
 any variant-specific filtering was implemented — the same approach applies here.
+
+---
+
+### Wire DP_WATER_HARDNESS as a new HACS sensor
+
+`DP_WATER_HARDNESS` (DpId 587) already exists in `dp_ids.py` but is not currently read by
+any client or exposed as an entity. Confirmed from application source analysis (app v2.14.2)
+that this is how Alba/Ble20 devices expose water hardness — a separate mechanism from the
+CommonSetting proc 0x51/0x52 ID 0 `WaterHardness` used by AquacleanOld devices (Mera/Sela/etc).
+See `docs/developer/model-feature-matrix.md` → "Other `GeberitDeviceType` values".
+
+**Wiring, following the existing descaling-group pattern:**
+1. `AlbaBaseClient.get_misc_state_async()` (`aquaclean_console_app/aquaclean_core/Clients/AlbaBaseClient.py`) —
+   add `result["water_hardness"] = await _u32(DpId.DP_WATER_HARDNESS)` alongside the other
+   descaling-adjacent reads (next to `DP_DAYS_UNTIL_NEXT_DESCALING` / `DP_DESCALING_CYCLES`).
+   Static value — no need to add it to the fast-poll subset (`get_misc_state_fast_async()`).
+2. `custom_components/geberit_aquaclean/coordinator.py` — add
+   `"alba_water_hardness": misc.get("water_hardness")` next to the existing
+   `alba_days_until_next_descaling` / `alba_descaling_cycles` lines (~line 864-865).
+3. `custom_components/geberit_aquaclean/sensor.py` — add a new entry to the sensor
+   descriptions tuple next to the existing `alba_descaling_cycles` row (~line 71):
+   `("alba_water_hardness", "Water Hardness", None, None, SensorStateClass.MEASUREMENT, "mdi:water-opacity")  # DpId 587`
+   (unit/icon TBD once a real device confirms the value's scale/range — check whether it's
+   raw ° dH or an enum like the CommonSetting version, which uses raw 0–2 range).
+
+Also update `homeassistant/configuration_mqtt.yaml` and `get_ha_discovery_configs()` in
+`main.py` if this is ever surfaced via MQTT too (per naming-conventions.md MQTT↔HA sync rule)
+— but this is Alba/HACS-only for now, so likely not needed unless the standalone bridge
+gains Alba support.
 
 ---
 
@@ -717,6 +746,37 @@ page flicker.
 - Remove `<meta http-equiv="refresh">`.
 
 **Effort:** ~50 lines. No new dependencies (`sse-starlette` already available).
+
+---
+
+### Add DpId 587 to mock-geberit-alba.py's `_DEFAULT_STORE`
+
+`DP_WATER_HARDNESS` (DpId 587) is confirmed missing from `_DEFAULT_STORE` — the table jumps
+straight from 585 (`DESCALING_STATUS`) to 588 (`UNACCOUNTED_SHOWER_CYCLES`), skipping 587
+entirely (586 is handled separately as the instanced `DESCALING_PROGRESS`). App v2.14.2 adds
+a `WaterHardnessViewModel` (Alba/Ble20 "NewAquaClean" tree) reachable from Maintenance →
+Descaling → Water Hardness that reads this DpId directly — see
+`docs/developer/model-feature-matrix.md` → "Other `GeberitDeviceType` values". Against the
+current mock, opening that screen returns `InvalidId` instead of a value.
+
+**Fix:** add a row to `_DEFAULT_STORE`, following the neighboring descaling-group entries'
+format `(dp_id, inst, ver, dt, min_s, max_s, behavior, value)`:
+
+```python
+(587, None,  0, 10, 0,         2,          1, b'\x01'),  # WATER_HARDNESS = 1 (Level 2 of 3)
+```
+
+**Caveats:**
+- Real device metadata (datatype/behavior/min/max) for DpId 587 is unconfirmed — 587 is not
+  covered in `docs/developer/alba-dpid-reference.md`'s probe results. The row above assumes
+  a 3-level enum (0–2), matching the CommonSetting `WaterHardness` semantics documented for
+  AquacleanOld devices in `.claude/rules/ble-protocol.md`. Verify against a real Alba capture
+  if one becomes available, and correct `dt`/`max_s` if wrong.
+- **Default value `1`, not `0`** — deliberate, matching the existing precedent from
+  `mock-geberit-mera.md` where CommonSetting `WaterHardness=0` triggered a real app crash
+  (`ArgumentOutOfRangeException` on the dashboard segmented control, "Fehler" popup, fixed
+  in mock v1.63.0b1 by defaulting to `1`). Apply the same defensive default here in case the
+  app's Alba-side water-hardness UI has the same off-by-one assumption.
 
 ---
 

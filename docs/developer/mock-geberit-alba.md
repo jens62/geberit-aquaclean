@@ -143,6 +143,34 @@ Use this MAC in all test invocations.
 
 ---
 
+## Running two mock instances (simulating two Geberit devices on one shared proxy)
+
+By default the mock binds to the first Bluetooth adapter BlueZ reports. Use
+`--adapter <hci_name>` to pin it to a specific adapter instead, so two mock
+processes on the **same host** can run simultaneously against two different
+USB BT dongles — e.g. to reproduce/verify the ESP32 shared-proxy subscription
+race fixed for two Geberit devices behind one `aquaclean-proxy` (see
+`.claude/rules/ble-connection-modes.md` trap 12).
+
+```bash
+# Terminal 1 — first dongle
+sudo /home/jens/venv/bin/python tools/mock-geberit-alba.py --mode ble20 --adapter hci0
+
+# Terminal 2 — second dongle
+sudo /home/jens/venv/bin/python tools/mock-geberit-alba.py --mode ble20 --adapter hci1 --web-port 8766
+```
+
+- `--web-port` must differ between instances in `--mode ble20` (the NOTIFY
+  control web UI defaults to port 8765 and would otherwise collide).
+- List available adapter names with `bluetoothctl list` or `hciconfig -a`.
+- If `--adapter` doesn't match any BlueZ node, the mock prints the available
+  adapter names and exits before touching D-Bus.
+- Both mock devices need to be within BLE range of the **same** ESPHome proxy
+  to reproduce the shared-subscription scenario; add both as separate HACS
+  config entries pointing at that one `esphome_host`.
+
+---
+
 ## Mode: `--mode handshake` — testing Alba decryption
 
 ### What it tests

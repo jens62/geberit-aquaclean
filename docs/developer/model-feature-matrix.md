@@ -188,6 +188,31 @@ set.
 
 ---
 
+## Other `GeberitDeviceType` values seen in app source (not AquacleanOld variant-byte devices)
+
+These are separate product lines/enum values confirmed from vendor application source
+analysis (app v2.14.1 vs v2.14.2 diff) — none of them use the proc-0x82 variant-byte
+scheme documented above, and none are currently supported by this bridge.
+
+| `GeberitDeviceType` | Value | Notes |
+|---|---|---|
+| `AcTopComfort` (AcTop) | 16 | Enum value present unchanged since v2.14.1 (not new), but app **v2.14.2** adds the first real UI for it: dedicated cleaning/descaling state machine (steps: Error, Disabled, Ready, SprayArmExtending, CleaningNozzle, SprayArmRetracting, CleaningOpening, SprayArmReturning) and a shower personal-settings screen. Appears to be a nozzle self-cleaning toilet lid product, distinct from the AquacleanOld family and from Alba/Ble20. Protocol/transport for AcTop is unconfirmed — not yet BLE-sniffed. AcTop's light/odour-extraction scheduling uses `MonolithTimeSlotModel` (renamed from `Ble20TimeSlotModel` in v2.14.2, fields unchanged) — i.e. it shares a scheduling data model with **Monolith** (a mirror-cabinet fixture), not with Alba/Ble20. |
+| `AcAlbaWifi` | 17 | Exists unchanged in both v2.14.1 and v2.14.2 — not previously documented in this project. Name implies a WiFi-connected Alba variant. No app UI or protocol code was touched by the v2.14.2 diff, so likely unreleased/future hardware. |
+| `Gateway` | 109 | App v2.14.2 adds a mock harness (`GatewayFunctions`, trivial body — just starts an RTC time updater) for this type. Notable alongside a second v2.14.2 change: the HDLC/COBS/CRC16 framing engine (the same one underlying Alba/Ble20 `TunnelDataExchange`/SABM — see `alba-tunnel-data-exchange.md`) moved out of the Bluetooth-specific vendor assembly into the shared Core assembly. Together these hint that Geberit may be building a non-BLE-transport home-gateway hub reusing the same Arendi HDLC/COBS framing stack. Speculative — watch future app versions. |
+
+**Water hardness on Alba/Ble20 devices** is read via a dedicated DpId (`DP_DESCALING_WATER_HARDNESS`
+in app source; DpId 587, already present in this bridge as `DP_WATER_HARDNESS` in `dp_ids.py`
+but not currently read or exposed by any client) — **not** via the CommonSetting proc
+0x51/0x52 ID 0 mechanism (`WaterHardness`) used by the AquacleanOld devices in the tables
+above. Two separate mechanisms for the same concept, one per protocol family.
+
+**DpId migration subsystem**: app v2.14.2 adds `DpMigration`/`DpMigrationEntry`/
+`DpMigrationException` — a mechanism for remapping DpId values across firmware versions.
+Relevant if a future Alba/Ble20 firmware update appears to silently change a DpId's
+meaning; worth checking this mechanism before assuming a protocol regression.
+
+---
+
 ## Bridge gaps for Mera Classic
 
 The bridge works correctly out of the box for Mera Classic. No SPL changes needed.
