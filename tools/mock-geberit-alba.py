@@ -1024,20 +1024,49 @@ class BatteryService(Service):
 # Helper functions
 # ---------------------------------------------------------------------------
 
-async def find_first_adapter_path_and_address(bus):
-    """Use ObjectManager to find the first Adapter1 path and Address."""
+async def select_adapter(bus, adapter_name: str | None):
+    """Find a Bluetooth adapter via ObjectManager: the one matching adapter_name
+    (BlueZ node name, e.g. "hci1"), or the first available adapter if
+    adapter_name is None. Lets two mock instances run on the same host against
+    two different USB BT dongles (e.g. to simulate two Geberit devices sharing
+    one ESPHome proxy — see docs/developer/mock-geberit-alba.md).
+
+    Returns (adapter_wrapper, adapter_path, adapter_address, objmgr).
+    Raises ValueError if adapter_name is given but no matching adapter is found.
+    """
     introspection = await bus.introspect('org.bluez', '/')
     proxy = bus.get_proxy_object('org.bluez', '/', introspection)
     objmgr = proxy.get_interface('org.freedesktop.DBus.ObjectManager')
     managed = await objmgr.call_get_managed_objects()
+
+    candidates = []  # (path, address)
     for path, ifaces in managed.items():
         if 'org.bluez.Adapter1' in ifaces:
-            adapter_props = ifaces['org.bluez.Adapter1']
-            addr = adapter_props.get('Address')
+            addr = ifaces['org.bluez.Adapter1'].get('Address')
             if isinstance(addr, Variant):
                 addr = addr.value
-            return path, addr, objmgr
-    return None, None, objmgr
+            candidates.append((path, addr))
+
+    if not candidates:
+        return None, None, None, objmgr
+
+    if adapter_name:
+        target_path = f'/org/bluez/{adapter_name}'
+        match = next((c for c in candidates if c[0] == target_path), None)
+        if match is None:
+            available = ", ".join(p.rsplit('/', 1)[-1] for p, _ in candidates)
+            raise ValueError(
+                f"Adapter '{adapter_name}' not found. Available adapters: {available or 'none'}"
+            )
+    else:
+        match = candidates[0]
+
+    adapter_path, adapter_address = match
+    adapter_introspection = await bus.introspect('org.bluez', adapter_path)
+    adapter_proxy = bus.get_proxy_object('org.bluez', adapter_path, adapter_introspection)
+    adapter_wrapper = Adapter(adapter_proxy)
+
+    return adapter_wrapper, adapter_path, adapter_address, objmgr
 
 
 async def safe_call(obj, method_name, *args, **kwargs):
@@ -1061,7 +1090,7 @@ async def safe_call(obj, method_name, *args, **kwargs):
 # Main
 # ---------------------------------------------------------------------------
 
-async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
+async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765, adapter_name: str | None = None):
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     # Suppress the noisy "does not have property TxPower" error from dbus_next.
@@ -1083,22 +1112,24 @@ async def main(mode: str, send_delay_sec: float = 0.0, web_port: int = 8765):
     # resumes unencrypted writes immediately. Both DpId=8 and DpId=9 arrive fine.
     _agent_mgr = None
 
-    adapter_wrapper = await Adapter.get_first(bus)
-    if adapter_wrapper:
-        print("Adapter wrapper obtained from bluez_peripheral.")
-    else:
-        print("No Bluetooth adapter wrapper found via bluez_peripheral.Adapter.get_first()")
-
     objmgr = None
+    adapter_wrapper = None
+    adapter_path = None
+    adapter_address = None
     try:
-        adapter_path, adapter_address, objmgr = await find_first_adapter_path_and_address(bus)
+        adapter_wrapper, adapter_path, adapter_address, objmgr = await select_adapter(bus, adapter_name)
+        if adapter_wrapper:
+            print(f"Adapter wrapper obtained from bluez_peripheral ({adapter_path}).")
+        else:
+            print("No Bluetooth adapter found via ObjectManager.")
         print("Adapter DBus path:", adapter_path)
         print("Adapter BLE address:", adapter_address,
               "(controller identity — BlueZ may advertise with a random/rotating address on-air; run 'sudo btmon' to see the actual transmitted address)")
+    except ValueError as e:
+        print(f"Adapter selection failed: {e}")
+        return
     except Exception as e:
         print("Could not read adapter path/address via ObjectManager:", e)
-        adapter_path = None
-        adapter_address = None
 
     # Set the BlueZ adapter alias so GATT 0x2a00 (GAP Device Name) returns "AC250"
     # instead of the system hostname.  iOS reads this after the Arendi protocol completes.
@@ -1764,11 +1795,20 @@ Test sequence:
         help="Print raw ATT hex for every BLE write (default: suppressed). "
              "Useful for HDLC parsing debugging; normally too noisy.",
     )
+    parser.add_argument(
+        "--adapter",
+        default=None,
+        metavar="HCI_NAME",
+        help="BlueZ adapter node name to bind to (e.g. 'hci1'). Default: first "
+             "adapter found. Use this to run two mock instances simultaneously "
+             "on one host, one per USB BT dongle — e.g. to simulate two Geberit "
+             "devices sharing a single ESPHome proxy.",
+    )
     args = parser.parse_args()
 
     _VERBOSE = args.verbose
 
     try:
-        asyncio.run(main(args.mode, send_delay_sec=args.send_delay / 1000.0, web_port=args.web_port))
+        asyncio.run(main(args.mode, send_delay_sec=args.send_delay / 1000.0, web_port=args.web_port, adapter_name=args.adapter))
     except KeyboardInterrupt:
         print("\nInterrupted by user. Exiting.")
