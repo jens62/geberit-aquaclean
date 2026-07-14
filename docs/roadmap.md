@@ -863,44 +863,159 @@ Implementation notes:
 
 ---
 
-### Mock Mera: capture real Mera firmware update — proc 0x00/0x01 protocol + Fehler hypothesis ★ NEXT
+### Mock Mera: real Mera firmware update captured and decoded (2026-07-14) ✅ DONE
 
-**Goal:** Capture the full first-time onboarding + firmware update flow on the real Mera with
-a fresh Geberit Home App install. Answers three open questions simultaneously.
+**Captured:** dual nRF52840 sniffer (Mac + Windows, cross-validated) covering a genuine
+RS28.0 → RS30.0 update on the real Mera, plus a full-session Charles HAR (10:16–10:35).
+Files: `local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/`
+(`firmware-update-vom-mac.md` / `firmware-update-von-windows.md` — decoded via
+`tools/nrf-ble-analyze.py --markdown`).
 
-**Why fresh app install (delete + reinstall on iPad):**
-With local storage cleared, the real Mera's SAP CRC32 UniqueId is unknown → app takes the
-first-time pairing path, behaving toward the real device exactly as it behaves toward the
-mock. This exposes:
+**Question 1 — does the real Mera trigger the blocking update on genuine first pairing? YES.**
+Confirmed via `GetFirmwareVersionList` (proc `0x0E`): component 1 read RS28.0 TS199 (`32 38 c7`)
+at connect; after the update completed and the device rebooted/reconnected, the same query
+returned RS30.0 TS206 (`33 30 ce`). The update genuinely applied.
 
-1. **Does the real Mera trigger the blocking firmware update UI on a genuine first-ever
-   connection?** The code path says it should (RS28.0 → `GetVersion()` null → `_E004()` true
-   → `GetActiveUpdateAsync()` finds RS30.0 Ble2V1 package → non-null → blocking UI). If it
-   does NOT → something not yet found in the source is short-circuiting the flow.
-2. **proc 0x00 (ctx=0x40) and proc 0x01 (ctx=0x00) byte sequences** — the firmware update
-   protocol the mock needs to implement to eliminate the Fehler on every reconnect.
-3. **Fehler persistence hypothesis confirmed or denied** — after the update completes,
-   reconnect. If Fehler stops → hypothesis confirmed (persistent completion flag written).
-   If Fehler continues → wrong hypothesis.
+**Question 2 — proc 0x00/0x01 protocol: decoded.** See
+`.claude/rules/ble-protocol.md` "Confirmed procedure codes" for the full proc table
+(`0x40/0x52` start, `0x40/0x53` status poll, `0x40/0x00` + `0x00/0x01` + `0x40/0x04` setup/finalize
+exchange) and the spontaneous-notify progress-frame format (`11 06 …` counter, `+12` every ~2.2s).
 
-**Bonus:** after the update the real Mera is at RS30.0, matching mock v1.75.0b1 exactly.
+**Question 3 — Fehler persistence hypothesis: not resolved by this capture.** After reconnect,
+the `0x40/0x00` / `0x00/0x01` / `0x40/0x52` sequence never recurs — consistent with "no update
+needed → flow doesn't re-enter." But this real capture is a genuinely-outdated-firmware → updated
+transition, not the mock's actual bug (mock already reports RS30.0 everywhere on every connect,
+yet still shows Fehler every time). That mock-specific Fehler cause is still open — this capture
+doesn't touch it, since the real device never entered a "Fehler despite already-current firmware"
+state to compare against.
 
-**Capture checklist (Wireshark + nRF52840 on Apple Laptop):**
-1. Start Wireshark with the nRF52840 sniffer
-2. Let it scan until it shows the Mera's BLE address
-3. Click **Follow** on that address — sniffer tracks all channel hops automatically
-4. Enable continuous file saving in Wireshark (Capture → Options → Output → save to file,
-   auto-rotate every 50 MB or 5 min) as safety net against crash mid-capture
-5. Delete and reinstall Geberit Home App on iPad (clears all local storage)
-6. Open the app → onboard the real Mera → let the firmware update run to completion
-7. After update: reconnect once more to observe whether Fehler still appears
+**Correction (2026-07-14, later same day) — there IS a bulk transfer; the first pass missed it
+due to a tool bug.** `nrf-ble-analyze.py`'s fallback decoders only inspected `v[0]` of any
+unrecognized ATT payload and printed `byte0=0x..`, discarding the rest — making real ~20-byte
+writes look like single-byte keepalive ticks. Fixed (see "Tool fix" below); raw tshark and the
+corrected script both confirm:
 
-**Risk:** one shot — firmware is updated regardless of capture success. The real Mera
-cannot be put back to RS28.0 after the update.
+- **~290KB of real payload** flows to the device during the ~2m44s flash window, on writes to
+  handles `0x0003` (134,919 bytes), `0x0006` (78,780 bytes), `0x0009` (76,680 bytes) — all
+  App→Dev, all on the same BLE connection as the rest of the session (`btle.access_address`
+  matches throughout; cross-validated against the independent Windows capture within ~1%).
+- **Content is binary, not text.** Printable-ASCII ratio is 33–36% — essentially the random-chance
+  baseline (~37% of byte values are printable), not elevated. Entropy is 6.3–6.5 bits/byte (of max
+  8.0) — consistent with real compiled/structured binary (plausibly genuine firmware machine
+  code), not compressed/encrypted (~8.0) and not plain text (~4.5). An earlier read of a few
+  frames as "readable Czech/Croatian release-note text" was a false positive — coincidental
+  printable fragments, not representative of the ~290KB as a whole.
+- **One non-coincidental structural feature**: printable ratio spikes to 70–77% at the same
+  relative position (~80–90% through the stream) on all three channels simultaneously — a real
+  structured region, not noise, but see the identification below — it does **not** come from the
+  reference firmware's own tail (checked directly, that's mostly zero-padding). Still unexplained.
+- The dedicated "OTA" characteristic (CCCD at handle `0x002C`) is still subscribed to but never
+  notifies — the transfer uses the three write handles above instead.
+- The HAR still shows the app querying `https://prod.firmwarev1.services.geberit.com/api/firmwares`
+  and getting a `downloadUrl` per component without ever requesting one in this session — so the
+  ~290KB over BLE is not literally proxied from those catalog URLs in real time; where the app
+  sources the bytes it writes is still open.
 
-**Detailed analysis background:**
-`local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md`
-§ "Fehler on every mock connect — hypothesis" and § "v1.75.0b1 empirical finding".
+**Identified (2026-07-14, later same day) — it's node `0x01`'s (and node `0x0B`'s) RS30.0 TS206
+firmware images.** `local-assets/firmware/mera_comfort_RS30_TS206.bin` is a ZIP of the full cloud
+"FwPkg" bundle, already extracted at
+`local-assets/firmware/FwPkg_..._Mera_F8_01_RS_30_00_TS_206_extracted/Mera_F8_01_RS_30_00_TS_206/`.
+
+**Correction to an earlier assumption**: diffing the actual `GetFirmwareVersionList` bytes
+captured before (10:26:03.892) and after (10:30:50.792) the update shows **two** components
+changed, not one:
+
+| Component | Before | After |
+|---|---|---|
+| `0x01` (Steuerung / main controller) | RS28.0 TS199 | RS30.0 TS206 |
+| `0x0B` (Bewegungserkennung / motion detection) | RS07.0 TS22 | RS08.0 TS23 |
+
+All 11 other queried components (`0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0C,0x0E,0x0F`) are
+byte-identical before and after. This corrects the assumption (carried over from
+`memory/mock-firmware-all-components-rs30.md`) that "nodes 3–15 were already at target version" —
+node `0x0B` was not, and got updated too.
+
+Compared the capture against `0x01 FW Appl Steuerung AqC GH RS30 TS206.bin` (210,820 bytes —
+genuine ARM/Cortex-M firmware, starts with a real vector table: `48 5b 00 20 fd b0 03 08...` =
+SP + reset handler) **and** `0x0B FW Appl Bewegungserkennung AqC H RS08 TS23.bin` (39,924 bytes).
+
+A naive whole-frame substring search found 0% matches. **Stripping the first 2 bytes of every
+individual ATT write frame** (a per-packet header — likely offset/sequence) before searching
+changes that completely:
+
+| Handle | Match rate (2-byte header stripped) | Order correlation (transfer time vs. file offset) |
+|---|---|---|
+| `0x0003` | 63.4% | 0.973 |
+| `0x0006` | 84.1% | 0.978 |
+| `0x0009` | 84.4% | 0.976 |
+
+The ~0.97 correlation is decisive: as the transfer progresses in time, the matched position inside
+the reference firmware increases essentially monotonically — a genuine sequential file transfer,
+not coincidence. Combined, the three channels verify **61% of the 210,820-byte node-`0x01` image
+(128,692 bytes) byte-for-byte**. Re-checking the previously-"unmatched" frames on `handle0003`
+against node `0x0B`'s image directly accounts for another chunk: **754 of the 1,713 unmatched
+frames match node `0x0B`'s 39,924-byte firmware** instead. Between the two images plus the
+still-unidentified text region (see below), essentially all of the transfer is now accounted for;
+the small residual is likely frame-boundary/header-length edge effects plus the ~1.7% known
+sniffer packet loss — not evidence of a mismatch.
+
+**Conclusion: the ~290KB bulk transfer IS component `0x01`'s AND component `0x0B`'s RS30.0/RS08.0
+firmware images**, interleaved and split across three parallel write characteristics for
+throughput, each ATT write carrying a 2-byte header + up to 18 payload bytes (MTU=23). This closes
+the "what is being transferred" question from earlier — the toilet's controller is NOT flashing
+from a pre-staged image; the app genuinely pushes both new firmware images over BLE, just spread
+across 3 channels rather than the "OTA" characteristic anyone would have guessed to check first,
+and covering exactly the two components whose version actually needed to change.
+
+**Still open:** where the app sources these exact bytes from (not the `/download` catalog URL in
+this session, per the HAR) and the ~80–90%-through-stream Polish-text region noted above (confirmed
+NOT to be node `0x01`'s own tail; not yet checked against node `0x0B`'s tail either).
+
+**Tool fix (2026-07-14):** `tools/nrf-ble-analyze.py` now collapses long runs (>20 frames) of
+unrecognized-payload writes/notifies on the same (handle, direction) into a bounded sample (first
++ last 10 frames shown in full) plus one omission-marker row reporting count/bytes/printable% and
+pointing at a sibling `<stem>.handle<H>.<write|notify>.bin` file — written next to the `.md` when
+`--output` is given — that holds the complete reassembled bytes. Keeps the annotated markdown
+bounded (this capture: 28,470 → 13,945 lines) while still preserving the full payload on disk for
+offline analysis, without silently truncating to one byte *or* reproducing the entire proprietary
+payload inline in a checked-out text file.
+
+**Reboot moment identified (2026-07-14):** the app's "Gerät wird neu gestartet…" message
+corresponds to a real hardware reboot, confirmed at the BLE link layer. Timeline (mac capture):
+`0x40/0x04` finalize ACK at 10:30:29.5 → three garbled `ADV_IND` (corrupted manufacturer data,
+radio up but firmware not yet initialized) at 10:30:31.0–33.4 → **~13.3s of total silence, no
+advertising at all** → first stable `ADV_IND`+`SCAN_RSP` at **10:30:46.7** (matches the observed
+message timing to the second) → fresh `CONNECT_IND` (new BLE link, not a re-discovery on the same
+connection) at 10:30:48.4. Cross-validated against the independent Windows sniffer (same shape,
+few seconds of clock drift). **Trigger: `Proc(ctx=0x40, proc=0x04)` is the last thing sent before
+the device drops off** — it's the finalize call after the second `0x40/0x53` status poll reports
+`06`.
+
+**Alba-vs-Mera restart command — confirmed gap.** Alba has a real general-purpose reboot command:
+`DP_RESTART` (DpId 153, `Command`/`Unused`, write-only) — already implemented as
+`button.geberit_aquaclean_restart_alba_device` in HACS, confirmed on real hardware (MuusLee,
+v3.0.0, see `docs/developer/tested-devices.md` / `docs/developer/hacs-entity-reference.md`).
+Mera Comfort has **no equivalent**: it runs the legacy "AC_" procedural protocol
+(`Commands.py` `SetCommand` codes 0–78), which predates the unified `DP_` DataPoint namespace
+`DP_RESTART` belongs to — checked the decompiled DpId/command definitions, no restart/reboot
+entry exists anywhere in the AC_ namespace. The only BLE-triggerable Mera reboot ever observed is
+the firmware-update finalize side effect above — it's gated behind first entering update mode via
+`0x40/0x52`, so it is **not** a safe drop-in replacement for a generic restart button without
+further testing (untested whether `0x40/0x04` does anything outside that state machine).
+
+---
+
+### Mock Mera: wire the real update proc sequence + timing into mock-geberit-mera.py
+
+**Optional / low priority** — the mock currently sidesteps the entire update flow by reporting
+all `_FW_COMPONENT_VERSIONS` as RS30.0 TS206, so the app never triggers `0x40/0x52` in the first
+place. This item is only useful if we ever want the mock to *demonstrate* the real update flow
+(e.g. for testing bridge/HACS behavior during a firmware update) rather than avoid it.
+
+Would use the fully-decoded sequence from the entry above: `0x40/0x52` → `0x40/0x53` poll (`05`→`06`)
+→ `0x40/0x00` → ~2m44s of spontaneous `11 06 …` progress notifies (+12 per ~2.2s) interleaved with
+`70 00 0c 18 …` heartbeats → `0x40/0x53` poll again (`05`→`06`) → `0x40/0x04` → disconnect/reboot
+(~19s) → reconnect with bumped `_FW_COMPONENT_VERSIONS`.
 
 ---
 

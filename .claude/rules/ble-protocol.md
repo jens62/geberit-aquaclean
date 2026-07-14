@@ -220,6 +220,71 @@ From `aquaclean-SILLY.log`:
 **Discrete DpId Procedure ID** (for BLE_COMMAND_REFERENCE.md DpIds directly): **UNKNOWN**.
 Not observed in any log. To find: BLE-sniff the official Geberit Home app.
 
+### Firmware update procedures (ctx=0x40) — confirmed from real Mera RS28.0→RS30.0 capture (2026-07-14)
+
+Dual nRF52840 capture (Mac+Windows) of a genuine firmware update on the real Mera Comfort.
+Files: `local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/*.md`.
+
+| Proc | Ctx | Name (inferred) | Request | Response |
+|------|-----|------------------|---------|----------|
+| `0x00` | `0x40` | GetTransferWindow(?) | no args | 12 bytes: offset/size-like fields, varies each call |
+| `0x01` | `0x00` | Heartbeat/ACK | no args | ACK, interleaved with `0x40/0x00` during setup |
+| `0x04` | `0x40` | Continue/Ack — **the second call triggers an actual device reboot** | no args | ACK |
+| `0x52` | `0x40` | **StartFirmwareUpdate** | no args | ACK. Also arrives as a spontaneous device-initiated notify at the end of the flash phase |
+| `0x53` | `0x40` | **GetUpdateStatus** | no args | 1 byte: `0x05`=busy, `0x06`=phase complete. Polled every ~1.7–2.3s |
+
+**Observed sequence:** `0x40/0x52` (start) → `0x40/0x53` polled until `06` → `0x40/0x00` (once) →
+~2m44s flashing window (see below) → spontaneous `0x40/0x52` echo → `0x40/0x53` polled again until
+`06` → `0x40/0x04` (finalize) → device disconnects, reboots (~19s), reconnects with the new
+`GetFirmwareVersionList` (proc `0x0E`) version.
+
+**Flashing-window spontaneous notifies (A5 channel):**
+- `70 00 0c 18 [bitmask] 0f 00…00 b7 09 01 00 00 0d fa` — heartbeat; `bitmask` cycles
+  `01→03→07→0f→ff0f`, not correlated with progress.
+- `11 06 00 00 08 [crc16][seq][ctx] [progress:u32-LE] 0c 08 00 00 00 00` — real progress counter,
+  increments by exactly **+12 every ~2.2s**, reaching ≥840 by the end of the window. Likely a
+  flash page/block counter.
+
+**Bulk binary transfer confirmed (corrected 2026-07-14)** — an earlier pass wrongly concluded "no
+bulk transfer" because `nrf-ble-analyze.py`'s fallback decoders only printed `byte0=` for any
+unrecognized ATT payload, discarding the rest. Fixed (script now saves the full bytes to sibling
+`.bin` files instead of truncating). Raw tshark + the corrected script confirm **~290KB written
+App→Dev** during the ~2m44s flash window, split across three parallel write handles:
+`0x0003` (134,919 bytes), `0x0006` (78,780 bytes), `0x0009` (76,680 bytes) — all on the same BLE
+connection as the rest of the session (verified via `btle.access_address`), cross-validated
+against the independent Windows capture within ~1%. Content is mostly **binary, not text**:
+printable-ASCII ratio 33–36% (≈ random-chance baseline), entropy 6.3–6.5 bits/byte — consistent
+with real compiled firmware code. **Identified**: byte-for-byte substring matching (after stripping
+a 2-byte per-ATT-frame header) confirms this is genuine firmware — but for **two** components, not
+one: node `0x01`'s RS30.0 TS206 image (210,820 bytes; 61% directly byte-verified, 0.97 correlation
+between transfer order and file offset) *and* node `0x0B`'s RS08.0 TS23 image (39,924 bytes; 754
+frames on `handle0003` alone). Diffing the actual `GetFirmwareVersionList` bytes before/after
+confirms both components' versions changed (`0x01`: RS28.0 TS199→RS30.0 TS206; `0x0B`
+Bewegungserkennung/motion detection: RS07.0 TS22→RS08.0 TS23) — all other queried components
+byte-identical before/after. This corrects the assumption in
+`memory/mock-firmware-all-components-rs30.md` that "nodes 3–15 were already at target version."
+One remaining non-coincidental structural feature: a Polish-language UI text region (confirmed
+readable: "Pokrywa WC"/WC lid, "Usuwanie zapachu"/odor removal, "Odkamienianie"/descaling, etc.,
+each phrase repeated 2–3× verbatim) at the same relative position (~80–90% through the stream) on
+all three channels — confirmed NOT part of either firmware image's own tail; still unexplained.
+See `docs/roadmap.md` → "Mock Mera: real Mera firmware update captured and decoded" for full
+detail, including the tool fix.
+
+**Reboot confirmed at link layer.** The app's "Gerät wird neu gestartet…" message corresponds to
+a real hardware reboot: after the second `0x40/0x04` finalize ACK, the device goes fully silent
+(no advertising at all) for ~13.3s, then re-advertises with corrupted manufacturer data for a few
+seconds (radio up, firmware not yet initialized) before stabilizing and getting a fresh
+`CONNECT_IND` (a new BLE link, not a GATT re-discovery on the old one). `0x40/0x04` is the last
+thing sent before the device drops off — see `docs/roadmap.md` for the full timeline.
+
+**No general-purpose restart command exists for Mera** (unlike Alba's `DP_RESTART` = DpId 153,
+already wired up as `button.geberit_aquaclean_restart_alba_device` in HACS). Mera's legacy "AC_"
+`SetCommand` namespace (0–78 above) predates the unified `DP_` DataPoint system `DP_RESTART`
+belongs to, and has no restart/reboot entry. The only BLE-triggerable Mera reboot ever observed is
+the `0x40/0x04` finalize side effect above, gated behind first entering update mode via `0x40/0x52`
+— **do not repurpose it as a standalone restart trigger without testing** whether it does anything
+outside that state machine.
+
 ---
 
 ## CommonSetting IDs (proc 0x51 / 0x52)

@@ -1377,7 +1377,9 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
 
 def _format_traffic_log(frames: list, markdown: bool) -> str:
     """Render the chronological ATT traffic log as markdown or plain text.
-    Uses abs_ts (HH:MM:SS.mmm) when available, falls back to relative ts_str."""
+    Uses abs_ts (HH:MM:SS.mmm) when available, falls back to relative ts_str.
+    Frames carrying an `_omission` key (see `_bundle_bulk_channels`) render as
+    a single collapsed summary row instead of the normal Time/Dir/Handle row."""
     has_abs = bool(frames and frames[0].get("abs_ts"))
     lines: list[str] = []
     if markdown:
@@ -1388,6 +1390,9 @@ def _format_traffic_log(frames: list, markdown: bool) -> str:
         lines.append("| Time | Dir | Handle | Decoded |")
         lines.append("|------|-----|--------|---------|")
         for f in frames:
+            if "_omission" in f:
+                lines.append(f"| | | | _{_format_omission_note(f['_omission'])}_ |")
+                continue
             h_str  = f"0x{f['handle']:04X}"
             t_str  = f["abs_ts"] if has_abs else f["ts_str"]
             lines.append(f"| `{t_str}` | {f['direction']} | `{h_str}` | {f['decoded']} |")
@@ -1401,12 +1406,98 @@ def _format_traffic_log(frames: list, markdown: bool) -> str:
             lines.append(f"  {'Time':<{col_t}}  {'Dir':<9}  {'Handle':<8}  Decoded")
             lines.append(f"  {'-'*col_t}  {'-'*9}  {'-'*8}  {'-'*50}")
             for f in frames:
+                if "_omission" in f:
+                    lines.append(f"  {_format_omission_note(f['_omission'])}")
+                    continue
                 h_str = f"0x{f['handle']:04X}"
                 t_str = f["abs_ts"] if has_abs else f["ts_str"]
                 lines.append(
                     f"  {t_str:<{col_t}}  {f['direction']:<9}  {h_str:<8}  {f['decoded']}")
     lines.append("")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Bulk-unknown-channel bundling — collapse long runs of unrecognized-payload
+# frames (real data our proc/InfoFrame decoders don't understand) into a
+# bounded sample instead of either (a) silently truncating to byte0, the
+# original bug, or (b) dumping every byte inline into the markdown, which
+# would reproduce the entire transferred payload (possibly proprietary
+# vendor firmware/update content) as hex text in a checked-out file.
+# ---------------------------------------------------------------------------
+
+_BULK_FALLBACK_THRESHOLD = 20   # frames on one (handle, direction) before collapsing
+_BULK_SAMPLE_EDGE        = 10   # frames shown in full at the start/end of a collapsed run
+
+
+def _is_fallback_frame(decoded: str) -> bool:
+    return "WRITE  byte0=" in decoded or "NOTIF byte0=" in decoded
+
+
+def _format_omission_note(info: dict) -> str:
+    return (f"… {info['count']:,} more frames ({info['bytes']:,} bytes, "
+            f"~{info['printable_pct']}% printable ASCII) omitted — "
+            f"see `{info['file']}` …")
+
+
+def _bundle_bulk_channels(frames: list) -> tuple:
+    """Collapse long runs of unrecognized-payload frames on the same
+    (handle, direction) into a bounded sample (first/last _BULK_SAMPLE_EDGE)
+    plus one omission-marker row, and separately reassemble the FULL bytes
+    for each collapsed channel in chronological order.
+
+    Returns (display_frames, raw_channels) where raw_channels maps a
+    filename-safe key (e.g. "handle0003.write") to the complete reassembled
+    bytes for that channel — callers write these to sibling files, not into
+    the markdown, so the annotated doc stays bounded while the full payload
+    is still available on disk for offline analysis.
+    """
+    groups: dict = {}
+    for i, f in enumerate(frames):
+        if _is_fallback_frame(f["decoded"]):
+            groups.setdefault((f["handle"], f["direction"]), []).append(i)
+
+    raw_channels: dict = {}
+    omit_at: dict = {}
+    skip: set = set()
+
+    for (handle, direction), idxs in groups.items():
+        if len(idxs) <= _BULK_FALLBACK_THRESHOLD:
+            continue
+        kind = "write" if direction == "App→Dev" else "notify"
+        key = f"handle{handle:04X}.{kind}"
+        chunks = [bytes.fromhex(frames[i]["raw_hex"]) for i in idxs]
+        raw_channels[key] = b"".join(chunks)
+
+        keep = set(idxs[:_BULK_SAMPLE_EDGE]) | set(idxs[-_BULK_SAMPLE_EDGE:])
+        middle = [i for i in idxs if i not in keep]
+        if not middle:
+            continue
+        skip.update(middle)
+
+        middle_bytes = b"".join(bytes.fromhex(frames[i]["raw_hex"]) for i in middle)
+        printable = sum(1 for b in middle_bytes if 0x20 <= b <= 0x7e)
+        pct = round(100 * printable / len(middle_bytes)) if middle_bytes else 0
+
+        marker_idx = middle[0]
+        skip.discard(marker_idx)
+        omit_at[marker_idx] = {
+            "count": len(middle),
+            "bytes": len(middle_bytes),
+            "printable_pct": pct,
+            "file": f"{key}.bin",
+        }
+
+    display_frames = []
+    for i, f in enumerate(frames):
+        if i in skip:
+            continue
+        if i in omit_at:
+            display_frames.append({**f, "_omission": omit_at[i]})
+        else:
+            display_frames.append(f)
+
+    return display_frames, raw_channels
 
 
 def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
@@ -1550,7 +1641,20 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
                                         epoch_base=epoch_base, tz=tz)
 
     # Bidirectional raw traffic log (every write + notify, decoded)
-    traffic      = _get_geberit_traffic(tshark, pcapng, mac, addr_field, epoch_base, tz)
+    traffic = _get_geberit_traffic(tshark, pcapng, mac, addr_field, epoch_base, tz)
+    traffic, raw_channels = _bundle_bulk_channels(traffic)
+    if raw_channels:
+        if args.output:
+            out_dir = Path(args.output).parent
+            out_stem = Path(args.output).stem
+            for key, blob in raw_channels.items():
+                raw_path = out_dir / f"{out_stem}.{key}.bin"
+                raw_path.write_bytes(blob)
+                print(f"[+] {len(blob):,} raw bytes written to {raw_path}", file=sys.stderr)
+        else:
+            print(f"[!] {len(raw_channels)} bulk-unknown channel(s) collapsed in the "
+                  f"traffic log — pass --output to also save their raw bytes to disk",
+                  file=sys.stderr)
     traffic_plain = _format_traffic_log(traffic, markdown=False)
     traffic_md    = _format_traffic_log(traffic, markdown=True)
 
