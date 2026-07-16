@@ -188,6 +188,21 @@ a disconnect (same mechanism as `mock-geberit-alba.py`).
 The mock calls `btmgmt pairable off` at startup (v1.32.0+). Do **not** change this
 to `pairable=on` — that triggers an iOS pairing dialog interrupting the flow.
 
+**Regression and re-fix (2026-07-16, v1.77.0b1):** the RC-pairing-stub commit `2b565b0`
+(v2.14.x era) reintroduced `btmgmt pairable on` in `_handle_button()`, scoped to the
+web-UI button-press window, specifically so the physical Remote Control accessory could
+complete SMP pairing. This silently broke the rule above again — `pairable=on` is
+adapter-wide, so it also invited iOS's own system Bluetooth stack to offer pairing with
+"ro" (the mock's device name), not just the RC. Confirmed live: iOS showed
+"Kopplungsanforderung ... „ro" möchte sich mit deinem iPad koppeln" during a normal Home
+App connection attempt. Removed again in v1.77.0b1 (both `tools/mock-geberit-mera.py` and
+`aquaclean_ble_relay/mera_mock.py`) — the button press now only updates the advertisement
+byte, no `pairable` toggle. Trade-off: RC pairing via this button-press window no longer
+completes SMP; the RC pairing GATT service stub (0xC526) still exists and is still
+discoverable, just not pairable through this path anymore. If RC pairing testing is
+needed again, it needs a way to scope pairing to just the RC's connection, not a blanket
+adapter-wide `pairable=on` — don't reintroduce this a third time without solving that.
+
 ---
 
 ## Known issues

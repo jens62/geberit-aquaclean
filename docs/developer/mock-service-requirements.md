@@ -607,3 +607,11 @@ A **second, separate test** — two devices sharing `hci0` (the original Phase 5
 remains worth doing to confirm the D-Bus/GATT-level fixes (path prefixing, instance-scoped
 `_emit_interface_added`) work under real concurrent registration, but verify it via direct
 BLE connect tooling, not the Home App's scan, per the correction above.
+
+**First live run (2026-07-16), `hci0`=Mera + `hci1`=Alba:** Alba connected and saved
+cleanly. Mera hit an unrelated, pre-existing bug — not a Phase 5 issue, present in
+`tools/mock-geberit-mera.py` unmodified — an iOS system pairing dialog interrupted the
+connection. Root cause and fix: see `docs/developer/mock-geberit-mera.md` §"Battery plugin
+interaction", "Regression and re-fix (2026-07-16, v1.77.0b1)". Once past that, Mera reached
+the already-known-expected "firmware update required" state (real per-component firmware
+versions). Concurrent registration itself (the actual Phase 5 subject) was not the blocker.

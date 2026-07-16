@@ -82,7 +82,7 @@ from aquaclean_ble_relay import mock_persistence  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.76.0b1"
+_MOCK_VERSION = "1.77.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -1211,8 +1211,6 @@ class MeraMock:
             self._log("·", f"Attempt {gen}: A6 CCCD not set within 3 s — skipping A6 burst")
         if self._button_pressed:
             self._button_pressed = False
-            subprocess.run(["btmgmt", "-i", self._hci_index(), "pairable", "off"], capture_output=True)
-            self._log("·", "Adapter set to pairable=off (RC pairing window closed)")
             await self._update_advert(0)      # await: HCI commands must finish before A5 responses start
         service._a6_burst_done.set()     # bursts complete — A5 responses may now proceed
 
@@ -1271,8 +1269,12 @@ class MeraMock:
             raise web.HTTPFound("/")
         self._button_pressed = True
         self._log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
-        subprocess.run(["btmgmt", "-i", self._hci_index(), "pairable", "on"], capture_output=True)
-        self._log("·", "Adapter set to pairable=on (RC pairing window open)")
+        # Do NOT set pairable=on here (v1.31.0 removed it once already, v1.31.0 changelog:
+        # "removes btmgmt pairable=on to fix iOS pairing dialog"; v2.14.x's RC-pairing-stub
+        # commit 2b565b0 reintroduced it, which brought the same dialog back — pairable=on is
+        # adapter-wide, so it also invites iOS's own system Bluetooth stack to offer pairing
+        # with "ro", not just the Remote Control accessory. Fixed again 2026-07-16 — do not
+        # reintroduce a third time without a way to scope pairing to just the RC.
         await self._update_advert(1)
         raise web.HTTPFound("/")
 
