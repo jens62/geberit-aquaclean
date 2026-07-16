@@ -140,6 +140,51 @@ match the code rather than the code rewritten to match a speculative doc.
   exactly one device's rows — already satisfies "acts on exactly one device's store, never
   all of them" (§6).
 
+### Per-device identity (serial number, PIN) — implemented for Alba (2026-07-16)
+
+**Coverage gap found:** "store all data which is stored on a real device" (§0/§5's coverage
+requirement) was being interpreted as "settings a real device lets you change" — but a real
+device also has a unique serial number and pairing PIN printed on its own sticker, set once
+at manufacturing and never changed. Every `_DEFAULT_STORE` row for these (DpId 12
+`PAIRING_SECRET`, DpId 369 `SALES_PRODUCT_SERIAL_NUMBER`) was one hardcoded value shared by
+every `AlbaMock` instance — two mocked Albas (e.g. Phase 5's `hci0`+`hci1` test) would show
+identical "S/N" and PIN, which no real fleet of devices looks like.
+
+**Implementation:** both DpIds are `behavior==4` (Protected — factory-set, never written
+over BLE), so the existing Nvm (`behavior==3`) write-through path never touches them.
+`_Ble20AppLayer.__init__` now generates a value for each on first construction for a given
+`device_key`, persists it immediately (same `dpid:{id}` key scheme as Nvm settings), and
+reapplies the persisted value on every later session/restart — stable per device, exactly
+like a sticker that never changes once printed, distinct across devices.
+
+**Bug found and fixed during verification:** the first pass skipped *regenerating* an
+already-persisted identity value correctly, but never actually applied the persisted value
+back into `self._store` (the reload loop only applies persisted overrides to
+`behavior==3` rows) — so a restart silently reverted to the `_DEFAULT_STORE` default instead
+of the previously-generated identity. Fixed by applying the persisted value directly for
+these two DpIds, bypassing the Nvm-only reload loop. Verified on the mock VM: `hci0` and
+`hci1` get distinct serial+PIN, and `hci0`'s identity survives a simulated restart
+unchanged.
+
+**Web UI:** the Alba control page now shows a sticker-style block (model, S/N, PIN) reading
+live from the active session's store, so the two values are visible without needing a BLE
+client.
+
+**Security finding along the way:** `_DEFAULT_STORE`'s `PAIRING_SECRET` comment named a real
+physical device's actual pairing PIN as a formatting example. Redacted (both
+`tools/mock-geberit-alba.py` and `aquaclean_ble_relay/alba_mock.py`) — a real device's BLE
+pairing PIN is a real credential, not safe to reference in a public repo regardless of
+framing. **The value was already present in pushed history** (confirmed via `git log -S`,
+present since commit `7ac384c`) — the redaction commit only fixes the current file content
+going forward; the value remains visible in git history unless that's separately addressed
+(not done — would need history rewriting, a decision for the repo owner, not taken
+unilaterally).
+
+**Not yet done:** the same per-device-identity gap likely applies to `MeraMock` (`_SAP_NUMBER`/
+`_SERIAL`, currently fixed instance attributes set in `__init__`, not persisted or varied
+per adapter) — not implemented, since the concrete ask and Phase 5 test case were Alba-only.
+Worth doing the same way if/when two Mera instances are tested together.
+
 ### Provenance of min/max values (why they're code, not DB or a live fetch)
 
 Checked before deciding this, rather than guessing: does `RS28.0`/`TS199`-style firmware, or

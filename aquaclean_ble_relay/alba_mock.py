@@ -50,6 +50,7 @@ import hashlib
 import inspect
 import os
 import pathlib
+import random
 import struct
 import sys
 from datetime import datetime, timezone
@@ -181,7 +182,7 @@ class _Ble20AppLayer:
         (8,   None,  0,  8, 2,         2,          0, struct.pack('<I', 3)),          # FW_RS_VERSION = 3 -> RS03.0 TS89
         (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
         (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
-        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (real kstr=7080; 0000 for testing)
+        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (real device has a non-zero PIN; 0000 for testing convenience)
         (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
         (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
         (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf)
@@ -258,6 +259,25 @@ class _Ble20AppLayer:
         (689, 31,    1,  9, 0,  999999999,         1, struct.pack('<I', 0)),          # STATISTIC_COUNTER_TOTAL inst=31
     ]
 
+    # A real Alba's serial number and pairing PIN are unique per physical unit —
+    # printed on its own sticker (see docs/developer/mock-service-requirements.md
+    # §5) — but every _DEFAULT_STORE row above is one shared hardcoded default.
+    # Two Alba mocks (e.g. two adapters, Phase 5) would otherwise show identical
+    # "S/N" and PIN, which isn't what a real fleet of devices looks like. These
+    # two DpIds are Protected (behavior=4, factory-set — never written over BLE,
+    # so the Nvm write-through path below doesn't touch them) but still need a
+    # stable per-device identity: generated once per device_key and persisted
+    # forever after, exactly like a sticker never changes once printed.
+    _IDENTITY_DPIDS = (12, 369)  # PAIRING_SECRET, SALES_PRODUCT_SERIAL_NUMBER
+
+    @staticmethod
+    def _generate_identity_value(dp_id: int) -> bytes:
+        if dp_id == 12:  # PAIRING_SECRET — 4-digit numeric PIN, same format as _DEFAULT_STORE's default
+            return f"{random.randint(0, 9999):04d}".encode('ascii')
+        if dp_id == 369:  # SALES_PRODUCT_SERIAL_NUMBER, e.g. real kstr-style "SB2603EU08023"
+            return f"SB{random.randint(1000, 9999)}EU{random.randint(0, 999999):06d}".encode('ascii')
+        raise ValueError(f"no identity generator for DpId {dp_id}")
+
     def __init__(self, notify_queue=None, device_key: str = "default"):
         self._device_key = device_key
         self._store: dict = {}
@@ -287,6 +307,23 @@ class _Ble20AppLayer:
             entry = self._store.get((dp_id, None))
             if entry is not None and entry['behavior'] == 3:
                 entry['value'] = bytearray(bytes.fromhex(value_hex))
+
+        # Per-device identity (serial number, pairing PIN) — generated once per
+        # device_key, persisted immediately, and reused on every later session/
+        # restart. Deliberately outside the Nvm-only loop above: these are
+        # Protected fields never written over BLE, so nothing would ever
+        # populate them via the normal write-through path.
+        for dp_id in self._IDENTITY_DPIDS:
+            key = f"dpid:{dp_id}"
+            if key in persisted:
+                # Apply directly — the loop above skips these (behavior==4,
+                # Protected, not ==3 Nvm), so without this they'd silently stay
+                # at the _DEFAULT_STORE default despite being "already generated".
+                self._store[(dp_id, None)]['value'] = bytearray(bytes.fromhex(persisted[key]))
+                continue
+            value = self._generate_identity_value(dp_id)
+            self._store[(dp_id, None)]['value'] = bytearray(value)
+            mock_persistence.save("alba", self._device_key, key, value.hex())
 
     async def _stop_sequence(self):
         """Simulate realistic shower wind-down: 5->6(Retracting)->7(Postrinsing)->2(Ready)."""
@@ -1602,8 +1639,13 @@ class AlbaMock:
                     if _cur_app:
                         _v564 = bytes(_cur_app._store.get((564, None), {}).get('value', b'\x01'))
                         s564 = int.from_bytes(_v564, 'little') if _v564 else 1
+                        _serial = bytes(_cur_app._store.get((369, None), {}).get('value', b'')).decode('ascii', 'replace') or "pending..."
+                        _pin = bytes(_cur_app._store.get((12, None), {}).get('value', b'')).decode('ascii', 'replace') or "pending..."
+                        _sap = bytes(_cur_app._store.get((371, None), {}).get('value', b'')).decode('ascii', 'replace') or "?"
                     else:
                         s564 = _ui_notify_state["564"]
+                        _serial = _pin = "pending..."
+                        _sap = "?"
                     b607 = "ON (sitting)" if s607 else "OFF (absent)"
                     b564 = {1: "1 (disabled)", 2: "2 (ready)", 5: "5 (running)"}.get(s564, f"{s564} (?)")
                     c607 = "#2a9" if s607 else "#999"
@@ -1617,8 +1659,18 @@ class AlbaMock:
                         ".lbl{width:290px}.note{font-size:.85em;color:#666}"
                         "button{padding:6px 18px;border:1px solid #888;border-radius:4px;"
                         "cursor:pointer;color:#fff;font-family:monospace}"
+                        ".sticker{background:#eee;color:#111;padding:10px 14px;border-radius:4px;"
+                        "margin-bottom:20px;line-height:1.5}"
                         "</style></head><body>"
                         "<h2>Mock Alba — NOTIFY Control</h2>"
+                        # Per-device identity, generated once and persisted (requirements doc
+                        # §5) — mirrors the S/N + PIN printed on a real unit's sticker, so two
+                        # mocked Albas (e.g. on hci0/hci1) show distinct values here.
+                        "<div class='sticker'>"
+                        f"AquaClean Alba {_sap}<br>"
+                        f"S/N: {_serial}<br>"
+                        f"PIN: {_pin}"
+                        "</div>"
                         "<p>Pushes encrypted NOTIFY_DATA to the active BLE client.<br>"
                         "Discarded when no client is connected or the DpId is not subscribed.</p>"
                         f'<div class="row">'
