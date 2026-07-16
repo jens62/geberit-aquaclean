@@ -159,11 +159,18 @@ function mcBuildSelect(row) {
     if (opt.value === row.value) o.selected = true;
     sel.appendChild(o);
   });
-  const prevValue = row.value;
+  // <option value="..."> is always a string in the DOM regardless of what JS
+  // value was assigned to it, so sel.value read back is always a string —
+  // parseInt() would silently mangle string-valued options (e.g. a firmware
+  // profile "rs28"/"rs30") into NaN. Look up the matching option's original,
+  // correctly-typed value from row.options instead of guessing the type.
+  let lastGood = row.value;
   sel.onchange = function () {
-    const next = parseInt(sel.value, 10);
+    const opt = (row.options || []).find(function (o) { return String(o.value) === sel.value; });
+    const next = opt ? opt.value : sel.value;
     mcWrite(row.writeUrl, next, null).then(function (ok) {
-      if (!ok) sel.value = prevValue;
+      if (ok) lastGood = next;
+      else sel.value = lastGood;
     });
   };
   return sel;
