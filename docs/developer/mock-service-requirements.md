@@ -235,7 +235,7 @@ of it.
 | 2 | Refactor Mera mock into an importable class | **Done** — verified on VM, see below |
 | 2b | Real settings mutation + persistence wiring for Mera (follow-up) | **Done** — verified on VM, see below |
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
-| 4 | `mock_service.py` orchestrator, single device only | Not started |
+| 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | Not started |
 | 6 | Webui, multi-device | Not started |
 | 7 | Logging polish (combined + per-device files) | Not started |
@@ -436,3 +436,37 @@ drive `_Ble20AppLayer`/`_dispatch_sync` directly, bypassing the handshake and D-
 layers — same limitation noted for Mera's Phase 2b). Flagged as a follow-up, not blocking,
 since the underlying protocol logic and persistence are now verified directly and the
 D-Bus/GATT/advertisement wiring is a near-verbatim port of Mera's already-verified pattern.
+
+### Phase 4 — `mock_service.py`, single device (2026-07-16)
+
+**Motivation, ahead of schedule:** the plan had logging as Phase 7, after multi-device
+(Phase 5). Brought forward to Phase 4 because testing `alba_mock.py` directly hit the exact
+problem Phase 7 exists to solve — Alba has no log file at all (print()-only), so every test
+required manually retyping a `| tee <name>.log` filename. `mock_service.py` gives every run
+an auto-named log file now, without waiting for the full per-device-logger conversion.
+
+**What's implemented:**
+- `--device model=NAME,adapter=HCI[,...]` — the §3-decided single open-ended `--model`
+  lookup table (`_MODEL_REGISTRY = {"mera": MeraMock, "alba": AlbaMock}`). Every field
+  besides `model` is passed straight through as a constructor kwarg to whichever class
+  `model` maps to (numeric-looking values coerced to `int`/`float`) — this is what lets
+  `mode=`/`send_delay_sec=` (Alba-only) and `web_port=`/`state_dir=` (both) reach the right
+  model without `mock_service.py` hardcoding either model's parameter list.
+- `--state-dir` (global) — passed to the model as `state_dir`; also anchors the
+  auto-named log file at `<state_dir>/logs/mock-<model>-<adapter>_<timestamp>.log`.
+- `--list-models` — enumerates the registry (§3's discoverability requirement).
+- Startup validation at parse time, not after connecting to D-Bus: unknown model, malformed
+  `--device` field, and more than one `--device` (Phase 4 is deliberately single-device
+  only — multi-device is Phase 5) all fail with a clear `argparse` error before anything
+  BLE-related happens. An unexpected kwarg for a given model (e.g. `mode=` for Mera, which
+  has no such parameter) fails the same way via a caught `TypeError`.
+- Logging: process-wide `sys.stdout`/`sys.stderr` tee to the auto-named file — deliberately
+  an interim, single-device-appropriate solution (module docstring flags this explicitly).
+  It cannot separate concurrent devices' output, so Phase 5 + Phase 7 need to replace it
+  with true per-device handlers. Running `MeraMock` through this means its output lands in
+  both the tee file and Mera's own independent per-adapter log file (Phase 2) — redundant
+  but harmless; also cleaned up in Phase 7, not this phase.
+
+**Verified on the mock VM** (`--list-models`, `--help`, and all four error paths — unknown
+model, malformed field, >1 `--device`, bad kwarg for a model — each produces the expected
+error and exit code 2, confirmed by hand).
