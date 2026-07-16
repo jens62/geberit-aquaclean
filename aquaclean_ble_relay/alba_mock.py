@@ -48,6 +48,7 @@ import asyncio
 import builtins
 import hashlib
 import inspect
+import json
 import os
 import pathlib
 import random
@@ -61,7 +62,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.20.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.21.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging (unused today — ported for parity, same as the original script)
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -126,8 +127,9 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
 )
 try:
-    from fastapi import FastAPI as _FastAPI
+    from fastapi import FastAPI as _FastAPI, Request as _Request
     from fastapi.responses import HTMLResponse as _HTMLResponse, RedirectResponse as _RedirectResponse
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
     import uvicorn as _uvicorn
     _WEB_AVAILABLE = True
 except ImportError:
@@ -143,6 +145,28 @@ def _inner_cobs_encode(data: bytes) -> bytes:
     """Wrap data in inner COBS frame: [0x00] + COBS(data + CRC16_LE) + [0x00]."""
     crc = _crc16_kermit(data)
     return b'\x00' + _cobs_encode(data + bytes([crc & 0xFF, (crc >> 8) & 0xFF])) + b'\x00'
+
+
+# ---------------------------------------------------------------------------
+# DpId value codecs for the webui settings table (docs/developer/mock-service-
+# requirements.md §6) — datatype legend per _DEFAULT_STORE's own comment
+# (8=String, 9=Counter 4-byte LE, everything else here is a 1-byte enum/offon).
+# ---------------------------------------------------------------------------
+
+def _decode_dpid_value(datatype: int, raw: bytes):
+    if datatype == 8:  # String
+        return raw.decode('ascii', 'replace')
+    if datatype == 9:  # Counter, 4-byte LE
+        return struct.unpack('<I', raw.ljust(4, b'\x00')[:4])[0]
+    return raw[0] if raw else 0
+
+
+def _encode_dpid_value(datatype: int, value) -> bytes:
+    if datatype == 8:  # String
+        return str(value).encode('ascii')
+    if datatype == 9:  # Counter, 4-byte LE
+        return struct.pack('<I', int(value))
+    return bytes([int(value) & 0xFF])
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +303,20 @@ class _Ble20AppLayer:
     _FIRMWARE_DPIDS = ((8, None), (9, None), (10, None), (786, 2), (785, 3), (787, 3))
     # FW_RS_VERSION, FW_TS_VERSION, HW_RS_VERSION, GEBERIT_LOADER_VERSION, FUS_VERSION, WIRELESS_STACK_VERSION
 
+    # Friendly names for the webui's settings table (docs/developer/mock-service-
+    # requirements.md §6) — writable Nvm DpIds plus the read-only identity/
+    # firmware DpIds above. Deliberately scoped to these ~14, not all 79 DpIds
+    # in _DEFAULT_STORE — the rest are live/session state, not "settings".
+    _DPID_NAMES = {
+        13: "Access Code", 580: "Stored Anal Spray Intensity",
+        581: "Stored Anal Spray Arm Position", 582: "Stored Shower Water Temperature",
+        583: "Stored Anal Spray Arm Oscillation", 795: "Demo Mode",
+        12: "Pairing Secret (PIN)", 369: "Serial Number",
+        8: "FW RS Version", 9: "FW TS Version", 10: "HW RS Version",
+        785: "FUS Version", 786: "Geberit Loader Version", 787: "Wireless Stack Version",
+    }
+    _SETTINGS_DPIDS = tuple(_DPID_NAMES.keys())
+
     @staticmethod
     def _generate_identity_value(dp_id: int) -> bytes:
         if dp_id == 12:  # PAIRING_SECRET — 4-digit numeric PIN, same format as _DEFAULT_STORE's default
@@ -355,6 +393,54 @@ class _Ble20AppLayer:
         instance = dict(self._FIRMWARE_DPIDS)[dp_id]
         self._store[(dp_id, instance)]['value'] = bytearray(value)
         mock_persistence.save("alba", self._device_key, f"dpid:{dp_id}", bytes(value).hex())
+
+    def _find_entry(self, dp_id: int):
+        return next((e for (d, _i), e in self._store.items() if d == dp_id), None)
+
+    def _settings_table_data(self) -> dict:
+        """Build the metadata+value JSON mock-controls.js needs to render the
+        settings table — docs/developer/mock-service-requirements.md §6."""
+        settings_rows, info_rows = [], []
+        for dp_id in self._SETTINGS_DPIDS:
+            entry = self._find_entry(dp_id)
+            if entry is None:
+                continue
+            value = _decode_dpid_value(entry['datatype'], bytes(entry['value']))
+            row = {
+                "id": dp_id, "name": self._DPID_NAMES[dp_id], "value": value,
+                "min": entry['min_s'], "max": entry['max_s'],
+            }
+            if entry['behavior'] == 3:  # Nvm — the only writable class here
+                row["writeUrl"] = f"/settings/dpid/{dp_id}"
+                if entry['datatype'] == 8:
+                    row["kind"] = "text"
+                elif entry['datatype'] == 11:
+                    row["kind"] = "toggle"
+                else:
+                    row["kind"] = "stepper"
+                settings_rows.append(row)
+            else:
+                row["kind"] = "readonly"
+                info_rows.append(row)
+        return {"sections": [
+            {"title": "Settings", "rows": settings_rows},
+            {"title": "Identity & Firmware", "rows": info_rows},
+        ]}
+
+    def _write_dpid_setting(self, dp_id: int, raw_value) -> None:
+        """Webui-only write path for /settings/dpid/{id}. Restricted to
+        behavior==3 (Nvm) rows — mirrors the persistence _write() already does
+        for a real BLE WriteCmd, but deliberately does NOT fan out a NOTIFY
+        (that's a live-BLE-session concept; this is a settings-table edit that
+        may happen with no BLE client connected at all)."""
+        entry = self._find_entry(dp_id)
+        if entry is None:
+            raise KeyError(f"unknown DpId {dp_id}")
+        if entry['behavior'] != 3:
+            raise ValueError(f"DpId {dp_id} is not writable (behavior={entry['behavior']})")
+        encoded = _encode_dpid_value(entry['datatype'], raw_value)
+        entry['value'] = bytearray(encoded)
+        mock_persistence.save("alba", self._device_key, f"dpid:{dp_id}", encoded.hex())
 
     async def _stop_sequence(self):
         """Simulate realistic shower wind-down: 5->6(Retracting)->7(Postrinsing)->2(Ready)."""
@@ -1661,6 +1747,8 @@ class AlbaMock:
             else:
 
                 _web_app = _FastAPI()
+                _static_dir = pathlib.Path(__file__).parent / "static"
+                _web_app.mount("/static", _StaticFiles(directory=str(_static_dir)), name="static")
 
                 @_web_app.get("/", response_class=_HTMLResponse)
                 async def _web_get_index():
@@ -1673,10 +1761,12 @@ class AlbaMock:
                         _serial = bytes(_cur_app._store.get((369, None), {}).get('value', b'')).decode('ascii', 'replace') or "pending..."
                         _pin = bytes(_cur_app._store.get((12, None), {}).get('value', b'')).decode('ascii', 'replace') or "pending..."
                         _sap = bytes(_cur_app._store.get((371, None), {}).get('value', b'')).decode('ascii', 'replace') or "?"
+                        _settings_json = json.dumps(_cur_app._settings_table_data())
                     else:
                         s564 = _ui_notify_state["564"]
                         _serial = _pin = "pending..."
                         _sap = "?"
+                        _settings_json = json.dumps({"sections": []})
                     b607 = "ON (sitting)" if s607 else "OFF (absent)"
                     b564 = {1: "1 (disabled)", 2: "2 (ready)", 5: "5 (running)"}.get(s564, f"{s564} (?)")
                     c607 = "#2a9" if s607 else "#999"
@@ -1684,6 +1774,7 @@ class AlbaMock:
                     return (
                         "<!DOCTYPE html><html><head><title>Mock Alba NOTIFY</title>"
                         "<meta http-equiv='refresh' content='2'>"
+                        "<link rel='stylesheet' href='/static/mock-controls.css'>"
                         "<style>"
                         "body{font-family:monospace;max-width:540px;margin:40px auto;padding:0 20px}"
                         ".row{display:flex;align-items:center;gap:16px;margin:16px 0}"
@@ -1716,8 +1807,24 @@ class AlbaMock:
                         f'<br>standalone toggle cycles 1→2→5→1</span></span>'
                         f'<form method="POST" action="/notify/564/toggle">'
                         f'<button style="background:{c564}">{b564} &rarr; Cycle</button></form></div>'
+                        "<h3>Settings</h3>"
+                        "<div id='mc-root'></div>"
+                        "<script src='/static/mock-controls.js'></script>"
+                        f"<script>mcRenderSettingsTable(document.getElementById('mc-root'), {_settings_json});</script>"
                         "</body></html>"
                     )
+
+                @_web_app.post("/settings/dpid/{dp_id}")
+                async def _web_write_dpid(dp_id: int, request: _Request):
+                    cur_app = _ble20_app_ref[0]
+                    if cur_app is None:
+                        return _HTMLResponse("No active session", status_code=409)
+                    body = await request.json()
+                    try:
+                        cur_app._write_dpid_setting(dp_id, body["value"])
+                    except (KeyError, ValueError) as e:
+                        return _HTMLResponse(str(e), status_code=400)
+                    return {"ok": True}
 
                 @_web_app.post("/notify/{dp_id}/toggle")
                 async def _web_post_toggle(dp_id: str):

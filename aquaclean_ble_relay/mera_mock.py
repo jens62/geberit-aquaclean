@@ -82,7 +82,7 @@ from aquaclean_ble_relay import mock_persistence  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.78.0b1"
+_MOCK_VERSION = "1.79.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -181,6 +181,63 @@ _FW_COMPONENT_VERSIONS = {
     12: (0x30, 0x37, 0x12),  # RS07.0 TS18  — Orientierungslicht
     14: (0x30, 0x37, 0x1B),  # RS07.0 TS27  — Föhneinheit
     15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
+}
+
+# Friendly names for the webui's read-only Firmware Versions section — mirrors
+# _FW_COMPONENT_VERSIONS's own trailing comments (duplicated as structured data
+# since comments aren't machine-readable; see docs/developer/mock-service-
+# requirements.md §6).
+_FW_COMPONENT_NAMES = {
+    1: "Steuerung (main controller)", 3: "Geruchsabsaugung", 4: "Duscheinheit",
+    5: "Deckelheber", 6: "Föhnmodul", 7: "WW-Bereitung", 8: "WC-Sitz-Heizung",
+    9: "Bedienfeld", 10: "Benutzererkennung", 11: "Bewegungserkennung",
+    12: "Orientierungslicht", 14: "Föhneinheit", 15: "Schnittstellenmodul",
+}
+
+# Settings-table metadata (name, kind, min, max, options) for the webui's
+# generic mock-controls.js renderer (docs/developer/mock-service-requirements.md
+# §6). Names/ranges from .claude/rules/ble-protocol.md's ProfileSettings/
+# CommonSetting tables (canonical source per CLAUDE.md's BLE protocol rules).
+# kind mirrors the widget mock-controls.js builds: stepper|toggle|select|swatch.
+# OscillatorState's real range is unconfirmed (ble-protocol.md notes no
+# min/max) and the mock's shared default dict seeds it at 3 — rendered as a
+# small stepper rather than a toggle so an out-of-[0,1] default doesn't look
+# broken.
+_PROFILE_SETTING_META = {
+    0: ("Odour Extraction",     "toggle",  0, 1, None),
+    1: ("Oscillator State",     "stepper", 0, 4, None),
+    2: ("Anal Shower Pressure", "stepper", 0, 4, None),
+    3: ("Lady Shower Pressure", "stepper", 0, 4, None),
+    4: ("Anal Shower Position", "stepper", 0, 4, None),
+    5: ("Lady Shower Position", "stepper", 0, 4, None),
+    6: ("Water Temperature",    "stepper", 0, 5, None),
+    7: ("WC Seat Heat",         "stepper", 0, 5, None),
+    8: ("Dryer Temperature",    "stepper", 0, 5, None),
+    9: ("Dryer State",          "toggle",  0, 1, None),
+}
+
+_ORIENTATION_LIGHT_COLORS = [
+    (0, "Blue",       "#3366ff"),
+    (1, "Turquoise",  "#33cccc"),
+    (2, "Magenta",    "#cc33cc"),
+    (3, "Orange",     "#ff8800"),
+    (4, "Yellow",     "#ffee33"),
+    (5, "Warm White", "#ffe0b3"),
+    (6, "Cold White", "#e6f0ff"),
+]
+_ORIENTATION_LIGHT_MODES = [(0, "Off"), (1, "On"), (2, "When Approached")]
+
+_COMMON_SETTING_META = {
+    0: ("Water Hardness",               "stepper", 0, 4, None),
+    1: ("Orientation Light Brightness", "stepper", 0, 4, None),
+    2: ("Orientation Light Colour",     "swatch",  0, 6, _ORIENTATION_LIGHT_COLORS),
+    3: ("Orientation Light Mode",       "select",  0, 2, _ORIENTATION_LIGHT_MODES),
+    4: ("Lid Sensor Range",             "stepper", 0, 4, None),
+    5: ("Odour Extraction Run-On",      "toggle",  0, 1, None),
+    6: ("Lid Auto Open",                "toggle",  0, 1, None),
+    7: ("Lid Auto Close",               "toggle",  0, 1, None),
+    8: ("Auto Flush",                   "toggle",  0, 1, None),
+    9: ("Demo Mode",                    "toggle",  0, 1, None),
 }
 
 # ---- Advertisement D-Bus path (bluez_peripheral default, used for unregister) ----
@@ -643,6 +700,7 @@ _HTML = """\
 <head>
   <meta charset="utf-8">
   <title>Mera Mock {version}</title>
+  <link rel="stylesheet" href="/static/mock-controls.css">
   <style>
     body {{ font-family: monospace; margin: 2em; background: #1a1a2e; color: #e0e0e0; }}
     h1 {{ color: #00d4aa; }}
@@ -685,9 +743,15 @@ _HTML = """\
   <form method="post" action="/clear-log" style="display:inline">
     <button type="submit" class="danger">Clear log</button>
   </form>
+  <h2>Settings</h2>
+  <div id="mc-root"></div>
   <h2>Session log</h2>
   <div class="log">{log_html}</div>
-  <script>setTimeout(function(){{location.reload();}}, 3000);</script>
+  <script src="/static/mock-controls.js"></script>
+  <script>
+    mcRenderSettingsTable(document.getElementById('mc-root'), {settings_json});
+    setTimeout(function(){{location.reload();}}, 3000);
+  </script>
 </body>
 </html>
 """
@@ -1103,6 +1167,14 @@ class MeraMock:
         value = self._STORED_COMMON_SETTINGS.get(setting_id, 0)
         return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
+    def _write_stored_common_setting(self, setting_id: int, value: int) -> None:
+        """Shared by proc 0x52 (BLE) and the webui's /settings/common/{id} route
+        — one write path, so both surfaces stay consistent (docs/developer/
+        mock-service-requirements.md §6)."""
+        self._STORED_COMMON_SETTINGS[setting_id] = value
+        mock_persistence.save("mera", self._adapter_tag, f"common_setting:{setting_id}", value)
+        self._log("·", f"SetStoredCommonSetting id={setting_id} value={value} — persisted")
+
     def _proc_52(self, args: bytes) -> bytes:
         """SetStoredCommonSetting — persisted immediately via mock_persistence.py.
         Requires a power-cycle to take effect on a real device; the mock applies
@@ -1110,9 +1182,7 @@ class MeraMock:
         "pending write" state to model here."""
         setting_id, value = self._parse_set_setting_args(args)
         if setting_id is not None:
-            self._STORED_COMMON_SETTINGS[setting_id] = value
-            mock_persistence.save("mera", self._adapter_tag, f"common_setting:{setting_id}", value)
-            self._log("·", f"SetStoredCommonSetting id={setting_id} value={value} — persisted")
+            self._write_stored_common_setting(setting_id, value)
         return b""
 
     def _proc_53(self, args: bytes) -> bytes:
@@ -1121,13 +1191,18 @@ class MeraMock:
         value = self._STORED_PROFILE_SETTINGS.get(setting_id, 0)
         return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
+    def _write_stored_profile_setting(self, setting_id: int, value: int) -> None:
+        """Shared by proc 0x54 (BLE) and the webui's /settings/profile/{id}
+        route — one write path, so both surfaces stay consistent."""
+        self._STORED_PROFILE_SETTINGS[setting_id] = value
+        mock_persistence.save("mera", self._adapter_tag, f"profile_setting:{setting_id}", value)
+        self._log("·", f"SetStoredProfileSetting id={setting_id} value={value} — persisted")
+
     def _proc_54(self, args: bytes) -> bytes:
         """SetStoredProfileSetting — persisted immediately via mock_persistence.py."""
         setting_id, value = self._parse_set_setting_args(args)
         if setting_id is not None:
-            self._STORED_PROFILE_SETTINGS[setting_id] = value
-            mock_persistence.save("mera", self._adapter_tag, f"profile_setting:{setting_id}", value)
-            self._log("·", f"SetStoredProfileSetting id={setting_id} value={value} — persisted")
+            self._write_stored_profile_setting(setting_id, value)
         return b""
 
     def _proc_09(self, args: bytes) -> bytes:
@@ -1268,6 +1343,40 @@ class MeraMock:
             lines.append(f'<div class="{css}">[{ts}] {direction} {msg}</div>')
         return "\n".join(lines) or "<div class='info'>(no activity)</div>"
 
+    def _settings_table_data(self) -> dict:
+        """Build the metadata+value JSON mock-controls.js needs to render the
+        settings table — docs/developer/mock-service-requirements.md §6."""
+        def _rows(meta, values, url_prefix):
+            rows = []
+            for setting_id, (name, kind, mn, mx, options) in meta.items():
+                row = {
+                    "id": setting_id, "name": name, "kind": kind,
+                    "value": values.get(setting_id, 0), "min": mn, "max": mx,
+                    "writeUrl": f"{url_prefix}/{setting_id}",
+                }
+                if kind == "select":
+                    row["options"] = [{"value": v, "label": lbl} for v, lbl in options]
+                elif kind == "swatch":
+                    row["options"] = [{"value": v, "label": lbl, "color": color} for v, lbl, color in options]
+                rows.append(row)
+            return rows
+
+        fw_rows = [
+            {
+                "id": cid,
+                "name": _FW_COMPONENT_NAMES.get(cid, f"Component {cid}"),
+                "kind": "readonly",
+                "value": f"RS{chr(v1)}{chr(v2)}.0 TS{build}",
+            }
+            for cid, (v1, v2, build) in sorted(self._FW_COMPONENT_VERSIONS.items())
+        ]
+
+        return {"sections": [
+            {"title": "Profile Settings", "rows": _rows(_PROFILE_SETTING_META, self._STORED_PROFILE_SETTINGS, "/settings/profile")},
+            {"title": "Common Settings", "rows": _rows(_COMMON_SETTING_META, self._STORED_COMMON_SETTINGS, "/settings/common")},
+            {"title": "Firmware Versions", "rows": fw_rows},
+        ]}
+
     async def _handle_root(self, request):
         from aiohttp import web
         html = _HTML.format(
@@ -1279,8 +1388,23 @@ class MeraMock:
             article=self._ARTICLE, sap=self._SAP_NUMBER, serial=self._SERIAL,
             description=self._DESCRIPTION, variant=self._VARIANT,
             log_html=self._render_log(),
+            settings_json=json.dumps(self._settings_table_data()),
         )
         return web.Response(content_type="text/html", text=html)
+
+    async def _handle_write_common_setting(self, request):
+        from aiohttp import web
+        setting_id = int(request.match_info["setting_id"])
+        body = await request.json()
+        self._write_stored_common_setting(setting_id, int(body["value"]))
+        return web.json_response({"ok": True})
+
+    async def _handle_write_profile_setting(self, request):
+        from aiohttp import web
+        setting_id = int(request.match_info["setting_id"])
+        body = await request.json()
+        self._write_stored_profile_setting(setting_id, int(body["value"]))
+        return web.json_response({"ok": True})
 
     async def _handle_button(self, request, service: MeraService):
         from aiohttp import web
@@ -1693,6 +1817,9 @@ class MeraMock:
         app.router.add_post("/button", lambda r: self._handle_button(r, service))
         app.router.add_get("/status", self._handle_status)
         app.router.add_post("/clear-log", self._handle_clear_log)
+        app.router.add_post("/settings/common/{setting_id}", self._handle_write_common_setting)
+        app.router.add_post("/settings/profile/{setting_id}", self._handle_write_profile_setting)
+        app.router.add_static("/static/", path=str(Path(__file__).parent / "static"))
 
         runner = web.AppRunner(app)
         await runner.setup()

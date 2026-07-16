@@ -1,0 +1,155 @@
+/* Generic settings-control styling for the BLE mock webuis (MeraMock, AlbaMock).
+   Visually mirrors aquaclean_console_app/static/index.html's --bg/--surface/
+   --text/--muted theme and .ps-section/.ps-row/.ps-stepper/.ios-toggle/
+   .cs-swatch classes (renamed mc-* here to avoid colliding with each mock's
+   own page styles) — see docs/developer/mock-service-requirements.md §6. */
+
+:root {
+  --mc-bg: #1a1a2e;
+  --mc-surface: #16213e;
+  --mc-text: #e0e0e0;
+  --mc-muted: #888;
+  --mc-success: #4caf50;
+  --mc-error: #f44336;
+  --mc-radius: 12px;
+}
+
+.mc-sections { display: flex; flex-direction: column; gap: 0.5rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+.mc-section {
+  background: var(--mc-surface);
+  border-radius: var(--mc-radius);
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+
+.mc-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--mc-muted);
+  padding: 0.55rem 1.1rem 0.45rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.mc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1.1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 0.875rem;
+  gap: 1rem;
+  min-height: 2.6rem;
+  color: var(--mc-text);
+}
+.mc-row:last-child { border-bottom: none; }
+.mc-row-label { flex-shrink: 0; }
+.mc-readonly { color: var(--mc-muted); }
+
+/* iOS-style toggle switch */
+.mc-toggle { position: relative; display: inline-block; width: 46px; height: 28px; flex-shrink: 0; }
+.mc-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.mc-toggle-track {
+  position: absolute; inset: 0;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.15);
+  transition: background 0.22s;
+  cursor: pointer;
+}
+.mc-toggle-track::before {
+  content: '';
+  position: absolute;
+  left: 3px; top: 3px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.22s cubic-bezier(.4,0,.2,1);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+.mc-toggle input:checked + .mc-toggle-track { background: #34c759; }
+.mc-toggle input:checked + .mc-toggle-track::before { transform: translateX(18px); }
+
+/* Stepper: − value + */
+.mc-stepper {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.04);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.mc-step-btn {
+  background: none;
+  border: none;
+  color: var(--mc-text);
+  font-size: 1.15rem;
+  line-height: 1;
+  width: 2.2rem;
+  height: 2.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 0;
+  border-right: 1px solid rgba(255,255,255,0.1);
+  transition: background 0.15s;
+}
+.mc-step-btn:last-child { border-right: none; border-left: 1px solid rgba(255,255,255,0.1); }
+.mc-step-btn:hover { background: rgba(255,255,255,0.1); }
+.mc-step-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mc-step-btn.success { color: var(--mc-success); }
+.mc-step-btn.error { color: var(--mc-error); }
+.mc-step-val {
+  min-width: 2.4rem;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--mc-text);
+  user-select: none;
+}
+
+/* Enum select */
+.mc-sel {
+  padding: 0.3rem 0.5rem;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.06);
+  color: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  min-width: 9rem;
+  cursor: pointer;
+}
+
+/* Color swatches (e.g. orientation-light color) */
+.mc-swatch { display: inline-block; width: 1.55rem; height: 1.55rem; border-radius: 50%; margin: 0 0.22rem; cursor: pointer; border: 2px solid transparent; vertical-align: middle; transition: transform 0.15s, border-color 0.15s; }
+.mc-swatch:first-child { margin-left: 0; }
+.mc-swatch:hover { transform: scale(1.2); }
+.mc-swatch.active { border-color: #fff; transform: scale(1.15); }
+
+/* Text field + save button (e.g. Alba ACCESS_CODE) */
+.mc-text-group { display: inline-flex; align-items: center; gap: 0.4rem; }
+.mc-text {
+  padding: 0.3rem 0.5rem;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.06);
+  color: inherit;
+  font-size: 0.85rem;
+}
+.mc-text-save {
+  background: var(--mc-surface);
+  color: var(--mc-text);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.mc-text-save:disabled { opacity: 0.5; cursor: not-allowed; }
+.mc-text-save.success { border-color: var(--mc-success); color: var(--mc-success); }
+.mc-text-save.error { border-color: var(--mc-error); color: var(--mc-error); }
