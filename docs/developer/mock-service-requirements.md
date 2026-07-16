@@ -280,6 +280,48 @@ the Geberit cloud, hand out setting min/max ranges at runtime? Investigated agai
 - Full settings table per device (value, datatype, behavior, min/max), inline per-row edit,
   **Reset to factory defaults** scoped to exactly one device's store — never all of them.
 
+### DRY: shared frontend assets with the real bridge webui — 2026-07-16
+
+**Current state (confirmed by reading all three, not assumed):** there are three fully
+separate HTML/JS sources today, zero sharing between them —
+- the real bridge's `aquaclean_console_app/static/index.html` (2141 lines, one monolithic
+  file, no separate `.js`/`.css` files),
+- Mera mock's inline `_HTML` template (`mera_mock.py`, aiohttp + `str.format()`, ~53 lines —
+  identity table + button-press form + session log only),
+- Alba mock's inline route-handler string (`alba_mock.py`, FastAPI, ~35 lines — identity
+  sticker + two DpId toggle buttons only).
+
+Neither mock currently implements orientation-light control, a settings table, or anything
+else that visibly duplicates the bridge's markup — so there's no duplication to fix *yet*.
+But Phase 6 (the row above) is exactly where both mocks are planned to grow a full settings
+table, and building that twice from scratch — once per mock, independently from the bridge's
+existing solution — would be the third and fourth independent implementation of primitives
+the bridge already solved generically.
+
+**What's actually reusable:** the bridge's `index.html` script block already implements its
+per-feature controls (including orientation light's brightness stepper and color swatches)
+as hand-written HTML wired to a small set of *generic*, data-attribute-driven JS helpers —
+not one bespoke script per feature:
+- `stepDec`/`stepInc` — generic numeric stepper (`data-kind`/`data-id`/`data-min`/`data-max`)
+- `setCommonSetting` / `setProfileSetting` — generic setting-updater dispatch by ID
+- `sendPost` — generic POST helper
+- the `.ps-section`/`.ps-row`/`.ps-stepper` CSS classes these are wired to
+
+These aren't bridge-specific — a mock's future settings table needs the exact same
+primitives (numeric stepper, enum/select, color swatch, toggle button) against the same
+conceptual setting IDs (`common_setting`/`profile_setting`) the bridge already uses them for.
+Only the primitives are candidates for sharing; feature-specific markup (labels, the literal
+orientation-light swatch colors, section titles) stays per-consumer, since each surface
+renders its own device's setting definitions.
+
+**Proposal for Phase 6 (not decided, not implemented — a design question to resolve at Phase
+6 time, so it doesn't get built three times in parallel by accident):** extract the primitives
+above into a shared static JS/CSS asset that both the bridge's FastAPI static mount and each
+mock's own web server (FastAPI for Alba/console, aiohttp for Mera — both can serve a static
+directory from disk regardless of framework) can reference, instead of each mock reinventing
+them. Exact location/mechanism (e.g. a new top-level `shared_static/` dir vs. some other
+approach) is intentionally left open until Phase 6 actually starts.
+
 ## 7. Logging
 
 - One logger per device instance, named by the same `(model, adapter)` key used for
@@ -337,7 +379,7 @@ of it.
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
-| 6 | Webui, multi-device | Not started |
+| 6 | Webui, multi-device | Not started — see §6 "DRY: shared frontend assets with the real bridge webui" |
 | 7 | Logging polish (combined + per-device files) | Not started |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
 | 9 | Firmware override parsing *(future, §4)* | Not started |
