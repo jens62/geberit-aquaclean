@@ -338,15 +338,31 @@ mock settings-control module" since it touches shipped `aquaclean_console_app` c
 proper branch/PR, per the existing mock-vs-console-app workflow split
 (`memory/feedback_mock_services_work_on_main.md`).
 
-**Implemented, not yet VM-verified (2026-07-16, commit `d217e46`):**
+**Implemented and VM-verified (2026-07-16, commit `d217e46`, VM-verified `2d8a56a`+):**
 `aquaclean_ble_relay/static/mock-controls.js`/`.css` built as described above. Mera got
 `/settings/common/{id}` and `/settings/profile/{id}` write routes (backed by
 `_write_stored_common_setting`/`_write_stored_profile_setting`, shared with proc 0x52/0x54 so
 BLE and webui writes stay consistent) plus a read-only Firmware Versions section; Alba got a
 single `/settings/dpid/{id}` write route restricted to Nvm (`behavior==3`) rows, with
 datatype-aware encode/decode helpers, covering the writable Nvm DpIds plus read-only identity/
-firmware DpIds. Not runtime-verified in this dev environment — `fastapi`/`aiohttp` aren't
-installed here (same limitation as the rest of this file); needs a real run on the mock VM.
+firmware DpIds.
+
+Could not be runtime-verified in this dev environment — `fastapi`/`aiohttp`/`bluez_peripheral`
+aren't installed here — so verified on the mock VM (`anneubuntu-studio`, `/home/jens/venv`,
+which does have them): both mocks import cleanly, the settings table renders, static assets
+serve, and writes round-trip and persist (Mera via `common_setting`/`profile_setting`, Alba via
+Nvm DpIds; a write to an Alba Protected DpId — e.g. the pairing PIN — is correctly rejected with
+HTTP 400). Permanent regression coverage added as `tests/test_mera_mock_webui.py` and
+`tests/test_alba_mock_webui.py` — skipped automatically via `pytest.importorskip` in any
+environment missing the deps (this dev venv included), runnable for real wherever they're
+installed. All 11 tests pass on the mock VM.
+
+**Bug found and fixed along the way (commit `2d8a56a`):** `alba_mock.py` added the repo root to
+`sys.path` right before its `aquaclean_console_app` imports, but its own `aquaclean_ble_relay.*`
+imports sit above that line — so standalone-script invocation (where `sys.path[0]` is this
+file's own directory, not the repo root) failed with `ModuleNotFoundError` before ever reaching
+the later insert. `mera_mock.py` already did this in the correct order; `alba_mock.py` didn't.
+Fixed by moving the insert before both import groups it serves.
 
 ## 7. Logging
 
@@ -407,7 +423,7 @@ of it.
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
-| 6 | Webui, multi-device | **Implemented, not VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba, see §6 "DRY..." |
+| 6 | Webui, multi-device | **Done, VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba, see §6 "DRY..."; regression tests in `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` |
 | 7 | Logging polish (combined + per-device files) | Not started |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
 | 9 | Firmware override parsing *(future, §4)* | Not started |
