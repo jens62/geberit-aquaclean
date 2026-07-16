@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.75.0b1"
+_MOCK_VERSION = "1.76.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -496,22 +496,39 @@ def _proc_subscribenotif(proc: int, args: bytes) -> bytes:
     return result
 
 
-# Per-component firmware versions from real Mera Comfort onboarding-real-mera.md.
+# Per-component firmware versions — real post-update values from a genuine
+# RS28.0->RS30.0 Mera Comfort update, captured 2026-07-14
+# (local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/).
 # Format per record: (v1, v2, build) where version=chr(v1)+chr(v2), build=int.
+#
+# These are the device's OWN real values, not a uniform hack: diffing the
+# actual GetFirmwareVersionList bytes before/after that update showed only
+# components 1 (Steuerung) and 11 (Bewegungserkennung) actually changed
+# version; every other component here was already byte-identical to its
+# target before the update and still is. The earlier "all components must be
+# RS30.0 TS206" hack (v1.75.0b1) papered over a bug that was actually caused
+# by component 11 alone being below target in that older real-device capture
+# (RS07.0 TS22) — not by nodes 3-15 as a block. See
+# memory/mock-firmware-all-components-rs30.md and
+# memory/mera-firmware-update-ble-protocol.md for the full analysis.
+#
+# UNCONFIRMED ON REAL HARDWARE — ship as a beta tag (vX.Y.Zb1) first per
+# the project's pre-release rule; this replaces logic that has regressed
+# the blocking-firmware-update-UI bug twice before (v1.72.0b1-v1.74.0b1).
 _FW_COMPONENT_VERSIONS = {
-    1:  (0x33, 0x30, 0xCE),  # RS30.0 TS206 — all components must report RS30 to avoid blocking firmware update UI
-    3:  (0x33, 0x30, 0xCE),
-    4:  (0x33, 0x30, 0xCE),
-    5:  (0x33, 0x30, 0xCE),
-    6:  (0x33, 0x30, 0xCE),
-    7:  (0x33, 0x30, 0xCE),
-    8:  (0x33, 0x30, 0xCE),
-    9:  (0x33, 0x30, 0xCE),
-    10: (0x33, 0x30, 0xCE),
-    11: (0x33, 0x30, 0xCE),
-    12: (0x33, 0x30, 0xCE),
-    14: (0x33, 0x30, 0xCE),
-    15: (0x33, 0x30, 0xCE),
+    1:  (0x33, 0x30, 0xCE),  # RS30.0 TS206 — Steuerung (main controller) — updated by the real device
+    3:  (0x30, 0x38, 0x1F),  # RS08.0 TS31  — Geruchsabsaugung
+    4:  (0x30, 0x38, 0x25),  # RS08.0 TS37  — Duscheinheit
+    5:  (0x31, 0x31, 0x3C),  # RS11.0 TS60  — Deckelheber
+    6:  (0x30, 0x38, 0x30),  # RS08.0 TS48  — Föhnmodul
+    7:  (0x31, 0x31, 0x29),  # RS11.0 TS41  — WW-Bereitung
+    8:  (0x30, 0x39, 0x1F),  # RS09.0 TS31  — WC-Sitz-Heizung
+    9:  (0x30, 0x37, 0x13),  # RS07.0 TS19  — Bedienfeld
+    10: (0x30, 0x37, 0x12),  # RS07.0 TS18  — Benutzererkennung
+    11: (0x30, 0x38, 0x17),  # RS08.0 TS23  — Bewegungserkennung — updated by the real device (was RS07.0 TS22)
+    12: (0x30, 0x37, 0x12),  # RS07.0 TS18  — Orientierungslicht
+    14: (0x30, 0x37, 0x1B),  # RS07.0 TS27  — Föhneinheit
+    15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
 }
 
 
