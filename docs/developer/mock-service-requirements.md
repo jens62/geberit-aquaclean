@@ -435,6 +435,24 @@ webui tests.
 - **Resource conflicts across devices:** need a decision on whether a webui bind failure (or
   any single-device startup failure) aborts the entire `mock_service.py` run or just that one
   device, leaving the others running.
+- **Mera `SetCommand` (proc 0x09) is almost entirely unsimulated — found 2026-07-16, tracked as
+  Phase 10.** This is a gap in *action simulation*, distinct from persistence (§5), which is
+  correctly wired for the settings that actually need it. Precisely:
+  - `_write_stored_common_setting`/`_write_stored_profile_setting` (proc 0x52/0x54, "Stored"
+    settings) persist correctly — confirmed working, reused by both the real BLE path and the
+    Phase 6 webui write routes. If the real Geberit Home App changes e.g. orientation light
+    colour against a mocked device, that persists across a mock restart.
+  - `_proc_08`/`_proc_0b` (`SetActiveProfileSetting`/`SetActiveCommonSetting`) are session-only,
+    never persisted — **by design, not a bug**: this correctly mirrors the real device, where
+    Active state is always re-derived from Stored NVM after a power-cycle.
+  - `_proc_09` (`SetCommand`) — the toggle/trigger channel for ~20 command codes
+    (`ToggleLidPosition`, `PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`,
+    `TriggerFlushManually`, `ResetFilterCounter`, `ToggleOrientationLight`, `Stop`, etc., see
+    `.claude/rules/ble-protocol.md` Layer 1 table) — only **2** codes are wired at all
+    (`ToggleAnalShower`/`ToggleLadyShower`, correctly not persisted — they flip live SPL state).
+    Every other code is a silent no-op: the real app or remote control can send them to the mock
+    and nothing happens at all — not even a log line distinguishing "received but ignored" from
+    "not received."
 
 ## 10. Decisions log
 
@@ -467,6 +485,7 @@ of it.
 | 9 | Firmware override parsing *(future, §4)* | Not started |
 | 9a | Firmware version persistence (Mera + Alba) | **Done** — see §5 "Firmware version persistence" |
 | 9b | Firmware update-process simulation (Mera `0x40` proc sequence; Alba TBD) | Not started — depends on 9a |
+| 10 | Wire remaining Mera `SetCommand` (proc 0x09) codes — action simulation, not persistence | Not started — see §9 |
 
 ### Phase 2 — scope decision (2026-07-16)
 

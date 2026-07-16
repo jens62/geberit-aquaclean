@@ -167,6 +167,12 @@ Implementation order:
 
 (Stop, OdourExtraction, OdourExtractionRunOn done in v3.0.6. ToggleOrientationLight moved to AcSela task above.)
 
+**Note:** this is about exposing `SetCommand` codes through the bridge's REST/MQTT/CLI/HACS
+interfaces. A separate, unrelated gap exists on the *mock* side — the Mera mock itself doesn't
+simulate most `SetCommand` codes either (only `ToggleAnalShower`/`ToggleLadyShower` have any
+effect), so testing against a mocked device won't currently exercise these even once bridge-side
+wiring exists. Tracked as `docs/developer/mock-service-requirements.md` §9 / Phase 10.
+
 ---
 
 ### BLE sniffing needed — unimplemented procedures
