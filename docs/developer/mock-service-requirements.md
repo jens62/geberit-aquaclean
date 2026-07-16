@@ -561,15 +561,49 @@ confirmed via a real throwaway D-Bus connection listing `hci0` as the only avail
 adapter), missing `web_port` with 2+ devices, and duplicate `web_port` — each produces the
 expected `argparse`-level error before touching any BLE/D-Bus registration.
 
+**Correction (2026-07-16, same day): sharing one adapter is not a good test of "the Geberit
+Home App discovers two devices independently."** The BlueZ-multiplexing argument above is
+correct at the D-Bus/GATT/advertising-*instance* level, but it doesn't mean two devices
+sharing an adapter are independently discoverable by the app. A BLE advertisement is
+transmitted from the adapter's own BD address (MAC); `bluez_peripheral`'s simple
+`Advertisement` object doesn't configure per-instance private/random addressing, and this
+adapter advertises with its real public MAC (confirmed, privacy off — see
+`memory/mock-ble-advertising-mac.md`). So two advertisement instances registered on the
+same adapter very likely transmit **two different payloads from the identical MAC,
+simultaneously** — which reproduces (arguably worsens) the exact MAC-keyed-device-list
+confusion documented in the Phase 4 gotcha (§"mock-geberit-alba.md" #5), just concurrent
+instead of sequential.
+
+**What sharing one adapter *is* still good for:** testing the mocks' own GATT/protocol/
+persistence correctness concurrently, via direct-connect tooling (bleak scripts,
+`gatttool`, a bridge-side automated test) that connects by MAC + specific service UUID
+rather than relying on the Home App's scan-and-match heuristics.
+
+**What it's *not* good for:** getting the real Geberit Home App to treat two mocks as
+independently discoverable at once. That specific test needs two physically separate
+adapters (two distinct MACs) — a hardware requirement for *that* test, not a code
+limitation. The mock VM turns out to have exactly that available:
+```
+hci0  A0:AD:9F:72:C4:0F  (Realtek, BT 5.1)  — used in all testing so far
+hci1  00:1A:7D:DA:71:13  (Cambridge Silicon Radio, BT 4.0) — previously unused
+```
+
 **Not yet verified: two devices actually registering and advertising concurrently on real
-hardware.** This needs `sudo` (not available to me directly over SSH) — e.g.:
+hardware.** This needs `sudo` (not available to me directly over SSH) — first test, using
+the two separate adapters above to sidestep the MAC-sharing issue entirely:
 ```bash
 sudo /home/jens/venv/bin/python3 -m aquaclean_ble_relay.mock_service \
   --device model=mera,adapter=hci0,web_port=8765 \
-  --device model=alba,adapter=hci0,web_port=8766
+  --device model=alba,adapter=hci1,web_port=8766
 ```
-Expect both to register GATT services and advertise simultaneously on the one `hci0`
-adapter (per the BlueZ multiplexing capability above); worth checking `bluetoothctl show`
-mid-run for `ActiveInstances: 0x02` and both service UUID sets present, and trying to
-discover/connect to each independently from the Geberit Home App (remembering the Phase 4
-gotcha: delete any stale device entry from a previous single-device test first).
+Expect both to register GATT services and advertise independently, each under its own
+adapter's MAC. Worth checking `bluetoothctl show` mid-run for both adapters' state, and
+discovering/connecting to each independently from the Geberit Home App (remembering the
+Phase 4 gotcha: delete any stale device entry from a previous single-device test first — a
+fresh MAC per adapter should mean this is now a non-issue for this specific test, but the
+first `hci0` run reused the same MAC as every earlier test this session).
+
+A **second, separate test** — two devices sharing `hci0` (the original Phase 5 plan) —
+remains worth doing to confirm the D-Bus/GATT-level fixes (path prefixing, instance-scoped
+`_emit_interface_added`) work under real concurrent registration, but verify it via direct
+BLE connect tooling, not the Home App's scan, per the correction above.

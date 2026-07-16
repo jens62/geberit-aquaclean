@@ -16,13 +16,14 @@ over a model's registry defaults. Add new models/variants (e.g. "sela" once
 its mock exists — Phase 8) by adding one entry here; mock_service.py itself
 never branches on protocol.
 
-Multiple devices CAN share one adapter — BlueZ supports multiple GATT
-applications and multiple advertisement instances per adapter (confirmed:
-this VM's adapter reports SupportedInstances=3). What's rejected is two
---device entries with the exact same (model, adapter) pair, since that would
-have both instances registering under identical D-Bus object paths. Two
-mock/protocol-level fixes were needed to make sharing an adapter actually
-safe, both applied directly in mera_mock.py/alba_mock.py, not here:
+Multiple devices CAN share one adapter at the D-Bus/GATT level — BlueZ
+supports multiple GATT applications and multiple advertisement instances per
+adapter (confirmed: this VM's adapter reports SupportedInstances=3). What's
+rejected is two --device entries with the exact same (model, adapter) pair,
+since that would have both instances registering under identical D-Bus
+object paths. Two mock/protocol-level fixes were needed to make sharing an
+adapter safe at that level, both applied directly in
+mera_mock.py/alba_mock.py, not here:
   1. D-Bus GATT app paths are now prefixed by model name AND adapter — they
      used to be tagged by adapter only, so Mera's and Alba's generically-named
      "battery"/"dis" service paths would collide if they ever shared an
@@ -32,6 +33,19 @@ safe, both applied directly in mera_mock.py/alba_mock.py, not here:
      dbus_next.message_bus.BaseMessageBus at the CLASS level — process-wide,
      so two concurrent registrations would race each other's patch/restore.
      Now scoped to each instance's own `bus` object.
+
+BUT: sharing one adapter means sharing that adapter's BLE MAC address — every
+advertisement instance registered on it transmits from the same address
+unless something explicitly configures per-instance private addressing
+(bluez_peripheral's simple Advertisement object doesn't). Two devices sharing
+an adapter will very likely broadcast two different payloads from the
+identical MAC simultaneously, which the Geberit Home App's MAC-keyed device
+list (see docs/developer/mock-geberit-alba.md gotcha #5) will likely find
+just as confusing as it found the sequential version of this problem in
+Phase 4 — possibly more so. Sharing an adapter is fine for testing the mocks'
+own GATT/protocol/persistence correctness via direct-connect tooling; use two
+physically separate adapters (two distinct MACs) when the point of the test
+is the real Home App discovering two devices independently.
 
 All requested adapters are validated to actually exist (one throwaway D-Bus
 connection, before any device starts) — a typo'd --adapter now fails fast for
