@@ -82,7 +82,7 @@ from aquaclean_ble_relay import mock_persistence  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.77.0b1"
+_MOCK_VERSION = "1.78.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -163,7 +163,10 @@ _PROC_NAMES: dict = {
 # RS28.0->RS30.0 Mera Comfort update, captured 2026-07-14
 # (local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/).
 # Format per record: (v1, v2, build) where version=chr(v1)+chr(v2), build=int.
-# Read-only protocol data (not mutated anywhere) — stays module-level.
+# Fallback defaults only — each MeraMock instance copies this into
+# self._FW_COMPONENT_VERSIONS at init and overlays any persisted per-adapter
+# values on top (docs/developer/mock-service-requirements.md §5 "Firmware
+# version persistence").
 _FW_COMPONENT_VERSIONS = {
     1:  (0x33, 0x30, 0xCE),  # RS30.0 TS206 — Steuerung (main controller) — updated by the real device
     3:  (0x30, 0x38, 0x1F),  # RS08.0 TS31  — Geruchsabsaugung
@@ -748,6 +751,10 @@ class MeraMock:
             0x00: 1, 0x01: 1, 0x02: 2, 0x03: 1, 0x04: 2,
             0x05: 1, 0x06: 4, 0x07: 0, 0x08: 3, 0x09: 1, 0x0d: 1,
         }
+        # Per-instance overlay of the module-level fallback defaults — lets a
+        # future firmware-update simulation durably change what GetFirmwareVersionList
+        # reports, and keeps two MeraMock instances (different adapters) independent.
+        self._FW_COMPONENT_VERSIONS = dict(_FW_COMPONENT_VERSIONS)
 
         # Persisted values win over the hardcoded defaults above — this is what
         # makes settings survive a mock restart (requirements doc §0/§5).
@@ -762,6 +769,8 @@ class MeraMock:
                 self._STORED_COMMON_SETTINGS[idx] = value
             elif namespace == "profile_setting":
                 self._STORED_PROFILE_SETTINGS[idx] = value
+            elif namespace == "fw":
+                self._FW_COMPONENT_VERSIONS[idx] = tuple(value)
 
         # Active CommonSetting store (proc 0x0A/0x0B) — session-scoped, seeded
         # from Stored (including any persisted overrides just applied above) at
@@ -1020,9 +1029,19 @@ class MeraMock:
         comp_ids = list(args[1:1 + count])
         records = bytes([len(comp_ids)])
         for cid in comp_ids:
-            v1, v2, build = _FW_COMPONENT_VERSIONS.get(cid, (0x30, 0x30, 0))
+            v1, v2, build = self._FW_COMPONENT_VERSIONS.get(cid, (0x30, 0x30, 0))
             records += bytes([cid, v1, v2, build, 0])
         return records + bytes(max(0, 61 - len(records)))  # always pad to 61 bytes
+
+    def _set_fw_version(self, component_id: int, v1: int, v2: int, build: int) -> None:
+        """Update one component's reported firmware version and persist it —
+        the write hook a firmware-update-process simulation calls after a
+        simulated OTA completes (mirrors the real RS28.0->RS30.0 capture in
+        memory/mera-firmware-update-ble-protocol.md). Not called anywhere yet
+        (docs/developer/mock-service-requirements.md Phase 9b)."""
+        self._FW_COMPONENT_VERSIONS[component_id] = (v1, v2, build)
+        mock_persistence.save("mera", self._adapter_tag, f"fw:{component_id}", [v1, v2, build])
+        self._log("·", f"SetFirmwareVersion component={component_id} -> ({v1},{v2},{build}) — persisted")
 
     def _proc_86(self) -> bytes:
         """GetDeviceInitialOperationDate: UTF-8 date string, no null terminator (real device: 31.05.2024)."""

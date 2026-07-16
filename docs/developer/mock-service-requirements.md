@@ -197,6 +197,48 @@ set in `__init__`, not persisted or varied per adapter) — not implemented, sin
 concrete ask and Phase 5 test case were Alba-only.
 Worth doing the same way if/when two Mera instances are tested together.
 
+### Firmware version persistence (Mera + Alba) — 2026-07-16
+
+**Gap found:** both mocks reported firmware/component versions as read-only, in-memory-only
+data — Mera's `_FW_COMPONENT_VERSIONS` (module-level dict, `mera_mock.py`) and Alba's
+firmware DpIds (8 `FW_RS_VERSION`, 9 `FW_TS_VERSION`, 10 `HW_RS_VERSION`, 785 `FUS_VERSION`,
+786 `GEBERIT_LOADER_VERSION`, 787 `WIRELESS_STACK_VERSION`, all `behavior==0`/`4` in
+`_DEFAULT_STORE`) were never written to `mock_persistence.py`. Fine for reporting a static
+version, but it blocked simulating a firmware update (§9b below), which needs the reported
+version to durably change after the simulated OTA — exactly what a real device's flash-backed
+version storage does. Confirmed directly: the real Mera Comfort capture in
+`memory/mera-firmware-update-ble-protocol.md` shows `GetFirmwareVersionList` returning
+RS28.0 TS199 before an update and RS30.0 TS206 after, for component `0x01`.
+
+**Implementation — same composite-key mechanism as everything else in this section, no
+schema change:**
+- **Mera** (done, `mera_mock.py`): `state_key = f"fw:{component_id}"` — same
+  `namespace:index` shape as `common_setting:idx`/`profile_setting:idx`. `MeraMock.__init__`
+  copies the module-level `_FW_COMPONENT_VERSIONS` fallback dict into
+  `self._FW_COMPONENT_VERSIONS`, then overlays any persisted values in the same loop that
+  already handles common/profile settings. `_proc_0e` (`GetFirmwareVersionList`) reads the
+  instance dict, not the module dict. New `_set_fw_version(component_id, v1, v2, build)`
+  writes through to `mock_persistence.py` — the hook Phase 9b's update-process simulation
+  will call. Not called anywhere yet.
+- **Alba** (done, `alba_mock.py`): `state_key = f"dpid:{dp_id}"` — identical scheme to the
+  Nvm/identity DpIds already persisted. The six firmware DpIds are Info/Protected, so (like
+  the identity DpIds) they get their own loop outside the Nvm-only reload path. Unlike
+  identity, there's no random generation — first run for a given `device_key` simply persists
+  today's hardcoded `_DEFAULT_STORE` default as-is, since firmware versions aren't unique per
+  physical unit. New `_set_firmware_version(dp_id, value)` is the equivalent write hook, also
+  not called anywhere yet.
+
+**Parity policy (2026-07-16, explicit user instruction):** any mock feature implemented for
+one protocol (Mera or Alba) gets mirrored in the other at the same time, unless there's a
+concrete protocol-level reason it can't apply — tracking two mocks that drift independently
+is more housekeeping than doing both up front. This firmware-persistence change is the first
+instance of applying that policy; apply it by default to future mock feature work.
+
+**Not yet done:** the actual update-process simulation that calls the two write hooks above.
+Mera's real `0x40/0x52…0x40/0x04` proc sequence is already decoded in
+`.claude/rules/ble-protocol.md` and `memory/mera-firmware-update-ble-protocol.md`; no
+Alba-side capture exists yet. Tracked as Phase 9b below.
+
 ### Provenance of min/max values (why they're code, not DB or a live fetch)
 
 Checked before deciding this, rather than guessing: does `RS28.0`/`TS199`-style firmware, or
@@ -299,6 +341,8 @@ of it.
 | 7 | Logging polish (combined + per-device files) | Not started |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
 | 9 | Firmware override parsing *(future, §4)* | Not started |
+| 9a | Firmware version persistence (Mera + Alba) | **Done** — see §5 "Firmware version persistence" |
+| 9b | Firmware update-process simulation (Mera `0x40` proc sequence; Alba TBD) | Not started — depends on 9a |
 
 ### Phase 2 — scope decision (2026-07-16)
 

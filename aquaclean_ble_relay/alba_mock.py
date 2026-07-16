@@ -61,7 +61,7 @@ def print(*args, **kwargs):  # noqa: A001
     _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.19.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.20.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging (unused today — ported for parity, same as the original script)
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -270,6 +270,15 @@ class _Ble20AppLayer:
     # forever after, exactly like a sticker never changes once printed.
     _IDENTITY_DPIDS = (12, 369)  # PAIRING_SECRET, SALES_PRODUCT_SERIAL_NUMBER
 
+    # Firmware/component-version DpIds — behavior==0 (Info) or 4 (Protected), so
+    # (like identity above) never touched by the Nvm (behavior==3) write-through
+    # path. Persisted the same way so a future firmware-update simulation can
+    # durably change what a real device's flash update would change, and so
+    # multiple AlbaMock instances don't all silently share one mutable copy.
+    # (dp_id, instance) pairs — three of these are instanced rows in _DEFAULT_STORE.
+    _FIRMWARE_DPIDS = ((8, None), (9, None), (10, None), (786, 2), (785, 3), (787, 3))
+    # FW_RS_VERSION, FW_TS_VERSION, HW_RS_VERSION, GEBERIT_LOADER_VERSION, FUS_VERSION, WIRELESS_STACK_VERSION
+
     @staticmethod
     def _generate_identity_value(dp_id: int) -> bytes:
         if dp_id == 12:  # PAIRING_SECRET — 4-digit numeric PIN, same format as _DEFAULT_STORE's default
@@ -324,6 +333,28 @@ class _Ble20AppLayer:
             value = self._generate_identity_value(dp_id)
             self._store[(dp_id, None)]['value'] = bytearray(value)
             mock_persistence.save("alba", self._device_key, key, value.hex())
+
+        # Firmware/component-version DpIds — unlike identity, no random
+        # generation: firmware versions aren't unique per physical unit, so the
+        # first run for a device_key just persists today's hardcoded
+        # _DEFAULT_STORE default, making it the stable, writable baseline a
+        # future firmware-update simulation can change.
+        for dp_id, instance in self._FIRMWARE_DPIDS:
+            key = f"dpid:{dp_id}"
+            if key in persisted:
+                self._store[(dp_id, instance)]['value'] = bytearray(bytes.fromhex(persisted[key]))
+                continue
+            value = bytes(self._store[(dp_id, instance)]['value'])
+            mock_persistence.save("alba", self._device_key, key, value.hex())
+
+    def _set_firmware_version(self, dp_id: int, value: bytes) -> None:
+        """Update a firmware/component-version DpId and persist it — the write
+        hook a firmware-update-process simulation calls after a simulated OTA
+        completes. Not called anywhere yet (docs/developer/mock-service-requirements.md
+        Phase 9b)."""
+        instance = dict(self._FIRMWARE_DPIDS)[dp_id]
+        self._store[(dp_id, instance)]['value'] = bytearray(value)
+        mock_persistence.save("alba", self._device_key, f"dpid:{dp_id}", bytes(value).hex())
 
     async def _stop_sequence(self):
         """Simulate realistic shower wind-down: 5->6(Retracting)->7(Postrinsing)->2(Ready)."""
