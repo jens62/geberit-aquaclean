@@ -1177,11 +1177,14 @@ class AlbaMock:
         # D-Bus GATT application paths, tagged with the adapter so two instances
         # don't collide (the original script hardcoded these — fine for one
         # instance per process, not fine once mock_service.py runs several).
+        # Prefixed with the model name, not just the adapter: "battery"/"dis" are generic
+        # service names that MeraMock also uses — tagging by adapter alone would collide
+        # if an Alba and a Mera mock ever share one adapter (Phase 5, mock_service.py).
         app_paths = {
-            "geberit": f"/org/bluez/example/geberit_{self._adapter_tag}",
-            "sigdata": f"/org/bluez/example/sigdata_{self._adapter_tag}",
-            "dis": f"/org/bluez/example/dis_{self._adapter_tag}",
-            "battery": f"/org/bluez/example/battery_{self._adapter_tag}",
+            "geberit": f"/org/bluez/example/alba_geberit_{self._adapter_tag}",
+            "sigdata": f"/org/bluez/example/alba_sigdata_{self._adapter_tag}",
+            "dis": f"/org/bluez/example/alba_dis_{self._adapter_tag}",
+            "battery": f"/org/bluez/example/alba_battery_{self._adapter_tag}",
         }
 
         # Track the BlueZ object path and address of the currently connected BLE client.

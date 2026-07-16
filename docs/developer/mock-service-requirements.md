@@ -236,7 +236,7 @@ of it.
 | 2b | Real settings mutation + persistence wiring for Mera (follow-up) | **Done** — verified on VM, see below |
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
-| 5 | Multi-device concurrency | Not started |
+| 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
 | 6 | Webui, multi-device | Not started |
 | 7 | Logging polish (combined + per-device files) | Not started |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
@@ -511,3 +511,65 @@ initially pointed at BT5 Extended Advertising (the same issue Mera hit in June,
 advertisement payload was confirmed byte-identical to the known-working original script.
 Worth remembering before assuming a code regression: check the app's own device list first
 when switching `--device model=` between test sessions on a shared `adapter=`.
+
+### Phase 5 — multi-device concurrency (2026-07-16)
+
+**Reframed the scope while implementing.** The original plan assumed devices need separate
+adapters. Wrong: BlueZ supports multiple GATT applications and multiple advertisement
+instances per adapter (confirmed — the mock VM's single adapter reports
+`SupportedInstances: 0x03`), so two devices *can* share one adapter. The real constraint is
+narrower: no two devices may register under the same D-Bus object paths or bind the same
+TCP port. Found and fixed three concrete bugs this exposed, none of which were visible with
+only one device running (Phases 2–4):
+
+1. **D-Bus GATT app path collision between different models on the same adapter.**
+   `mera_mock.py`/`alba_mock.py` tagged app paths by adapter only — `battery`/`dis` are
+   generic service names both models use, so a Mera and an Alba mock sharing an adapter
+   would collide on `/org/bluez/example/battery_hci0` etc. Fixed: paths now prefixed by
+   model name *and* adapter in both files.
+2. **`MeraMock`'s `_emit_interface_added` suppression patched the class, not the
+   instance.** Flagged as a known limitation back in Phase 2 ("revisit before Phase 5").
+   Fixed: patches `bus._emit_interface_added` as an instance attribute on that device's own
+   `bus` object (Python attribute lookup checks the instance `__dict__` before the class,
+   so this shadows the class method for one bus only) instead of
+   `dbus_next.message_bus.BaseMessageBus` at the class level. Two concurrent registrations
+   no longer race each other's patch/restore.
+3. **Web UI port collision.** `MeraMock` and `AlbaMock` both default `web_port=8765` and
+   each binds a real listener there (Mera always; Alba whenever `mode="ble20"`, the
+   registry default) — found by actually running two devices together, where it surfaced as
+   `OSError: address already in use` deep inside `uvicorn`'s startup, on the second
+   device's task, well after the first was already running. Fixed with the same fail-fast
+   pattern as the `(model, adapter)` duplicate check: 2+ `--device` entries now require an
+   explicit, distinct `web_port=` on every one, checked before any device starts.
+
+**`mock_service.py` changes:**
+- Removed the "exactly one `--device`" restriction; each spec becomes its own `asyncio`
+  task, launched together via `asyncio.gather` inside one `asyncio.run`.
+- Duplicate-`(model, adapter)` pairs are rejected at parse time (sharing an adapter across
+  *different* models is fine and now the tested path — see below).
+- All requested adapters are validated to exist via one throwaway D-Bus connection
+  *before* any device starts, so a typo'd `--adapter` fails the whole batch immediately
+  rather than only the affected device failing deep inside GATT registration.
+- Log filename now reflects the whole device batch (`mock-<model1>-<adapter1>+<model2>-
+  <adapter2>_<timestamp>.log`) for 2+ devices; unchanged single-device filename for one.
+  Still one combined `sys.stdout`/`sys.stderr` tee — cannot separate concurrent devices'
+  interleaved lines into distinct files; that's still Phase 7.
+
+**Verified on the mock VM (no sudo needed for these — pure validation/parsing logic):**
+missing `--device`, duplicate `(model, adapter)`, unknown adapter (fails the whole batch,
+confirmed via a real throwaway D-Bus connection listing `hci0` as the only available
+adapter), missing `web_port` with 2+ devices, and duplicate `web_port` — each produces the
+expected `argparse`-level error before touching any BLE/D-Bus registration.
+
+**Not yet verified: two devices actually registering and advertising concurrently on real
+hardware.** This needs `sudo` (not available to me directly over SSH) — e.g.:
+```bash
+sudo /home/jens/venv/bin/python3 -m aquaclean_ble_relay.mock_service \
+  --device model=mera,adapter=hci0,web_port=8765 \
+  --device model=alba,adapter=hci0,web_port=8766
+```
+Expect both to register GATT services and advertise simultaneously on the one `hci0`
+adapter (per the BlueZ multiplexing capability above); worth checking `bluetoothctl show`
+mid-run for `ActiveInstances: 0x02` and both service UUID sets present, and trying to
+discover/connect to each independently from the Geberit Home App (remembering the Phase 4
+gotcha: delete any stale device entry from a previous single-device test first).

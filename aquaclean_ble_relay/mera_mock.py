@@ -1390,12 +1390,15 @@ class MeraMock:
         # of message_bus.py runs before _emit_interface_added), so GetManagedObjects
         # returns all 7 and BlueZ creates char decls for all 7.
         #
-        # KNOWN LIMITATION carried over unchanged from the original script: this
-        # patches dbus_next.message_bus.BaseMessageBus at the CLASS level, i.e.
-        # process-wide, not per-instance. Safe today because Phase 2 still only
-        # runs one MeraMock per process. Revisit before Phase 5 (multi-device in
-        # one process) runs two instances whose GATT registration could overlap —
-        # this patch/restore pair would race between them.
+        # Fixed for Phase 5 (multi-device in one process): patch bus._emit_interface_added
+        # as an INSTANCE attribute, not the BaseMessageBus CLASS. Assigning a plain
+        # function to bus._emit_interface_added shadows the class method for this bus
+        # object only (Python attribute lookup checks the instance __dict__ before the
+        # class) — calling it as self._emit_interface_added(...) still works identically,
+        # since instance-dict lookups return the function as-is, unbound, matching
+        # _counting_emit's plain (*a, **kw) signature. This means two MeraMock/AlbaMock
+        # instances (each with their own bus = await MessageBus(...).connect()) can
+        # register GATT concurrently without one's patch/restore racing the other's.
         #
         # v1.34.0b1: pre-cleanup — unregister any stale GATT application from a previous
         # mock run that exited without calling UnregisterApplication.  BlueZ retains
@@ -1405,11 +1408,14 @@ class MeraMock:
         #
         # App paths are tagged with the adapter so two instances (e.g. once Sela
         # reuses this same protocol module) don't collide on one D-Bus object path.
+        # Prefixed with the model name, not just the adapter: "battery"/"dis" are generic
+        # service names that AlbaMock also uses — tagging by adapter alone would collide
+        # if a Mera and an Alba mock ever share one adapter (Phase 5, mock_service.py).
         app_paths = {
-            "mera": f"/org/bluez/example/mera_{self._adapter_tag}",
-            "battery": f"/org/bluez/example/battery_{self._adapter_tag}",
-            "dis": f"/org/bluez/example/dis_{self._adapter_tag}",
-            "rc_pairing": f"/org/bluez/example/rc_pairing_{self._adapter_tag}",
+            "mera": f"/org/bluez/example/mera_gatt_{self._adapter_tag}",
+            "battery": f"/org/bluez/example/mera_battery_{self._adapter_tag}",
+            "dis": f"/org/bluez/example/mera_dis_{self._adapter_tag}",
+            "rc_pairing": f"/org/bluez/example/mera_rc_pairing_{self._adapter_tag}",
         }
         try:
             gatt_manager = adapter_wrapper._proxy.get_interface("org.bluez.GattManager1")
@@ -1427,15 +1433,13 @@ class MeraMock:
         except Exception as e:
             self.logger.debug("Pre-cleanup: no stale GATT app (OK on first run): %s", e)
 
-        from dbus_next.message_bus import BaseMessageBus as _MB
-        orig_emit = _MB._emit_interface_added
         emit_count = [0]
 
         def _counting_emit(*a, **kw):
             emit_count[0] += 1
             # intentionally suppressed — do not forward to BlueZ
 
-        _MB._emit_interface_added = _counting_emit
+        bus._emit_interface_added = _counting_emit
         service = MeraService(self)
         battery_service = BatteryService()
         dis_service = _DISService()
@@ -1447,7 +1451,7 @@ class MeraMock:
                 await dis_service.register(bus, app_paths["dis"], adapter_wrapper)
                 await rc_pairing_service.register(bus, app_paths["rc_pairing"], adapter_wrapper)
             finally:
-                _MB._emit_interface_added = orig_emit
+                del bus._emit_interface_added
             self.logger.info("GATT service registered (suppressed %d InterfacesAdded signals)", emit_count[0])
             exported = list(getattr(bus, "_path_exports", {}).keys())
             self.logger.info("D-Bus exported paths (%d): %s", len(exported), exported)
