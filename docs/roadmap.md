@@ -780,40 +780,94 @@ format `(dp_id, inst, ver, dt, min_s, max_s, behavior, value)`:
 
 ---
 
-### Mock alba: SQLite persistence for DpId store
+### Mock service: single CLI entry point for multi-model mocking
 
-**Requirement:** Replace the in-code `_DEFAULT_STORE` list with a SQLite database so
-mock state survives restarts and reflects all changes made via the Geberit Home App or
-HACS integration.
+**Status:** requirements defined, not yet implemented. Full requirements — CLI shape,
+multi-device orchestration, model/variant/protocol addressing (decided: single `--model`
+open-ended lookup table, not a `--protocol` + `--model` split), firmware override, shared
+SQLite persistence, multi-device webui, per-instance logging, DRY/shared-module structure,
+and open decisions — are in `docs/developer/mock-service-requirements.md`.
 
-- On startup: load DpId store from DB; seed with `_DEFAULT_STORE` defaults if the DB
-  is empty or missing.
-- All `_write` calls persist `entry['value']` changes to the DB immediately.
-- Restart resumes with last-written values — app/HACS changes are durable.
-- Web UI: full table of all 78 DpIds with current value, datatype, behavior, min/max;
-  inline per-row edit (HTML form); **Reset to factory defaults** button (truncates + reseeds
-  from hardcoded defaults).
+Supersedes the Alba-only "SQLite persistence for DpId store" framing that used to live here
+— generalized to run Mera, Sela, and Alba mocks **concurrently from one process**, each with
+its own durable settings store. The persistence schema requires two additions beyond what a
+flat DpId table needs: a `namespace` column (Mera addresses settings via multiple index
+spaces that each restart at 0 — `profile_setting`, `common_setting`, `active_setting`,
+`spl`), and a `persist` flag (not everything in Mera's addressable space is durable — some
+`spl` indices are live sensor/state signals). Row shape:
+`(namespace, index, value, datatype, behavior, min, max, persist)`. The full Mera
+namespace/index enumeration that this schema is built on stays below, as a standalone
+reference table.
 
-**Effort:** ~3–4 hours, ~150–200 lines.
+---
 
-| Piece | Effort |
-|-------|--------|
-| SQLite schema — one table mirroring `_DEFAULT_STORE` columns | small |
-| Startup: load from DB, seed defaults if empty | small |
-| `_write` hook: persist every `entry['value']` change | small |
-| Web UI: full 78-DpId table with current values | medium |
-| Web UI: inline per-row edit (one `<form>` per row) | medium |
-| Web UI: "Reset to factory defaults" button | small |
-| Wiring into `_stop_sequence` and per-session store setup | small |
+### Mock service: Mera namespace/index enumeration (persistence schema reference)
 
-**Main decision:** per-row POSTs (simple, composable with existing toggle pattern) vs
-bulk-edit form. Per-row is the natural fit.
+Referenced from `docs/developer/mock-service-requirements.md` §5 — kept here rather than
+duplicated, since it's a protocol-reference table, not orchestration/CLI design. Source:
+`.claude/rules/ble-protocol.md`.
+
+*`profile_setting`* (proc 0x53 get / 0x54 set, power-cycle to apply) — indices 0–14, **all
+PERSIST** except 11 `SeatHeating` (N/A on Mera Comfort, Tuma Comfort only): 0
+`OdourExtraction`, 1 `OscillatorState`, 2 `AnalShowerPressure`, 3 `LadyShowerPressure`, 4
+`AnalShowerPosition`, 5 `LadyShowerPosition`, 6 `WaterTemperature`, 7 `WcSeatHeat`, 8
+`DryerTemperature`, 9 `DryerState`, 10 `SystemFlush`, 12 `WaterHeating`, 13
+`DryerFanPower`, 14 `LadyOscillation`.
+
+*`common_setting`* (proc 0x51 get / 0x52 set, "Stored", power-cycle to apply) — indices
+0–12, **all PERSIST** except 10 `LightSensorSensitivity` (AcSela only) and 11 `CareMode`
+(Floorstanding only): 0 `WaterHardness`, 1 `OrientationLightBrightness`, 2
+`OrientationLightColour`, 3 `OrientationLightMode`, 4 `LidSensorRange`, 5
+`OdourExtractionRunOn`, 6 `LidAutoOpen`, 7 `LidAutoClose`, 8 `AutoFlush`, 9 `DemoMode`, 12
+`Language`.
+
+*`active_setting`* (proc 0x0A get / 0x0B set, reuses the `common_setting`/`profile_setting`
+ID space, applies immediately) — **NO PERSIST, by design.** Confirmed behavior: the iPhone
+app uses these at session init to restore Active values *from* the corresponding Stored
+row, and writing Active leaves Stored unchanged. Active is session-scoped runtime state,
+seeded from the matching `common_setting`/`profile_setting` row at BLE-session start / mock
+startup, held only in memory thereafter — mirrors the real device, where a power-cycle
+re-derives Active from Stored NVM. Giving Active its own durable row would let a mock
+restart "remember" an immediate-mode value the real hardware would have forgotten.
+
+*`spl`* (proc 0x0D, read-only live-state poll) — indices 0–31 + mirrors 32–60 + 100/104–106:
+
+| Idx | Name | Persist |
+|---|---|---|
+| 0 | StateUserPresent | NO — live sensor |
+| 1 | StateShowerAnal (mislabeled; tracks sitting) | NO — live sensor |
+| 2 | StateShowerLady | NO — live sensor |
+| 3 | StateDryer (mislabeled; tracks anal shower) | NO — live sensor |
+| 4 | StateDescaling | NO — live progress; resets on restart like a real power-cycle |
+| 5 | DurationDescaling | NO — live counter tied to index 4 |
+| 6 | LastError | **YES** — device retains last fault code across power-cycle |
+| 7 | StateService | NO — live |
+| 8/9/10 | StateSprayCalibration/StateOrientationLight/StateDraining | N/A on Mera Comfort |
+| 11 | EndiannessCheck | NO — constant/diagnostic |
+| 12–15 | UnpostedShowerCycles, DaysUntilNextDescale, DaysUntilShowerRestricted, ShowerCyclesUntilConfirmation | **YES** — statistics |
+| 16–18 | TimestampAtLastDescale, TimestampAtLastDescalePrompt, NumberOfDescaleCycles | **YES** |
+| 19–22 | DaysUntilNextFilterChange, TimestampAtLastFilterChange, TimestampAtLastFilterChangePrompt, NumberOfFilterChanges | **YES** — statistics |
+| 23 | LocalAppTime | NO — app writes current wall-clock every session, never a device setting |
+| 24–27 | LightDailyBlock1/2 Start/Stop | **YES** — schedule |
+| 28 | TimestampAtLastPowerdown | **YES** — but mock must write this at graceful shutdown (`_stop_sequence`), not on every setting change |
+| 31 | RealtimeClockUtcTime | NO — same reasoning as LocalAppTime |
+| 32–46 | ActiveProfileSettings 0–14 (read-only mirror) | NO — mirrors `active_setting`, itself non-persistent |
+| 47–60 | ActiveCommonSettings 0–13 (read-only mirror) | NO — same |
+| 100 | ConnectedSsmDevices (bitmask) | **YES** — device pairing/registration state |
+| 104–106 | LidOffsetPosition, ShowerArmOffsetPosition, DryerArmOffsetPosition | **YES** — calibration offsets |
+
+*`command`* (proc 0x09, `SetCommandAsync`) — **excluded from the store entirely.**
+Toggles/triggers carry no value of their own; their effect shows up as a mutation of an
+`spl` row (e.g. `ToggleAnalShower` flips `spl[1]`) or is momentary. Nothing to persist.
+
+**Tally:** ~60 real persisted rows for Mera Comfort (15 profile + 13 common + ~30 real
+SPL/calibration/bitmask rows), plus the non-persisted Active/live rows held only in memory.
 
 **Dependency:** `sqlite3` is stdlib — no new packages.
 
-**Complication:** `_DEFAULT_STORE` carries typed metadata (datatype, behavior, min, max).
-The DB must store these columns so "Reset to factory" can truncate + reseed without
-a code lookup, and so the web UI can render appropriate input controls per datatype.
+Open decisions on how this table is used (generic vs. per-model schema, webui edit pattern,
+single-port vs. landing-page webui) are tracked in
+`docs/developer/mock-service-requirements.md` §10, not duplicated here.
 
 ---
 
