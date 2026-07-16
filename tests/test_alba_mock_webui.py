@@ -27,6 +27,7 @@ a _run_all() aggregator and a test_all_*() pytest entry point.
 """
 
 import asyncio
+import logging
 import os
 import shutil
 import sys
@@ -56,7 +57,13 @@ _STATIC_DIR = os.path.join(os.path.dirname(alba_mock.__file__), "static")
 
 
 def _make_layer(device_key: str) -> _Ble20AppLayer:
-    return _Ble20AppLayer(device_key=device_key)
+    # Dedicated "test.*" logger name, never touched by mock_logging.py's
+    # file-handler-attaching logic — avoids every test in this file colliding
+    # on the single globally-cached "mock.alba.default" logger (logging.
+    # FileHandler opens its file immediately and keeps the fd; reusing that
+    # cached logger after an earlier test's tmp dir is deleted raises
+    # FileNotFoundError on the next log call from a *different* test).
+    return _Ble20AppLayer(device_key=device_key, logger=logging.getLogger(f"test.alba.{device_key}"))
 
 
 def _build_app(layer: _Ble20AppLayer) -> FastAPI:
@@ -180,12 +187,78 @@ async def test_write_route_over_http():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_broadcast_fn_called_on_persisted_write():
+    """_write_dpid_setting() (webui) and _write() (real BLE WriteCmd) both call
+    broadcast_fn after a persisted (behavior==3, Nvm) write — the hook AlbaMock
+    threads its own webui-SSE broadcaster through, so real BLE writes push a
+    fresh state update, not just webui-initiated ones (docs/developer/
+    mock-service-requirements.md §6). A write to a non-Nvm DpId (nothing
+    persisted) must NOT broadcast."""
+    tmp = tempfile.mkdtemp()
+    try:
+        from aquaclean_ble_relay import mock_persistence
+        mock_persistence.set_state_dir(tmp)
+        calls = []
+        layer = _Ble20AppLayer(
+            device_key="test-broadcast", broadcast_fn=lambda: calls.append(1),
+            logger=logging.getLogger("test.alba.broadcast"),
+        )
+
+        layer._write_dpid_setting(580, 2)
+        assert len(calls) == 1
+
+        from aquaclean_console_app.bluetooth_le.LE.Ble20Client import encode_address
+        layer._write(bytes([0x20]) + encode_address(581) + bytes([3]))
+        assert len(calls) == 2
+
+        layer._write(bytes([0x20]) + encode_address(607) + bytes([1]))  # behavior==1, not Nvm
+        assert len(calls) == 2
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_alba_mock_broadcast_state_nowait_payload():
+    """AlbaMock._broadcast_state_nowait() pushes a well-formed {"type":"state",
+    "settings":..., "notify":...} payload to every subscriber queue — the same
+    shape the /events SSE route sends."""
+    tmp = tempfile.mkdtemp()
+    try:
+        from aquaclean_ble_relay import mock_persistence
+        mock_persistence.set_state_dir(tmp)
+        # Unique adapter (tmp's own unique suffix) so mock_logging's globally-
+        # cached "mock.alba.<adapter>" logger is never reused across separate
+        # invocations of this test (individual pytest run vs _run_all()) with
+        # different, already-deleted tmp dirs — see _make_layer's comment above.
+        mock = alba_mock.AlbaMock(adapter=os.path.basename(tmp), mode="ble20", web_port=0, state_dir=tmp)
+        queue = asyncio.Queue()
+        mock._sse_queues.append(queue)
+
+        layer = _make_layer("test-broadcast-payload")
+        mock._broadcast_state_nowait(layer)
+        assert not queue.empty()
+        data = queue.get_nowait()
+        assert data["type"] == "state"
+        assert "settings" in data
+        assert "notify" in data
+
+        # None (no active BLE session) must still produce a valid payload, just
+        # without a "settings" key — the webui shows an empty table, not a crash.
+        mock._broadcast_state_nowait(None)
+        data2 = queue.get_nowait()
+        assert data2["type"] == "state"
+        assert "settings" not in data2
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def _run_all():
     tests = [
         test_settings_table_data_sections,
         test_write_dpid_setting_persists,
         test_write_dpid_setting_rejects_protected,
         test_write_route_over_http,
+        test_broadcast_fn_called_on_persisted_write,
+        test_alba_mock_broadcast_state_nowait_payload,
     ]
     passed = 0
     failed = 0

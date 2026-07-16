@@ -16,6 +16,26 @@
 // expects any 2xx response. The row's own writeUrl fully identifies the target
 // (setting id baked into the URL) — this module has no knowledge of Mera's
 // common/profile split or Alba's DpId space, only rows and URLs.
+//
+// mcConnectSSE(url, onState) opens an EventSource against url (mirrors
+// aquaclean_console_app/static/index.html's connectSSE()/onmessage pattern)
+// and calls onState(data) for every {"type": "state", ...} message — each
+// mock's own page decides what to do with the payload (re-render the
+// settings table, update a badge, etc.), same division of responsibility as
+// the real bridge's onStateReceived().
+
+function mcConnectSSE(url, onState) {
+  const es = new EventSource(url);
+  es.onmessage = function (e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'state') onState(data);
+    } catch (err) {
+      console.error('[SSE] parse error', err, 'raw:', e.data);
+    }
+  };
+  return es;
+}
 
 function mcRenderSettingsTable(container, data) {
   container.innerHTML = '';

@@ -14,6 +14,7 @@ a _run_all() aggregator and a test_all_*() pytest entry point.
 """
 
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -39,7 +40,13 @@ _STATIC_DIR = os.path.join(os.path.dirname(mera_mock.__file__), "static")
 
 
 def _make_mock(state_dir: str) -> MeraMock:
-    return MeraMock(adapter=None, web_port=0, state_dir=state_dir)
+    # Unique adapter (state_dir's own unique suffix), not None/"default" —
+    # mock_logging caches its "mock.mera.<adapter>" logger globally by name,
+    # with a logging.FileHandler that opens its file immediately and keeps
+    # the fd; reusing "mock.mera.default" across tests with different (and,
+    # by the time a later test runs, already-deleted) tmp dirs risks a stale
+    # handle. A unique adapter per test avoids the collision entirely.
+    return MeraMock(adapter=os.path.basename(state_dir), web_port=0, state_dir=state_dir)
 
 
 def _build_app(mock: MeraMock) -> web.Application:
@@ -47,6 +54,7 @@ def _build_app(mock: MeraMock) -> web.Application:
     app.router.add_get("/", mock._handle_root)
     app.router.add_post("/settings/common/{setting_id}", mock._handle_write_common_setting)
     app.router.add_post("/settings/profile/{setting_id}", mock._handle_write_profile_setting)
+    app.router.add_get("/events", mock._handle_events)
     app.router.add_static("/static/", path=_STATIC_DIR)
     return app
 
@@ -150,6 +158,44 @@ async def test_write_profile_setting_persists():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_sse_events_pushes_on_write():
+    """/events (docs/developer/mock-service-requirements.md §6 SSE) sends an
+    initial state snapshot on connect, then a fresh push after a settings
+    write — replacing the old full-page-reload polling mechanism."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            resp = await client.get("/events")
+            assert resp.status == 200
+            line1 = await resp.content.readline()
+            await resp.content.readline()  # blank line: SSE message terminator ("data: ...\n\n")
+            assert line1.startswith(b"data: ")
+            initial = json.loads(line1[len(b"data: "):])
+            assert initial["type"] == "state"
+            assert "settings" in initial
+
+            before = mock._STORED_COMMON_SETTINGS[1]
+            new_value = 0 if before >= 4 else before + 1
+            r = await client.post("/settings/common/1", json={"value": new_value})
+            assert r.status == 200
+
+            line2 = await resp.content.readline()
+            await resp.content.readline()  # blank line terminator again
+            pushed = json.loads(line2[len(b"data: "):])
+            common_rows = pushed["settings"]["sections"][1]["rows"]
+            row = next(x for x in common_rows if x["id"] == 1)
+            assert row["value"] == new_value
+            resp.close()
+        finally:
+            await client.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def _run_all():
     tests = [
         test_settings_table_data_sections,
@@ -157,6 +203,7 @@ async def _run_all():
         test_static_assets_served,
         test_write_common_setting_persists,
         test_write_profile_setting_persists,
+        test_sse_events_pushes_on_write,
     ]
     passed = 0
     failed = 0

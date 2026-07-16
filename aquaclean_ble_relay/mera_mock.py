@@ -83,7 +83,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.80.0b1"
+_MOCK_VERSION = "1.81.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -724,9 +724,9 @@ _HTML = """\
 <body>
   <h1>Geberit AquaClean Mera Comfort — Mock {version}</h1>
   <p>
-    BLE: <span class="badge {conn_cls}">{conn_txt}</span>
+    BLE: <span class="badge {conn_cls}" id="conn-badge">{conn_txt}</span>
     &nbsp;
-    Button: <span class="badge {btn_cls}">{btn_txt}</span>
+    Button: <span class="badge {btn_cls}" id="btn-badge">{btn_txt}</span>
   </p>
   <h2>Identity</h2>
   <table>
@@ -747,11 +747,24 @@ _HTML = """\
   <h2>Settings</h2>
   <div id="mc-root"></div>
   <h2>Session log</h2>
-  <div class="log">{log_html}</div>
+  <div class="log" id="log-div">{log_html}</div>
   <script src="/static/mock-controls.js"></script>
   <script>
     mcRenderSettingsTable(document.getElementById('mc-root'), {settings_json});
-    setTimeout(function(){{location.reload();}}, 3000);
+    mcConnectSSE('/events', function (data) {{
+      if (data.settings) mcRenderSettingsTable(document.getElementById('mc-root'), data.settings);
+      if (data.log_html != null) document.getElementById('log-div').innerHTML = data.log_html;
+      if (data.connected != null) {{
+        var cb = document.getElementById('conn-badge');
+        cb.className = 'badge ' + (data.connected ? 'ok' : 'idle');
+        cb.textContent = data.connected ? 'Connected' : 'Idle';
+      }}
+      if (data.button_pressed != null) {{
+        var bb = document.getElementById('btn-badge');
+        bb.className = 'badge ' + (data.button_pressed ? 'ok' : 'warn');
+        bb.textContent = data.button_pressed ? 'Pressed' : 'Waiting';
+      }}
+    }});
   </script>
 </body>
 </html>
@@ -847,6 +860,7 @@ class MeraMock:
 
         # ---- mutable session/connection state (was module-level globals) ----
         self._session_log: list = []
+        self._sse_queues: list = []  # webui /events subscribers (docs/developer/mock-service-requirements.md §6)
         self._button_pressed = False
         self._registration_level: int = 0   # 0=Not registered, 1=Private, 2=Public — real device returns 0 during onboarding
         self._connected = False
@@ -878,6 +892,27 @@ class MeraMock:
         if len(self._session_log) > 200:
             self._session_log.pop(0)
         self.logger.info("  %s %s", direction, msg)
+        self._broadcast_state_nowait()
+
+    def _broadcast_state_nowait(self) -> None:
+        """Push current state to every connected webui SSE client (/events).
+        Called from _log() — nearly every state-mutating path (settings
+        writes, button press, general BLE activity) already logs through it,
+        so this covers them for free instead of scattering broadcast calls
+        everywhere. Sync (put_nowait, not await) since _log() is sync and
+        called from many non-async contexts; safe because these are unbounded
+        asyncio.Queue instances (put_nowait never blocks/raises on them)."""
+        if not self._sse_queues:
+            return
+        data = {
+            "type": "state",
+            "settings": self._settings_table_data(),
+            "connected": self._connected,
+            "button_pressed": self._button_pressed,
+            "log_html": self._render_log(),
+        }
+        for q in list(self._sse_queues):
+            q.put_nowait(data)
 
     async def _update_advert(self, state_b: int) -> None:
         """Unregister current advertisement and re-register with updated IsButtonPressed flag.
@@ -1403,6 +1438,44 @@ class MeraMock:
         self._write_stored_profile_setting(setting_id, int(body["value"]))
         return web.json_response({"ok": True})
 
+    async def _handle_events(self, request):
+        """SSE endpoint (mirrors aquaclean_console_app/RestApiService.py's
+        /events — same asyncio.Queue-per-client + 30s heartbeat pattern),
+        so the webui updates in place instead of the full-page reload it
+        used before (docs/developer/mock-service-requirements.md §6)."""
+        from aiohttp import web
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+        queue: asyncio.Queue = asyncio.Queue()
+        self._sse_queues.append(queue)
+        try:
+            queue.put_nowait({
+                "type": "state",
+                "settings": self._settings_table_data(),
+                "connected": self._connected,
+                "button_pressed": self._button_pressed,
+                "log_html": self._render_log(),
+            })
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    await response.write(f"data: {json.dumps(data)}\n\n".encode())
+                except asyncio.TimeoutError:
+                    await response.write(b": heartbeat\n\n")
+        except (asyncio.CancelledError, ConnectionResetError):
+            pass
+        finally:
+            if queue in self._sse_queues:
+                self._sse_queues.remove(queue)
+        return response
+
     async def _handle_button(self, request, service: MeraService):
         from aiohttp import web
         if self._button_pressed:
@@ -1808,6 +1881,7 @@ class MeraMock:
         app.router.add_post("/clear-log", self._handle_clear_log)
         app.router.add_post("/settings/common/{setting_id}", self._handle_write_common_setting)
         app.router.add_post("/settings/profile/{setting_id}", self._handle_write_profile_setting)
+        app.router.add_get("/events", self._handle_events)
         app.router.add_static("/static/", path=str(Path(__file__).parent / "static"))
 
         runner = web.AppRunner(app)

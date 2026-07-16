@@ -57,7 +57,7 @@ import struct
 import sys
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.22.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.23.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging (unused today — ported for parity, same as the original script)
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -132,7 +132,11 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 )
 try:
     from fastapi import FastAPI as _FastAPI, Request as _Request
-    from fastapi.responses import HTMLResponse as _HTMLResponse, RedirectResponse as _RedirectResponse
+    from fastapi.responses import (
+        HTMLResponse as _HTMLResponse,
+        RedirectResponse as _RedirectResponse,
+        StreamingResponse as _StreamingResponse,
+    )
     from fastapi.staticfiles import StaticFiles as _StaticFiles
     import uvicorn as _uvicorn
     _WEB_AVAILABLE = True
@@ -329,9 +333,14 @@ class _Ble20AppLayer:
             return f"SB{random.randint(1000, 9999)}EU{random.randint(0, 999999):06d}".encode('ascii')
         raise ValueError(f"no identity generator for DpId {dp_id}")
 
-    def __init__(self, notify_queue=None, device_key: str = "default", logger=None):
+    def __init__(self, notify_queue=None, device_key: str = "default", logger=None, broadcast_fn=None):
         self._device_key = device_key
         self.logger = logger or logging.getLogger("mock.alba.default")
+        # Called (no args) after a persisted write, if given — AlbaMock threads its
+        # own webui-SSE broadcaster in here so real-BLE writes (not just webui
+        # writes) push a fresh state update (docs/developer/mock-service-
+        # requirements.md §6).
+        self._broadcast_fn = broadcast_fn
         self._store: dict = {}
         self._notify_subscribed: set = set()
         self._notify_queue = notify_queue
@@ -446,6 +455,8 @@ class _Ble20AppLayer:
         encoded = _encode_dpid_value(entry['datatype'], raw_value)
         entry['value'] = bytearray(encoded)
         mock_persistence.save("alba", self._device_key, f"dpid:{dp_id}", encoded.hex())
+        if self._broadcast_fn:
+            self._broadcast_fn()
 
     async def _stop_sequence(self):
         """Simulate realistic shower wind-down: 5->6(Retracting)->7(Postrinsing)->2(Ready)."""
@@ -556,6 +567,8 @@ class _Ble20AppLayer:
         if entry['behavior'] == 3:  # Nvm — persisted immediately (requirements doc §5)
             mock_persistence.save("alba", self._device_key, f"dpid:{dp_id}", value.hex())
             self.logger.info(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK — persisted")
+            if self._broadcast_fn:
+                self._broadcast_fn()
         else:
             self.logger.info(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK")
         responses = [bytes([CommandId.WriteAck]) + addr]
@@ -1284,6 +1297,22 @@ class AlbaMock:
         # mock-service-requirements.md §7); shared with MeraMock via mock_logging.py ----
         self.logger = mock_logging.get_device_logger("alba", self.adapter)
 
+        self._sse_queues: list = []  # webui /events subscribers (docs/developer/mock-service-requirements.md §6)
+
+    def _broadcast_state_nowait(self, ble20_app) -> None:
+        """Push current state to every connected webui SSE client (/events).
+        ble20_app is the current session's _Ble20AppLayer instance (or None
+        between sessions) — passed in rather than read from a self attribute
+        because it's reconstructed fresh per BLE session inside run()'s own
+        closures, not held on self (see _ble20_app_ref in run())."""
+        if not self._sse_queues:
+            return
+        data = {"type": "state", "notify": dict(_ui_notify_state)}
+        if ble20_app is not None:
+            data["settings"] = ble20_app._settings_table_data()
+        for q in list(self._sse_queues):
+            q.put_nowait(data)
+
     async def run(self):
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
@@ -1581,7 +1610,7 @@ class AlbaMock:
 
         async def _handshake_loop():
             nonlocal _connected_device_path, _connected_dev_iface
-            app_handler = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger).dispatch if self.mode == "ble20" else None
+            app_handler = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger, broadcast_fn=_broadcast).dispatch if self.mode == "ble20" else None
 
             async def _fast_disconnect():
                 """Disconnect BLE using pre-cached or freshly enumerated Device1 interface.
@@ -1626,7 +1655,7 @@ class AlbaMock:
                 if not _session_pre_created:
                     sig_service._arendi = _AriendiServerSide(logger=self.logger)
                     if self.mode == "ble20":
-                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger)  # fresh store per session
+                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger, broadcast_fn=_broadcast)  # fresh store per session
                         if _user_sitting:
                             _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
                             _ble20_app._store[(564, None)]['value'] = bytearray(b'\x02')  # Ready (app source: 0=Err,1=Disabled,2=Ready,3=Prerinsing,4=Extending,5=Shower,6=Retracting,7=Postrinsing)
@@ -1678,7 +1707,7 @@ class AlbaMock:
                 if by_peer or should_disconnect:
                     sig_service._arendi = _AriendiServerSide(logger=self.logger)
                     if self.mode == "ble20":
-                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger)
+                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger, broadcast_fn=_broadcast)
                         if _user_sitting:
                             _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
                             _ble20_app._store[(564, None)]['value'] = bytearray(b'\x02')  # Ready (app source: 0=Err,1=Disabled,2=Ready,3=Prerinsing,4=Extending,5=Shower,6=Retracting,7=Postrinsing)
@@ -1756,6 +1785,13 @@ class AlbaMock:
         # Always created so _Ble20AppLayer can use it even when web UI is disabled.
         _notify_push_queue: asyncio.Queue = asyncio.Queue()
 
+        def _broadcast():
+            """Passed as broadcast_fn to every _Ble20AppLayer construction below
+            (closure, not a self.-bound method, so it always reads the CURRENT
+            session's app via _ble20_app_ref — same forward-reference pattern
+            _handshake_loop already relies on for this same variable)."""
+            self._broadcast_state_nowait(_ble20_app_ref[0])
+
         _web_task = None
         _pusher_task = None
         if self.web_port > 0 and self.mode == "ble20":
@@ -1790,7 +1826,6 @@ class AlbaMock:
                     c564 = {"1": "#999", "2": "#2a9", "5": "#e50"}.get(str(s564), "#666")
                     return (
                         "<!DOCTYPE html><html><head><title>Mock Alba NOTIFY</title>"
-                        "<meta http-equiv='refresh' content='2'>"
                         "<link rel='stylesheet' href='/static/mock-controls.css'>"
                         "<style>"
                         "body{font-family:monospace;max-width:540px;margin:40px auto;padding:0 20px}"
@@ -1817,17 +1852,34 @@ class AlbaMock:
                         f'<br><span class="note">0=absent &nbsp; 1=sitting'
                         f'<br>also pushes DpId 564: 2=ready/startable, 1=disabled</span></span>'
                         f'<form method="POST" action="/notify/607/toggle">'
-                        f'<button style="background:{c607}">{b607} &rarr; Toggle</button></form></div>'
+                        f'<button id="dp607-btn" style="background:{c607}">{b607} &rarr; Toggle</button></form></div>'
                         f'<div class="row">'
                         f'<span class="lbl">DpId 564 — ANAL_SHOWER_STATUS (live)'
                         f'<br><span class="note">1=disabled &nbsp; 2=ready &nbsp; 5=running'
                         f'<br>standalone toggle cycles 1→2→5→1</span></span>'
                         f'<form method="POST" action="/notify/564/toggle">'
-                        f'<button style="background:{c564}">{b564} &rarr; Cycle</button></form></div>'
+                        f'<button id="dp564-btn" style="background:{c564}">{b564} &rarr; Cycle</button></form></div>'
                         "<h3>Settings</h3>"
                         "<div id='mc-root'></div>"
                         "<script src='/static/mock-controls.js'></script>"
                         f"<script>mcRenderSettingsTable(document.getElementById('mc-root'), {_settings_json});</script>"
+                        "<script>"
+                        "var _dp564Labels={1:'1 (disabled)',2:'2 (ready)',5:'5 (running)'};"
+                        "var _dp564Colors={1:'#999',2:'#2a9',5:'#e50'};"
+                        "mcConnectSSE('/events', function (data) {"
+                        "  if (data.settings) mcRenderSettingsTable(document.getElementById('mc-root'), data.settings);"
+                        "  if (data.notify) {"
+                        "    var b607 = document.getElementById('dp607-btn');"
+                        "    var sitting = !!data.notify['607'];"
+                        "    b607.style.background = sitting ? '#2a9' : '#999';"
+                        "    b607.textContent = (sitting ? 'ON (sitting)' : 'OFF (absent)') + ' \\u2192 Toggle';"
+                        "    var b564 = document.getElementById('dp564-btn');"
+                        "    var s564 = data.notify['564'];"
+                        "    b564.style.background = _dp564Colors[s564] || '#666';"
+                        "    b564.textContent = (_dp564Labels[s564] || (s564 + ' (?)')) + ' \\u2192 Cycle';"
+                        "  }"
+                        "});"
+                        "</script>"
                         "</body></html>"
                     )
 
@@ -1862,7 +1914,41 @@ class AlbaMock:
                         new_564 = {1: 2, 2: 5, 5: 1}.get(cur, 2)
                         _ui_notify_state["564"] = new_564
                         await _notify_push_queue.put((564, bytes([new_564])))
+                    _broadcast()  # so other connected tabs/clients see the toggle live, not just this one on reload
                     return _RedirectResponse("/", status_code=303)
+
+                @_web_app.get("/events")
+                async def _web_sse():
+                    """SSE endpoint (mirrors aquaclean_console_app/RestApiService.py's
+                    /events — same asyncio.Queue-per-client + 30s heartbeat pattern),
+                    so the webui updates in place instead of the full-page meta-refresh
+                    it used before (docs/developer/mock-service-requirements.md §6)."""
+                    queue: asyncio.Queue = asyncio.Queue()
+                    self._sse_queues.append(queue)
+                    initial = {"type": "state", "notify": dict(_ui_notify_state)}
+                    _cur = _ble20_app_ref[0]
+                    if _cur is not None:
+                        initial["settings"] = _cur._settings_table_data()
+                    queue.put_nowait(initial)
+
+                    async def _generate():
+                        try:
+                            while True:
+                                try:
+                                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                                    yield f"data: {json.dumps(data)}\n\n"
+                                except asyncio.TimeoutError:
+                                    yield ": heartbeat\n\n"
+                        except (asyncio.CancelledError, GeneratorExit):
+                            pass
+                        finally:
+                            if queue in self._sse_queues:
+                                self._sse_queues.remove(queue)
+
+                    return _StreamingResponse(
+                        _generate(), media_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    )
 
                 async def _pusher():
                     while True:

@@ -282,6 +282,52 @@ the Geberit cloud, hand out setting min/max ranges at runtime? Investigated agai
 - Full settings table per device (value, datatype, behavior, min/max), inline per-row edit,
   **Reset to factory defaults** scoped to exactly one device's store — never all of them.
 
+### Real SSE, not full-page-reload polling — 2026-07-16, VM-verified
+
+**Gap found:** both mocks' webui update mechanism was full-page reload on a timer —
+`setTimeout(location.reload(), 3000)` (Mera) / `<meta http-equiv="refresh" content="2">`
+(Alba) — not even AJAX polling of a JSON endpoint, let alone SSE like the real bridge's
+`new EventSource(apiBase + '/events')` (`index.html:1184`). Every reload wiped any
+in-progress interaction (a stepper mid-drag, a swatch's success/error flash) regardless of
+whether anything had actually changed.
+
+**Implemented:** both mocks now have a real `/events` SSE endpoint, mirroring
+`aquaclean_console_app/RestApiService.py`'s exact pattern — one `asyncio.Queue` per
+connected client, a 30s heartbeat (`: heartbeat\n\n`) when idle, `{"type": "state", ...}`
+JSON payloads. Client side, `mcConnectSSE(url, onState)` (new in `mock-controls.js`) mirrors
+`index.html`'s `connectSSE()`/`onmessage` — each mock's own page decides what to update
+(the settings table via `mcRenderSettingsTable`, plus its own badges/log/notify-button state)
+instead of reloading everything.
+
+- **Mera**: broadcasting is hooked into the existing `_log()` helper — nearly every
+  state-mutating path (settings writes via proc 0x52/0x54 *and* the webui write routes,
+  button press, general BLE activity) already calls `_log()` for the session log, so this
+  covers them all without scattering broadcast calls through the codebase.
+- **Alba** is architecturally harder: `_Ble20AppLayer`/`_AriendiServerSide` are freshly
+  reconstructed per BLE session inside closures in `run()`, and real BLE-side writes happen
+  inside `_Ble20AppLayer._write()`, which had no path back to `AlbaMock`'s broadcast queue.
+  Per explicit decision (full proper wiring for both mocks, not a shortcut for the harder
+  one): `_Ble20AppLayer.__init__` now takes an optional `broadcast_fn` callback (same pattern
+  as Phase 7's `logger` threading), called from both `_write_dpid_setting()` (webui writes)
+  and `_write()` (real BLE `WriteCmd`, only when a Nvm/`behavior==3` row actually persists) —
+  so a real Geberit Home App or remote-control write pushes a live update too, not just
+  webui-initiated ones.
+
+VM-verified on `anneubuntu-studio`: Mera's `/events` sends an initial snapshot on connect and
+a fresh push immediately after a settings write; Alba's broadcast fires correctly from both
+the webui write path and a real-BLE-frame-shaped `_write()` call, and correctly does *not*
+fire for a non-Nvm DpId write (nothing persisted, nothing to broadcast). Permanent regression
+tests added to `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` (skipped via
+`pytest.importorskip` where deps are missing, same as the rest of those files).
+
+**Test-isolation bug found and fixed along the way (own test code, not production):**
+`logging.FileHandler` opens its file immediately and `mock_logging.py` caches loggers
+globally by name — every test that used `adapter=None` collided on the same cached
+`"mock.mera.default"`/`"mock.alba.default"` logger, and once one test's tmp dir was deleted,
+a later test reusing that cached logger could hit `FileNotFoundError` on its next log call.
+Fixed by giving each test construction a unique adapter/logger identity (derived from its own
+tmp dir's unique suffix) instead of relying on the shared "default" bucket.
+
 ### DRY: shared frontend assets with the real bridge webui — 2026-07-16
 
 **Current state (confirmed by reading all three, not assumed):** there are three fully
@@ -497,7 +543,7 @@ of it.
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
-| 6 | Webui, multi-device | **Done, VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba, see §6 "DRY..."; regression tests in `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` |
+| 6 | Webui, multi-device | **Done, VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba (§6 "DRY...") + real SSE via `/events` replacing full-page-reload polling (§6 "Real SSE..."); regression tests in `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` |
 | 7 | Logging polish (combined + per-device files) | **Done, VM-verified** (2026-07-16) — `mock_logging.py` shared module, full print()→logger conversion for Alba, see §7 |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
 | 9 | Firmware override parsing *(future, §4)* | Not started |
