@@ -133,6 +133,39 @@ Read this file first when something is broken.
        passed to `connect_ble_only(inventory=...)` on all subsequent polls.
     Result: poll time drops from ~27 s to ~14 s; device free for ~16 s per 30 s interval.
 
+16. **Mock service: Geberit Home App can't find the mocked device ("not in Bluetooth range")
+    even at close range, immediately after a mock restart — adapter looks fine at HCI level**
+    → Check `sudo bluetoothctl show hci0` (or whichever adapter). If it reports "Controller
+    hciN not available" **even as root**, while `hciconfig -a` shows the same adapter UP
+    RUNNING at the kernel level, `bluetoothd`'s D-Bus-level view of the controller has
+    desynced from the kernel — the raw HCI socket still works, but BlueZ's daemon doesn't
+    expose it as a controller, so nothing above it (bluetoothctl, the mock, the phone) can
+    use it.
+    **Root cause (confirmed via `dmesg`, 2026-07-17):** repeated
+    `Bluetooth: hciN: Unexpected advertising set terminated event` kernel messages — a known
+    quirk on some BLE controllers (confirmed on the Realtek USB dongle used for Mera's `hci0`)
+    where the kernel's advertising-set bookkeeping gets out of sync with the controller.
+    Triggered by rapid advertise/unregister/re-register cycles — both mocks intentionally do
+    this on every connect to force a fast BLE connection interval (see `_Advertisement`'s
+    "unregister then re-register with `{MinInterval: 100, MaxInterval: 100}`" fix in
+    `alba_mock.py`/`mera_mock.py`) — and made worse by `kill -9`-ing a mock process, since
+    that skips the `finally:` cleanup that unregisters the GATT app/advertisement cleanly.
+    **Fix (confirmed sufficient in practice):**
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl restart bluetooth
+    sudo bluetoothctl show hci0   # confirm it now shows up
+    ```
+    **If that's not enough, escalate in order:**
+    ```bash
+    sudo hciconfig hci0 down && sudo hciconfig hci0 up   # kernel-level toggle only
+    sudo modprobe -r btusb && sudo modprobe btusb        # full USB driver reload
+    # last resort: physically unplug/replug that USB Bluetooth dongle
+    ```
+    **Prevention:** prefer a clean stop (Ctrl-C/SIGTERM, wait for actual exit) over `kill -9`
+    when possible — `kill -9` skips advertisement/GATT unregistration and makes this kind of
+    controller-state confusion more likely to accumulate over repeated cycles.
+
 ---
 
 ## Known open bugs (not yet fixed)
