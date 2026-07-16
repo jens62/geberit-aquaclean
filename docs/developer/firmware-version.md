@@ -429,22 +429,40 @@ unknown (it may have already been at RS30.0 when the mock comparison test was ru
 | `AppRemoteSettings.device_api_min_version` | Never reached: force-update check returns true before remote settings |
 | Feature flag in app update gate | Hardcoded to `true` — no gate effect |
 
-### Practical fix for the mock
+### Practical fix for the mock — SUPERSEDED 2026-07-16, see below
 
-**ALL entries in `_FW_COMPONENT_VERSIONS` must return RS30.0 TS206** (fixed in v1.75.0b1).
+~~**ALL entries in `_FW_COMPONENT_VERSIONS` must return RS30.0 TS206** (fixed in v1.75.0b1).~~
 
-Setting only component 1 (main controller) to RS30.0 is **not sufficient** —
+~~Setting only component 1 (main controller) to RS30.0 is **not sufficient** —
 confirmed empirically 2026-06-26 by comparing BLE logs from v1.64.0b1 (all RS30.0,
 dismissible Fehler only) vs v1.74.0b1 (component 1 = RS30.0, components 3–15 = real
-per-device RS07–RS11 → blocking update UI).
+per-device RS07–RS11 → blocking update UI).~~
 
-`GetActiveUpdateAsync()` in `FirmwareForceUpdateViewModel` performs a per-component
-version check. When any sub-node (3–15) reports a version below the local bundled
-Ble2V1 package's target for that node, the update is considered available → non-null
-→ blocking update UI that cannot be dismissed without completing the firmware update.
+**Superseded finding (v1.76.0b1, commit `e4295cc`, 2026-07-16):** the "all RS30.0"
+workaround above was itself replaced by reporting each component's real, individually
+diffed value (component 1 = RS30.0 TS206, components 3–15 = their actual real per-device
+RS07–RS11 versions — same shape as the "not sufficient" v1.74.0b1 config above, but with
+correctly diffed sub-component values instead of whatever v1.74.0b1 used). **Tested
+against the real Geberit Home App (2026-07-15):** the app still requests a firmware
+upgrade regardless — consistent with the decompiled finding above that
+`IsForceUpdateNecessary` is unconditionally `true` for every Mera connect, independent of
+the actual version delta — and resolves to the **dismissible "Fehler" popup**, not the
+blocking UI. Confirmed working end-to-end by the user (2026-07-16): "Fehler" appears, "OK"
+dismisses it, normal operation continues. This is the mock's current, unchanged default
+as of this doc's last edit — **not** something to revert to; it already is the working
+baseline.
 
-With all components at RS30.0 TS206: no per-node delta → null → dismissible "Fehler"
-popup only. Mock is fully operational after confirming the Fehler.
+The mock still has no handler for the actual firmware-update proc sequence
+(`ctx=0x40 proc=0x00/0x52/0x53/0x04`, `ctx=0x00 proc=0x01`) — it falls through to
+"unknown proc, returning empty OK", so the app loops on the probe sequence for a while
+before giving up and showing the dismissible Fehler. Implementing real handlers for that
+sequence (decoded in `memory/mera-firmware-update-ble-protocol.md` /
+`.claude/rules/ble-protocol.md`) is tracked as
+`docs/developer/mock-service-requirements.md` Phase 9b.
+
+**Given this, the root-cause analysis below (why RS28.0 vs RS30.0 differ, and whether the
+real device diverges from the mock) should be treated as historical/unconfirmed — it
+predates the empirical v1.76.0b1 test above and its conclusions may not hold.**
 
 **Real Mera HB2304EU298413 proc 0x0E response** (source: `onboarding-real-mera.md` lines 763–764):
 

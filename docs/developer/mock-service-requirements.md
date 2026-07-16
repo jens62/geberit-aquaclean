@@ -328,6 +328,33 @@ a later test reusing that cached logger could hit `FileNotFoundError` on its nex
 Fixed by giving each test construction a unique adapter/logger identity (derived from its own
 tmp dir's unique suffix) instead of relying on the shared "default" bucket.
 
+### Firmware profile selector (Mera only) — 2026-07-16, VM-verified
+
+**Implemented for Mera.** A new "Firmware Profile" `select` row at the top of the Firmware
+Versions section (`/settings/firmware-profile`, body `{"value": "rs28"|"rs30"}`) lets a user
+flip the mock between the two real captured snapshots — `_FW_COMPONENT_VERSIONS` (RS30.0
+TS206, current/default) and the new `_FW_COMPONENT_VERSIONS_RS28` (RS28.0 TS199, pre-update).
+Only components 1 and 11 actually differ between the two — confirmed twice over (`memory/
+mera-firmware-update-ble-protocol.md` and `docs/developer/firmware-version.md`, matching real
+capture bytes) — every other component is identical in both snapshots. Applying a profile
+calls the existing per-component `_set_fw_version()` write hook (Phase 9a) once per component,
+so persistence/logging/SSE-broadcast all stay identical to how an eventual Phase 9b OTA
+simulation would apply the same values one at a time. The currently-active profile is derived
+from component 1's live value (no separate "current profile" flag to keep in sync) —
+`_current_firmware_profile()` returns `"custom"` if it matches neither canonical snapshot
+(e.g. after a partial Phase 9b-simulated update).
+
+**Corrected a stale doc while implementing this:** `docs/developer/firmware-version.md`'s
+2026-06-26 finding ("component 1 alone at RS30.0 is not sufficient, all components must be
+RS30.0") was superseded by the actual v1.76.0b1 commit (`e4295cc`, 2026-07-16) and a real
+on-device test the same day — see that doc for the correction. The mock's real per-component
+values (today's default) are the confirmed-working baseline, not something to fix further.
+
+**Not yet implemented for Alba** — no real pre/post-update firmware capture exists for Alba
+yet (unlike Mera's nRF52840 capture), so there's no confirmed byte-accurate "older" snapshot to
+offer. Tracked as a to-do: once an Alba firmware-update capture exists, mirror this same
+selector for Alba's firmware DpIds (8/9/10/785/786/787).
+
 ### DRY: shared frontend assets with the real bridge webui — 2026-07-16
 
 **Current state (confirmed by reading all three, not assumed):** there are three fully
@@ -549,6 +576,7 @@ of it.
 | 9 | Firmware override parsing *(future, §4)* | Not started |
 | 9a | Firmware version persistence (Mera + Alba) | **Done** — see §5 "Firmware version persistence" |
 | 9b | Firmware update-process simulation (Mera `0x40` proc sequence; Alba TBD) | Not started — depends on 9a |
+| 9c | Firmware profile selector — Mera done, Alba pending a real capture | **Mera done, VM-verified** (2026-07-16) — see §6 "Firmware profile selector"; Alba not started |
 | 10 | Wire remaining Mera `SetCommand` (proc 0x09) codes — action simulation, not persistence | Not started — see §9 |
 
 ### Phase 2 — scope decision (2026-07-16)

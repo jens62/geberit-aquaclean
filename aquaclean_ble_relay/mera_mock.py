@@ -83,7 +83,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.81.0b1"
+_MOCK_VERSION = "1.82.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -182,6 +182,27 @@ _FW_COMPONENT_VERSIONS = {
     12: (0x30, 0x37, 0x12),  # RS07.0 TS18  — Orientierungslicht
     14: (0x30, 0x37, 0x1B),  # RS07.0 TS27  — Föhneinheit
     15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
+}
+
+# Pre-update snapshot — same real capture as _FW_COMPONENT_VERSIONS above, but the
+# BEFORE values. Only components 1 and 11 actually changed in the real update;
+# every other component is byte-identical to _FW_COMPONENT_VERSIONS (confirmed by
+# diffing the real device's GetFirmwareVersionList response before vs after —
+# memory/mera-firmware-update-ble-protocol.md). Lets the webui firmware-profile
+# selector flip the mock back to "needs update" on demand (docs/developer/
+# mock-service-requirements.md §9/Phase 10-adjacent — see §6 "Firmware profile
+# selector").
+_FW_COMPONENT_VERSIONS_RS28 = {
+    **_FW_COMPONENT_VERSIONS,
+    1:  (0x32, 0x38, 0xC7),  # RS28.0 TS199 — Steuerung (pre-update)
+    11: (0x30, 0x37, 0x16),  # RS07.0 TS22  — Bewegungserkennung (pre-update)
+}
+
+# Canonical firmware profiles selectable via the webui — keyed by the value the
+# generic <select> control (mock-controls.js) writes/reads.
+_FW_PROFILES = {
+    "rs30": _FW_COMPONENT_VERSIONS,
+    "rs28": _FW_COMPONENT_VERSIONS_RS28,
 }
 
 # Friendly names for the webui's read-only Firmware Versions section — mirrors
@@ -1139,6 +1160,27 @@ class MeraMock:
         mock_persistence.save("mera", self._adapter_tag, f"fw:{component_id}", [v1, v2, build])
         self._log("·", f"SetFirmwareVersion component={component_id} -> ({v1},{v2},{build}) — persisted")
 
+    def _current_firmware_profile(self) -> str:
+        """Which canonical profile (if any) the live firmware versions match —
+        derived from data already held, no separate "current profile" flag to
+        keep in sync. Compares component 1 only (unique per profile) with a
+        fallback for anything else (e.g. individual per-component writes from a
+        future Phase 9b OTA simulation that don't exactly match either snapshot)."""
+        current_c1 = self._FW_COMPONENT_VERSIONS.get(1)
+        for name, profile in _FW_PROFILES.items():
+            if profile[1] == current_c1:
+                return name
+        return "custom"
+
+    def _apply_firmware_profile(self, profile: str) -> None:
+        """Webui firmware-profile selector write path (docs/developer/
+        mock-service-requirements.md §6) — applies every component in the
+        chosen canonical snapshot via the existing per-component write hook,
+        so persistence/logging stay identical to a real Phase 9b OTA simulation
+        writing one component at a time."""
+        for component_id, (v1, v2, build) in _FW_PROFILES[profile].items():
+            self._set_fw_version(component_id, v1, v2, build)
+
     def _proc_86(self) -> bytes:
         """GetDeviceInitialOperationDate: UTF-8 date string, no null terminator (real device: 31.05.2024)."""
         return b"31.05.2024"
@@ -1393,7 +1435,18 @@ class MeraMock:
                 rows.append(row)
             return rows
 
-        fw_rows = [
+        profile_row = {
+            "id": "profile",
+            "name": "Firmware Profile",
+            "kind": "select",
+            "value": self._current_firmware_profile(),
+            "writeUrl": "/settings/firmware-profile",
+            "options": [
+                {"value": "rs30", "label": "RS30.0 TS206 (current)"},
+                {"value": "rs28", "label": "RS28.0 TS199 (needs update)"},
+            ],
+        }
+        fw_rows = [profile_row] + [
             {
                 "id": cid,
                 "name": _FW_COMPONENT_NAMES.get(cid, f"Component {cid}"),
@@ -1436,6 +1489,15 @@ class MeraMock:
         setting_id = int(request.match_info["setting_id"])
         body = await request.json()
         self._write_stored_profile_setting(setting_id, int(body["value"]))
+        return web.json_response({"ok": True})
+
+    async def _handle_set_firmware_profile(self, request):
+        from aiohttp import web
+        body = await request.json()
+        profile = body.get("value")
+        if profile not in _FW_PROFILES:
+            return web.json_response({"error": f"unknown profile {profile!r}"}, status=400)
+        self._apply_firmware_profile(profile)
         return web.json_response({"ok": True})
 
     async def _handle_events(self, request):
@@ -1885,6 +1947,7 @@ class MeraMock:
         app.router.add_post("/clear-log", self._handle_clear_log)
         app.router.add_post("/settings/common/{setting_id}", self._handle_write_common_setting)
         app.router.add_post("/settings/profile/{setting_id}", self._handle_write_profile_setting)
+        app.router.add_post("/settings/firmware-profile", self._handle_set_firmware_profile)
         app.router.add_get("/events", self._handle_events)
         app.router.add_static("/static/", path=str(Path(__file__).parent / "static"))
 

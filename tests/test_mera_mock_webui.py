@@ -54,6 +54,7 @@ def _build_app(mock: MeraMock) -> web.Application:
     app.router.add_get("/", mock._handle_root)
     app.router.add_post("/settings/common/{setting_id}", mock._handle_write_common_setting)
     app.router.add_post("/settings/profile/{setting_id}", mock._handle_write_profile_setting)
+    app.router.add_post("/settings/firmware-profile", mock._handle_set_firmware_profile)
     app.router.add_get("/events", mock._handle_events)
     app.router.add_static("/static/", path=_STATIC_DIR)
     return app
@@ -68,7 +69,9 @@ async def test_settings_table_data_sections():
         assert titles == ["Profile Settings", "Common Settings", "Firmware Versions"]
         assert len(data["sections"][0]["rows"]) == len(mock._STORED_PROFILE_SETTINGS)
         assert len(data["sections"][1]["rows"]) == len(mock._STORED_COMMON_SETTINGS)
-        assert len(data["sections"][2]["rows"]) == len(mock._FW_COMPONENT_VERSIONS)
+        # +1 for the "Firmware Profile" selector row prepended ahead of the
+        # per-component readonly rows.
+        assert len(data["sections"][2]["rows"]) == len(mock._FW_COMPONENT_VERSIONS) + 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -158,6 +161,37 @@ async def test_write_profile_setting_persists():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_firmware_profile_switch():
+    """The webui firmware-profile selector (docs/developer/mock-service-
+    requirements.md §6) flips only components 1+11 (the two that actually
+    changed in the real RS28.0->RS30.0 capture) and leaves every other
+    component untouched, and the choice survives a mock restart."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            assert mock._current_firmware_profile() == "rs30"
+            r = await client.post("/settings/firmware-profile", json={"value": "rs28"})
+            assert r.status == 200
+            assert mock._current_firmware_profile() == "rs28"
+            assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x30, 0x37, 0x16)
+            assert mock._FW_COMPONENT_VERSIONS[3] == (0x30, 0x38, 0x1F)  # unchanged
+
+            r2 = await client.post("/settings/firmware-profile", json={"value": "not-a-real-profile"})
+            assert r2.status == 400
+        finally:
+            await client.close()
+
+        mock2 = _make_mock(tmp)
+        assert mock2._current_firmware_profile() == "rs28"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def test_sse_events_pushes_on_write():
     """/events (docs/developer/mock-service-requirements.md §6 SSE) sends an
     initial state snapshot on connect, then a fresh push after a settings
@@ -203,6 +237,7 @@ async def _run_all():
         test_static_assets_served,
         test_write_common_setting_persists,
         test_write_profile_setting_persists,
+        test_firmware_profile_switch,
         test_sse_events_pushes_on_write,
     ]
     passed = 0
