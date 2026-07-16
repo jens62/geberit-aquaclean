@@ -46,6 +46,12 @@ them. All BLE/protocol behavior lives in the existing per-model modules, refacto
   `logging.getLogger("mera_mock")`). Each must become a class/async-factory taking
   `(adapter, variant, firmware, state_dir, ...)` so N instances coexist in one interpreter
   without clobbering each other's globals.
+- **Standalone parity, decided (see §10 decision 2):** `tools/mock-geberit-mera.py` and
+  `tools/mock-geberit-alba.py` keep working as single-device scripts — each becomes a thin
+  wrapper that instantiates exactly one instance of the refactored class. Not retired. This
+  also doubles as the regression baseline during the refactor: before `mock_service.py`
+  orchestration exists at all, the wrapper must behave identically to the pre-refactor
+  script, and the §0 acceptance test is provable against it standalone first.
 - **Startup validation, upfront, not mid-run:** reject unknown `--model` values, reject two
   `--device` entries pointing at the same adapter, fail fast with a clear message if a named
   adapter doesn't exist or is already claimed by BlueZ/another process — rather than
@@ -90,26 +96,82 @@ validated against a format regex at CLI-parse time with a clear error on mismatc
 
 ## 5. Persistence
 
-- One SQLite file per device instance, keyed by `(model, adapter)`, under `--state-dir` —
-  e.g. `mock_state/<model>-<adapter>.sqlite3`. Mera on `hci1` and Sela on `hci2` must never
-  share or clobber each other's store.
-- Shared schema/module in `aquaclean_ble_relay/mock_persistence.py` (already scaffolded) —
-  not Alba-specific. Implemented once, reused by every model.
-- Row shape: `(namespace, index, value, datatype, behavior, min, max, persist)`.
-  - `namespace` is required because Mera addresses settings via multiple index spaces that
-    each restart at 0 (`profile_setting`, `common_setting`, `active_setting`, `spl`); Alba's
-    flat DpId space doesn't need it but fits the same shape (`namespace='dpid'`).
-  - `persist` is required because not everything addressable is a durable setting — some
-    `spl` indices are live sensor/state signals that must reset on every mock restart,
-    exactly like a real power-cycle would. Full index-by-index classification for Mera is in
-    `docs/roadmap.md` (see top of this doc).
-- **Write-through, not write-on-shutdown.** Every setting change arriving over the protocol
-  (`SetStoredProfileSetting`, `SetActiveCommonSetting`, DpId write, etc.) persists to that
-  device's DB immediately, synchronously, at the moment of the write — not batched or
-  flushed at shutdown. This is what makes the §0 acceptance test hold even under an abrupt
+**Corrected from an earlier draft of this doc, against what's actually implemented in
+`aquaclean_ble_relay/mock_persistence.py` (scaffolded before this section was written).**
+The original draft assumed one SQLite *file* per device instance
+(`mock_state/<model>-<adapter>.sqlite3`). What's actually there — and what this section now
+documents — is a single shared DB file with per-device isolation via a composite key. Since
+the existing design already satisfies every real requirement below, the doc was fixed to
+match the code rather than the code rewritten to match a speculative doc.
+
+- **One shared SQLite file**, `mock_state.db`, under a configurable directory
+  (`set_state_dir()`, driven by `mock_service.py --state-dir`) — not one file per device.
+- **Isolation via composite primary key**, not separate files:
+  `(device_type, device_key, state_key) → value`. `device_type` = model name (`"mera"`,
+  `"alba"`); `device_key` = the adapter name (`"hci1"`) or advertised MAC, falls back to
+  `"default"` for single-instance use. Mera on `hci1` and Sela on `hci2` cannot collide —
+  they never share a primary key.
+- **`namespace`/`index` addressing** (needed because Mera has multiple index spaces that
+  each restart at 0 — `profile_setting`, `common_setting`, `active_setting`, `spl`) is
+  encoded into `state_key` as `f"{namespace}:{index}"`, e.g. `"common_setting:0"`. No schema
+  change needed — `state_key` was already a free-form string. Alba's flat DpId space fits
+  the same shape (`state_key = f"dpid:{dp_id}"`).
+- **`datatype`/`behavior`/`min`/`max` are NOT stored in the DB.** They're static per-model
+  Python tables, not mutable state — see "Provenance of min/max values" below for why this
+  is not a shortcut, it's where the real app gets them too. The webui's full settings table
+  (§6) joins static metadata with `load_all()`'s current values at render time.
+- **`persist` is not a DB column either** — it's a code-side decision. A protocol module
+  only calls `save()` for `(namespace, index)` pairs classified as durable (see the Mera
+  enumeration in `docs/roadmap.md`); live-state indices are simply never written. Nothing to
+  filter on read.
+- **Coverage requirement:** every `persist`-classified row in that enumeration must actually
+  round-trip through this store — the full real-device settings surface, not a convenience
+  subset. If a setting exists on a real toilet and is writable, it must survive a mock
+  restart.
+- **Write-through, not write-on-shutdown.** `save()` already commits synchronously on every
+  call — every setting change arriving over the protocol (`SetStoredProfileSetting`,
+  `SetActiveCommonSetting`, DpId write, etc.) persists immediately, not batched or flushed
+  at shutdown. This is what makes the §0 acceptance test hold even under an abrupt
   SIGINT/SIGTERM.
-- **Startup never overwrites an existing store.** Load the DB; only seed hardcoded defaults
-  if that device's DB is empty or missing. An existing DB always wins.
+- **Startup never overwrites an existing store.** `load_all()` returns whatever's on disk;
+  a protocol module seeds hardcoded defaults only for `(namespace, index)` pairs missing
+  from the result. An existing value always wins.
+- **Reset-to-factory is already correctly scoped.** `reset(device_type, device_key)` deletes
+  exactly one device's rows — already satisfies "acts on exactly one device's store, never
+  all of them" (§6).
+
+### Provenance of min/max values (why they're code, not DB or a live fetch)
+
+Checked before deciding this, rather than guessing: does `RS28.0`/`TS199`-style firmware, or
+the Geberit cloud, hand out setting min/max ranges at runtime? Investigated against
+`local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/firmware-update.har`
+(a full-session Charles capture from a real Mera Comfort firmware update). Findings:
+
+1. **Firmware version checks on startup — confirmed, yes.** The HAR shows
+   `prod.firmwarev1.services.geberit.com/api` → `/api/version` + `/api/firmwares` (an 809 KB
+   firmware catalog) hit repeatedly during the session. That's exactly the "check for
+   available updates" mechanism — real cloud call, real endpoint, confirmed present.
+2. **Setting min/max ranges — not in the cloud, at all.** The only other Geberit endpoint
+   hit is `mobileappsv1.services.geberit.com/api/Settings/*`, and its payloads are generic
+   app feature-flags — e.g. `Settings/43/iotsettings` decodes to
+   `{"min_remote_maintenance_app_version": "2.14.2", "aqua_clean_remote_support":
+   {"supported_devices": ["248_1"..."250_0"]}}` — device-type gating for a remote-support
+   feature, not protocol-level value bounds. Every other `/Settings/*` call in the capture
+   returned `"Data": null`.
+3. **So where do min/max actually live?** Not firmware, not cloud, as far as this project
+   has already reverse-engineered — `docs/developer/alba-dpid-reference.md` already
+   documents its own Min/Max columns as *"value range from protocol spec"*, i.e.
+   reverse-engineered from the decompiled Home App's own DataPoint definitions. The app
+   validates client-side using ranges compiled into the app binary. No accessible
+   firmware-side bounds-check was found in the decompiled Mera `0x01_decompiled.c` (the
+   switch dispatch doesn't decompile to labeled proc-ID cases, so confirming firmware-side
+   enforcement would need real disassembly effort) — plausible the firmware also rejects
+   out-of-range writes, but unconfirmed, and it doesn't change what we need to do: the
+   engineering instinct that this should be authoritative somewhere durable was right, but
+   empirically it's the app that's authoritative today, not the firmware. Since we already
+   have that "protocol spec" transcribed into `ble-protocol.md` / `alba-dpid-reference.md`,
+   the mock's metadata tables just reproduce the same source the real app uses — nothing new
+   to fetch.
 
 ## 6. Webui
 
@@ -144,11 +206,8 @@ validated against a format regex at CLI-parse time with a clear error on mismatc
 
 ## 9. Additional gaps identified
 
-- **Backward compatibility / migration path — OPEN.** Do `tools/mock-geberit-mera.py` and
-  `tools/mock-geberit-alba.py` get retired outright once `mock_service.py` exists, or kept as
-  thin single-device wrappers around the same refactored class (useful for quick manual
-  testing without spinning up the orchestrator)? Affects whether the class API needs to
-  support a "just run one, standalone" mode.
+- **Backward compatibility / migration path — RESOLVED, see §10 decision 2.** Kept as thin
+  single-device wrappers around the refactored class, not retired — see §2.
 - **Webui bind failure — OPEN.** If webui goes single-port-multi-route (§6), does one port
   conflict abort the whole service, or degrade just that device to headless (no webui, BLE
   still served)?
@@ -161,5 +220,5 @@ validated against a format regex at CLI-parse time with a clear error on mismatc
 | # | Decision | Status |
 |---|---|---|
 | 1 | `--model` single open-ended lookup table (not `--protocol` + `--model` split) | **Resolved** — §3 |
-| 2 | Keep standalone single-device mock scripts as thin wrappers, or retire them? | Open — §9 |
+| 2 | Standalone single-device mock scripts kept as thin wrappers around the refactored class, not retired | **Resolved** — §2 |
 | 3 | Webui bind failure: abort whole service, or degrade that one device to headless? | Open — §9 |

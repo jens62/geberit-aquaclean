@@ -790,13 +790,14 @@ and open decisions — are in `docs/developer/mock-service-requirements.md`.
 
 Supersedes the Alba-only "SQLite persistence for DpId store" framing that used to live here
 — generalized to run Mera, Sela, and Alba mocks **concurrently from one process**, each with
-its own durable settings store. The persistence schema requires two additions beyond what a
-flat DpId table needs: a `namespace` column (Mera addresses settings via multiple index
-spaces that each restart at 0 — `profile_setting`, `common_setting`, `active_setting`,
-`spl`), and a `persist` flag (not everything in Mera's addressable space is durable — some
-`spl` indices are live sensor/state signals). Row shape:
-`(namespace, index, value, datatype, behavior, min, max, persist)`. The full Mera
-namespace/index enumeration that this schema is built on stays below, as a standalone
+its own durable settings store, isolated within one shared DB file via a
+`(device_type, device_key)` composite key (`aquaclean_ble_relay/mock_persistence.py`, already
+implemented — see requirements doc §5 for the corrected design). Mera's addressing needs a
+`namespace` dimension beyond a flat DpId key, because it has multiple index spaces that each
+restart at 0 (`profile_setting`, `common_setting`, `active_setting`, `spl`) — encoded as
+`f"{namespace}:{index}"`. Not every addressable index is durable — some `spl` indices are
+live sensor/state signals a protocol module simply never persists. The full Mera
+namespace/index enumeration this classification is built on stays below, as a standalone
 reference table.
 
 ---
