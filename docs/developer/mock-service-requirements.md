@@ -338,6 +338,16 @@ mock settings-control module" since it touches shipped `aquaclean_console_app` c
 proper branch/PR, per the existing mock-vs-console-app workflow split
 (`memory/feedback_mock_services_work_on_main.md`).
 
+**Implemented, not yet VM-verified (2026-07-16, commit `d217e46`):**
+`aquaclean_ble_relay/static/mock-controls.js`/`.css` built as described above. Mera got
+`/settings/common/{id}` and `/settings/profile/{id}` write routes (backed by
+`_write_stored_common_setting`/`_write_stored_profile_setting`, shared with proc 0x52/0x54 so
+BLE and webui writes stay consistent) plus a read-only Firmware Versions section; Alba got a
+single `/settings/dpid/{id}` write route restricted to Nvm (`behavior==3`) rows, with
+datatype-aware encode/decode helpers, covering the writable Nvm DpIds plus read-only identity/
+firmware DpIds. Not runtime-verified in this dev environment — `fastapi`/`aiohttp` aren't
+installed here (same limitation as the rest of this file); needs a real run on the mock VM.
+
 ## 7. Logging
 
 - One logger per device instance, named by the same `(model, adapter)` key used for
@@ -397,7 +407,7 @@ of it.
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
-| 6 | Webui, multi-device | Not started — see §6 "DRY: shared frontend assets with the real bridge webui" |
+| 6 | Webui, multi-device | **Implemented, not VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba, see §6 "DRY..." |
 | 7 | Logging polish (combined + per-device files) | Not started |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
 | 9 | Firmware override parsing *(future, §4)* | Not started |
