@@ -1469,8 +1469,12 @@ class MeraMock:
                     await response.write(f"data: {json.dumps(data)}\n\n".encode())
                 except asyncio.TimeoutError:
                     await response.write(b": heartbeat\n\n")
-        except (asyncio.CancelledError, ConnectionResetError):
+        except ConnectionResetError:
             pass
+        # CancelledError deliberately NOT caught here — swallowing it would make
+        # this task look like it completed normally instead of being cancelled,
+        # which can block asyncio.run()'s shutdown from seeing this task as
+        # actually cancelled. finally still cleans up either way.
         finally:
             if queue in self._sse_queues:
                 self._sse_queues.remove(queue)

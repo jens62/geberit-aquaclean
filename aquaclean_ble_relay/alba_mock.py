@@ -1939,8 +1939,14 @@ class AlbaMock:
                                     yield f"data: {json.dumps(data)}\n\n"
                                 except asyncio.TimeoutError:
                                     yield ": heartbeat\n\n"
-                        except (asyncio.CancelledError, GeneratorExit):
+                        except GeneratorExit:
                             pass
+                        # CancelledError deliberately NOT caught here — for an async
+                        # generator, catching it and returning normally makes the
+                        # caller's __anext__() raise StopAsyncIteration instead of
+                        # CancelledError, which swallows the cancellation at this
+                        # boundary instead of propagating it to whatever task is
+                        # driving this generator. finally still cleans up either way.
                         finally:
                             if queue in self._sse_queues:
                                 self._sse_queues.remove(queue)
