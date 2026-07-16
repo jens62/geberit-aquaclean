@@ -413,6 +413,24 @@ regression coverage in `tests/test_mock_logging.py` — stdlib-only (no bluez_pe
 fastapi dependency), runs in any environment including the primary dev venv, unlike the Phase 6
 webui tests.
 
+**Follow-up bug (found live on the mock VM, fixed same day):** `MeraMock.run()` had a second,
+later reference to the `log_path` variable the Phase 7 refactor removed — crashed every real run
+with `NameError` as soon as the startup banner tried to print it. `get_device_logger()` now
+stashes the per-device path on the logger itself (`logger.device_log_path`) so callers can
+report it without keeping their own copy.
+
+**`--btmon-capture` / `--bluetoothd-debug` (2026-07-16):** `mock_service.py` can now start
+`sudo btmon -w <state-dir>/logs/mock-btmon_<timestamp>.btsnoop` and/or
+`sudo bluetoothd -n -d --noplugin=battery` (redirected to
+`<state-dir>/logs/mock-bluetoothd-debug_<timestamp>.log`) before any device starts, and stops
+them cleanly on exit — automating a capture workflow that was previously two separate manual
+terminal commands. Filenames follow the same `state_dir/logs/mock-*_<timestamp>` convention as
+the per-device/combined logs. Cleanup backs `Popen.terminate()` with a `sudo pkill -f` fallback
+keyed on a distinguishing argument, since `sudo` doesn't always forward `SIGTERM` to its child
+reliably. Deliberately does **not** stop/restart the systemd `bluetooth` service — mirrors the
+manual commands exactly; if systemd's `bluetoothd` is already holding the D-Bus name,
+`--bluetoothd-debug` just fails to bind, same as running the command by hand.
+
 ## 8. DRY — shared modules, not per-mock duplication
 
 - Adapter selection: already extracted (Alba's `--adapter` feature, merged to main) —
