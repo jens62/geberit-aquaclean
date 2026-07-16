@@ -165,7 +165,7 @@ class _Ble20AppLayer:
         (8,   None,  0,  8, 2,         2,          0, struct.pack('<I', 3)),          # FW_RS_VERSION = 3 → RS03.0 TS89
         (9,   None,  0,  9, 0,         65535,      0, struct.pack('<I', 89)),         # FW_TS_VERSION = 89
         (10,  None,  0,  8, 2,         2,          4, b'00'),                         # HW_RS_VERSION
-        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (real kstr=7080; 0000 for testing)
+        (12,  None,  0,  8, 0,         4,          4, b'0000'),                       # PAIRING_SECRET (real device has a non-zero PIN; 0000 for testing convenience)
         (13,  None,  0,  8, 0,         6,          3, b''),                           # ACCESS_CODE (empty)
         (14,  None,  0,  9, 0,         0,          3, struct.pack('<I', 0)),          # ACCESS_REVOCATION = 0
         (15,  None,  0, 13, 0,         0,          1, struct.pack('<I', 947286443)),  # RTC_TIME (obf)
