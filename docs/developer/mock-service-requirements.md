@@ -222,3 +222,85 @@ the Geberit cloud, hand out setting min/max ranges at runtime? Investigated agai
 | 1 | `--model` single open-ended lookup table (not `--protocol` + `--model` split) | **Resolved** — §3 |
 | 2 | Standalone single-device mock scripts kept as thin wrappers around the refactored class, not retired | **Resolved** — §2 |
 | 3 | Webui bind failure: abort whole service, or degrade that one device to headless? | Open — §9 |
+
+## 11. Implementation plan & phase status
+
+Ordered so each phase is independently testable before the next depends on it, and the §0
+acceptance test gets proven on one device before multi-device orchestration is built on top
+of it.
+
+| Phase | Goal | Status |
+|---|---|---|
+| 1 | Shared modules: `mock_bluez_adapter.py`, `mock_persistence.py` | **Done** — `152382c`, `dadde00`, `0a85636` |
+| 2 | Refactor Mera mock into an importable class | **Done** — verified on VM, see below |
+| 2b | Real settings mutation + persistence wiring for Mera (follow-up) | Not started |
+| 3 | Refactor Alba mock into an importable class | Not started |
+| 4 | `mock_service.py` orchestrator, single device only | Not started |
+| 5 | Multi-device concurrency | Not started |
+| 6 | Webui, multi-device | Not started |
+| 7 | Logging polish (combined + per-device files) | Not started |
+| 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
+| 9 | Firmware override parsing *(future, §4)* | Not started |
+
+### Phase 2 — scope decision (2026-07-16)
+
+Checked `_dispatch()` in `tools/mock-geberit-mera.py` before wiring persistence in, rather
+than assuming there was already something to persist: **every write procedure the mock
+currently handles is a no-op stub** — `0x09` (SetCommand), `0x08`/`0x14`/`0x15`, `0x0B`
+(SetActiveProfileSetting) all just `return b""`. Nothing mutates state, not even
+in-memory. So there is currently no real setting on the Mera mock that the Home App could
+change — the §0 acceptance test has no genuine hook to attach to yet on this model.
+Wiring `mock_persistence.py` against no-op stubs would prove nothing.
+
+**Decided scope for Phase 2:**
+- New module `aquaclean_ble_relay/mera_mock.py`, class `MeraMock` — a structural port of
+  `tools/mock-geberit-mera.py`: module-level globals become instance attributes, a
+  per-instance logger replaces the single hardcoded `logging.getLogger("mera_mock")`,
+  adapter selection goes through `mock_bluez_adapter.py` instead of the script's own inline
+  adapter lookup.
+- `tools/mock-geberit-mera.py` is left completely untouched. Its logic is duplicated into
+  the new class for now, not shared — accepted temporarily; a later phase decides the
+  cutover to a thin wrapper (§2, decision 2), once the class is proven.
+- The currently-stubbed `Set*` procedures are ported as the same no-op stubs — behavior
+  unchanged, no new mutation logic in this phase.
+- `mock_persistence.py` wiring is **deferred to Phase 2b**, not done in Phase 2.
+- No acceptance-test run in Phase 2 (needs Phase 2b's real mutation first).
+
+**Phase 2b (follow-up, not yet started):** implement actual state mutation for the
+currently-stubbed `Set*` procedures. Cross-check the exact proc → setting mapping against
+`.claude/rules/ble-protocol.md` before implementing — the current stub comments
+(`# SetStored* (empty OK)` grouping `0x08`/`0x14`/`0x15`) don't line up cleanly with that
+doc's documented proc table (`0x51`/`0x52` GetStoredCommonSetting/SetStoredCommonSetting,
+`0x53`/`0x54` GetStoredProfileSetting/SetStoredProfileSetting, `0x0A`/`0x0B`
+GetActiveCommonSetting/SetActiveCommonSetting) and need reconciling, not assuming the
+existing comments are correct. Once mutation is real, wire `mock_persistence.py`
+write-through and only then run the §0 acceptance test against Mera.
+
+### Phase 2 — verification (2026-07-16)
+
+Two independent checks, both against the real `hci0` adapter on the mock VM
+(`anneubuntu-studio`, `/home/jens/aquaclean_ble_relay/`), not just a syntax check:
+
+1. **Byte-for-byte dispatch comparison.** Loaded `tools/mock-geberit-mera.py` and the new
+   `MeraMock` class in the same interpreter and called `_dispatch()` with identical
+   `(ctx, proc, args)` for all 13 implemented procedures (`0x82, 0x51, 0x53, 0x0A, 0x0D,
+   0x0E, 0x45, 0x59, 0x07, 0x05, 0x81, 0x86, 0x55`). **All 13 produced identical output
+   frames.** This is the part a live BLE run can't easily exercise for every procedure in
+   one pass, so it was checked directly.
+2. **Live run against the real Geberit Home App.** Started
+   `python3 -m aquaclean_ble_relay.mera_mock --port 8765 --adapter hci0` under `sudo` on
+   the VM and connected with the real app. Log confirms: adapter correctly resolved via
+   `select_adapter` (`Adapter: A0:AD:9F:72:C4:0F path: /org/bluez/hci0`), GATT registered,
+   all four notify characteristics (A5–A8) wired, advertisement started with the correct
+   article/company ID, a real device connected, and `GetFirmwareVersionList` /
+   `GetSystemParameterList` / `GetFilterStatus` all completed with every multi-frame
+   response fully ACKed. No warnings, errors, or tracebacks in the 494-line log; clean
+   shutdown on Ctrl+C. The app showed "Das Gerät benötigt einen Firmware-Update" —
+   confirmed to be identical behavior to `tools/mock-geberit-mera.py` (both report the same
+   real per-component firmware versions shipped since v1.76.0b1), not a regression from
+   this refactor.
+
+Not yet exercised: the multi-instance-specific paths (adapter-tagged D-Bus app paths and
+log filenames, `_hci_index()` for a non-`hci0` adapter) — the VM only has one physical
+adapter, so this could only be verified with `adapter=None`/`"hci0"`. Multi-adapter
+behavior will get its first real test in Phase 5.
