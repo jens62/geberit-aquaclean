@@ -89,6 +89,15 @@ else:
     from dbus_next.service import ServiceInterface, dbus_property, method as dbus_method
     from dbus_next.constants import PropertyAccess
 
+# Adds the repo root to sys.path so `aquaclean_ble_relay`-relative imports below
+# resolve even when this file is run as a standalone script (sys.path[0] is then
+# this file's own directory, not the repo root) — must run before ANY import of
+# `aquaclean_ble_relay.*`/`aquaclean_console_app.*`. mera_mock.py does this
+# ordering correctly already; this file previously did it too late (after the
+# aquaclean_ble_relay imports right below), which only broke standalone-script
+# invocation outside a proper package layout — found 2026-07-16 testing Phase 6.
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+
 from aquaclean_ble_relay.mock_bluez_adapter import select_adapter  # noqa: E402
 from aquaclean_ble_relay import mock_persistence  # noqa: E402
 
@@ -109,8 +118,7 @@ class _Advertisement(Advertisement):
 
 
 # --- Import Arendi Security crypto from the bridge package -------------------
-# Adds the repo root to sys.path so we can import from aquaclean_console_app.
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+# (repo root already added to sys.path above, before the aquaclean_ble_relay imports)
 from aquaclean_console_app.bluetooth_le.LE.command_id import CommandId
 from aquaclean_console_app.bluetooth_le.LE.Ble20Client import encode_address, decode_address
 from aquaclean_console_app.bluetooth_le.LE.AriendiSecurity import (
