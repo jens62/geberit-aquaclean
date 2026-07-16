@@ -174,15 +174,27 @@ client.
 physical device's actual pairing PIN as a formatting example. Redacted (both
 `tools/mock-geberit-alba.py` and `aquaclean_ble_relay/alba_mock.py`) — a real device's BLE
 pairing PIN is a real credential, not safe to reference in a public repo regardless of
-framing. **The value was already present in pushed history** (confirmed via `git log -S`,
-present since commit `7ac384c`) — the redaction commit only fixes the current file content
-going forward; the value remains visible in git history unless that's separately addressed
-(not done — would need history rewriting, a decision for the repo owner, not taken
-unilaterally).
+framing. **This wasn't just an oversight — it violated an already-documented project rule**:
+`memory/kstr-probe-findings.md` (~55 days earlier) explicitly said "Do not log or commit
+actual values" for this exact DpId and the SAP/serial DpIds. The redaction fixes the rule
+violation going forward.
 
-**Not yet done:** the same per-device-identity gap likely applies to `MeraMock` (`_SAP_NUMBER`/
-`_SERIAL`, currently fixed instance attributes set in `__init__`, not persisted or varied
-per adapter) — not implemented, since the concrete ask and Phase 5 test case were Alba-only.
+**The value was already present in pushed history** (confirmed via `git log -S`, present
+since commit `7ac384c`, ~255 commits and 38 already-published GitHub Release tags
+downstream of it by the time this was found). **Decided (2026-07-16): leave history as-is,
+do not rewrite.** Considered and rejected — rewriting would force-push `main`, orphan 38
+published HACS release tags (each needing manual recreation), and diverge every existing
+clone, for a leak whose real-world exploitability is narrow (a 4-digit BLE pairing PIN,
+usable only by someone who both knows the specific device's BLE MAC and is within physical
+BLE range of it) and which — critically — rewriting wouldn't even fully undo, since anyone
+who already cloned or installed the repo keeps the old value in their local copy regardless.
+Do not re-raise this as an open task in a future session; it's a closed decision, not a
+pending TODO.
+
+**Not yet done — tracked as Phase 2c above, do not forget:** the same per-device-identity gap
+likely applies to `MeraMock` (`_SAP_NUMBER`/`_SERIAL`, currently fixed instance attributes
+set in `__init__`, not persisted or varied per adapter) — not implemented, since the
+concrete ask and Phase 5 test case were Alba-only.
 Worth doing the same way if/when two Mera instances are tested together.
 
 ### Provenance of min/max values (why they're code, not DB or a live fetch)
@@ -279,6 +291,7 @@ of it.
 | 1 | Shared modules: `mock_bluez_adapter.py`, `mock_persistence.py` | **Done** — `152382c`, `dadde00`, `0a85636` |
 | 2 | Refactor Mera mock into an importable class | **Done** — verified on VM, see below |
 | 2b | Real settings mutation + persistence wiring for Mera (follow-up) | **Done** — verified on VM, see below |
+| 2c | Per-device identity (`_SAP_NUMBER`/`_SERIAL`) for Mera (follow-up) | **Not started** — same gap as Alba's §5 fix, not yet ported to Mera |
 | 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
