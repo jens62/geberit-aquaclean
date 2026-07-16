@@ -59,21 +59,19 @@ checked at parse time (asyncio would otherwise raise "address already in
 use" deep inside uvicorn/aiohttp startup, one device silently failing while
 the other keeps running).
 
-Logging: opens one auto-named log file per run and tees the process's stdout
-to it (console + file), so nobody has to hand-manage a `| tee <name>.log`
-filename per test. This is still a process-wide stdout/stderr redirect — it
-cannot separate concurrent devices' interleaved output into distinct files,
-so for 2+ devices the log filename reflects the whole batch (not one device)
-and everyone's lines land in the one combined file. True per-device log
-files/handlers are Phase 7's job. MeraMock already opens its own per-adapter
-log file independently (Phase 2) — running it through mock_service.py means
-its output lands in both files, which is redundant but harmless.
+Logging (Phase 7, docs/developer/mock-service-requirements.md §7): each mock
+configures its own (model, adapter) logger from the shared state_dir via
+aquaclean_ble_relay/mock_logging.py — console, a per-device file, and one
+combined file shared by every device logger in this process. mock_service.py
+itself doesn't touch logging at all beyond passing state_dir through
+(_resolve_kwargs already defaults it onto every device's kwargs) — no more
+process-wide stdout/stderr tee, since every device's own combined-file
+handler now covers cross-device correlation properly.
 """
 
 import argparse
 import asyncio
 import sys
-import time
 from pathlib import Path
 
 from aquaclean_ble_relay.mera_mock import MeraMock
@@ -137,34 +135,6 @@ def _parse_device_spec(spec: str) -> dict:
             f"--device {spec!r}: unknown model {fields['model']!r} — available: {available}"
         )
     return fields
-
-
-class _Tee:
-    """Writes to every given stream. See module docstring re: logging scope.
-
-    Delegates any attribute it doesn't itself define (isatty, fileno,
-    encoding, ...) to the first stream — libraries that receive this as
-    sys.stdout (uvicorn's logging setup calls .isatty()) expect a real
-    file-like object, not just something with write()/flush().
-    """
-
-    def __init__(self, *streams):
-        self._streams = streams
-
-    def write(self, data):
-        for s in self._streams:
-            s.write(data)
-            s.flush()
-
-    def flush(self):
-        for s in self._streams:
-            s.flush()
-
-    def isatty(self):
-        return self._streams[0].isatty()
-
-    def __getattr__(self, name):
-        return getattr(self._streams[0], name)
 
 
 def _resolve_kwargs(spec: dict, state_dir: Path) -> tuple[str, dict]:
@@ -269,15 +239,12 @@ def main() -> None:
         if len(set(ports)) != len(ports):
             parser.error(f"--device web_port values must be distinct, got: {ports}")
 
-    log_dir = state_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = time.strftime("%Y-%m-%d_%H-%M")
+    # Each mock configures its own (model, adapter) logger from state_dir
+    # (console + per-device file + one combined file shared by every device
+    # logger in this process) via mock_logging.py — Phase 7, replacing the
+    # process-wide stdout/stderr tee this used to do itself.
     tag = "+".join(f"{model_name}-{kwargs.get('adapter') or 'default'}" for model_name, kwargs in resolved)
-    log_path = log_dir / f"mock-{tag}_{timestamp}.log"
-    log_file = open(log_path, "a", encoding="utf-8")
-    sys.stdout = _Tee(sys.stdout, log_file)
-    sys.stderr = _Tee(sys.stderr, log_file)
-    print(f"[mock_service] devices={tag}  log={log_path}")
+    print(f"[mock_service] devices={tag}  state_dir={state_dir}")
 
     mocks = []
     for model_name, kwargs in resolved:

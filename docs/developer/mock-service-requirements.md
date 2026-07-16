@@ -375,6 +375,44 @@ Fixed by moving the insert before both import groups it serves.
   between the two.
 - Log filenames follow the same `<model>-<adapter>` naming convention as the persistence DB.
 
+**Implemented and VM-verified (2026-07-16):** new shared module
+`aquaclean_ble_relay/mock_logging.py` — `get_device_logger(model, adapter)` returns/configures
+the `mock.<model>.<adapter>` logger (idempotent), with three handlers: console, a per-device
+file (`logs/mock-<model>-<adapter>_<timestamp>.log`), and one combined-file handler
+(`logs/mock-combined_<timestamp>.log`) shared by every device logger created in the process.
+Device tag is the logger name itself in the format string (`[%(asctime)s] [%(name)s]
+%(message)s`) — right after the timestamp, no per-record `extra=` plumbing needed.
+
+Both mocks now use it: `MeraMock` swapped its inline logger/file-handler setup for a call to
+the shared helper. `AlbaMock` needed more — it had no `logging.Logger` at all, just a
+module-level timestamped `print()` override used at ~120 call sites across `_Ble20AppLayer`,
+`_AriendiServerSide`, the four GATT service classes, and `AlbaMock` itself. Per explicit
+decision (full mechanical conversion over a smaller `contextvars`-based shortcut — the
+mechanical version means every call site genuinely holds its own `Logger`, not a shortcut that
+only observably behaves like one), the override is gone entirely: each of those classes now
+takes an optional `logger` constructor param (threaded down from `AlbaMock.logger` at
+construction), and all ~120 `print(...)` call sites became `self.logger.info(...)`. Six
+multi-positional-arg `print("text:", var)` calls were collapsed to single f-string args first —
+`logging.Logger.info(msg, *args)` treats extra positional args as `%`-style formatting
+arguments, so passing them through unchanged would have raised `TypeError` at runtime. Two call
+sites aren't methods (`safe_call()`, a module-level function — uses
+`getattr(obj, "logger", ...)`; the `if __name__ == "__main__":` KeyboardInterrupt handler —
+uses `mock.logger`).
+
+`mock_service.py`'s `_Tee` stdout/stderr redirect (the previous stand-in for a combined log,
+keyed by the whole `--device` batch rather than per-device) is removed — redundant now that
+every device logger has its own combined-file handler from `state_dir`, which
+`_resolve_kwargs` already defaults onto every device's constructor kwargs.
+
+VM-verified on `anneubuntu-studio`: device tag confirmed at the fixed post-timestamp position,
+per-device files confirmed isolated (each device's file contains only its own lines), the
+combined file confirmed shared and interleaved across two concurrently-constructed
+Mera+Alba instances, logger-wiring confirmed reaching all four previously-print()-only classes.
+All 11 pre-existing Phase 6 webui tests still pass unmodified (no regression). Permanent
+regression coverage in `tests/test_mock_logging.py` — stdlib-only (no bluez_peripheral/aiohttp/
+fastapi dependency), runs in any environment including the primary dev venv, unlike the Phase 6
+webui tests.
+
 ## 8. DRY — shared modules, not per-mock duplication
 
 - Adapter selection: already extracted (Alba's `--adapter` feature, merged to main) —
@@ -424,7 +462,7 @@ of it.
 | 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
 | 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
 | 6 | Webui, multi-device | **Done, VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba, see §6 "DRY..."; regression tests in `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` |
-| 7 | Logging polish (combined + per-device files) | Not started |
+| 7 | Logging polish (combined + per-device files) | **Done, VM-verified** (2026-07-16) — `mock_logging.py` shared module, full print()→logger conversion for Alba, see §7 |
 | 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
 | 9 | Firmware override parsing *(future, §4)* | Not started |
 | 9a | Firmware version persistence (Mera + Alba) | **Done** — see §5 "Firmware version persistence" |

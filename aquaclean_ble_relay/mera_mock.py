@@ -78,11 +78,12 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 
 from aquaclean_ble_relay.mock_bluez_adapter import select_adapter  # noqa: E402
 from aquaclean_ble_relay import mock_persistence  # noqa: E402
+from aquaclean_ble_relay import mock_logging  # noqa: E402
 
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.79.0b1"
+_MOCK_VERSION = "1.80.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -786,6 +787,7 @@ class MeraMock:
             # today (mock_service.py's orchestrator, Phase 4, will set this
             # once for the whole process instead).
             mock_persistence.set_state_dir(state_dir)
+            mock_logging.set_log_dir(state_dir)
 
         # ---- identity (was module-level constants; instance now so a future
         # variant/model registry can override per instance without touching
@@ -856,15 +858,10 @@ class MeraMock:
         self._advert_lock: asyncio.Lock | None = None  # created in run(), needs a running loop
         self._bus = None             # system D-Bus connection; set in run()
 
-        # ---- per-instance logger (was one hardcoded logging.getLogger("mera_mock")) ----
-        self.logger = logging.getLogger(f"mock.mera.{self._adapter_tag}")
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.propagate = False   # don't bubble to root logger
-        self._log_fmt = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
-        if not self.logger.handlers:
-            console_h = logging.StreamHandler(sys.stdout)
-            console_h.setFormatter(self._log_fmt)
-            self.logger.addHandler(console_h)
+        # ---- per-instance logger — console + per-device file + combined file,
+        # device tag at a fixed position in every line (docs/developer/
+        # mock-service-requirements.md §7); shared with AlbaMock via mock_logging.py ----
+        self.logger = mock_logging.get_device_logger("mera", self.adapter)
 
     def _hci_index(self) -> str:
         """BlueZ node name (e.g. "hci1") -> HCI index string ("1") for btmgmt/sysfs
@@ -1442,14 +1439,6 @@ class MeraMock:
 
     async def run(self) -> None:
         self._advert_lock = asyncio.Lock()
-
-        # Auto-named log file alongside this module, tagged with the adapter so two
-        # instances started in the same process/minute don't collide on one filename.
-        log_path = Path(__file__).parent / f"mock-geberit-mera_{self._adapter_tag}_{time.strftime('%Y-%m-%d_%H-%M')}.log"
-        file_h = logging.FileHandler(log_path, encoding="utf-8")
-        file_h.setFormatter(self._log_fmt)
-        self.logger.addHandler(file_h)
-        self.logger.info("Log: %s", log_path.name)
 
         # Clear any bond records without restarting the daemon.
         # btmgmt unpair removes the device (including stored IRK) from BlueZ memory and

@@ -29,13 +29,14 @@ Scope of this port (2026-07-16):
     (unchanged behavior) — each fresh construction reloads persisted Nvm
     values from mock_persistence.py, so a setting written in one session (or
     before a mock restart) is visible in the next session automatically.
-  - Logging is NOT converted to a per-instance logger in this phase. Unlike
-    Mera (one hardcoded `logging.getLogger`), Alba uses a module-level
-    timestamped `print()` override across hundreds of call sites in
-    _Ble20AppLayer, _AriendiServerSide, and the session loop. Converting all
-    of those is exactly Phase 7's scope ("Logging polish") — doing it
-    piecemeal here would leave a half-converted mix of self.logger and
-    print(), which is worse than deferring it wholesale.
+  - Logging: converted to per-instance loggers in Phase 7 ("Logging polish",
+    2026-07-16) — the module-level timestamped `print()` override that used
+    to sit here is gone. Every class that used to call it (_Ble20AppLayer,
+    _AriendiServerSide, the GATT service classes, AlbaMock itself) now holds
+    its own `self.logger`, all sourced from the same per-device logger built
+    by `aquaclean_ble_relay/mock_logging.py` (console + per-device file +
+    combined file, device tag at a fixed position after the timestamp) —
+    the same helper MeraMock uses.
 
 NOT tested against real BlueZ/D-Bus/hardware from this environment (no
 bluez_peripheral/dbus_next available here). Verified by careful manual port +
@@ -45,24 +46,18 @@ requirements doc's Phase 3 verification section.
 
 import argparse
 import asyncio
-import builtins
 import hashlib
 import inspect
 import json
+import logging
 import os
 import pathlib
 import random
 import struct
 import sys
-from datetime import datetime, timezone
-
-_builtin_print = builtins.print
-def print(*args, **kwargs):  # noqa: A001
-    now = datetime.now(tz=timezone.utc).astimezone().strftime('%H:%M:%S.%f')[:-3]
-    _builtin_print(now, *args, **kwargs)
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.21.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.22.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging (unused today — ported for parity, same as the original script)
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -100,6 +95,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from aquaclean_ble_relay.mock_bluez_adapter import select_adapter  # noqa: E402
 from aquaclean_ble_relay import mock_persistence  # noqa: E402
+from aquaclean_ble_relay import mock_logging  # noqa: E402
 
 
 class _Advertisement(Advertisement):
@@ -333,8 +329,9 @@ class _Ble20AppLayer:
             return f"SB{random.randint(1000, 9999)}EU{random.randint(0, 999999):06d}".encode('ascii')
         raise ValueError(f"no identity generator for DpId {dp_id}")
 
-    def __init__(self, notify_queue=None, device_key: str = "default"):
+    def __init__(self, notify_queue=None, device_key: str = "default", logger=None):
         self._device_key = device_key
+        self.logger = logger or logging.getLogger("mock.alba.default")
         self._store: dict = {}
         self._notify_subscribed: set = set()
         self._notify_queue = notify_queue
@@ -476,7 +473,7 @@ class _Ble20AppLayer:
         Response:    same header, one wrapped inner response per inner request frame.
         """
         if len(frame) < 9:
-            print(f"[MockBle20] tunnel frame too short ({len(frame)} bytes) — ignored")
+            self.logger.info(f"[MockBle20] tunnel frame too short ({len(frame)} bytes) — ignored")
             return []
         series  = frame[1]
         variant = frame[2]
@@ -489,11 +486,11 @@ class _Ble20AppLayer:
             inner_len = frame[pos] + 1
             pos += 1
             if pos + inner_len > len(frame):
-                print(f"[MockBle20] tunnel inner frame truncated at pos={pos} — ignored")
+                self.logger.info(f"[MockBle20] tunnel inner frame truncated at pos={pos} — ignored")
                 break
             inner = frame[pos:pos + inner_len]
             pos += inner_len
-            print(f"[MockBle20] [tunnel] inner cmd=0x{inner[0]:02X}")
+            self.logger.info(f"[MockBle20] [tunnel] inner cmd=0x{inner[0]:02X}")
             for resp in self._dispatch_sync(inner):
                 responses.append(hdr + bytes([len(resp) - 1]) + resp)
         return responses
@@ -519,7 +516,7 @@ class _Ble20AppLayer:
             return self._event_storage_inventory()
         if cmd == CommandId.ListInventoryCmd:
             return self._list_inventory()
-        print(f"[MockBle20] unknown cmd=0x{cmd:02X} — ignored")
+        self.logger.info(f"[MockBle20] unknown cmd=0x{cmd:02X} — ignored")
         return []
 
     def _inventory(self) -> list:
@@ -531,7 +528,7 @@ class _Ble20AppLayer:
                        struct.pack('<ii', e['min_s'], e['max_s']) +
                        bytes([e['behavior'] & 0x7F]))
             frames.append(bytes([CommandId.InventoryData]) + addr + payload)
-            print(f"[MockBle20] → INVENTORY_DATA DpId={dp_id}")
+            self.logger.info(f"[MockBle20] → INVENTORY_DATA DpId={dp_id}")
         return frames
 
     def _read(self, frame: bytes) -> list:
@@ -539,12 +536,12 @@ class _Ble20AppLayer:
         addr = encode_address(dp_id, inst)
         entry = self._store.get((dp_id, inst)) or self._store.get((dp_id, None))
         if entry is None:
-            print(f"[MockBle20] ← READ DpId={dp_id} → InvalidId")
+            self.logger.info(f"[MockBle20] ← READ DpId={dp_id} → InvalidId")
             return [bytes([CommandId.ReadError]) + addr + bytes([0x01])]
         val = bytes(entry['value'])
-        print(f"[MockBle20] ← READ DpId={dp_id} → {val.hex()}")
+        self.logger.info(f"[MockBle20] ← READ DpId={dp_id} → {val.hex()}")
         if dp_id == 8:
-            print("[MockServer] *** Phase 1 complete — if app shows PIN dialog, enter: 0000 ***")
+            self.logger.info("[MockServer] *** Phase 1 complete — if app shows PIN dialog, enter: 0000 ***")
         return [bytes([CommandId.ReadAns]) + addr + val]
 
     def _write(self, frame: bytes) -> list:
@@ -553,18 +550,18 @@ class _Ble20AppLayer:
         value = frame[off:]
         entry = self._store.get((dp_id, inst)) or self._store.get((dp_id, None))
         if entry is None:
-            print(f"[MockBle20] ← WRITE DpId={dp_id} → InvalidId")
+            self.logger.info(f"[MockBle20] ← WRITE DpId={dp_id} → InvalidId")
             return [bytes([CommandId.WriteError]) + addr + bytes([0x01])]
         entry['value'] = bytearray(value)
         if entry['behavior'] == 3:  # Nvm — persisted immediately (requirements doc §5)
             mock_persistence.save("alba", self._device_key, f"dpid:{dp_id}", value.hex())
-            print(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK — persisted")
+            self.logger.info(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK — persisted")
         else:
-            print(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK")
+            self.logger.info(f"[MockBle20] ← WRITE DpId={dp_id} value={value.hex()} → ACK")
         responses = [bytes([CommandId.WriteAck]) + addr]
         if dp_id in self._notify_subscribed:
             responses.append(bytes([CommandId.NotifyData]) + encode_address(dp_id) + value)
-            print(f"[MockBle20] → NOTIFY_DATA DpId={dp_id} value={value.hex()}")
+            self.logger.info(f"[MockBle20] → NOTIFY_DATA DpId={dp_id} value={value.hex()}")
         # DpId 563 = START_STOP_ANAL_SHOWER: mirror into DpId 564 (ANAL_SHOWER_STATUS)
         # Start (01): immediately -> 5 (Shower running); enables STOP button in app.
         # Stop  (00): async wind-down 5->6(Retracting)->7(Postrinsing)->2(Ready).
@@ -575,50 +572,50 @@ class _Ble20AppLayer:
                     entry_564['value'] = bytearray(b'\x05')
                 if 564 in self._notify_subscribed:
                     responses.append(bytes([CommandId.NotifyData]) + encode_address(564) + b'\x05')
-                    print(f"[MockBle20] → NOTIFY_DATA DpId=564 value=05 (Shower (running))")
+                    self.logger.info(f"[MockBle20] → NOTIFY_DATA DpId=564 value=05 (Shower (running))")
             else:
                 try:
                     asyncio.get_running_loop().create_task(self._stop_sequence())
-                    print(f"[MockBle20] → scheduled stop sequence 5->6(0.5s)->7(1.5s)->2(3s)")
+                    self.logger.info(f"[MockBle20] → scheduled stop sequence 5->6(0.5s)->7(1.5s)->2(3s)")
                 except RuntimeError:
                     entry_564 = self._store.get((564, None))
                     if entry_564 is not None:
                         entry_564['value'] = bytearray(b'\x02')
                     if 564 in self._notify_subscribed:
                         responses.append(bytes([CommandId.NotifyData]) + encode_address(564) + b'\x02')
-                        print(f"[MockBle20] → NOTIFY_DATA DpId=564 value=02 (Ready) [fallback]")
+                        self.logger.info(f"[MockBle20] → NOTIFY_DATA DpId=564 value=02 (Ready) [fallback]")
         return responses
 
     def _notify_enable(self, frame: bytes) -> list:
         dp_id, inst, _ = decode_address(frame, 1)
         addr = encode_address(dp_id, inst)
         if (dp_id, inst) not in self._store and (dp_id, None) not in self._store:
-            print(f"[MockBle20] ← NOTIFY_ENABLE DpId={dp_id} → InvalidId")
+            self.logger.info(f"[MockBle20] ← NOTIFY_ENABLE DpId={dp_id} → InvalidId")
             return [bytes([CommandId.NotifyError]) + addr + bytes([0x01])]
         self._notify_subscribed.add(dp_id)
-        print(f"[MockBle20] ← NOTIFY_ENABLE DpId={dp_id} → ACK")
+        self.logger.info(f"[MockBle20] ← NOTIFY_ENABLE DpId={dp_id} → ACK")
         return [bytes([CommandId.NotifyAck]) + addr]
 
     def _notify_disable(self, frame: bytes) -> list:
         dp_id, inst, _ = decode_address(frame, 1)
         addr = encode_address(dp_id, inst)
         self._notify_subscribed.discard(dp_id)
-        print(f"[MockBle20] ← NOTIFY_DISABLE DpId={dp_id} → ACK")
+        self.logger.info(f"[MockBle20] ← NOTIFY_DISABLE DpId={dp_id} → ACK")
         return [bytes([CommandId.NotifyAck]) + addr]
 
     def _capabilities(self) -> list:
         # flags=0x00: no extended event storage, no other extensions
-        print("[MockBle20] ← CAPABILITIES_CMD → ACK flags=0x00")
+        self.logger.info("[MockBle20] ← CAPABILITIES_CMD → ACK flags=0x00")
         return [bytes([CommandId.CapabilitiesAck, 0x00])]
 
     def _event_storage_inventory(self) -> list:
         # No stored events — respond with count=0
-        print("[MockBle20] ← EVENT_STORAGE_INVENTORY → count=0")
+        self.logger.info("[MockBle20] ← EVENT_STORAGE_INVENTORY → count=0")
         return [struct.pack('<BH', CommandId.EventStorageInventoryCount, 0)]
 
     def _list_inventory(self) -> list:
         # No lists — respond with count=0
-        print("[MockBle20] ← LIST_INVENTORY_CMD → count=0")
+        self.logger.info("[MockBle20] ← LIST_INVENTORY_CMD → count=0")
         return [struct.pack('<BH', CommandId.ListInventoryCount, 0)]
 
 
@@ -636,7 +633,8 @@ class _AriendiServerSide:
          send_fn: async callable(att_bytes: bytes) — sends a BLE notification
     """
 
-    def __init__(self):
+    def __init__(self, logger=None):
+        self.logger = logger or logging.getLogger("mock.alba.default")
         self._rx_buf  = bytearray()
         self._rx_queue: asyncio.Queue = asyncio.Queue()
         self._srr_queue: asyncio.Queue = asyncio.Queue()
@@ -686,7 +684,7 @@ class _AriendiServerSide:
             crc_recv = decoded[-2] | (decoded[-1] << 8)
             crc_calc = _crc16_kermit(decoded[:-2])
             if crc_recv != crc_calc:
-                print(f"[MockServer] CRC mismatch rx=0x{crc_recv:04X} calc=0x{crc_calc:04X} — frame dropped")
+                self.logger.info(f"[MockServer] CRC mismatch rx=0x{crc_recv:04X} calc=0x{crc_calc:04X} — frame dropped")
                 continue
             ctrl    = decoded[0]
             payload = decoded[1:-2]
@@ -695,14 +693,14 @@ class _AriendiServerSide:
                 peer_nr = (ctrl >> 5) & 0x07
                 self._rx_ack = (peer_ns + 1) % 8
                 cmd_byte = f"0x{payload[1]:02X}" if len(payload) >= 2 and payload[0] == _SEC_ENCRYPTED else f"sec=0x{payload[0]:02X}" if payload else "empty"
-                print(f"[HDLC←] I-frame N(S)={peer_ns} N(R)={peer_nr} payload={len(payload)}B cmd={cmd_byte}")
+                self.logger.info(f"[HDLC←] I-frame N(S)={peer_ns} N(R)={peer_nr} payload={len(payload)}B cmd={cmd_byte}")
                 self._rx_queue.put_nowait(('I', ctrl, payload))
             elif (ctrl & 0x03) == 0x03:   # U-frame
-                print(f"[HDLC←] U-frame ctrl=0x{ctrl:02X}")
+                self.logger.info(f"[HDLC←] U-frame ctrl=0x{ctrl:02X}")
                 self._rx_queue.put_nowait(('U', ctrl, payload))
             elif (ctrl & 0x03) == 0x01:  # S-frame (RR/RNR) — signal flow control
                 peer_nr = (ctrl >> 5) & 0x07
-                print(f"[HDLC←] S-RR N(R)={peer_nr}")
+                self.logger.info(f"[HDLC←] S-RR N(R)={peer_nr}")
                 self._srr_queue.put_nowait(ctrl)
 
     # -----------------------------------------------------------------------
@@ -805,54 +803,54 @@ class _AriendiServerSide:
         while True:
             _ble_session_phase += 1
             if need_sabm:
-                print(f"[MockServer] [Phase {_ble_session_phase}] waiting for SABM...")
+                self.logger.info(f"[MockServer] [Phase {_ble_session_phase}] waiting for SABM...")
                 try:
                     await self._await_u(self._u_ctrl(_HDLC_SABM_TYPE), timeout=60.0)
                 except asyncio.TimeoutError:
-                    print("[MockServer] session timed out — no client connected within 60 s")
-                    print("[Mock] If the bridge/HACS was running, the ESP32 BLE scanner may be stuck.")
-                    print("[Mock]   → Restart it via ESPHome web UI (Restart button) — no other action needed.")
+                    self.logger.info("[MockServer] session timed out — no client connected within 60 s")
+                    self.logger.info("[Mock] If the bridge/HACS was running, the ESP32 BLE scanner may be stuck.")
+                    self.logger.info("[Mock]   → Restart it via ESPHome web UI (Restart button) — no other action needed.")
                     return False
-                print(f"[MockServer] [Phase {_ble_session_phase}] ← SABM")
+                self.logger.info(f"[MockServer] [Phase {_ble_session_phase}] ← SABM")
             else:
-                print(f"[MockServer] [Phase {_ble_session_phase}] SABM (mid-session restart) — fresh Arendi KE")
+                self.logger.info(f"[MockServer] [Phase {_ble_session_phase}] SABM (mid-session restart) — fresh Arendi KE")
 
             # 1. UA
             await send_fn(self._att_u(_HDLC_UA_TYPE))
-            print(f"[MockServer] [Phase {_ble_session_phase}] → UA")
+            self.logger.info(f"[MockServer] [Phase {_ble_session_phase}] → UA")
 
             # 2. VERSION_REQ -> VERSION_RESP
             try:
                 await self._await_i(_SEC_VERSION_REQ)
             except asyncio.TimeoutError:
-                print("[MockServer] handshake timeout waiting for VERSION_REQ")
+                self.logger.info("[MockServer] handshake timeout waiting for VERSION_REQ")
                 return
-            print("[MockServer] ← VERSION_REQ")
+            self.logger.info("[MockServer] ← VERSION_REQ")
             await send_fn(self._att_i(bytes([_SEC_VERSION_RESP, 0, 0, 0, 0, 0, 1])))
-            print("[MockServer] → VERSION_RESP (proto v2)")
+            self.logger.info("[MockServer] → VERSION_RESP (proto v2)")
 
             # 3. EP_REQ -> EP_RESP
             try:
                 await self._await_i(_SEC_EP_REQ)
             except asyncio.TimeoutError:
-                print("[MockServer] handshake timeout waiting for EP_REQ")
+                self.logger.info("[MockServer] handshake timeout waiting for EP_REQ")
                 return
-            print("[MockServer] ← EP_REQ")
+            self.logger.info("[MockServer] ← EP_REQ")
             nonce1 = os.urandom(16)
             nonce2 = os.urandom(16)
             ep_resp = bytes([_SEC_EP_RESP]) + nonce1 + nonce2 + bytes([0x01])
             await send_fn(self._att_i(ep_resp))
-            print(f"[MockServer] → EP_RESP  nonce1={nonce1.hex()}  nonce2={nonce2.hex()}")
+            self.logger.info(f"[MockServer] → EP_RESP  nonce1={nonce1.hex()}  nonce2={nonce2.hex()}")
 
             # 4. KE_REQ -> verify client CMAC, generate server keypair, KE_RESP
             try:
                 ke = await self._await_i(_SEC_KE_REQ)
             except asyncio.TimeoutError:
-                print("[MockServer] handshake timeout waiting for KE_REQ")
+                self.logger.info("[MockServer] handshake timeout waiting for KE_REQ")
                 return
-            print("[MockServer] ← KE_REQ")
+            self.logger.info("[MockServer] ← KE_REQ")
             if len(ke) < 49:
-                print(f"[MockServer] KE_REQ too short ({len(ke)} bytes) — aborting")
+                self.logger.info(f"[MockServer] KE_REQ too short ({len(ke)} bytes) — aborting")
                 return
             client_public_bytes = ke[1:33]
             client_cmac_bytes   = ke[33:49]
@@ -860,9 +858,9 @@ class _AriendiServerSide:
             auth_key = _hkdf(ikm=aquacleanBridgeId, salt=nonce1, length=16)
             expected_cmac = _aes_cmac(auth_key, client_public_bytes)
             if client_cmac_bytes != expected_cmac:
-                print("[MockServer] client CMAC verification FAILED — wrong aquacleanBridgeId?")
+                self.logger.info("[MockServer] client CMAC verification FAILED — wrong aquacleanBridgeId?")
                 return
-            print("[MockServer] client CMAC verified ✓")
+            self.logger.info("[MockServer] client CMAC verified ✓")
 
             server_priv         = X25519PrivateKey.generate()
             server_public_bytes = server_priv.public_key().public_bytes_raw()
@@ -879,10 +877,10 @@ class _AriendiServerSide:
 
             ke_resp = bytes([_SEC_KE_RESP]) + server_public_bytes + server_cmac
             await send_fn(self._att_i(ke_resp))
-            print(f"[MockServer] → KE_RESP  server_pub={server_public_bytes.hex()[:16]}...")
+            self.logger.info(f"[MockServer] → KE_RESP  server_pub={server_public_bytes.hex()[:16]}...")
 
             self.handshake_done = True
-            print("[MockServer] *** HANDSHAKE COMPLETE — session keys established ***")
+            self.logger.info("[MockServer] *** HANDSHAKE COMPLETE — session keys established ***")
 
             # 5. Loop on incoming encrypted frames
             # The first item in the queue may be a S-RR ACK (ft='S') or the first data frame.
@@ -943,7 +941,7 @@ class _AriendiServerSide:
                     # Phase 1: iOS shows the PIN dialog after this; the inter-session gap
                     # can be long if the user is slow.  Keep a generous timeout.
                     _timeout = 30.0
-                print(f"[MockServer] ⏳ waiting for next frame (timeout={_timeout:.0f}s, tx_seq={self._tx_seq})")
+                self.logger.info(f"[MockServer] ⏳ waiting for next frame (timeout={_timeout:.0f}s, tx_seq={self._tx_seq})")
                 try:
                     ft, ctrl, payload = await asyncio.wait_for(
                         self._rx_queue.get(), timeout=_timeout
@@ -951,9 +949,9 @@ class _AriendiServerSide:
                 except asyncio.TimeoutError:
                     if _ble_session_phase >= 2:
                         if _disc_sent:
-                            print(f"[MockServer] save-screen timeout — user did not press Save within {_timeout:.0f} s of DISC")
+                            self.logger.info(f"[MockServer] save-screen timeout — user did not press Save within {_timeout:.0f} s of DISC")
                         else:
-                            print(f"[MockServer] Phase {_ble_session_phase} fallback timeout — "
+                            self.logger.info(f"[MockServer] Phase {_ble_session_phase} fallback timeout — "
                                   f"no frames for {_timeout:.0f} s")
                         self.should_disconnect_after = True
                     else:
@@ -962,15 +960,15 @@ class _AriendiServerSide:
                         # disconnect, which makes advertising resume immediately rather
                         # than waiting ~30 s for the supervision timeout on the
                         # CONWISE/CSR USB adapter.
-                        print(f"[MockServer] no frames for {_timeout:.0f} s — ending session to resume advertising")
+                        self.logger.info(f"[MockServer] no frames for {_timeout:.0f} s — ending session to resume advertising")
                     return
 
                 if ft == 'DISCONNECT':
-                    print("[MockServer] BLE connection closed — exiting frame loop immediately")
+                    self.logger.info("[MockServer] BLE connection closed — exiting frame loop immediately")
                     self.disconnected_by_peer = True
                     return
                 if ft == 'U' and ctrl == self._u_ctrl(_HDLC_SABM_TYPE):
-                    print("[MockServer] SABM received in frame loop — sending UA and restarting handshake")
+                    self.logger.info("[MockServer] SABM received in frame loop — sending UA and restarting handshake")
                     new_sabm = True
                     break
                 if ft != 'I':
@@ -978,15 +976,15 @@ class _AriendiServerSide:
                 _first_frame = False  # session is active; switch to 1 s inter-frame timeout
                 if not payload or payload[0] != _SEC_ENCRYPTED:
                     sec_str = f"0x{payload[0]:02X}" if payload else "0x??"
-                    print(f"[MockServer] unexpected I-frame sec_type={sec_str} — ignored")
+                    self.logger.info(f"[MockServer] unexpected I-frame sec_type={sec_str} — ignored")
                     continue
 
                 decrypted = self._rx_cipher.process(payload[1:])
                 plaintext = _inner_cobs_decode(decrypted)
                 if plaintext is None:
-                    print(f"[MockServer] ← inner COBS decode failed: {decrypted.hex()}")
+                    self.logger.info(f"[MockServer] ← inner COBS decode failed: {decrypted.hex()}")
                     continue
-                print(f"[MockServer] ← encrypted frame DECRYPTED: {plaintext.hex()}")
+                self.logger.info(f"[MockServer] ← encrypted frame DECRYPTED: {plaintext.hex()}")
 
                 if app_handler is not None:
                     responses = await app_handler(plaintext)
@@ -998,9 +996,9 @@ class _AriendiServerSide:
                         try:
                             await asyncio.wait_for(send_fn(att_frame), timeout=5.0)
                         except asyncio.TimeoutError:
-                            print(f"[MockServer] ERROR: send_fn blocked >5 s for cmd=0x{resp[0]:02X}")
+                            self.logger.info(f"[MockServer] ERROR: send_fn blocked >5 s for cmd=0x{resp[0]:02X}")
                             return False
-                        print(f"[MockServer] → cmd=0x{resp[0]:02X} N(S)={self._tx_seq - 1 & 7}")
+                        self.logger.info(f"[MockServer] → cmd=0x{resp[0]:02X} N(S)={self._tx_seq - 1 & 7}")
                         if send_delay_sec > 0:
                             await asyncio.sleep(send_delay_sec)
                     # Drain any S-RR ACKs the app sent — the real device fires all notifications
@@ -1010,7 +1008,7 @@ class _AriendiServerSide:
                         self._srr_queue.get_nowait()
                         _drained += 1
                     if _drained:
-                        print(f"[MockServer] drained {_drained} S-RR(s) after burst")
+                        self.logger.info(f"[MockServer] drained {_drained} S-RR(s) after burst")
                     # Real-time Phase 2 done detection: EVENT_STORAGE_INVENTORY + READ DpId=8.
                     # Send HDLC DISC to signal end of Phase 2 HDLC session.
                     # iOS responds UA (discarded), then sends Phase 3 SABM on same BLE link
@@ -1024,7 +1022,7 @@ class _AriendiServerSide:
                             _disc_type = 8  # DISC U-frame ctrl = 0x43
                             await send_fn(self._att_u(_disc_type))
                             _disc_sent = True
-                            print("[MockServer] Phase 2 complete — sent DISC; BLE stays alive for "
+                            self.logger.info("[MockServer] Phase 2 complete — sent DISC; BLE stays alive for "
                                   "Phase 2.5 reads (DpId=589/585/983/802) then Phase 3 SABM")
                 else:
                     # Fallback: fake Legacy GetDeviceIdentification response.
@@ -1040,7 +1038,7 @@ class _AriendiServerSide:
                     att_frame = self._att_i(bytes([_SEC_ENCRYPTED]) + encrypted_resp)
                     expected_nr = self._tx_seq
                     await send_fn(att_frame)
-                    print("[MockServer] → fake GetDeviceIdentification response (encrypted)")
+                    self.logger.info("[MockServer] → fake GetDeviceIdentification response (encrypted)")
                     try:
                         await self._await_s_rr(expected_nr, timeout=2.0)
                     except asyncio.TimeoutError:
@@ -1069,8 +1067,9 @@ class _AriendiServerSide:
 # ---------------------------------------------------------------------------
 
 class GeberitServiceA(Service):
-    def __init__(self):
+    def __init__(self, logger=None):
         super().__init__("559eb100-2390-11e8-b467-0ed5f89f718b", True)
+        self.logger = logger or logging.getLogger("mock.alba.default")
 
     @characteristic("559eb101-2390-11e8-b467-0ed5f89f718b", CharFlags.WRITE_WITHOUT_RESPONSE)
     def write_char(self, options):
@@ -1078,7 +1077,7 @@ class GeberitServiceA(Service):
 
     @write_char.setter
     def write_char(self, value, options):
-        print(f"Geberit A [Write]: {bytes(value).hex()}")
+        self.logger.info(f"Geberit A [Write]: {bytes(value).hex()}")
 
     @characteristic("559eb110-2390-11e8-b467-0ed5f89f718b", CharFlags.READ)
     def read_char(self, options):
@@ -1119,11 +1118,12 @@ class GeberitServiceA(Service):
 
 
 class BtSigDataService(Service):
-    def __init__(self, mode: str = "unsupported"):
+    def __init__(self, mode: str = "unsupported", logger=None):
         super().__init__("0000fd48-0000-1000-8000-00805f9b34fb", True)
         self._mode = mode
+        self.logger = logger or logging.getLogger("mock.alba.default")
         self._notify_value = bytes([0])
-        self._arendi = _AriendiServerSide() if mode in ("handshake", "ble20") else None
+        self._arendi = _AriendiServerSide(logger=self.logger) if mode in ("handshake", "ble20") else None
         # Populated after register() to enable pushing notifications.
         # bluez_peripheral stores characteristic _Characteristic objects in
         # Service._chars in declaration order: [0]=sig_write, [1]=sig_notify.
@@ -1147,7 +1147,7 @@ class BtSigDataService(Service):
                     {'Value': Variant('ay', list(att_bytes))}
                 )
         else:
-            print("[MockServer] WARNING: notify char interface not set — cannot send notification")
+            self.logger.info("[MockServer] WARNING: notify char interface not set — cannot send notification")
 
     @characteristic("559eb001-2390-11e8-b467-0ed5f89f718b", CharFlags.WRITE_WITHOUT_RESPONSE)
     def sig_write(self, options):
@@ -1156,11 +1156,11 @@ class BtSigDataService(Service):
     @sig_write.setter
     def sig_write(self, value, options):
         data = bytes(value)
-        print(f"[BLE←] {len(data)} B  {data.hex()}")
+        self.logger.info(f"[BLE←] {len(data)} B  {data.hex()}")
         if self._mode in ("handshake", "ble20") and self._arendi is not None:
             self._arendi.feed(data)
         else:
-            print(f"Data Channel [Write]: {data.hex()}")
+            self.logger.info(f"Data Channel [Write]: {data.hex()}")
 
     @characteristic("559eb002-2390-11e8-b467-0ed5f89f718b", CharFlags.NOTIFY)
     def sig_notify(self, options):
@@ -1225,6 +1225,9 @@ class BatteryService(Service):
 # ---------------------------------------------------------------------------
 
 async def safe_call(obj, method_name, *args, **kwargs):
+    """Module-level, not a method — no `self.logger` in scope. Every object
+    this is called with (GATT services, the advertisement) now has its own
+    `.logger` (Phase 7), so use that instead of a separate fallback logger."""
     fn = getattr(obj, method_name, None)
     if not fn:
         return False
@@ -1237,7 +1240,7 @@ async def safe_call(obj, method_name, *args, **kwargs):
                 await result
         return True
     except Exception as e:
-        print(f"Cleanup: calling {method_name} raised: {e}")
+        getattr(obj, "logger", logging.getLogger("mock.alba.setup")).info(f"Cleanup: calling {method_name} raised: {e}")
         return False
 
 
@@ -1274,6 +1277,12 @@ class AlbaMock:
             # Process-wide: see MeraMock.__init__ for the same note — all mock
             # instances share one DB file, isolated by (device_type, device_key).
             mock_persistence.set_state_dir(state_dir)
+            mock_logging.set_log_dir(state_dir)
+
+        # ---- per-instance logger — console + per-device file + combined file,
+        # device tag at a fixed position in every line (docs/developer/
+        # mock-service-requirements.md §7); shared with MeraMock via mock_logging.py ----
+        self.logger = mock_logging.get_device_logger("alba", self.adapter)
 
     async def run(self):
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -1304,17 +1313,17 @@ class AlbaMock:
         try:
             adapter_wrapper, adapter_path, adapter_address, objmgr = await select_adapter(bus, self.adapter)
             if adapter_wrapper:
-                print(f"Adapter wrapper obtained from bluez_peripheral ({adapter_path}).")
+                self.logger.info(f"Adapter wrapper obtained from bluez_peripheral ({adapter_path}).")
             else:
-                print("No Bluetooth adapter found via ObjectManager.")
-            print("Adapter DBus path:", adapter_path)
-            print("Adapter BLE address:", adapter_address,
+                self.logger.info("No Bluetooth adapter found via ObjectManager.")
+            self.logger.info(f"Adapter DBus path: {adapter_path}")
+            self.logger.info(f"Adapter BLE address: {adapter_address} "
                   "(controller identity — BlueZ may advertise with a random/rotating address on-air; run 'sudo btmon' to see the actual transmitted address)")
         except ValueError as e:
-            print(f"Adapter selection failed: {e}")
+            self.logger.info(f"Adapter selection failed: {e}")
             return
         except Exception as e:
-            print("Could not read adapter path/address via ObjectManager:", e)
+            self.logger.info(f"Could not read adapter path/address via ObjectManager: {e}")
 
         # Set the BlueZ adapter alias so GATT 0x2a00 (GAP Device Name) returns "AC250"
         # instead of the system hostname.  iOS reads this after the Arendi protocol completes.
@@ -1327,12 +1336,12 @@ class AlbaMock:
                 _adap_proxy = bus.get_proxy_object('org.bluez', adapter_path, _adap_intro)
                 _adap_props = _adap_proxy.get_interface('org.freedesktop.DBus.Properties')
                 await _adap_props.call_set('org.bluez.Adapter1', 'Alias', Variant('s', 'AC250'))
-                print("Adapter alias set to 'AC250' (GATT 0x2a00 Device Name)")
+                self.logger.info("Adapter alias set to 'AC250' (GATT 0x2a00 Device Name)")
             except Exception as e:
-                print(f"Warning: could not set adapter alias: {e}")
+                self.logger.info(f"Warning: could not set adapter alias: {e}")
 
         if not adapter_wrapper:
-            print("No adapter wrapper available; cannot register GATT services/advertisement.")
+            self.logger.info("No adapter wrapper available; cannot register GATT services/advertisement.")
             await bus.disconnect()
             return
 
@@ -1363,9 +1372,9 @@ class AlbaMock:
                 intro = await bus.introspect('org.bluez', path)
                 proxy = bus.get_proxy_object('org.bluez', path, intro)
                 _connected_dev_iface = proxy.get_interface('org.bluez.Device1')
-                print(f"[Mock] Device1 interface cached for fast disconnect: {path}")
+                self.logger.info(f"[Mock] Device1 interface cached for fast disconnect: {path}")
             except Exception as e:
-                print(f"[Mock] Pre-introspect failed (fast disconnect unavailable): {e}")
+                self.logger.info(f"[Mock] Pre-introspect failed (fast disconnect unavailable): {e}")
 
         # Sent once per mock session to force the BLE client (HAOS) to re-discover GATT handles.
         # HAOS BlueZ caches handles from prior sessions (via Database Hash); those cached handles
@@ -1385,9 +1394,9 @@ class AlbaMock:
                 _app = app_paths["sigdata"]
                 await _gm.call_unregister_application(_app)
                 await _gm.call_register_application(_app, {})
-                print("[Mock] [GATT] Service Changed sent — client will re-discover GATT handles")
+                self.logger.info("[Mock] [GATT] Service Changed sent — client will re-discover GATT handles")
             except Exception as _e:
-                print(f"[Mock] [GATT] Service Changed trigger failed (non-fatal): {_e}")
+                self.logger.info(f"[Mock] [GATT] Service Changed trigger failed (non-fatal): {_e}")
 
         if objmgr is not None:
             def on_device_connected(path, interfaces):
@@ -1403,7 +1412,7 @@ class AlbaMock:
                     if not _service_changed_sent[0]:
                         _service_changed_sent[0] = True
                         asyncio.ensure_future(_send_service_changed())
-                    print(f"[Mock] BLE client connected:    {addr or path}")
+                    self.logger.info(f"[Mock] BLE client connected:    {addr or path}")
 
             def on_device_disconnected(path, interfaces):
                 if 'org.bluez.Device1' in interfaces:
@@ -1412,7 +1421,7 @@ class AlbaMock:
                     # there.  Clearing it here would prevent the force-disconnect when
                     # BlueZ fires the event before the session handler runs (which is
                     # the case when the connection is terminated cleanly by the peer).
-                    print(f"[Mock] BLE client disconnected: {_connected_device_addr or path}")
+                    self.logger.info(f"[Mock] BLE client disconnected: {_connected_device_addr or path}")
                     # Signal the running arendi session to exit immediately so advertising
                     # resumes right away — without this the frame loop waits 60 s for more
                     # frames and the mock stays "occupied" blocking the next BLE client.
@@ -1426,8 +1435,8 @@ class AlbaMock:
             objmgr.on_interfaces_added(on_device_connected)
             objmgr.on_interfaces_removed(on_device_disconnected)
 
-        geb_service = GeberitServiceA()
-        sig_service = BtSigDataService(mode=self.mode)
+        geb_service = GeberitServiceA(logger=self.logger)
+        sig_service = BtSigDataService(mode=self.mode, logger=self.logger)
         dis_service = DeviceInformationService()
         bat_service = BatteryService()
 
@@ -1437,10 +1446,10 @@ class AlbaMock:
             await dis_service.register(bus, app_paths["dis"], adapter_wrapper)
             await bat_service.register(bus, app_paths["battery"], adapter_wrapper)
         except Exception as e:
-            print("Service registration failed:", e)
+            self.logger.info(f"Service registration failed: {e}")
 
         # Diagnostic: confirm CharFlags values and what D-Bus flags sig_write is advertising.
-        print(f"[Diag] CharFlags: READ={CharFlags.READ.value} WRITE_WITHOUT_RESPONSE={CharFlags.WRITE_WITHOUT_RESPONSE.value} WRITE={CharFlags.WRITE.value} NOTIFY={CharFlags.NOTIFY.value}")
+        self.logger.info(f"[Diag] CharFlags: READ={CharFlags.READ.value} WRITE_WITHOUT_RESPONSE={CharFlags.WRITE_WITHOUT_RESPONSE.value} WRITE={CharFlags.WRITE.value} NOTIFY={CharFlags.NOTIFY.value}")
         for attr in ('_characteristics', '_chars'):
             chars = getattr(sig_service, attr, None)
             if not chars:
@@ -1457,7 +1466,7 @@ class AlbaMock:
                     except Exception as e:
                         dbus_flags = f"ERROR: {e}"
                 flags_int = flags_val.value if hasattr(flags_val, 'value') else (flags_val if isinstance(flags_val, int) else '?')
-                print(f"[Diag] char {uuid_str}: flags={flags_val}({flags_int}) dbus_flags={dbus_flags} _service={'set' if service_ref not in (None,'NOT SET') else service_ref} _setter={'set' if setter_ref not in (None,'NOT SET') else setter_ref}")
+                self.logger.info(f"[Diag] char {uuid_str}: flags={flags_val}({flags_int}) dbus_flags={dbus_flags} _service={'set' if service_ref not in (None,'NOT SET') else service_ref} _setter={'set' if setter_ref not in (None,'NOT SET') else setter_ref}")
             break
 
         # Wire up the notify characteristic interface so send_notify() can push frames.
@@ -1476,9 +1485,9 @@ class AlbaMock:
                 break
         if notify_char is not None:
             sig_service.set_notify_char_iface(notify_char)
-            print("Notify characteristic interface wired.")
+            self.logger.info("Notify characteristic interface wired.")
         else:
-            print("WARNING: could not find notify characteristic — notifications disabled")
+            self.logger.info("WARNING: could not find notify characteristic — notifications disabled")
 
         # Advertisement payload must fit within 31 bytes (BLE ADV_IND limit).
         # Real Alba advertises: fd48 16-bit UUID (4 B) + mfr data (19 B) + flags (3 B) = 26 B.
@@ -1517,7 +1526,7 @@ class AlbaMock:
             await adv.register(bus, adapter_wrapper)
             adv_registered = True
         except Exception as e:
-            print("Advertisement registration failed:", e)
+            self.logger.info(f"Advertisement registration failed: {e}")
         finally:
             bus.export = _orig_bus_export
 
@@ -1558,21 +1567,21 @@ class AlbaMock:
                         'MinInterval': Variant('u', 100),
                         'MaxInterval': Variant('u', 100),
                     })
-                    print(f"[Mock] Advertising interval set to 100 ms via {_adv_path} (Phase 3 connects in <1 s)")
+                    self.logger.info(f"[Mock] Advertising interval set to 100 ms via {_adv_path} (Phase 3 connects in <1 s)")
                 except Exception as _e:
-                    print(f"[Mock] Warning: fast advertising interval not set ({_e})")
-                    print("[Mock]   Needs BlueZ >= 5.58 and LEAdvertisingManager1 support")
+                    self.logger.info(f"[Mock] Warning: fast advertising interval not set ({_e})")
+                    self.logger.info("[Mock]   Needs BlueZ >= 5.58 and LEAdvertisingManager1 support")
             else:
-                print("[Mock] Warning: adv path unknown — advertising at BlueZ default 1280 ms")
-                print("[Mock]   Phase 3 may not connect within the iOS app's ~1 s window -> crash")
+                self.logger.info("[Mock] Warning: adv path unknown — advertising at BlueZ default 1280 ms")
+                self.logger.info("[Mock]   Phase 3 may not connect within the iOS app's ~1 s window -> crash")
 
-        print(f"--- Mock Device Active (mode={self.mode}) ---")
-        print(f"    mock: {_MOCK_VERSION}  script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
-        print("Advertising: fd48 + Geberit mfr data (company 0x0602)")
+        self.logger.info(f"--- Mock Device Active (mode={self.mode}) ---")
+        self.logger.info(f"    mock: {_MOCK_VERSION}  script: {_SCRIPT_HASH}  bridge: {_BRIDGE_VERSION}")
+        self.logger.info("Advertising: fd48 + Geberit mfr data (company 0x0602)")
 
         async def _handshake_loop():
             nonlocal _connected_device_path, _connected_dev_iface
-            app_handler = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag).dispatch if self.mode == "ble20" else None
+            app_handler = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger).dispatch if self.mode == "ble20" else None
 
             async def _fast_disconnect():
                 """Disconnect BLE using pre-cached or freshly enumerated Device1 interface.
@@ -1583,7 +1592,7 @@ class AlbaMock:
                 """
                 iface = _connected_dev_iface
                 if iface is None and objmgr is not None:
-                    print("[Mock] Fast-disconnect: no cached interface — enumerating ObjectManager")
+                    self.logger.info("[Mock] Fast-disconnect: no cached interface — enumerating ObjectManager")
                     try:
                         _managed = await objmgr.call_get_managed_objects()
                         for _p, _ifs in _managed.items():
@@ -1596,28 +1605,28 @@ class AlbaMock:
                                 _intro = await bus.introspect('org.bluez', _p)
                                 _proxy = bus.get_proxy_object('org.bluez', _p, _intro)
                                 iface = _proxy.get_interface('org.bluez.Device1')
-                                print(f"[Mock] Fast-disconnect: found device at {_p}")
+                                self.logger.info(f"[Mock] Fast-disconnect: found device at {_p}")
                                 break
                     except Exception as e:
-                        print(f"[Mock] Fast-disconnect: ObjectManager enumeration failed: {e}")
+                        self.logger.info(f"[Mock] Fast-disconnect: ObjectManager enumeration failed: {e}")
                 if iface is None:
-                    print("[Mock] Fast-disconnect: device not found — end-of-session cleanup will disconnect")
+                    self.logger.info("[Mock] Fast-disconnect: device not found — end-of-session cleanup will disconnect")
                     return
                 try:
                     await iface.call_disconnect()
-                    print("[Mock] Fast-disconnect: BLE link terminated")
+                    self.logger.info("[Mock] Fast-disconnect: BLE link terminated")
                 except Exception as e:
-                    print(f"[Mock] Fast-disconnect: {e}")
+                    self.logger.info(f"[Mock] Fast-disconnect: {e}")
             _user_sitting = False
             _session_num = 0
             _session_pre_created = False  # True when cleanup pre-created the next session
             while True:
                 _session_num += 1
-                print(f"\n[Mock] ===== SESSION {_session_num} — waiting for client =====")
+                self.logger.info(f"\n[Mock] ===== SESSION {_session_num} — waiting for client =====")
                 if not _session_pre_created:
-                    sig_service._arendi = _AriendiServerSide()
+                    sig_service._arendi = _AriendiServerSide(logger=self.logger)
                     if self.mode == "ble20":
-                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag)  # fresh store per session
+                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger)  # fresh store per session
                         if _user_sitting:
                             _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
                             _ble20_app._store[(564, None)]['value'] = bytearray(b'\x02')  # Ready (app source: 0=Err,1=Disabled,2=Ready,3=Prerinsing,4=Extending,5=Shower,6=Retracting,7=Postrinsing)
@@ -1639,15 +1648,15 @@ class AlbaMock:
                     _completed = await sig_service._arendi.run(sig_service.send_notify, app_handler=app_handler, send_delay_sec=self.send_delay_sec, disconnect_fn=None)
                     _session_completed = True   # run() returned — a client connected
                     if _completed is not False:
-                        print("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
+                        self.logger.info("[MockServer] session complete — waiting for next client (Ctrl-C to quit)")
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     msg = str(exc)
                     if msg:
-                        print(f"[MockServer] ERROR: {msg}")
+                        self.logger.info(f"[MockServer] ERROR: {msg}")
                     else:
-                        print("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
+                        self.logger.info("[MockServer] session timed out — waiting for next client (Ctrl-C to quit)")
 
                 # Only toggle when a client actually connected and completed a session.
                 # Timeouts (no client within 60 s) raise an exception so _session_completed
@@ -1659,7 +1668,7 @@ class AlbaMock:
                 should_disconnect = getattr(sig_service._arendi, 'should_disconnect_after', False)
                 if _session_completed and _completed is not False:
                     _user_sitting = not _user_sitting
-                    print(f"[Mock] Next session USER_DETECTION_STATUS -> {'1 (sitting)' if _user_sitting else '0 (absent)'}")
+                    self.logger.info(f"[Mock] Next session USER_DETECTION_STATUS -> {'1 (sitting)' if _user_sitting else '0 (absent)'}")
 
                 # Pre-create next session immediately when:
                 #   by_peer=True  — iOS disconnected the BLE link
@@ -1667,9 +1676,9 @@ class AlbaMock:
                 # Both cases: iOS connects Phase 3 within ~400 ms.  Pre-creating now ensures
                 # the Phase 3 SABM lands in the correct session queue, not the defunct one.
                 if by_peer or should_disconnect:
-                    sig_service._arendi = _AriendiServerSide()
+                    sig_service._arendi = _AriendiServerSide(logger=self.logger)
                     if self.mode == "ble20":
-                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag)
+                        _ble20_app = _Ble20AppLayer(notify_queue=_notify_push_queue, device_key=self._adapter_tag, logger=self.logger)
                         if _user_sitting:
                             _ble20_app._store[(607, None)]['value'] = bytearray(b'\x01')
                             _ble20_app._store[(564, None)]['value'] = bytearray(b'\x02')  # Ready (app source: 0=Err,1=Disabled,2=Ready,3=Prerinsing,4=Extending,5=Shower,6=Retracting,7=Postrinsing)
@@ -1710,23 +1719,23 @@ class AlbaMock:
                                 _c = _c.value
                             if _c:
                                 _path_to_disconnect = _p
-                                print(f"[Mock] Found connected device via ObjectManager: {_p}")
+                                self.logger.info(f"[Mock] Found connected device via ObjectManager: {_p}")
                                 break
                     except Exception as _oe:
-                        print(f"[Mock] ObjectManager enumeration failed: {_oe}")
+                        self.logger.info(f"[Mock] ObjectManager enumeration failed: {_oe}")
                 if _path_to_disconnect is not None:
-                    print(f"[Mock] Forcing BlueZ disconnect to resume advertising{' (already disconnected by peer — call may fail)' if by_peer else ''}: {_path_to_disconnect}")
+                    self.logger.info(f"[Mock] Forcing BlueZ disconnect to resume advertising{' (already disconnected by peer — call may fail)' if by_peer else ''}: {_path_to_disconnect}")
                     try:
                         introspect = await bus.introspect('org.bluez', _path_to_disconnect)
                         proxy = bus.get_proxy_object('org.bluez', _path_to_disconnect, introspect)
                         dev_iface = proxy.get_interface('org.bluez.Device1')
                         await dev_iface.call_disconnect()
-                        print("[Mock] Force-disconnect sent; advertising resumes immediately")
+                        self.logger.info("[Mock] Force-disconnect sent; advertising resumes immediately")
                     except Exception as _e:
                         if by_peer:
-                            print(f"[Mock] Force-disconnect on already-disconnected device (expected): {_e}")
+                            self.logger.info(f"[Mock] Force-disconnect on already-disconnected device (expected): {_e}")
                         else:
-                            print(f"[Mock] Force-disconnect failed: {_e}")
+                            self.logger.info(f"[Mock] Force-disconnect failed: {_e}")
 
                 # BlueZ resumes advertising automatically after a BLE disconnect because the
                 # advertisement registered at startup remains active.  Calling unregister/
@@ -1737,7 +1746,7 @@ class AlbaMock:
                 # within 400 ms and the next session is already pre-created above.
                 if not (by_peer or should_disconnect):
                     await asyncio.sleep(0.3)
-                print("[Mock] Ready for next client")
+                self.logger.info("[Mock] Ready for next client")
 
         # Mutable ref to the current session's _Ble20AppLayer.  Set by _handshake_loop each
         # time a new session is created; read by the web-UI pusher to check subscriptions.
@@ -1751,7 +1760,7 @@ class AlbaMock:
         _pusher_task = None
         if self.web_port > 0 and self.mode == "ble20":
             if not _WEB_AVAILABLE:
-                print("[MockWeb] WARNING: FastAPI/uvicorn not installed — --web-port ignored")
+                self.logger.info("[MockWeb] WARNING: FastAPI/uvicorn not installed — --web-port ignored")
             else:
 
                 _web_app = _FastAPI()
@@ -1861,11 +1870,11 @@ class AlbaMock:
                         arendi = sig_service._arendi
                         ble20_app = _ble20_app_ref[0]
                         if arendi is None or not getattr(arendi, 'handshake_done', False):
-                            print(f"[MockWeb] NOTIFY DpId={dp_id} discarded — no active session")
+                            self.logger.info(f"[MockWeb] NOTIFY DpId={dp_id} discarded — no active session")
                             continue
                         if ble20_app is None or dp_id not in ble20_app._notify_subscribed:
                             subs = ble20_app._notify_subscribed if ble20_app else set()
-                            print(f"[MockWeb] NOTIFY DpId={dp_id} discarded — not subscribed (subscribed: {subs})")
+                            self.logger.info(f"[MockWeb] NOTIFY DpId={dp_id} discarded — not subscribed (subscribed: {subs})")
                             continue
                         entry = ble20_app._store.get((dp_id, None))
                         if entry is not None:
@@ -1874,7 +1883,7 @@ class AlbaMock:
                         encrypted = arendi._tx_cipher.process(_inner_cobs_encode(payload))
                         att_frame = arendi._att_i(bytes([_SEC_ENCRYPTED]) + encrypted)
                         await sig_service.send_notify(att_frame)
-                        print(f"[MockWeb] → NOTIFY_DATA DpId={dp_id} value={value_bytes.hex()}")
+                        self.logger.info(f"[MockWeb] → NOTIFY_DATA DpId={dp_id} value={value_bytes.hex()}")
 
                 _pusher_task = asyncio.create_task(_pusher())
                 _web_cfg = _uvicorn.Config(
@@ -1884,11 +1893,11 @@ class AlbaMock:
                 _web_srv = _uvicorn.Server(_web_cfg)
                 _web_srv.install_signal_handlers = lambda: None
                 _web_task = asyncio.create_task(_web_srv.serve())
-                print(f"[MockWeb] Control UI: http://0.0.0.0:{self.web_port}/  (DpId 607 + 564)")
+                self.logger.info(f"[MockWeb] Control UI: http://0.0.0.0:{self.web_port}/  (DpId 607 + 564)")
 
         server_task = None
         if self.mode in ("handshake", "ble20"):
-            print("Waiting for bridge to connect and start handshake (60 s timeout)...")
+            self.logger.info("Waiting for bridge to connect and start handshake (60 s timeout)...")
             server_task = asyncio.create_task(_handshake_loop())
 
         stop_event = asyncio.Event()
@@ -1905,7 +1914,7 @@ class AlbaMock:
         except KeyboardInterrupt:
             pass
         finally:
-            print("\nShutting down...")
+            self.logger.info("\nShutting down...")
             if _pusher_task and not _pusher_task.done():
                 _pusher_task.cancel()
             if _web_task and not _web_task.done():
@@ -1930,8 +1939,8 @@ class AlbaMock:
                 if inspect.isawaitable(result):
                     await result
             except Exception as e:
-                print("Error disconnecting bus:", e)
-            print("Cleanup complete. Exiting.")
+                self.logger.info(f"Error disconnecting bus: {e}")
+            self.logger.info("Cleanup complete. Exiting.")
 
 
 if __name__ == "__main__":
@@ -1993,4 +2002,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(mock.run())
     except KeyboardInterrupt:
-        print("\nInterrupted by user. Exiting.")
+        mock.logger.info("Interrupted by user. Exiting.")
