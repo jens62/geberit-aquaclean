@@ -77,6 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType               
 from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame            import FlowControlFrame as _FlowControlFrame  # noqa: E402
 
 from aquaclean_ble_relay.mock_bluez_adapter import select_adapter  # noqa: E402
+from aquaclean_ble_relay import mock_persistence  # noqa: E402
 
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
@@ -148,6 +149,7 @@ _PROC_NAMES: dict = {
     0x15: "SubscribeNotif_0x15",
     0x45: "GetStatisticsDescale",
     0x51: "GetStoredCommonSetting",
+    0x52: "SetStoredCommonSetting",
     0x53: "GetStoredProfileSetting",
     0x54: "SetStoredProfileSetting",
     0x55: "GetDeviceRegistrationLevel",
@@ -704,10 +706,19 @@ class MeraMock:
       - D-Bus GATT application object paths (so two instances don't collide)
     """
 
-    def __init__(self, adapter: str | None = None, web_port: int = 8765):
+    def __init__(self, adapter: str | None = None, web_port: int = 8765, state_dir=None):
         self.adapter = adapter
         self.web_port = web_port
         self._adapter_tag = adapter or "default"
+
+        if state_dir is not None:
+            # Process-wide: all mock instances share one DB file, isolated by
+            # (device_type, device_key) rows — see mock_persistence.py. Setting
+            # this per-instance is harmless as long as only one state_dir is
+            # ever configured per process, which is the only case that exists
+            # today (mock_service.py's orchestrator, Phase 4, will set this
+            # once for the whole process instead).
+            mock_persistence.set_state_dir(state_dir)
 
         # ---- identity (was module-level constants; instance now so a future
         # variant/model registry can override per instance without touching
@@ -724,8 +735,12 @@ class MeraMock:
         self._SPL_MERA_VALUES: dict = {}
 
         # Values from real Mera Comfort onboarding capture (onboarding-real-mera_timing.md).
-        # Copies of the original module-level dicts — same defaults, now owned by
-        # the instance since Phase 2b will make these mutable per-instance state.
+        # Hardcoded real-device defaults — overridden below by anything already
+        # persisted for this device (startup never overwrites an existing store,
+        # requirements doc §5). ACTIVE_PROFILE_SETTINGS is the write-target for
+        # proc 0x08 (SetActiveProfileSetting) — session-only, never persisted,
+        # same as ACTIVE_COMMON_SETTINGS below; it has no confirmed getter of its
+        # own so it's never read back, only written.
         self._ACTIVE_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
         self._STORED_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
         self._STORED_COMMON_SETTINGS   = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
@@ -733,6 +748,27 @@ class MeraMock:
             0x00: 1, 0x01: 1, 0x02: 2, 0x03: 1, 0x04: 2,
             0x05: 1, 0x06: 4, 0x07: 0, 0x08: 3, 0x09: 1, 0x0d: 1,
         }
+
+        # Persisted values win over the hardcoded defaults above — this is what
+        # makes settings survive a mock restart (requirements doc §0/§5).
+        persisted = mock_persistence.load_all("mera", self._adapter_tag)
+        for key, value in persisted.items():
+            namespace, _, idx_str = key.partition(":")
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                continue
+            if namespace == "common_setting":
+                self._STORED_COMMON_SETTINGS[idx] = value
+            elif namespace == "profile_setting":
+                self._STORED_PROFILE_SETTINGS[idx] = value
+
+        # Active CommonSetting store (proc 0x0A/0x0B) — session-scoped, seeded
+        # from Stored (including any persisted overrides just applied above) at
+        # mock startup, held only in memory thereafter, never persisted. Mirrors
+        # the real device: a power-cycle re-derives Active from Stored NVM.
+        # Simplification: seeded once here, not re-seeded per BLE session.
+        self._ACTIVE_COMMON_SETTINGS = dict(self._STORED_COMMON_SETTINGS)
 
         # ---- mutable session/connection state (was module-level globals) ----
         self._session_log: list = []
@@ -822,23 +858,29 @@ class MeraMock:
             result = self._proc_86()
         elif proc == 0x0D:            # GetSystemParameterList
             result = self._proc_0d(args)
-        elif proc == 0x09:            # SetCommand (shower/lid/flush toggle)
-            result = b""
+        elif proc == 0x09:            # SetCommand (1-byte command code)
+            result = self._proc_09(args)
         elif proc in (0x11, 0x13):
             result = self._proc_subscribenotif(proc, args)
-        elif proc in (0x08, 0x14, 0x15):  # SetStored* (empty OK)
+        elif proc in (0x14, 0x15):    # SubscribeNotif variants — no confirmed distinct behavior
             result = b""
+        elif proc == 0x08:            # SetActiveProfileSetting — confirmed format [count=3, setting_id, value]
+            result = self._proc_08(args)
         elif proc == 0x07:            # GetPerNodeProfileSetting — echo queried node_id
             response_node_id = args[0] if args else 0x01
             result = self._proc_07(args)
-        elif proc == 0x0A:            # GetActiveProfileSetting
+        elif proc == 0x0A:            # GetActiveCommonSetting (fixed in Phase 2b — was misreading ProfileSettings)
             result = self._proc_0a(args)
-        elif proc == 0x0B:            # SetActiveProfileSetting
-            result = b""
+        elif proc == 0x0B:            # SetActiveCommonSetting — session-only, not persisted
+            result = self._proc_0b(args)
         elif proc == 0x51:            # GetStoredCommonSetting
             result = self._proc_51(args)
+        elif proc == 0x52:            # SetStoredCommonSetting — persisted
+            result = self._proc_52(args)
         elif proc == 0x53:            # GetStoredProfileSetting
             result = self._proc_53(args)
+        elif proc == 0x54:            # SetStoredProfileSetting — persisted
+            result = self._proc_54(args)
         elif proc == 0x55:            # GetDeviceRegistrationLevel
             result = bytes([self._registration_level])
         elif proc == 0x56:            # SetDeviceRegistrationLevel
@@ -993,10 +1035,48 @@ class MeraMock:
         return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
     def _proc_0a(self, args: bytes) -> bytes:
-        """GetActiveProfileSetting: args[0] = setting ID, returns 16-bit LE value."""
+        """GetActiveCommonSetting: args[0] = setting ID, returns 16-bit LE value.
+
+        FIXED in Phase 2b: this used to read _ACTIVE_PROFILE_SETTINGS under a
+        "GetActiveProfileSetting" docstring, contradicting _PROC_NAMES's own
+        "GetActiveCommonSetting" label for proc 0x0A and ble-protocol.md's
+        "Active vs Stored" section (0x0A/0x0B operate on the CommonSetting ID
+        space, same as 0x51/0x52, just applied immediately, no power-cycle).
+        """
         setting_id = args[0] if args else 0
-        value = self._ACTIVE_PROFILE_SETTINGS.get(setting_id, 0)
+        value = self._ACTIVE_COMMON_SETTINGS.get(setting_id, 0)
         return bytes([value & 0xFF, (value >> 8) & 0xFF])
+
+    @staticmethod
+    def _parse_set_setting_args(args: bytes):
+        """[arg_count=3, setting_id, value] — confirmed format for 0x08
+        (SetActiveProfileSetting, real OTA capture 2026-06-01). Assumed by
+        analogy for 0x0B/0x52/0x54 — structurally the same setter shape for
+        the Active/Stored, Common/Profile setting pairs — not independently
+        confirmed for those three. Verify against a real capture if one
+        surfaces. Returns (setting_id, value) or (None, None) if args too short.
+        """
+        if len(args) < 3:
+            return None, None
+        return args[1], args[2]
+
+    def _proc_08(self, args: bytes) -> bytes:
+        """SetActiveProfileSetting — session-only, never persisted (no confirmed
+        getter exists for this proc; write-only as far as this mock is concerned)."""
+        setting_id, value = self._parse_set_setting_args(args)
+        if setting_id is not None:
+            self._ACTIVE_PROFILE_SETTINGS[setting_id] = value
+            self._log("·", f"SetActiveProfileSetting id={setting_id} value={value} (session-only, not persisted)")
+        return b""
+
+    def _proc_0b(self, args: bytes) -> bytes:
+        """SetActiveCommonSetting — session-only, never persisted (mirrors the
+        real device: Active is re-derived from Stored NVM on every power-cycle)."""
+        setting_id, value = self._parse_set_setting_args(args)
+        if setting_id is not None:
+            self._ACTIVE_COMMON_SETTINGS[setting_id] = value
+            self._log("·", f"SetActiveCommonSetting id={setting_id} value={value} (session-only, not persisted)")
+        return b""
 
     def _proc_51(self, args: bytes) -> bytes:
         """GetStoredCommonSetting: args[0] = setting ID, returns 16-bit LE value."""
@@ -1004,11 +1084,53 @@ class MeraMock:
         value = self._STORED_COMMON_SETTINGS.get(setting_id, 0)
         return bytes([value & 0xFF, (value >> 8) & 0xFF])
 
+    def _proc_52(self, args: bytes) -> bytes:
+        """SetStoredCommonSetting — persisted immediately via mock_persistence.py.
+        Requires a power-cycle to take effect on a real device; the mock applies
+        it to _STORED_COMMON_SETTINGS right away since there is no separate
+        "pending write" state to model here."""
+        setting_id, value = self._parse_set_setting_args(args)
+        if setting_id is not None:
+            self._STORED_COMMON_SETTINGS[setting_id] = value
+            mock_persistence.save("mera", self._adapter_tag, f"common_setting:{setting_id}", value)
+            self._log("·", f"SetStoredCommonSetting id={setting_id} value={value} — persisted")
+        return b""
+
     def _proc_53(self, args: bytes) -> bytes:
         """GetStoredProfileSetting: args[0] = setting ID, returns 16-bit LE value."""
         setting_id = args[0] if args else 0
         value = self._STORED_PROFILE_SETTINGS.get(setting_id, 0)
         return bytes([value & 0xFF, (value >> 8) & 0xFF])
+
+    def _proc_54(self, args: bytes) -> bytes:
+        """SetStoredProfileSetting — persisted immediately via mock_persistence.py."""
+        setting_id, value = self._parse_set_setting_args(args)
+        if setting_id is not None:
+            self._STORED_PROFILE_SETTINGS[setting_id] = value
+            mock_persistence.save("mera", self._adapter_tag, f"profile_setting:{setting_id}", value)
+            self._log("·", f"SetStoredProfileSetting id={setting_id} value={value} — persisted")
+        return b""
+
+    def _proc_09(self, args: bytes) -> bytes:
+        """SetCommand: args[0] = 1-byte command code (ble-protocol.md Layer 1).
+
+        Only the two commands with an unambiguous SPL effect are implemented —
+        ToggleAnalShower flips spl[1], ToggleLadyShower flips spl[2]. Both SPL
+        indices are classified NO PERSIST (live sensor state) in the roadmap's
+        Mera namespace/index enumeration, so this only mutates _SPL_MERA_VALUES,
+        never mock_persistence.py. Other command codes are left as no-ops —
+        not guessing effects that aren't confirmed anywhere.
+        """
+        code = args[0] if args else None
+        if code == 0:      # ToggleAnalShower
+            running = self._SPL_MERA_VALUES.get(1, 0) != 0
+            self._SPL_MERA_VALUES[1] = 0 if running else 1281  # packed: temp=1, pressure running
+            self._log("·", f"ToggleAnalShower -> spl[1]={self._SPL_MERA_VALUES[1]}")
+        elif code == 1:    # ToggleLadyShower
+            running = self._SPL_MERA_VALUES.get(2, 0) != 0
+            self._SPL_MERA_VALUES[2] = 0 if running else 1  # no packed-field spec confirmed for index 2
+            self._log("·", f"ToggleLadyShower -> spl[2]={self._SPL_MERA_VALUES[2]}")
+        return b""
 
     # ---- BLE connection bursts ----
 
@@ -1577,11 +1699,13 @@ if __name__ == "__main__":
                         help="Web UI port (default: 8765)")
     parser.add_argument("--adapter", metavar="ADAPTER", default=None,
                         help="BlueZ adapter node name, e.g. hci1 (default: first found)")
+    parser.add_argument("--state-dir", metavar="DIR", default=None,
+                        help="Directory for the shared persistence DB (default: alongside this module)")
     parser.add_argument("--version", action="version",
                         version=f"mera_mock {_MOCK_VERSION}")
     parsed = parser.parse_args()
 
-    mock = MeraMock(adapter=parsed.adapter, web_port=parsed.port)
+    mock = MeraMock(adapter=parsed.adapter, web_port=parsed.port, state_dir=parsed.state_dir)
     try:
         asyncio.run(mock.run())
     except KeyboardInterrupt:

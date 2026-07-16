@@ -233,7 +233,7 @@ of it.
 |---|---|---|
 | 1 | Shared modules: `mock_bluez_adapter.py`, `mock_persistence.py` | **Done** — `152382c`, `dadde00`, `0a85636` |
 | 2 | Refactor Mera mock into an importable class | **Done** — verified on VM, see below |
-| 2b | Real settings mutation + persistence wiring for Mera (follow-up) | Not started |
+| 2b | Real settings mutation + persistence wiring for Mera (follow-up) | **Done** — verified on VM, see below |
 | 3 | Refactor Alba mock into an importable class | Not started |
 | 4 | `mock_service.py` orchestrator, single device only | Not started |
 | 5 | Multi-device concurrency | Not started |
@@ -266,15 +266,81 @@ Wiring `mock_persistence.py` against no-op stubs would prove nothing.
 - `mock_persistence.py` wiring is **deferred to Phase 2b**, not done in Phase 2.
 - No acceptance-test run in Phase 2 (needs Phase 2b's real mutation first).
 
-**Phase 2b (follow-up, not yet started):** implement actual state mutation for the
-currently-stubbed `Set*` procedures. Cross-check the exact proc → setting mapping against
-`.claude/rules/ble-protocol.md` before implementing — the current stub comments
-(`# SetStored* (empty OK)` grouping `0x08`/`0x14`/`0x15`) don't line up cleanly with that
-doc's documented proc table (`0x51`/`0x52` GetStoredCommonSetting/SetStoredCommonSetting,
-`0x53`/`0x54` GetStoredProfileSetting/SetStoredProfileSetting, `0x0A`/`0x0B`
-GetActiveCommonSetting/SetActiveCommonSetting) and need reconciling, not assuming the
-existing comments are correct. Once mutation is real, wire `mock_persistence.py`
-write-through and only then run the §0 acceptance test against Mera.
+**Phase 2b — refined plan (2026-07-16):**
+
+Cross-checking `_PROC_NAMES`, the dispatch comments, and `.claude/rules/ble-protocol.md`
+before implementing found a real bug already present in the ported code (not introduced by
+Phase 2, just carried over faithfully since Phase 2 was structural-only):
+
+- `0x51`/`0x52` (GetStoredCommonSetting/SetStoredCommonSetting) and `0x53`/`0x54`
+  (GetStoredProfileSetting/SetStoredProfileSetting) are unambiguous — confirmed in both
+  `_PROC_NAMES` and `ble-protocol.md`.
+- `0x09` (SetCommand, 1-byte command code) and `0x08` (SetActiveProfileSetting, confirmed
+  format `[arg_count=3, setting_id, value]` from a real OTA capture) are also unambiguous.
+- **Bug found:** `_PROC_NAMES` labels `0x0A`/`0x0B` as `GetActiveCommonSetting`/
+  `SetActiveCommonSetting`, matching `ble-protocol.md`'s "Active vs Stored" section (0x0A/0x0B
+  operate on the *same CommonSetting ID space* as 0x51/0x52, applied immediately, no
+  power-cycle). But the shipped `_proc_0a()` docstring says `GetActiveProfileSetting` and
+  reads `_ACTIVE_PROFILE_SETTINGS` (a *ProfileSetting*-shaped dict) — contradicting its own
+  proc's name. Fixed in this phase: `0x0A`/`0x0B` now read/write a session-scoped
+  active-common-setting store; `_ACTIVE_PROFILE_SETTINGS` becomes the write-target for `0x08`
+  instead (which never had a confirmed getter of its own).
+
+**Implementation:**
+1. `0x0A`/`0x0B` → an in-memory "active common setting" store, seeded from
+   `_STORED_COMMON_SETTINGS` at mock startup. Session-scoped, **never persisted** — matches
+   the rule that Active is re-derived from Stored NVM on every real power-cycle. Seeded once
+   at mock startup (not re-seeded per BLE session) — a deliberate scope simplification.
+2. `0x52`/`0x54` → real mutation into `_STORED_COMMON_SETTINGS`/`_STORED_PROFILE_SETTINGS`,
+   **wired to `mock_persistence.py` write-through** — these are exactly the values the §0
+   acceptance test needs to survive a restart. Arg format assumed identical to `0x08`'s
+   confirmed `[count=3, setting_id, value]` shape (structurally the same setter pattern for
+   the sibling Stored pair) — not independently confirmed for `0x52`/`0x54`, flagged in code,
+   verify against a real capture if one surfaces.
+3. `0x08` → real mutation into `_ACTIVE_PROFILE_SETTINGS`, in-memory only, not persisted.
+4. `0x09` → real mutation for the two commands with an unambiguous `spl` effect:
+   `ToggleAnalShower` (code 0) flips `spl[1]`, `ToggleLadyShower` (code 1) flips `spl[2]`.
+   Both are classified **NO PERSIST** (live sensor state) in the roadmap enumeration, so no
+   persistence call here — only `_SPL_MERA_VALUES` mutates. Other command codes stay no-ops;
+   not guessing effects that aren't confirmed anywhere.
+5. `MeraMock.__init__` gains a `state_dir` parameter (calls `mock_persistence.set_state_dir()`
+   once — this is process-wide, since all instances share one DB file) and loads persisted
+   `common_setting:*`/`profile_setting:*` rows for `(device_type="mera", device_key=adapter)`
+   at construction, overriding the hardcoded defaults only where a persisted value exists —
+   startup never overwrites an existing store (§5).
+6. §0 acceptance test run for real against Mera once this lands: change a Stored setting via
+   the Home App, stop the mock, restart, confirm the value survived.
+
+### Phase 2b — verification (2026-07-16)
+
+Same VM, same technique as Phase 2 (byte-for-byte comparison + a scripted round-trip),
+covering what a single live-App session can't easily exercise in one pass:
+
+1. **No regression on the 10 procedures Phase 2b didn't touch** (`0x82, 0x0D, 0x0E, 0x45,
+   0x59, 0x07, 0x05, 0x81, 0x86, 0x55`) — re-ran the byte-for-byte comparison against
+   `tools/mock-geberit-mera.py`; all still match.
+2. **Stored settings persist and survive a simulated restart.** `SetStoredCommonSetting`
+   (`0x52`, WaterHardness id=0 → 2) and `SetStoredProfileSetting` (`0x54`, AnalShowerPressure
+   id=2 → 4) both mutate immediately and are still present after destroying the `MeraMock`
+   instance and constructing a fresh one against the same `state_dir`/adapter — this **is**
+   the §0 acceptance test, run against real persistence logic (not yet against a live BLE
+   session).
+3. **Active settings correctly do NOT persist.** Writing `SetActiveCommonSetting` (`0x0B`,
+   id=0 → 6) is immediately visible via `GetActiveCommonSetting` (`0x0A`) within the same
+   instance, but after a simulated restart `0x0A` returns `2` — re-seeded from the (persisted)
+   Stored value, not the prior session's transient override. Confirms the "Active is
+   session-scoped, re-derived from Stored NVM on power-cycle" rule holds.
+4. **SetCommand toggle correctly does NOT persist.** `ToggleAnalShower` (`0x09`, code 0)
+   flips `spl[1]` to `1281` (verified byte-for-byte in the little-endian frame payload); after
+   a simulated restart it's back to `0`.
+5. **Nothing leaks into the DB that shouldn't.** Raw persisted rows after the whole sequence:
+   exactly `{'common_setting:0': 2, 'profile_setting:2': 4}` — no `active_*` or `spl` keys.
+
+Not yet run: a live session against the real Geberit Home App changing a setting through
+its own UI (the scripted test drives `_dispatch()` directly, bypassing GATT/BLE). Worth
+doing once there's a Home App screen that actually calls `0x52`/`0x54` for a setting this
+mock exposes — flagged as a follow-up, not blocking, since the underlying mutation +
+persistence logic is now verified directly.
 
 ### Phase 2 — verification (2026-07-16)
 
