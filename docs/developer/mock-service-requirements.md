@@ -234,7 +234,7 @@ of it.
 | 1 | Shared modules: `mock_bluez_adapter.py`, `mock_persistence.py` | **Done** — `152382c`, `dadde00`, `0a85636` |
 | 2 | Refactor Mera mock into an importable class | **Done** — verified on VM, see below |
 | 2b | Real settings mutation + persistence wiring for Mera (follow-up) | **Done** — verified on VM, see below |
-| 3 | Refactor Alba mock into an importable class | Not started |
+| 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
 | 4 | `mock_service.py` orchestrator, single device only | Not started |
 | 5 | Multi-device concurrency | Not started |
 | 6 | Webui, multi-device | Not started |
@@ -370,3 +370,69 @@ Not yet exercised: the multi-instance-specific paths (adapter-tagged D-Bus app p
 log filenames, `_hci_index()` for a non-`hci0` adapter) — the VM only has one physical
 adapter, so this could only be verified with `adapter=None`/`"hci0"`. Multi-adapter
 behavior will get its first real test in Phase 5.
+
+### Phase 3 — Alba: scope and how it differs from Mera's Phase 2/2b (2026-07-16)
+
+Read `tools/mock-geberit-alba.py` fully before deciding scope, rather than assuming it
+needed the same two-phase treatment as Mera. It doesn't:
+
+- **The DpId store and Arendi crypto session were already instance-scoped classes**
+  (`_Ble20AppLayer`, `_AriendiServerSide`), not module globals — `grep '^    global '`
+  returns nothing in the whole file. Only one true module-level mutable existed
+  (`_VERBOSE`, and it's dead — set but never read, in both the original script and this
+  port). So the "globals → instance attributes" work Mera's Phase 2 needed was already
+  done; this phase mainly wrapped `main()`'s ~600-line orchestration body into
+  `AlbaMock.run()`, with `mode`/`adapter_name`/`send_delay_sec`/`web_port` becoming
+  `self.*` at their ~11 actual touch points. Its nested closures needed no changes — they
+  already close over `main()`'s locals, which are just as valid as a method's locals.
+- **`_Ble20AppLayer._write()` already does real mutation** — nothing was stubbed, unlike
+  Mera's Phase 2 finding. So persistence wiring is included in this same phase, not split
+  into a Phase 3b.
+- **Every DpId row already carries a `behavior` field** (0=Info 1=Status 2=Command 3=Nvm
+  4=Protected) in `_DEFAULT_STORE`. Only `behavior==3` (Nvm) is a genuinely durable
+  setting — the persist decision falls straight out of data already in the table, no
+  separate namespace/persist classification needed (unlike Mera's multiple overlapping
+  index spaces). Six DpIds are Nvm today: 13 (ACCESS_CODE), 580–583 (STORED_ANAL_SPRAY_*),
+  795 (DEMO_MODE).
+- **`_Ble20AppLayer` is deliberately reconstructed fresh every BLE session** (unchanged
+  behavior — simulates a clean device state machine per connection). Each fresh
+  construction now reloads persisted Nvm values from `mock_persistence.py`, so this
+  "fresh per session" design ends up giving Alba's mock *better* restart fidelity than
+  Mera's for free: a setting survives not just a mock restart but every single new BLE
+  session, without needing a Mera-style "seed once at process start" step.
+- **Logging conversion is deferred to Phase 7, deliberately, unlike Mera.** Mera had one
+  hardcoded logger, trivially replaced. Alba uses a module-level timestamped `print()`
+  override across hundreds of call sites in `_Ble20AppLayer`, `_AriendiServerSide`, and
+  the session loop. Converting those is exactly Phase 7's scope ("Logging polish") —
+  doing it piecemeal here would leave a half-converted mix of `self.logger` and `print()`,
+  worse than deferring wholesale. `AlbaMock` has no `self.logger` in this phase.
+- **D-Bus GATT app paths tagged with the adapter**, same reasoning as Mera's Phase 2 —
+  the original hardcoded paths (`/org/bluez/example/geberit` etc.) would collide the
+  moment a second instance runs in the same process.
+- **Adapter selection** goes through the shared `mock_bluez_adapter.select_adapter`,
+  removing this script's own byte-identical inline copy (confirmed identical before
+  removing it — no behavior change).
+
+### Phase 3 — verification (2026-07-16)
+
+Same VM, same techniques as Phase 2/2b:
+
+1. **Import-only smoke test** — clean.
+2. **Byte-for-byte protocol comparison.** Instantiated `_Ble20AppLayer` from both
+   `tools/mock-geberit-alba.py` (deployed to the VM matching the current repo hash,
+   confirmed via `sha256sum`) and the new `aquaclean_ble_relay/alba_mock.py` in the same
+   interpreter. `_inventory()` matched byte-for-byte (80 DpIds); `_read()` matched
+   byte-for-byte for **all 79 addressable DpIds** in `_DEFAULT_STORE`.
+3. **Persistence round-trip.** Writing DpId 580 (`STORED_ANAL_SPRAY_INTENSITY`, Nvm)
+   persists immediately (logged `— persisted`) and survives constructing a fresh
+   `_Ble20AppLayer` with the same `device_key` (simulated new session/restart). Writing
+   DpId 564 (`ANAL_SHOWER_STATUS`, Status not Nvm) does **not** log persisted and correctly
+   reverts to its default in a fresh instance. Raw DB after the sequence: exactly
+   `{'dpid:580': '02'}` — nothing else leaked in.
+
+Not yet run: a live session against the real Geberit Home App or the bridge's
+`Ble20Client` completing the full Arendi handshake against this class (the scripted tests
+drive `_Ble20AppLayer`/`_dispatch_sync` directly, bypassing the handshake and D-Bus/GATT
+layers — same limitation noted for Mera's Phase 2b). Flagged as a follow-up, not blocking,
+since the underlying protocol logic and persistence are now verified directly and the
+D-Bus/GATT/advertisement wiring is a near-verbatim port of Mera's already-verified pattern.
