@@ -491,3 +491,23 @@ this crashed with `AttributeError: '_Tee' object has no attribute 'isatty'`. Fix
 stream — so the next library that probes an unexpected file-like attribute on `sys.stdout`
 doesn't hit the same class of bug. This is exactly the kind of thing the "not yet run: a
 live session" caveats on Phases 2b/3/4 were flagging — verified logic only goes so far.
+
+**Live end-to-end run against the real Geberit Home App (2026-07-16), after the `isatty`
+fix:** `mock_service.py --device model=alba,adapter=hci0` (defaulting to `mode=ble20` per
+the registry-defaults fix above) — real device connected, full Arendi handshake completed
+three times across reconnects, 268 lines of Inventory/Read activity. This closes the "not
+yet run: a live session" gap noted in Phase 3's verification.
+
+Getting here also surfaced a real, non-code gotcha — **not specific to Alba** — now
+documented in `docs/developer/mock-geberit-alba.md` §"Known behaviour/gotchas" #5: the
+Geberit Home App would not discover the Alba mock at all while it still had a *different*
+mock model (Mera) registered as a known device at the same adapter's BLE MAC. The app's
+device list is keyed by MAC, not by GATT profile, so this bites in either direction — a
+Mera entry blocks a later Alba mock at the same MAC, and equally an Alba entry would block
+a later Mera mock, or any future model sharing that adapter (Sela, once it exists). Deleting
+the stale app-side entry fixed it immediately. A `btmon` capture during the failure
+initially pointed at BT5 Extended Advertising (the same issue Mera hit in June,
+`e905a33`/`e05fc99`) as a plausible cause; that turned out to be a red herring — the
+advertisement payload was confirmed byte-identical to the known-working original script.
+Worth remembering before assuming a code regression: check the app's own device list first
+when switching `--device model=` between test sessions on a shared `adapter=`.

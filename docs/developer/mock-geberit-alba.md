@@ -438,6 +438,39 @@ check the mock's `"Notify characteristic interface wired."` startup line; if
 it prints `"notifications disabled"` instead, the `_chars` layout has changed
 and the index needs updating in `mock-geberit-alba.py:main()`.
 
+### 5. App scan finds nothing after switching mock models on the same adapter
+
+**Confirmed root cause (2026-07-16), not a mock or advertising bug — and not specific to
+Alba.** Any device already known to the Geberit Home App at a given BLE MAC — a different
+mocked model (Mera, Alba, Sela once it exists), or a real device — blocks discovery of
+*anything else* mocked at that same adapter's MAC. The app's own device list is keyed by
+BLE MAC, not by GATT profile, and it doesn't re-scan a MAC it already believes it knows. It
+was first hit while testing Alba (hence documented here too), but applies equally in the
+other direction (Alba entry blocking a later Mera mock) or any other model pairing — see
+`docs/developer/mock-service-requirements.md`'s Phase 4 section for the general note.
+
+**Fix:** in the Geberit Home App, delete the stale device entry (the one from the previous
+mock model) before starting a different model's mock on the same adapter. Once removed,
+discovery and connection work immediately — confirmed with `mock_service.py --device
+model=alba,adapter=hci0` after deleting a previously-added `model=mera` entry on the same
+`hci0`/`A0:AD:9F:72:C4:0F`.
+
+**What this ruled out along the way:** a `btmon` capture during the failure showed the mock
+using BT5 Extended Advertising (`LE_Set_Extended_Advertising_*` HCI commands) rather than
+legacy `ADV_IND`. This looked promising — Mera hit exactly this problem in June (`e905a33`,
+reverted the next day in `e05fc99` after the fix corrupted the advertising payload) — but
+turned out to be a red herring here: the advertisement payload itself was confirmed
+byte-identical to the working original script, GATT services registered correctly, and the
+real cause was the app's stale device-list entry, not the PDU type. If you hit "app can't
+find the mock" again with a *fresh* device identity (never before added to the app on this
+adapter), extended-vs-legacy advertising is still worth checking first via `btmon` +
+`tools/analyze-btmon-mock.py` — but check the app's device list first, it's the cheaper test.
+
+**Practical implication for `mock_service.py`:** switching `--device model=` between test
+runs on the same `adapter=` will hit this every time unless the app-side device entry is
+removed first. Worth keeping in mind once Sela (Phase 8) or other variants share an adapter
+in testing.
+
 ---
 
 ## In-process unit test — `tests/test_arendi_security.py`
