@@ -274,9 +274,11 @@ the Geberit cloud, hand out setting min/max ranges at runtime? Investigated agai
 
 ## 6. Webui
 
-- Multi-device aware: either one HTTP server with one route per active device (`/mera`,
-  `/sela`, `/alba`, or keyed by adapter) on a single port, or a landing page listing running
-  instances linking to per-device pages.
+- **Multi-device routing — DECIDED (2026-07-16):** each device keeps its own already-independent
+  web server/port (status quo architecture — aiohttp for Mera, FastAPI for Alba, each bound to
+  its own `web_port`). No landing page, no single-port/single-server merge — a user running N
+  mock devices already knows each one's port from its own `--device` spec, and unifying
+  aiohttp+FastAPI into one process-wide server would add real complexity for no functional gain.
 - Full settings table per device (value, datatype, behavior, min/max), inline per-row edit,
   **Reset to factory defaults** scoped to exactly one device's store — never all of them.
 
@@ -314,13 +316,27 @@ Only the primitives are candidates for sharing; feature-specific markup (labels,
 orientation-light swatch colors, section titles) stays per-consumer, since each surface
 renders its own device's setting definitions.
 
-**Proposal for Phase 6 (not decided, not implemented — a design question to resolve at Phase
-6 time, so it doesn't get built three times in parallel by accident):** extract the primitives
-above into a shared static JS/CSS asset that both the bridge's FastAPI static mount and each
-mock's own web server (FastAPI for Alba/console, aiohttp for Mera — both can serve a static
-directory from disk regardless of framework) can reference, instead of each mock reinventing
-them. Exact location/mechanism (e.g. a new top-level `shared_static/` dir vs. some other
-approach) is intentionally left open until Phase 6 actually starts.
+**Decided (2026-07-16):** write a new, standalone, metadata-driven JS+CSS module inside
+`aquaclean_ble_relay/` — not extracted from `index.html`, and `index.html` is not modified by
+this work (that stays a separate future item, see below). The module mirrors the bridge's
+visual style (same stepper widget, same color-swatch treatment used for orientation-light-style
+controls, same toggle-switch look) but is architected generically from the start, unlike the
+bridge's current per-ID-hardcoded functions (`onCommonSettings` branches on
+`cs[0]`/`cs[1]`/`cs[2]`... individually; `setCommonSetting`/`setProfileSetting` POST to
+hardcoded bridge-only paths): a metadata list per setting
+(`{id, name, kind: stepper|toggle|select|swatch, min, max, writeUrl}`) drives rendering, value
+updates, and writes generically, so the same renderer serves Mera's `common_setting`/
+`profile_setting` IDs and Alba's DpIds without per-ID branches.
+
+This keeps the work entirely inside `aquaclean_ble_relay/` — no branch needed, straight to main
+like the rest of the mock work — while deliberately building the *forward candidate* for
+eventual sharing: because it's generic rather than mock-specific, refactoring `index.html` later
+becomes "swap its inline per-ID code for calls into this module, supplying the bridge's own
+metadata list" rather than a rewrite from scratch. That refactor is out of scope here — tracked
+as a future item in `docs/roadmap.md` → "Refactor: aquaclean_console_app webui to use the shared
+mock settings-control module" since it touches shipped `aquaclean_console_app` code and needs a
+proper branch/PR, per the existing mock-vs-console-app workflow split
+(`memory/feedback_mock_services_work_on_main.md`).
 
 ## 7. Logging
 
@@ -363,6 +379,8 @@ approach) is intentionally left open until Phase 6 actually starts.
 | 1 | `--model` single open-ended lookup table (not `--protocol` + `--model` split) | **Resolved** — §3 |
 | 2 | Standalone single-device mock scripts kept as thin wrappers around the refactored class, not retired | **Resolved** — §2 |
 | 3 | Webui bind failure: abort whole service, or degrade that one device to headless? | Open — §9 |
+| 4 | Frontend sharing: mock-only fresh generic module, not extracted from `index.html` | **Resolved** — §6 |
+| 5 | Multi-device routing: each device keeps its own independent page (no landing page, no single-port merge) | **Resolved** — §6 |
 
 ## 11. Implementation plan & phase status
 

@@ -802,6 +802,25 @@ reference table.
 
 ---
 
+### Refactor: aquaclean_console_app webui to use the shared mock settings-control module (future)
+
+**Not scoped, not started.** `docs/developer/mock-service-requirements.md` §6 records a
+decision (2026-07-16) to build a new, generic, metadata-driven settings-control module
+(stepper/toggle/select/swatch widgets + a generic write helper) for the mock webuis, styled to
+match `aquaclean_console_app/static/index.html` but living entirely in `aquaclean_ble_relay/`
+and not touching `index.html` itself. It's deliberately built as the forward candidate for
+`index.html`'s own settings controls — currently hardcoded per setting ID (e.g.
+`onCommonSettings` branching on `cs[0]`/`cs[1]`/`cs[2]`... individually) — so once the mock
+module exists and is proven, `index.html` could be refactored to consume it (supplying the
+bridge's own setting metadata) instead of its current inline per-ID code.
+
+Touches shipped, user-facing `aquaclean_console_app` code — needs a proper branch/PR (not
+direct-to-main like the mock work), and per the release-process checklist likely touches
+`docs/cli.md`/`docs/configuration.md` if any REST-facing behavior changes as a result. Not
+scheduled — revisit once the mock module has shipped and proven itself.
+
+---
+
 ### Mock service: Mera namespace/index enumeration (persistence schema reference)
 
 Referenced from `docs/developer/mock-service-requirements.md` §5 — kept here rather than
@@ -866,8 +885,9 @@ SPL/calibration/bitmask rows), plus the non-persisted Active/live rows held only
 
 **Dependency:** `sqlite3` is stdlib — no new packages.
 
-Open decisions on how this table is used (generic vs. per-model schema, webui edit pattern,
-single-port vs. landing-page webui) are tracked in
+Open/resolved decisions on how this table is used (generic vs. per-model schema, webui edit
+pattern; multi-device routing resolved 2026-07-16 as "each device keeps its own independent
+page", no landing page or single-port merge) are tracked in
 `docs/developer/mock-service-requirements.md` §10, not duplicated here.
 
 ---
