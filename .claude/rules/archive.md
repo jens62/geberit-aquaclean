@@ -1,3 +1,6 @@
+## Memory snapshot 2026-07-16
+Active memory entries: 63  |  Pruned: 1 (`spl-params-model-differentiation.md` — superseded by `.claude/rules/ble-protocol.md`'s SPL parameter index table, which corrects the stale `[0-7]` list and explicitly debunks the "indices 8-10 corrupt GetFilterStatus" claim as unverified/contradicted) + 1 inline MEMORY.md line (pre-release-before-stable note, already a pure pointer to `.claude/rules/release-process.md` with no backing file)  |  CLAUDE.md: 3,035 chars — well within the 40,000 limit, no change  |  roadmap-todo.md: already a pointer stub ("Merged into docs/roadmap.md"), nothing to archive  |  Snapshot taken by /compress-memory
+
 ## Memory snapshot 2026-06-27 (session 2)
 Active memory entries: 46  |  Pruned: 1 (`hacs-pre-release-checklist.md` — explicitly OBSOLETE, v3.1.2 released)  |  Updated: `alba-esphome-probe-status.md` (branch merged in v3.1.0, not "NOT merged to main"), `mock-alba-jetzt-verbinden.md` (description version 2.17.0 → 2.19.0)  |  Added MEMORY.md inline: Alba variant=0 mapping confirmed  |  Snapshot taken by /compress-memory
 
