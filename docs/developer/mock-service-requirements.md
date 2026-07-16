@@ -481,3 +481,13 @@ an auto-named log file now, without waiting for the full per-device-logger conve
 **Verified on the mock VM** (`--list-models`, `--help`, and all four error paths — unknown
 model, malformed field, >1 `--device`, bad kwarg for a model — each produces the expected
 error and exit code 2, confirmed by hand).
+
+**Bug found on the first real run (2026-07-16), fixed same day:** `--mode ble20` starts a
+`uvicorn` web server (the NOTIFY control UI); `uvicorn.Config.__init__` configures its
+logging and calls `sys.stdout.isatty()`. `_Tee` only implemented `write()`/`flush()`, so
+this crashed with `AttributeError: '_Tee' object has no attribute 'isatty'`. Fixed by adding
+`isatty()` (delegated to the original console stream, not the log file) plus a generic
+`__getattr__` fallback delegating anything else (`fileno`, `encoding`, ...) to the same
+stream — so the next library that probes an unexpected file-like attribute on `sys.stdout`
+doesn't hit the same class of bug. This is exactly the kind of thing the "not yet run: a
+live session" caveats on Phases 2b/3/4 were flagging — verified logic only goes so far.

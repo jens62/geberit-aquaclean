@@ -90,7 +90,13 @@ def _parse_device_spec(spec: str) -> dict:
 
 
 class _Tee:
-    """Writes to every given stream. See module docstring re: Phase 4 scope."""
+    """Writes to every given stream. See module docstring re: Phase 4 scope.
+
+    Delegates any attribute it doesn't itself define (isatty, fileno,
+    encoding, ...) to the first stream — libraries that receive this as
+    sys.stdout (uvicorn's logging setup calls .isatty()) expect a real
+    file-like object, not just something with write()/flush().
+    """
 
     def __init__(self, *streams):
         self._streams = streams
@@ -103,6 +109,12 @@ class _Tee:
     def flush(self):
         for s in self._streams:
             s.flush()
+
+    def isatty(self):
+        return self._streams[0].isatty()
+
+    def __getattr__(self, name):
+        return getattr(self._streams[0], name)
 
 
 def main() -> None:
