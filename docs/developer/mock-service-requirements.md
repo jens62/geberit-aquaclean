@@ -447,14 +447,25 @@ an auto-named log file now, without waiting for the full per-device-logger conve
 
 **What's implemented:**
 - `--device model=NAME,adapter=HCI[,...]` — the §3-decided single open-ended `--model`
-  lookup table (`_MODEL_REGISTRY = {"mera": MeraMock, "alba": AlbaMock}`). Every field
-  besides `model` is passed straight through as a constructor kwarg to whichever class
-  `model` maps to (numeric-looking values coerced to `int`/`float`) — this is what lets
-  `mode=`/`send_delay_sec=` (Alba-only) and `web_port=`/`state_dir=` (both) reach the right
-  model without `mock_service.py` hardcoding either model's parameter list.
+  lookup table. Each registry entry carries a class *and* that model's sensible defaults:
+  `_MODEL_REGISTRY = {"mera": {"cls": MeraMock, "defaults": {}}, "alba": {"cls": AlbaMock,
+  "defaults": {"mode": "ble20"}}}`. Every field besides `model` is passed straight through
+  as a constructor kwarg to whichever class `model` maps to (numeric-looking values coerced
+  to `int`/`float`), merged over the registry defaults — explicit `--device` fields always
+  win. This is what lets `mode=`/`send_delay_sec=` (Alba-only) and `web_port=`/`state_dir=`
+  (both) reach the right model without `mock_service.py` hardcoding either model's parameter
+  list.
+- **Model-specific defaults, not just the class.** `AlbaMock` itself still defaults to
+  `mode="unsupported"` — faithful to the original script, which deliberately uses that as
+  its own default to test the HACS unsupported-device screen. But nobody saying "mock an
+  Alba" through this orchestrator wants that by default; they want the functional protocol.
+  So the *registry* overrides it to `mode="ble20"`, leaving `AlbaMock`'s own default
+  untouched — `model=alba,adapter=hci0` alone now gives a fully functional Alba mock;
+  `model=alba,adapter=hci0,mode=unsupported` still reaches the original behavior explicitly.
 - `--state-dir` (global) — passed to the model as `state_dir`; also anchors the
   auto-named log file at `<state_dir>/logs/mock-<model>-<adapter>_<timestamp>.log`.
-- `--list-models` — enumerates the registry (§3's discoverability requirement).
+- `--list-models` — enumerates the registry *and* each model's defaults (§3's
+  discoverability requirement) — e.g. prints `alba (defaults: {'mode': 'ble20'})`.
 - Startup validation at parse time, not after connecting to D-Bus: unknown model, malformed
   `--device` field, and more than one `--device` (Phase 4 is deliberately single-device
   only — multi-device is Phase 5) all fail with a clear `argparse` error before anything

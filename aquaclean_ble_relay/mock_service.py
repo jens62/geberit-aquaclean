@@ -6,9 +6,16 @@ only. Multi-device concurrency is Phase 5 — passing more than one --device is
 rejected here with a clear error rather than silently only starting the first.
 
 --model is a single, open-ended lookup table (§3, decided — not a separate
---protocol + --model split): _MODEL_REGISTRY maps a model name straight to its
-class. Add new models/variants (e.g. "sela" once its mock exists — Phase 8) by
-adding one entry here; mock_service.py itself never branches on protocol.
+--protocol + --model split): _MODEL_REGISTRY maps a model name to its class
+plus that model's sensible defaults (e.g. Alba's own constructor defaults to
+mode="unsupported" — faithful to the original script's default, which
+deliberately tests the HACS unsupported-device screen — but nobody saying
+"mock an Alba" through this orchestrator wants that by default, they want the
+functional protocol; the registry's default overrides that to mode="ble20"
+while leaving AlbaMock itself untouched). Explicit --device fields always win
+over a model's registry defaults. Add new models/variants (e.g. "sela" once
+its mock exists — Phase 8) by adding one entry here; mock_service.py itself
+never branches on protocol.
 
 Logging: opens one auto-named log file per run and tees the process's stdout
 to it (console + file), so nobody has to hand-manage a `| tee <name>.log`
@@ -31,8 +38,8 @@ from aquaclean_ble_relay.mera_mock import MeraMock
 from aquaclean_ble_relay.alba_mock import AlbaMock
 
 _MODEL_REGISTRY = {
-    "mera": MeraMock,
-    "alba": AlbaMock,
+    "mera": {"cls": MeraMock, "defaults": {}},
+    "alba": {"cls": AlbaMock, "defaults": {"mode": "ble20"}},
 }
 
 
@@ -106,10 +113,11 @@ def main() -> None:
     parser.add_argument(
         "--device", action="append", dest="devices", type=_parse_device_spec,
         metavar="model=NAME,adapter=HCI[,web_port=PORT][,mode=MODE][,send_delay_sec=SEC]",
-        help="One mocked device. Required field: model (one of: %s). Every other "
-             "field is passed straight through to that model's constructor — e.g. "
-             "adapter, web_port (int), mode/send_delay_sec (Alba only). Phase 4 "
-             "supports exactly one --device; multi-device is Phase 5."
+        help="One mocked device. Required field: model (one of: %s — see "
+             "--list-models for each model's defaults). Every other field is passed "
+             "straight through to that model's constructor, overriding the model's "
+             "registry defaults — e.g. adapter, web_port (int), mode/send_delay_sec "
+             "(Alba only). Phase 4 supports exactly one --device; multi-device is Phase 5."
              % ", ".join(sorted(_MODEL_REGISTRY)),
     )
     parser.add_argument(
@@ -125,7 +133,9 @@ def main() -> None:
 
     if args.list_models:
         for name in sorted(_MODEL_REGISTRY):
-            print(name)
+            defaults = _MODEL_REGISTRY[name]["defaults"]
+            suffix = f" (defaults: {defaults})" if defaults else ""
+            print(f"{name}{suffix}")
         return
 
     if not args.devices:
@@ -138,7 +148,11 @@ def main() -> None:
 
     spec = dict(args.devices[0])
     model_name = spec.pop("model")
-    mock_cls = _MODEL_REGISTRY[model_name]
+    entry = _MODEL_REGISTRY[model_name]
+    mock_cls = entry["cls"]
+    kwargs = dict(entry["defaults"])
+    kwargs.update(spec)  # explicit --device fields always win over model defaults
+    spec = kwargs
 
     state_dir = Path(args.state_dir) if args.state_dir else Path(__file__).parent / "mock_state"
     spec.setdefault("state_dir", str(state_dir))
