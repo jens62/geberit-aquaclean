@@ -83,7 +83,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.82.0b1"
+_MOCK_VERSION = "1.83.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -215,6 +215,23 @@ _FW_COMPONENT_NAMES = {
     9: "Bedienfeld", 10: "Benutzererkennung", 11: "Bewegungserkennung",
     12: "Orientierungslicht", 14: "Föhneinheit", 15: "Schnittstellenmodul",
 }
+
+# Firmware-update proc sequence (ctx=0x40, plus a ctx=0x00/proc=0x01 companion
+# frame) — Phase 9b, see .claude/rules/ble-protocol.md "Firmware update
+# procedures (ctx=0x40)" and memory/mera-firmware-update-ble-protocol.md for
+# the decoded real-device sequence this simulates. Timers are shortened from
+# the real ~2m44s flash window / ~13s reboot silence — this is a mock aid for
+# exercising the app's update UX, not a byte-exact replay; see docs/developer/
+# mock-service-requirements.md Phase 9b "complete process" for the deferred
+# byte-exact items (progress-notify frames, real timer lengths, bulk-transfer
+# byte-count logging).
+_FW_UPDATE_BUSY_SECONDS = 20    # simulated flash window (real: ~164s)
+_FW_UPDATE_REBOOT_SECONDS = 8   # simulated reboot silence (real: ~13.3s)
+# Synthetic ctx=0x40/proc=0x00 keepalive payload — real captures show this
+# telemetry-like value fluctuating per call without gating app progression
+# (the app keeps polling it unchanged for 30+ seconds before the user taps
+# "Update Now"), so a fixed template is sufficient.
+_FW_UPDATE_KEEPALIVE = bytes([0x00, 0x20, 0x00, 0x08, 0xFF, 0xE7, 0x00, 0x08, 0x00, 0x04, 0x00, 0x00])
 
 # Settings-table metadata (name, kind, min, max, options) for the webui's
 # generic mock-controls.js renderer (docs/developer/mock-service-requirements.md
@@ -887,6 +904,7 @@ class MeraMock:
         self._connected = False
         self._connection_gen = 0     # incremented on each new connection; guards stale burst tasks
         self._current_device_path = None  # D-Bus path of the currently connected device
+        self._fw_update_state = "idle"  # idle | started | done | rebooting — Phase 9b ctx=0x40 simulation
         self._advert = None          # current _MeraAdvertisement instance
         self._advert_bus = None      # D-Bus connection stored for advert updates
         self._advert_adapter = None  # Adapter stored for advert updates
@@ -972,7 +990,13 @@ class MeraMock:
 
         response_node_id = 0x01
 
-        if proc == 0x82:              # GetDeviceIdentification
+        # ctx=0x40 (plus its ctx=0x00/proc=0x01 companion frame) is the
+        # firmware-update sequence — proc 0x52/0x53 collide numerically with
+        # SetStoredCommonSetting/GetStoredProfileSetting below, which only
+        # apply under the default ctx. Must be checked first.
+        if ctx == 0x40 or (ctx == 0x00 and proc == 0x01):
+            result = self._proc_fw_update(ctx, proc, args)
+        elif proc == 0x82:              # GetDeviceIdentification
             result = self._proc_82()
         elif proc == 0x05:            # GetNodeInventory
             result = self._proc_05()
@@ -1180,6 +1204,55 @@ class MeraMock:
         writing one component at a time."""
         for component_id, (v1, v2, build) in _FW_PROFILES[profile].items():
             self._set_fw_version(component_id, v1, v2, build)
+
+    def _proc_fw_update(self, ctx: int, proc: int, args: bytes) -> bytes:
+        """Firmware-update proc sequence (Phase 9b) — see .claude/rules/
+        ble-protocol.md "Firmware update procedures (ctx=0x40)". Minimal
+        state machine (idle -> started -> done -> rebooting -> idle) driven
+        by timers, not by the bulk firmware-binary writes the real app also
+        sends on the A1-A4 write characteristics during the flash window —
+        those are tolerated by the generic frame parser (best-effort; see
+        docs/developer/mock-service-requirements.md Phase 9b) but not
+        inspected here."""
+        if ctx == 0x00 and proc == 0x01:
+            return b""  # companion heartbeat frame — ACK-only
+        if proc == 0x00:                # background keepalive, unrelated to update state
+            return _FW_UPDATE_KEEPALIVE
+        if proc == 0x52:                # StartFirmwareUpdate
+            if self._fw_update_state == "idle":
+                self._fw_update_state = "started"
+                self._log("·", f"Firmware update started (simulated, {_FW_UPDATE_BUSY_SECONDS}s)")
+                asyncio.ensure_future(self._fw_update_run())
+            return b""
+        if proc == 0x53:                # poll: 05=busy, 06=done
+            return bytes([0x06 if self._fw_update_state == "done" else 0x05])
+        if proc == 0x04:                # benign ping; finalize trigger once done
+            if self._fw_update_state == "done":
+                self._fw_update_state = "rebooting"  # guard against double-scheduling on repeat pings
+                asyncio.ensure_future(self._fw_update_finalize())
+            return b""
+        self._log("·", f"  unknown ctx=0x40 proc 0x{proc:02X} — returning empty OK")
+        return b""
+
+    async def _fw_update_run(self) -> None:
+        await asyncio.sleep(_FW_UPDATE_BUSY_SECONDS)
+        self._fw_update_state = "done"
+        self._log("·", "Firmware update flash window complete (simulated) — waiting for finalize")
+
+    async def _fw_update_finalize(self) -> None:
+        self._log("·", "Firmware update finalize — simulating device reboot")
+        self._apply_firmware_profile("rs30")
+        device_path = self._current_device_path
+        if device_path and self._bus:
+            try:
+                dev_intro = await self._bus.introspect("org.bluez", device_path)
+                dev_proxy = self._bus.get_proxy_object("org.bluez", device_path, dev_intro)
+                await dev_proxy.get_interface("org.bluez.Device1").call_disconnect()
+            except Exception as exc:
+                self.logger.warning("simulated-reboot disconnect failed: %s", exc)
+        await asyncio.sleep(_FW_UPDATE_REBOOT_SECONDS)
+        self._fw_update_state = "idle"
+        self._log("·", "Simulated reboot complete — device reachable again")
 
     def _proc_86(self) -> bytes:
         """GetDeviceInitialOperationDate: UTF-8 date string, no null terminator (real device: 31.05.2024)."""

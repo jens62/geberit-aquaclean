@@ -222,6 +222,47 @@ Not observed in any log. To find: BLE-sniff the official Geberit Home app.
 
 ---
 
+## Firmware update procedures (ctx=0x40)
+
+Decoded from a genuine RS28.0→RS30.0 Mera Comfort update capture, 2026-07-14
+(`local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/`,
+full detail in `memory/mera-firmware-update-ble-protocol.md`). **Not a separate
+proc namespace** — these proc codes collide numerically with the default-ctx
+ones (0x52=SetStoredCommonSetting, 0x53=GetStoredProfileSetting under ctx=1);
+`ctx` must be checked first, before dispatching on `proc` alone.
+
+| ctx | proc | Meaning | Request→Response |
+|-----|------|---------|-------------------|
+| `0x40` | `0x00` | Background keepalive/telemetry, runs continuously (~2s interval) independent of update state | args=none → 12-byte payload, observed values fluctuate but don't appear to gate app progression |
+| `0x00` | `0x01` | Companion heartbeat frame, always sent alongside `0x40/0x00` | args=none → empty (ACK-only) |
+| `0x40` | `0x04` | Benign ping during the flash window; **the same code also finalizes the update** — after the device is in the "done" polling state, the next `0x40/0x04` is followed ~1s later by device silence (reboot) | args=none → empty (ACK-only); no distinct "finalize" proc code exists, behavior is state-dependent |
+| `0x40` | `0x52` | `StartFirmwareUpdate` — sent once, when the user taps "Update Now" in the app (the `0x40/0x00`/`0x00/0x01` background poll runs for 30+ seconds beforehand without blocking this) | args=none → empty (ACK-only) |
+| `0x40` | `0x53` | Poll update progress | args=none → 1 byte: `0x05`=busy, `0x06`=done. Polled every ~1.8s for the whole flash window (~164s in the real capture) |
+
+**Bulk firmware transfer**: during the flash window, the app also writes
+~290KB of raw firmware binary (not proc-framed) directly on the same A1–A4
+write characteristics used for normal proc requests, split across three of
+the four channels. This is **not gated by any proc response** — the device
+signals completion purely via the `0x40/0x53` poll flipping to `0x06`, not by
+counting bytes. The write channels must tolerate this arbitrary binary data
+without crashing; garbled `ctx`/`proc` bytes parsed from it are harmless noise
+(spurious "unknown proc" responses the app isn't waiting on).
+
+**Reboot**: last thing sent before the device goes silent is `0x40/0x04`.
+Real device: ~13.3s fully silent (no advertising), then a few seconds of
+corrupted advertising data before stabilizing and getting a fresh `CONNECT_IND`
+(~19s total). No general-purpose restart command exists for Mera (unlike
+Alba's `DP_RESTART`) — this finalize side effect is the only BLE-triggerable
+reboot ever observed.
+
+**Mock implementation** (`mera_mock.py`, Phase 9b): simplified state machine
+(`idle → started → done → rebooting → idle`) driven by timers rather than by
+inspecting the bulk transfer or emitting progress-notify frames on A5 — see
+`docs/developer/mock-service-requirements.md` Phase 9b for the deferred
+byte-exact items.
+
+---
+
 ## CommonSetting IDs (proc 0x51 / 0x52)
 
 | ID | Correct name | Device restriction |

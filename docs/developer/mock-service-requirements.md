@@ -952,3 +952,45 @@ connection. Root cause and fix: see `docs/developer/mock-geberit-mera.md` §"Bat
 interaction", "Regression and re-fix (2026-07-16, v1.77.0b1)". Once past that, Mera reached
 the already-known-expected "firmware update required" state (real per-component firmware
 versions). Concurrent registration itself (the actual Phase 5 subject) was not the blocker.
+
+### Phase 9b — firmware-update process simulation, minimal version (2026-07-17)
+
+**Implemented (Mera only — no real Alba firmware-update capture exists yet, so this is not
+a parity violation, just nothing to base an Alba equivalent on).** `mera_mock.py` v1.83.0b1:
+- `_dispatch()` gained an early `ctx`-first branch — `ctx=0x40` (plus its `ctx=0x00/proc=0x01`
+  companion frame) routes to `_proc_fw_update()` before the existing proc-keyed chain, because
+  `proc=0x52`/`0x53` collide numerically with `SetStoredCommonSetting`/`GetStoredProfileSetting`
+  under the default ctx. See `.claude/rules/ble-protocol.md` § "Firmware update procedures
+  (ctx=0x40)" for the full decoded sequence this implements.
+- State machine `self._fw_update_state`: `idle -> started -> done -> rebooting -> idle`.
+  `0x40/0x52` (StartFirmwareUpdate) starts it; `0x40/0x53` polls it (`05`=busy/`06`=done);
+  `0x40/0x04` while `done` triggers finalize — applies the `"rs30"` firmware profile via the
+  existing `_apply_firmware_profile()`/`_set_fw_version()` write hook (Phase 9a, previously
+  unused), force-disconnects the current BLE link via `Device1.Disconnect()` (reusing the
+  `self._bus`/`self._current_device_path` pattern already used by `_request_short_ci()`), then
+  resets to `idle` after a delay so the app's natural reconnect sees updated firmware on the
+  next `GetFirmwareVersionList`.
+- `0x40/0x00` returns a fixed synthetic 12-byte keepalive payload; real captures show this
+  value fluctuating per call without gating app progression, so an exact match wasn't pursued.
+
+**Deliberately minimal — deferred to a follow-up pass:**
+- **Timers are shortened**, not byte-exact: `_FW_UPDATE_BUSY_SECONDS=20` (real flash window:
+  ~164s) and `_FW_UPDATE_REBOOT_SECONDS=8` (real reboot silence: ~13.3s).
+- **No progress-notify frames** on the A5 channel (real device emits spontaneous
+  `progress:u32-LE` notifications during the flash window; the app doesn't appear to rely on
+  them for the state transition, only on the `0x40/0x53` poll).
+- **No inspection of the ~290KB bulk firmware-binary transfer** the app writes on the A1-A4
+  characteristics during the flash window (not proc-framed). The generic frame parser
+  (`_handle_request`) is expected to tolerate this arbitrary binary without crashing — bytes
+  that happen to parse as a plausible-looking header just produce harmless spurious "unknown
+  proc" responses the app isn't waiting on — but this was reasoned from code inspection, not
+  yet exercised against the real bulk-write traffic pattern on the VM. Watch mock logs during
+  first live test for unexpected volume/errors during the simulated flash window.
+- **No byte-count/progress logging** of that bulk transfer for observability (explicitly
+  deferred at the user's request, to keep the first pass minimal).
+- **No checksum/content validation** of the transferred firmware image — not needed, since
+  completion is signalled by the `0x40/0x53` poll, not by the transfer itself.
+
+If any of the above turns out to matter in practice (e.g. the app times out waiting for a
+progress notification, or the bulk write does crash the parser), promote it out of this list
+and implement it.
