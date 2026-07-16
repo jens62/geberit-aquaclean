@@ -71,7 +71,9 @@ handler now covers cross-device correlation properly.
 
 import argparse
 import asyncio
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from aquaclean_ble_relay.mera_mock import MeraMock
@@ -168,6 +170,43 @@ async def _run_all(mocks) -> None:
     await asyncio.gather(*(m.run() for m in mocks))
 
 
+def _start_capture(cmd: list[str], log_path: Path, tee_to_file: bool = False):
+    """Start a sudo-prefixed background capture process (btmon, bluetoothd -n -d)
+    before any mock device starts. Returns (Popen, log_file_or_None) for
+    _stop_capture() to clean up later. tee_to_file redirects the process's own
+    stdout/stderr into log_path — used for bluetoothd, which has no -w-style
+    output flag of its own; btmon writes log_path itself via its own -w arg."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if tee_to_file:
+        log_file = open(log_path, "a", encoding="utf-8")
+        proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+        return proc, log_file
+    proc = subprocess.Popen(cmd)
+    return proc, None
+
+
+def _stop_capture(label: str, proc: subprocess.Popen, log_file, match_arg: str) -> None:
+    """Terminate a sudo-launched capture process. sudo doesn't always forward
+    SIGTERM to its child reliably depending on version/config, so terminate()
+    is backed by a `sudo pkill -f` fallback keyed on a distinguishing argument
+    (e.g. the process's own output path, or a flag combination unique to our
+    invocation) so cleanup is robust even if the direct terminate() doesn't
+    reach the actual btmon/bluetoothd process."""
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+    subprocess.run(
+        ["sudo", "pkill", "-f", match_arg],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if log_file:
+        log_file.close()
+    print(f"[mock_service] stopped {label}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="mock_service.py",
@@ -193,6 +232,19 @@ def main() -> None:
     parser.add_argument(
         "--list-models", action="store_true",
         help="List registered --device model= values and exit.",
+    )
+    parser.add_argument(
+        "--btmon-capture", action="store_true",
+        help="Start 'sudo btmon -w <state-dir>/logs/mock-btmon_<timestamp>.btsnoop' "
+             "before any device starts, and stop it on exit.",
+    )
+    parser.add_argument(
+        "--bluetoothd-debug", action="store_true",
+        help="Start 'sudo bluetoothd -n -d --noplugin=battery' before any device "
+             "starts, redirected to <state-dir>/logs/mock-bluetoothd-debug_<timestamp>.log, "
+             "and stop it on exit. Does NOT stop/restart the systemd bluetooth service — "
+             "if it's already running and holding the D-Bus name, this will simply fail "
+             "to bind, same as running the command by hand.",
     )
     args = parser.parse_args()
 
@@ -261,6 +313,23 @@ def main() -> None:
         await _check_adapters_exist(adapter_names)
         await _run_all(mocks)
 
+    log_dir = state_dir / "logs"
+    capture_timestamp = time.strftime("%Y-%m-%d_%H-%M")
+    btmon_path = log_dir / f"mock-btmon_{capture_timestamp}.btsnoop"
+    bluetoothd_path = log_dir / f"mock-bluetoothd-debug_{capture_timestamp}.log"
+    btmon_proc = bluetoothd_proc = bluetoothd_log_file = None
+
+    if args.btmon_capture:
+        btmon_proc, _ = _start_capture(["sudo", "btmon", "-w", str(btmon_path)], btmon_path)
+        print(f"[mock_service] btmon capture: {btmon_path}")
+
+    if args.bluetoothd_debug:
+        bluetoothd_proc, bluetoothd_log_file = _start_capture(
+            ["sudo", "bluetoothd", "-n", "-d", "--noplugin=battery"],
+            bluetoothd_path, tee_to_file=True,
+        )
+        print(f"[mock_service] bluetoothd debug: {bluetoothd_path}")
+
     try:
         asyncio.run(_main_async())
     except ValueError as e:
@@ -268,6 +337,11 @@ def main() -> None:
         sys.exit(1)
     except KeyboardInterrupt:
         print("[mock_service] Interrupted by user. Exiting.")
+    finally:
+        if btmon_proc is not None:
+            _stop_capture("btmon capture", btmon_proc, None, str(btmon_path))
+        if bluetoothd_proc is not None:
+            _stop_capture("bluetoothd debug", bluetoothd_proc, bluetoothd_log_file, "bluetoothd -n -d")
 
 
 if __name__ == "__main__":

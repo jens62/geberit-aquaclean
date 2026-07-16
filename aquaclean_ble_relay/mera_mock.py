@@ -1821,7 +1821,7 @@ class MeraMock:
         self.logger.info("    SAP: %s  article: %s", self._SAP_NUMBER, self._ARTICLE)
         self.logger.info("    Device Name (0x2a00): 'ro'")
         self.logger.info("    Web UI: http://0.0.0.0:%d/", self.web_port)
-        self.logger.info("    Log file: %s", log_path.name)
+        self.logger.info("    Log file: %s", self.logger.device_log_path.name)
         self.logger.info("")
 
         await asyncio.get_event_loop().create_future()   # run forever

@@ -71,5 +71,6 @@ def get_device_logger(model: str, adapter: str | None) -> logging.Logger:
     logger.addHandler(device_h)
 
     logger.addHandler(_get_combined_handler())  # same Handler instance across all device loggers
+    logger.device_log_path = device_path  # exposed so callers can report it themselves
     logger.info("Per-device log: %s", device_path.name)
     return logger
