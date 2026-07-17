@@ -562,6 +562,30 @@ manual commands exactly; if systemd's `bluetoothd` is already holding the D-Bus 
     never shown in the webui's three existing sections (Profile Settings, Common Settings,
     Firmware Versions). Same fix shape: a read-only "Device State" section covering
     everything not already in an existing section.
+- **Requirement: the real Geberit hardware Remote Control must be able to discover, pair
+  with, and connect to both the mera-mock and the alba-mock — added 2026-07-17, tracked as
+  Phase 12.** Goal: exercise remote-control behavior (button presses, displacement/handoff
+  with a concurrently-connected phone app, etc.) against the mocks instead of requiring real
+  hardware every time. Current state, not yet a working feature on either mock:
+  - **Mera**: `_RCPairingService` (mera_mock.py) is a discovery-only stub — advertises GATT
+    service UUID `0xC526` so the RC's `FIND_BY_TYPE_VALUE` pre-pairing check succeeds, but
+    implements nothing else. The RC then attempts real BLE pairing (`LL_ENC_REQ`) — untested
+    whether the mock's BlueZ stack actually completes pairing/bonding, and all post-pairing RC
+    traffic is encrypted and not yet decoded (see `memory/geberit-remote-control-ble.md`), so
+    even a successful pairing wouldn't yet produce meaningful behavior.
+  - **Alba**: no RC-related GATT service exists at all — unknown whether Alba's real RC
+    pairing uses the same `0xC526` UUID as Mera or a different one; needs investigation
+    (real-hardware BLE sniff of an Alba + RC pairing, analogous to the existing Mera capture).
+  - Both real-hardware investigations already in progress are relevant background, not
+    solutions: `memory/mera-comfort-displacement-baseline.md` (remote recovers ~9s after app
+    disconnect on real Mera hardware) and `memory/alba-remote-control-conflict.md` /
+    `memory/alba-session-caching-fix.md` (Alba remote-displacement root cause still open).
+  - Scope not yet broken down — likely needs: (1) BLE pairing/bonding support in the mock's
+    GATT server stack (SMP/LTK, not just GATT characteristics — may require bluez_peripheral/
+    BlueZ agent-level changes beyond what either mock currently does), (2) Alba's discovery
+    surface identified and stubbed the same way Mera's is, (3) enough of the post-pairing
+    encrypted protocol decoded/implemented for either mock to respond meaningfully rather than
+    just complete pairing and go silent.
 
 ## 10. Decisions log
 
