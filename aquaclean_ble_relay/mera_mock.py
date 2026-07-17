@@ -37,6 +37,7 @@ import sys
 import asyncio
 import subprocess
 import hashlib
+import struct
 import time
 import json
 import logging
@@ -83,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.83.0b1"
+_MOCK_VERSION = "1.84.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -227,6 +228,15 @@ _FW_COMPONENT_NAMES = {
 # byte-count logging).
 _FW_UPDATE_BUSY_SECONDS = 20    # simulated flash window (real: ~164s)
 _FW_UPDATE_REBOOT_SECONDS = 8   # simulated reboot silence (real: ~13.3s)
+# Progress-notify ticks during the busy window (A5, spontaneous) — real device
+# emits +12 every ~2.2s over ~164s, reaching ~840-888. Compressed to the same
+# final value over the shortened window: 10 ticks x +84 = 840.
+_FW_UPDATE_PROGRESS_TICKS = 10
+_FW_UPDATE_PROGRESS_STEP = 84
+# Bulk firmware-binary write observability: log a byte-count summary every
+# this many bytes per channel instead of a per-frame hex dump (which would be
+# ~14,500 lines for the real ~290KB transfer and is meaningless binary anyway).
+_FW_BULK_LOG_THRESHOLD = 8192
 # Synthetic ctx=0x40/proc=0x00 keepalive payload — real captures show this
 # telemetry-like value fluctuating per call without gating app progression
 # (the app keeps polling it unchanged for 30+ seconds before the user taps
@@ -384,6 +394,21 @@ def _build_frames(ctx: int, proc: int, result: bytes, status: int = 0, node_id: 
     return frames
 
 
+def _build_progress_frame(progress: int) -> bytes:
+    """Spontaneous firmware-update progress notification (A5, ctx=0x40 flash
+    window) — Phase 9b. Distinct message id=6 (not proc-response id=5), body
+    = [0x03, 0x00, 0x00, progress:u32-LE, 0x0c] (8 bytes). Decoded from the
+    real capture (memory/mera-firmware-update-ble-protocol.md): trailing bytes
+    beyond the declared 8-byte body length carry real-device buffer-reuse
+    garbage (confirmed non-zero, non-constant across otherwise-identical
+    frames) — outside the declared length, so irrelevant to any correct
+    parser; this always zero-pads there instead of replicating that garbage."""
+    body = bytes([0x03, 0x00, 0x00]) + struct.pack('<I', progress) + bytes([0x0c])
+    msg = CrcMessage.create(6, 0x00, body)
+    serialized = bytes(msg.serialize())
+    return bytes([0x11]) + serialized[:19]
+
+
 # ---- GATT Service ----
 class MeraService(Service):
     """Geberit AquaClean Mera Comfort GATT service.
@@ -404,6 +429,10 @@ class MeraService(Service):
     def __init__(self, mock: "MeraMock"):
         super().__init__(_SVC_UUID, True)
         self._mock = mock
+        mock._gatt_service = self  # back-ref so async tasks (e.g. Phase 9b's
+        # _fw_update_run) can push spontaneous notifications outside the
+        # request/response path, without threading `service` through _dispatch.
+        self._fw_bulk_bytes: dict = {"A1": 0, "A2": 0, "A3": 0, "A4": 0}  # Phase 9b bulk-transfer observability
         self._notify_value = bytes(20)
         self._notify_iface = None         # wired after register() via wire_notify()
         self._notify_a6_iface = None      # wired after register() via wire_notify_a6()
@@ -504,6 +533,24 @@ class MeraService(Service):
         return [self.push_notify, self.push_notify_a6,
                 self.push_notify_a7, self.push_notify_a8][frame_index % 4]
 
+    def _log_write(self, idx: int, raw: bytes) -> None:
+        """Log an incoming write on A1-A4 (idx 0-3, matching write_0..write_3) —
+        Phase 9b: during the firmware-update flash window the app also writes
+        ~290KB of raw (non-proc-framed) binary on these same characteristics
+        (see .claude/rules/ble-protocol.md "Firmware update procedures"). A
+        per-frame hex dump of that is both meaningless (opaque binary) and
+        would flood the log (~14,500 lines for the real transfer size) — log a
+        running byte-count summary instead, only while an update is actually
+        in progress."""
+        if self._mock._fw_update_state == "started":
+            channel = f"A{idx + 1}"
+            self._fw_bulk_bytes[channel] += len(raw)
+            total = self._fw_bulk_bytes[channel]
+            if total // _FW_BULK_LOG_THRESHOLD != (total - len(raw)) // _FW_BULK_LOG_THRESHOLD:
+                self._mock._log("·", f"  {channel}: {total} bulk bytes received (firmware update in progress)")
+            return
+        self._mock._log("←", f"WRITE_{idx} ({len(raw)}B): {raw.hex()}")
+
     async def _handle_request(self, raw: bytes) -> None:
         mock = self._mock
         async with self._request_lock:
@@ -586,7 +633,7 @@ class MeraService(Service):
     @write_0.setter
     def write_0(self, value, options):
         raw = bytes(value)
-        self._mock._log("←", f"WRITE_0 ({len(raw)}B): {raw.hex()}")
+        self._log_write(0, raw)
         asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_WRITE_1_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
@@ -596,7 +643,7 @@ class MeraService(Service):
     @write_1.setter
     def write_1(self, value, options):
         raw = bytes(value)
-        self._mock._log("←", f"WRITE_1 ({len(raw)}B): {raw.hex()}")
+        self._log_write(1, raw)
         asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_WRITE_2_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
@@ -606,7 +653,7 @@ class MeraService(Service):
     @write_2.setter
     def write_2(self, value, options):
         raw = bytes(value)
-        self._mock._log("←", f"WRITE_2 ({len(raw)}B): {raw.hex()}")
+        self._log_write(2, raw)
         asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_WRITE_3_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
@@ -616,7 +663,7 @@ class MeraService(Service):
     @write_3.setter
     def write_3(self, value, options):
         raw = bytes(value)
-        self._mock._log("←", f"WRITE_3 ({len(raw)}B): {raw.hex()}")
+        self._log_write(3, raw)
         asyncio.ensure_future(self._handle_request(raw))
 
     @characteristic(_NOTIFY_A5_UUID, CharFlags.NOTIFY)
@@ -905,6 +952,7 @@ class MeraMock:
         self._connection_gen = 0     # incremented on each new connection; guards stale burst tasks
         self._current_device_path = None  # D-Bus path of the currently connected device
         self._fw_update_state = "idle"  # idle | started | done | rebooting — Phase 9b ctx=0x40 simulation
+        self._gatt_service = None  # wired by MeraService.__init__ — lets async tasks push spontaneous notifications
         self._advert = None          # current _MeraAdvertisement instance
         self._advert_bus = None      # D-Bus connection stored for advert updates
         self._advert_adapter = None  # Adapter stored for advert updates
@@ -1207,13 +1255,13 @@ class MeraMock:
 
     def _proc_fw_update(self, ctx: int, proc: int, args: bytes) -> bytes:
         """Firmware-update proc sequence (Phase 9b) — see .claude/rules/
-        ble-protocol.md "Firmware update procedures (ctx=0x40)". Minimal
-        state machine (idle -> started -> done -> rebooting -> idle) driven
-        by timers, not by the bulk firmware-binary writes the real app also
-        sends on the A1-A4 write characteristics during the flash window —
-        those are tolerated by the generic frame parser (best-effort; see
-        docs/developer/mock-service-requirements.md Phase 9b) but not
-        inspected here."""
+        ble-protocol.md "Firmware update procedures (ctx=0x40)". State
+        machine (idle -> started -> done -> rebooting -> idle) driven by
+        timers, plus spontaneous progress-notify frames on A5 during the busy
+        window (_fw_update_run) and byte-count observability logging for the
+        bulk firmware-binary writes the app also sends on A1-A4 during that
+        same window (MeraService._log_write) — the generic frame parser
+        tolerates that binary without inspecting/validating its content."""
         if ctx == 0x00 and proc == 0x01:
             return b""  # companion heartbeat frame — ACK-only
         if proc == 0x00:                # background keepalive, unrelated to update state
@@ -1221,6 +1269,8 @@ class MeraMock:
         if proc == 0x52:                # StartFirmwareUpdate
             if self._fw_update_state == "idle":
                 self._fw_update_state = "started"
+                if self._gatt_service is not None:
+                    self._gatt_service._fw_bulk_bytes = {"A1": 0, "A2": 0, "A3": 0, "A4": 0}
                 self._log("·", f"Firmware update started (simulated, {_FW_UPDATE_BUSY_SECONDS}s)")
                 asyncio.ensure_future(self._fw_update_run())
             return b""
@@ -1235,7 +1285,13 @@ class MeraMock:
         return b""
 
     async def _fw_update_run(self) -> None:
-        await asyncio.sleep(_FW_UPDATE_BUSY_SECONDS)
+        interval = _FW_UPDATE_BUSY_SECONDS / _FW_UPDATE_PROGRESS_TICKS
+        progress = 0
+        for _ in range(_FW_UPDATE_PROGRESS_TICKS):
+            await asyncio.sleep(interval)
+            progress += _FW_UPDATE_PROGRESS_STEP
+            if self._gatt_service is not None:
+                await self._gatt_service.push_notify(_build_progress_frame(progress))
         self._fw_update_state = "done"
         self._log("·", "Firmware update flash window complete (simulated) — waiting for finalize")
 

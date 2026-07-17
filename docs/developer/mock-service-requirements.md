@@ -1015,24 +1015,47 @@ a parity violation, just nothing to base an Alba equivalent on).** `mera_mock.py
 - `0x40/0x00` returns a fixed synthetic 12-byte keepalive payload; real captures show this
   value fluctuating per call without gating app progression, so an exact match wasn't pursued.
 
-**Deliberately minimal — deferred to a follow-up pass:**
-- **Timers are shortened**, not byte-exact: `_FW_UPDATE_BUSY_SECONDS=20` (real flash window:
-  ~164s) and `_FW_UPDATE_REBOOT_SECONDS=8` (real reboot silence: ~13.3s).
-- **No progress-notify frames** on the A5 channel (real device emits spontaneous
-  `progress:u32-LE` notifications during the flash window; the app doesn't appear to rely on
-  them for the state transition, only on the `0x40/0x53` poll).
-- **No inspection of the ~290KB bulk firmware-binary transfer** the app writes on the A1-A4
-  characteristics during the flash window (not proc-framed). The generic frame parser
-  (`_handle_request`) is expected to tolerate this arbitrary binary without crashing — bytes
-  that happen to parse as a plausible-looking header just produce harmless spurious "unknown
-  proc" responses the app isn't waiting on — but this was reasoned from code inspection, not
-  yet exercised against the real bulk-write traffic pattern on the VM. Watch mock logs during
-  first live test for unexpected volume/errors during the simulated flash window.
-- **No byte-count/progress logging** of that bulk transfer for observability (explicitly
-  deferred at the user's request, to keep the first pass minimal).
+**Follow-up pass (2026-07-17) — implemented:**
+- **Progress-notify frames on A5** — `_build_progress_frame()` + `_fw_update_run()` now emit
+  10 spontaneous notifications during the busy window (message id=6, distinct from proc-
+  response id=5), incrementing by 84 each (reaching 840, matching the real capture's observed
+  final value, compressed into the shortened window). Byte layout verified against the real
+  capture: CRC16 matches exactly for progress=0 and progress=12 (reconstructed independently
+  via `CrcMessage.create(6, 0x00, body)` and compared byte-for-byte against
+  `firmware-update-vom-mac.md`) — only the real device's trailing buffer-reuse garbage bytes
+  (beyond the declared 8-byte body length, therefore outside what any correct parser reads)
+  differ, and this always zero-pads there instead of replicating that garbage.
+- **Byte-count observability logging** for the bulk firmware-binary transfer —
+  `MeraService._log_write()` now suppresses the per-frame hex dump on A1-A4 while
+  `_fw_update_state == "started"` (would otherwise be ~14,500 meaningless hex-dump lines for
+  the real ~290KB transfer) and logs a running total every 8192 bytes per channel instead.
+  Counters reset on every new `StartFirmwareUpdate`.
+- **Bulk-transfer crash-safety** — re-verified via code inspection (not yet exercised live,
+  see caveat below): `_handle_request` only acts on `ft == CONTROL` or `ft == SINGLE`; any
+  other frame type from `_FrameFactory.getFrameTypeFromHeaderByte()` (the expected outcome for
+  most random firmware bytes) falls through as a no-op. Worst case for bytes that do parse as
+  a plausible header is a spurious "unknown proc" response the app isn't waiting on — no
+  unguarded exception path exists.
+
+**Still deliberately not done:**
+- **Timers remain shortened**, not byte-exact: `_FW_UPDATE_BUSY_SECONDS=20` (real flash
+  window: ~164s) and `_FW_UPDATE_REBOOT_SECONDS=8` (real reboot silence: ~13.3s) — a
+  practicality choice for repeated test iterations, not a gap.
 - **No checksum/content validation** of the transferred firmware image — not needed, since
   completion is signalled by the `0x40/0x53` poll, not by the transfer itself.
 
-If any of the above turns out to matter in practice (e.g. the app times out waiting for a
-progress notification, or the bulk write does crash the parser), promote it out of this list
-and implement it.
+**Important caveat (2026-07-17 live test):** none of the busy-window behavior above —
+progress-notify frames, bulk-byte logging, or the bulk-transfer tolerance — has actually been
+exercised live yet. The first live test against a freshly-installed Geberit Home App with the
+RS28.0 profile never got past the `0x40/0x00`/`0x00/0x01` background-poll loop: the app never
+sent `0x40/0x52` (StartFirmwareUpdate) at all, even after tapping "Update Now" and waiting ~9
+minutes through repeated BLE reconnects. The mock's `0x40/0x00` response is well-formed and
+cleanly ACKed every time (verified from the mock's own log), so this isn't a framing bug — the
+leading theory is that the app is waiting on some readiness signal (the real device's
+`0x40/0x00` payload varies call-to-call; the mock's `_FW_UPDATE_KEEPALIVE` is static) or on a
+GATT characteristic outside the proc-frame protocol entirely (e.g. an unidentified
+`READ_BLOB_REQ` on handle `0x0020` spotted in the real capture during this exact window).
+Root-causing this needs a fresh nRF52840 capture of the Geberit Home App talking to the mock
+itself (not just the existing real-device capture) — pending, needs the user's sniffing
+hardware. Until that's resolved, the busy-window code above is implemented and byte-verified
+in isolation, but unconfirmed end-to-end.
