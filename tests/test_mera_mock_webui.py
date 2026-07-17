@@ -164,9 +164,12 @@ async def test_write_profile_setting_persists():
 
 async def test_firmware_profile_switch():
     """The webui firmware-profile selector (docs/developer/mock-service-
-    requirements.md §6) flips only components 1+11 (the two that actually
-    changed in the real RS28.0->RS30.0 capture) and leaves every other
-    component untouched, and the choice survives a mock restart."""
+    requirements.md §6) flips every component uniformly to RS28.0 TS199
+    (2026-07-17: changed from only components 1+11 — see
+    docs/developer/firmware-version.md "Consolidated summary" for why
+    per-component heterogeneous real values reliably trigger the app's
+    blocking force-update screen, and uniform values don't), and the choice
+    survives a mock restart."""
     tmp = tempfile.mkdtemp()
     try:
         mock = _make_mock(tmp)
@@ -179,8 +182,8 @@ async def test_firmware_profile_switch():
             assert r.status == 200
             assert mock._current_firmware_profile() == "rs28"
             assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
-            assert mock._FW_COMPONENT_VERSIONS[11] == (0x30, 0x37, 0x16)
-            assert mock._FW_COMPONENT_VERSIONS[3] == (0x30, 0x38, 0x1F)  # unchanged
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)
+            assert mock._FW_COMPONENT_VERSIONS[3] == (0x32, 0x38, 0xC7)  # now also uniform
 
             r2 = await client.post("/settings/firmware-profile", json={"value": "not-a-real-profile"})
             assert r2.status == 400
