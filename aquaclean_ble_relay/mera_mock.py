@@ -1272,7 +1272,7 @@ class MeraMock:
                 if self._gatt_service is not None:
                     self._gatt_service._fw_bulk_bytes = {"A1": 0, "A2": 0, "A3": 0, "A4": 0}
                 self._log("·", f"Firmware update started (simulated, {_FW_UPDATE_BUSY_SECONDS}s)")
-                asyncio.ensure_future(self._fw_update_run())
+                asyncio.ensure_future(self._fw_update_run(auto_finalize=False))
             return b""
         if proc == 0x53:                # poll: 05=busy, 06=done
             return bytes([0x06 if self._fw_update_state == "done" else 0x05])
@@ -1284,7 +1284,12 @@ class MeraMock:
         self._log("·", f"  unknown ctx=0x40 proc 0x{proc:02X} — returning empty OK")
         return b""
 
-    async def _fw_update_run(self) -> None:
+    async def _fw_update_run(self, auto_finalize: bool = False) -> None:
+        """auto_finalize=True for the webui manual trigger — that flow has no
+        real app cooperating to send the ctx=0x40/proc=0x04 finalize ping, so
+        it would otherwise sit at "done" forever. The real proc=0x52 path
+        keeps auto_finalize=False, matching real protocol fidelity (finalize
+        only on the app's own follow-up ping)."""
         interval = _FW_UPDATE_BUSY_SECONDS / _FW_UPDATE_PROGRESS_TICKS
         progress = 0
         for _ in range(_FW_UPDATE_PROGRESS_TICKS):
@@ -1294,6 +1299,9 @@ class MeraMock:
                 await self._gatt_service.push_notify(_build_progress_frame(progress))
         self._fw_update_state = "done"
         self._log("·", "Firmware update flash window complete (simulated) — waiting for finalize")
+        if auto_finalize:
+            self._fw_update_state = "rebooting"  # guard against a real proc=0x04 double-scheduling finalize
+            asyncio.ensure_future(self._fw_update_finalize())
 
     async def _fw_update_finalize(self) -> None:
         self._log("·", "Firmware update finalize — simulating device reboot")
@@ -1652,7 +1660,7 @@ class MeraMock:
         if self._gatt_service is not None:
             self._gatt_service._fw_bulk_bytes = {"A1": 0, "A2": 0, "A3": 0, "A4": 0}
         self._log("·", f"Firmware update started (webui-triggered, simulated, {_FW_UPDATE_BUSY_SECONDS}s)")
-        asyncio.ensure_future(self._fw_update_run())
+        asyncio.ensure_future(self._fw_update_run(auto_finalize=True))
         return web.json_response({"ok": True})
 
     async def _handle_events(self, request):
