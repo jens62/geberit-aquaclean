@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.89.0b1"
+_MOCK_VERSION = "1.90.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -185,19 +185,20 @@ _FW_COMPONENT_VERSIONS = {
     15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
 }
 
-# Incremental test (2026-07-17) — change ONLY component 1 to RS28.0 TS199, leaving every
-# other component (including 11) at the current real post-update baseline. Isolates a
-# single variable: does changing just one component out of 13 already produce blocking,
-# or does the app tolerate a single mismatch? Earlier variants tried: (a) real pre-update
-# snapshot — components 1+11 both lowered, rest real (reliably BLOCKS with the current app
-# version — that's a proven-real, working-on-real-hardware combination per the July 14
-# capture, yet blocks against the mock); (b) uniform RS28.0 across all 13 (avoids blocking,
-# but the app then shows "current" with a blank version display instead of "needs update" —
-# see docs/developer/firmware-version.md "Consolidated summary" and the resolution/blank-
-# version entries for the full investigation). Neither reproduces the real device's actual
-# behavior (proper version string shown, genuine working update flow) — this step isolates
-# where exactly the divergence starts.
-_FW_COMPONENT_VERSIONS_RS28 = {**_FW_COMPONENT_VERSIONS, 1: (0x32, 0x38, 0xC7)}
+# Incremental test (2026-07-17), reversed direction — start from the CONFIRMED-WORKING
+# uniform-RS28.0-everywhere baseline (dismissible Fehler, stable 9+ minute connections,
+# confirmed twice) and revert ONLY component 11 back to its real value, leaving the other
+# 12 components (including 1) at the uniform RS28.0 TS199 that's known to work. Component
+# 11 chosen because it's the other component that actually changed in the real RS28->RS30
+# update (alongside 1) — a meaningful choice, not arbitrary. Isolates: does moving a single
+# component away from uniformity, in this direction, already break the working state?
+# (Earlier attempt moved 12 components away from uniformity at once while "changing" only
+# component 1 — not actually a single-variable test; see docs/developer/firmware-version.md
+# "Consolidated summary" for that and the other variants tried.)
+_FW_COMPONENT_VERSIONS_RS28 = {
+    **{cid: (0x32, 0x38, 0xC7) for cid in _FW_COMPONENT_VERSIONS},
+    11: _FW_COMPONENT_VERSIONS[11],
+}
 
 # Canonical firmware profiles selectable via the webui — keyed by the value the
 # generic <select> control (mock-controls.js) writes/reads.
