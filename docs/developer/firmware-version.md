@@ -680,6 +680,27 @@ having silently failed.
   all (attempts 1/2 in the pre-fix test on 2026-07-17 12:27 were clean, stable, 60-80s
   sessions with zero stalls or pairing attempts, and still never sent it).
 
+### Consolidated summary (2026-07-17) — every "the mock causes this" theory tried so far, and why each was ruled out
+
+Each of these was proposed with genuine supporting evidence at the time, then tested directly
+against the actual periodic-disconnect pattern (~35–90s, `Remote User Terminated`) and/or
+`0x40/0x52` never being sent — not just plausibility-argued away:
+
+| # | Theory | Evidence that made it plausible | Test performed | Result |
+|---|--------|----------------------------------|-----------------|--------|
+| 1 | BlueZ adapter desync (Trap 16) | `bluetoothctl show` reported the controller unavailable at one point | Checked `dmesg` for the known kernel signature (`Unexpected advertising set terminated event`) around the actual disconnect timestamps | **Ruled out** — no kernel event correlated; the "unavailable" report was a query-syntax bug (`show hci0` vs. the real MAC), not a real desync |
+| 2 | Battery plugin's spontaneous SMP Security Request | Confirmed via pcapng: mock's own BlueZ initiates an unsolicited Security Request, app cooperates, mock rejects its own request — 7 times in one session, suspiciously matching the disconnect count | Fixed via systemd override (`--noplugin=battery`); re-tested with two fresh sessions | **Ruled out** — SMP cycle completely eliminated, but the disconnect pattern and `0x40/0x52` were both unaffected |
+| 3 | GATT-discovery stall (CCCD not subscribed within 8s) | Reproduced: some reconnects stall mid-discovery and time out | Compared against the *clean* connections in the same test | **Ruled out** — the clean, stall-free connections also never sent `0x40/0x52` and also eventually disconnected on the same cadence |
+| 4 | Dead connection-interval-request code | `_request_short_ci()` silently failed on every connection (confirmed: no such D-Bus method exists on `Device1`) | Checked actual negotiated parameters (30ms/0/1000ms) against Apple's Bluetooth Accessory Design Guidelines compliance formulas | **Ruled out** — parameters already compliant despite the request always having failed; removed as dead code regardless |
+
+**Current status**: no confirmed cause for either the periodic disconnect or the fact that
+`0x40/0x52` never gets sent, on the mock side. Every mock-side mechanism found and tested has
+been refuted. Next step: determine whether this is even a mock-specific problem at all, via a
+longer real-device capture (sniffer started before connecting, then the app left idling
+normally on the device's detail screen for 5+ minutes) — if the real device shows the same
+disconnect pattern under equivalent idle conditions, this reframes as normal Geberit Home App
+behavior rather than a mock defect.
+
 ---
 
 ## Open questions
