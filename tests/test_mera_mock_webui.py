@@ -164,12 +164,12 @@ async def test_write_profile_setting_persists():
 
 async def test_firmware_profile_switch():
     """The webui firmware-profile selector (docs/developer/mock-service-
-    requirements.md §6) flips every component uniformly to RS28.0 TS199
-    (2026-07-17: changed from only components 1+11 — see
-    docs/developer/firmware-version.md "Consolidated summary" for why
-    per-component heterogeneous real values reliably trigger the app's
-    blocking force-update screen, and uniform values don't), and the choice
-    survives a mock restart."""
+    requirements.md §6). 2026-07-17: changed to an incremental single-variable
+    test — flips ONLY component 1 to RS28.0 TS199, leaving every other
+    component (including 11) at the current real baseline — isolating whether
+    a single mismatched component alone triggers the app's blocking
+    force-update screen. See docs/developer/firmware-version.md "Consolidated
+    summary" for the full investigation and the two earlier variants tried."""
     tmp = tempfile.mkdtemp()
     try:
         mock = _make_mock(tmp)
@@ -182,8 +182,8 @@ async def test_firmware_profile_switch():
             assert r.status == 200
             assert mock._current_firmware_profile() == "rs28"
             assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
-            assert mock._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)
-            assert mock._FW_COMPONENT_VERSIONS[3] == (0x32, 0x38, 0xC7)  # now also uniform
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x30, 0x38, 0x17)  # unchanged (real baseline)
+            assert mock._FW_COMPONENT_VERSIONS[3] == (0x30, 0x38, 0x1F)   # unchanged (real baseline)
 
             r2 = await client.post("/settings/firmware-profile", json={"value": "not-a-real-profile"})
             assert r2.status == 400

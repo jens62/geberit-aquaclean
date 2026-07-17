@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.88.0b1"
+_MOCK_VERSION = "1.89.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -185,18 +185,19 @@ _FW_COMPONENT_VERSIONS = {
     15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
 }
 
-# Uniform RS28.0 TS199 across every component — NOT the real pre-update snapshot
-# (which only changed components 1+11, real values otherwise; see git history for
-# that version if ever needed again). Changed 2026-07-17: per-component heterogeneous
-# real values (RS08/RS09/RS11/... on sub-nodes) reliably produce the Geberit Home
-# App's BLOCKING force-update screen with the current app version — confirmed via
-# a live test against mock v1.63.0b1 (tools/mock-geberit-mera.py, commit ec1f79b),
-# which reports RS30.0 TS206 uniformly for all components and reliably produces the
-# dismissible "Fehler" (OK, continue working) instead. This profile mirrors that
-# uniformity, at RS28.0 TS199, testing whether uniformity — not the specific value —
-# is what the app's decision logic actually keys on. See docs/developer/
-# firmware-version.md "Consolidated summary" for the full investigation.
-_FW_COMPONENT_VERSIONS_RS28 = {cid: (0x32, 0x38, 0xC7) for cid in _FW_COMPONENT_VERSIONS}
+# Incremental test (2026-07-17) — change ONLY component 1 to RS28.0 TS199, leaving every
+# other component (including 11) at the current real post-update baseline. Isolates a
+# single variable: does changing just one component out of 13 already produce blocking,
+# or does the app tolerate a single mismatch? Earlier variants tried: (a) real pre-update
+# snapshot — components 1+11 both lowered, rest real (reliably BLOCKS with the current app
+# version — that's a proven-real, working-on-real-hardware combination per the July 14
+# capture, yet blocks against the mock); (b) uniform RS28.0 across all 13 (avoids blocking,
+# but the app then shows "current" with a blank version display instead of "needs update" —
+# see docs/developer/firmware-version.md "Consolidated summary" and the resolution/blank-
+# version entries for the full investigation). Neither reproduces the real device's actual
+# behavior (proper version string shown, genuine working update flow) — this step isolates
+# where exactly the divergence starts.
+_FW_COMPONENT_VERSIONS_RS28 = {**_FW_COMPONENT_VERSIONS, 1: (0x32, 0x38, 0xC7)}
 
 # Canonical firmware profiles selectable via the webui — keyed by the value the
 # generic <select> control (mock-controls.js) writes/reads.
