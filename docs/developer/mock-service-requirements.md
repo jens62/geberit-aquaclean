@@ -544,6 +544,24 @@ manual commands exactly; if systemd's `bluetoothd` is already holding the D-Bus 
     Every other code is a silent no-op: the real app or remote control can send them to the mock
     and nothing happens at all — not even a log line distinguishing "received but ignored" from
     "not received."
+- **Webui only shows a subset of stored state, not everything the mock tracks — found
+  2026-07-17, tracked as Phase 11.** Requested for both Alba and Mera (parity).
+  - **Alba**: `_Ble20AppLayer._DEFAULT_STORE` holds all 79 DpIds in `self._store`, but
+    `_settings_table_data()` only renders `self._SETTINGS_DPIDS` (14 keys — Nvm settings +
+    identity + firmware). The other ~65 DpIds (shower/descaling status, statistics, error
+    flags, commands, etc.) are fully live in memory but never surfaced in the webui at all.
+    Fix: add a third, read-only "Device State" section listing everything in `self._store`
+    not already in `_SETTINGS_DPIDS`. Needs a full name table extracted from
+    `_DEFAULT_STORE`'s inline comments (only the 14 settings DpIds have structured names
+    today, via `_DPID_NAMES`) — the rest currently only have a trailing `# COMMENT`, not a
+    machine-readable label. Open question: flat list sorted by DpId, or grouped by category
+    (shower / descaling / statistics / errors) mirroring `_DEFAULT_STORE`'s own comment
+    groupings — decide when implementing.
+  - **Mera**: analogous gap — `self._SPL_MERA_VALUES`, `self._PER_NODE_PROFILE_SETTINGS`,
+    `self._ACTIVE_COMMON_SETTINGS`, `self._registration_level`, and other live state are
+    never shown in the webui's three existing sections (Profile Settings, Common Settings,
+    Firmware Versions). Same fix shape: a read-only "Device State" section covering
+    everything not already in an existing section.
 
 ## 10. Decisions log
 
