@@ -661,16 +661,24 @@ the periodic disconnects or the core "update never starts" mystery. Both the Blu
 theory (Trap 16) and this battery-plugin theory are now ruled out as explanations for that
 specific pattern — it remains unsolved.
 
+**Update — handle `0x001B` error resolved**: a later, more thorough sweep of a fresh capture
+(post battery-plugin-fix) found **zero** `Insufficient Authentication (0x05)` errors anywhere —
+every `ATT: Error Response` in that capture is `Attribute Not Found (0x0a)`, which is normal,
+expected GATT-discovery probing. So the `0x001B` auth error was entirely the battery plugin's
+own doing, not a separate mock-side issue — fully resolved, not just "worth re-checking".
+
+**Also investigated and ruled out**: whether the mock's dead connection-interval-request code
+(`_request_short_ci()`, removed 2026-07-17) was contributing — it wasn't; see
+`docs/developer/mock-geberit-mera.md` § "Connection-interval request was always dead code" for
+the full writeup. Our actual negotiated connection parameters (30ms/0/1000ms) already satisfy
+Apple's Bluetooth Accessory Design Guidelines compliance formulas, despite that request always
+having silently failed.
+
 **Not yet answered — back to an open question, no remaining hypothesis:**
 - Why the app still disconnects every ~40–90s with the battery-plugin cycle eliminated.
 - Why `0x40/0x52` never gets sent even during connections with no observed protocol error at
   all (attempts 1/2 in the pre-fix test on 2026-07-17 12:27 were clean, stable, 60-80s
   sessions with zero stalls or pairing attempts, and still never sent it).
-- The `ATT Error Resp ... error=0x05 (Insufficient Authentication)` on handle `0x001B` (Battery
-  Level, near the Battery Service in the GATT table) still occurs on every connection even with
-  the battery plugin disabled — worth re-checking whether it's now coming from the app's own
-  attempt to read the mock's Battery Level characteristic directly (unrelated to BlueZ's
-  plugin), and whether that's connected to anything else.
 
 ---
 

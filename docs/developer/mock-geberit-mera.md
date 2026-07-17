@@ -203,6 +203,40 @@ discoverable, just not pairable through this path anymore. If RC pairing testing
 needed again, it needs a way to scope pairing to just the RC's connection, not a blanket
 adapter-wide `pairable=on` — don't reintroduce this a third time without solving that.
 
+### Connection-interval request was always dead code — removed 2026-07-17
+
+`_request_short_ci()` tried to request a shorter BLE connection interval (8.75–10ms) from
+iOS right after CCCD-A5 subscription, via `org.bluez.Device1.call_update_connection_parameters()`.
+Intent: at the default ~30ms connection interval, the largest multi-frame proc response
+(`GetDeviceIdentification`, 6 frames) doesn't fully arrive within iOS's ~54ms FlowControl ACK
+window, causing a partial ACK and one retransmit round — visible in every mock log as
+`FlowControl: bitmask=0x0f (expected ...) — retransmit #1 of frame(s) [...]`. A faster CI
+would have delivered all frames in time and avoided that.
+
+**Confirmed 2026-07-17: this call has silently failed on every single connection since it was
+written.** `org.bluez.Device1` has never exposed `UpdateConnectionParameters`/`LEConnParamUpdate`
+in its documented D-Bus API — checked against BlueZ's own `device-api` docs (only `Connect`,
+`Disconnect`, `ConnectProfile`, `DisconnectProfile`, `Pair`, `CancelPairing` exist). The
+`try/except` around the call masked an `AttributeError` on every attempt; the mock has always
+run at whatever default connection interval BlueZ/iOS negotiate (observed: 30ms, 0 latency,
+1000ms supervision timeout — which do satisfy Apple's Bluetooth Accessory Design Guidelines
+compliance formulas, for what it's worth).
+
+**Investigated as part of the 2026-07-17 firmware-update-mystery investigation** (see
+`docs/developer/firmware-version.md` § "Investigation update") because iOS is separately known
+to disconnect BLE peripherals over non-compliant connection parameters — a real, well-documented
+class of issue (Apple Developer Forums, multiple hardware-vendor reports). Checked our actual
+negotiated values against Apple's published formulas from the Bluetooth Accessory Design
+Guidelines (§3.6) — all pass. So this dead code, while real and now removed, was **not** the
+cause of the periodic ~35–90s app-initiated disconnects chased that day; that mystery remains
+open. The retransmit-then-succeed pattern it would have prevented is cosmetic (single retry,
+always resolves) — not shown to cause any actual failure on its own.
+
+**Removed** in `mera_mock.py` v1.87.0b1 rather than fixed, since there's no evidence a working
+D-Bus equivalent exists for a BlueZ peripheral to request connection parameters — achieving the
+original intent (if ever revisited) would need a different mechanism entirely (e.g. kernel-level
+`btmgmt`/debugfs LE connection parameter defaults, not a per-device D-Bus call).
+
 ---
 
 ## Known issues

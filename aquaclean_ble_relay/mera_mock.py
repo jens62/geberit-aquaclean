@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.86.0b1"
+_MOCK_VERSION = "1.87.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -1439,28 +1439,6 @@ class MeraMock:
 
     # ---- BLE connection bursts ----
 
-    async def _request_short_ci(self) -> None:
-        """Request a shorter BLE connection interval from iOS via BlueZ UpdateConnectionParameters.
-
-        Called right after iOS enables A5 CCCD.  The new CI (8.75-10ms) takes effect
-        within ~200ms (6 x 30ms CEs) — well before the first proc request (~480ms later).
-
-        With CI=10ms and 12ms inter-frame delay, all 4 CONS frames of the largest
-        proc response (proc 0x82, 82-byte payload) arrive within iOS's ~54ms FlowControl
-        window, instead of running past it when CI=30ms.
-        """
-        if self._bus is None or self._current_device_path is None:
-            return
-        try:
-            dev_intro = await self._bus.introspect("org.bluez", self._current_device_path)
-            dev_proxy = self._bus.get_proxy_object("org.bluez", self._current_device_path, dev_intro)
-            dev_iface = dev_proxy.get_interface("org.bluez.Device1")
-            # minInterval=7 (8.75ms), maxInterval=8 (10ms), latency=0, supervision_timeout=200 (2s)
-            await dev_iface.call_update_connection_parameters(7, 8, 0, 200)
-            self._log("·", f"Requested CI=8.75-10ms — {self._current_device_path}")
-        except Exception as e:
-            self._log("·", f"UpdateConnectionParameters: {e}")
-
     async def _send_info_frame_burst(self, service: MeraService, gen: int) -> None:
         """Send InfoFrame burst on A5 (for bridge) and on A6 (for iOS ConnectionState.Ready).
 
@@ -1488,8 +1466,15 @@ class MeraMock:
             return
         if not self._connected or self._connection_gen != gen:
             return
-        # Request shorter CI so multi-frame responses arrive within iOS's FlowControl window
-        asyncio.ensure_future(self._request_short_ci())
+        # A connection-interval-shortening request used to be attempted here (via
+        # org.bluez.Device1.UpdateConnectionParameters) to get multi-frame proc
+        # responses delivered within iOS's ~54ms FlowControl ACK window at the
+        # default ~30ms CI. Removed 2026-07-17: that D-Bus method has never
+        # existed on Device1 (confirmed against BlueZ's documented API), so this
+        # silently failed on every single connection since it was written — see
+        # docs/developer/mock-geberit-mera.md § "Connection-interval request was
+        # always dead code" for the full investigation and why it wasn't the
+        # actual cause of the periodic-disconnect mystery.
         self._log("·", f"Attempt {gen}: sending A5 InfoFrame burst (10x)")
         service._a6_burst_done.clear()   # block A5 responses during both bursts
         for _ in range(10):
