@@ -580,6 +580,39 @@ survives long enough to fire the BLE write. **Not yet answered: why** the mock's
 gets bounced this often in this state when the real device's doesn't — this is the next thread
 to pull, in preference to the payload-content angle.
 
+### New finding (2026-07-17) — the Geberit Home App attempts real BLE pairing (SMP) against the mock, twice per session, and is rejected
+
+Confirmed via `btmon -r` on a live capture (`mock-btmon_2026-07-17_12-51.btsnoop`): the app's
+device (an iPad, confirmed by cross-referencing the mock's own `BLE client connected:
+66:F2:AC:84:E1:6D` log line against the capture) sends an SMP Pairing Request twice during one
+session (at t=13.5s and t=61.5s), requesting Bonding, Secure Connections, EncKey/IdKey/LinkKey
+distribution. The mock's BlueZ stack rejects both with `SMP: Pairing Failed (0x05) — Pairing
+not supported`, since this protocol is deliberately unencrypted at the BLE layer (PIN checks
+happen at the application layer via proc `0x44`/`0x64`, never real SMP pairing — see
+`memory/ble-link-layer-security.md`).
+
+**Caveat — checked and ruled out as a red herring in most other captures**: `SMP: Pairing
+Failed` events appear in nearly every historical btsnoop capture on the mock VM going back to
+June 13 (Alba probes, HACS zeroconf tests, unrelated old Mera runs) — but cross-checking one of
+those (`alba-ble20-probe-2.14.1_btmon__2026-06-14_10-01.btsnoop`) shows the failing address
+there is `88:66:5A:EF:F7:BC`, a **public** Apple MAC (typical of an accessory like AirPods/
+Watch attempting its own unrelated pairing) — not a resolvable random address, and not tied to
+any GATT session in that capture. So the *presence* of `Pairing Failed` events alone is not
+meaningful; only this session's specific case is confirmed as the actual app/iPad, via the
+direct address cross-reference above.
+
+**Not yet answered:**
+- What in the app's flow triggers it to attempt pairing at those two specific moments —
+  possibly in response to the `ATT Error Resp ... error=0x05 (Insufficient Authentication)`
+  seen on handle `0x001B` on every connection (real hypothesis, not yet confirmed) — attempting
+  to satisfy an authentication requirement before retrying a characteristic read.
+- Handle `0x001B` sits right after the Battery Service declaration in the mock's GATT table —
+  worth checking whether `BatteryService`'s characteristic in `mera_mock.py` is incorrectly
+  requiring authenticated/encrypted access when it shouldn't be.
+- Whether the pairing rejection has any downstream effect on the app's behavior (e.g.
+  contributing to the periodic disconnect pattern, or the "needs update" fallback), or whether
+  the app simply shrugs it off and moves on.
+
 ---
 
 ## Open questions
