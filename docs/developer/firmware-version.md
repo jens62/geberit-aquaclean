@@ -743,6 +743,27 @@ design ("more would only confuse the user," per direct observation). Still open:
 string ever renders as blank `"--"` on a real device under any circumstance, or whether blank is
 mock-specific — not yet confirmed either way.
 
+**Re-flagged (2026-07-17), first noted June 2026 — inconsistent firmware-version reporting
+correlates with the app finding two "unconfigured" devices instead of one.** User-reported
+recurring observation, re-raised during the incremental single-component test (component 1
+changed, all others left at the real baseline — i.e. deliberately inconsistent right now).
+
+There is a **prior, different explanation already on record** for a superficially similar
+symptom, from the large prompting-log transcript (`local-assets/claude-prompting-et-al_mera-mock.txt`,
+June): *"Two unconfigured devices before bluetoothd restart, one after — that means iOS was
+seeing two distinct BLE advertisers. The most likely cause: a previous mock run left a stale BLE
+advertisement registered in BlueZ."* That explanation is about **stale advertisements** left over
+from a prior mock run — entirely independent of what firmware-version *data* is being reported.
+**Not yet confirmed whether today's re-occurrence is the same stale-advertisement mechanism
+recurring coincidentally alongside firmware-version testing, or a genuinely new, data-driven
+mechanism where inconsistent per-component version data itself causes the app to perceive two
+devices** (e.g. if the app fingerprints/deduplicates discovered devices partly using reported
+firmware-version data, an inconsistent read within one discovery session could plausibly produce
+two different fingerprints for the same physical device). Needs a clean, controlled check:
+whether "two unconfigured devices" appears specifically correlated with inconsistent version
+data across repeated tests, independent of any stale-advertisement conditions (fresh mock
+restart, no prior leftover state) — not yet done.
+
 ---
 
 ## Open questions
