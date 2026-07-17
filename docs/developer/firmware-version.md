@@ -580,38 +580,97 @@ survives long enough to fire the BLE write. **Not yet answered: why** the mock's
 gets bounced this often in this state when the real device's doesn't — this is the next thread
 to pull, in preference to the payload-content angle.
 
-### New finding (2026-07-17) — the Geberit Home App attempts real BLE pairing (SMP) against the mock, twice per session, and is rejected
+### New finding (2026-07-17) — the mock itself spontaneously initiates BLE pairing (SMP), the app cooperates, and the mock rejects its own request — possibly the actual cause of the periodic disconnects
 
-Confirmed via `btmon -r` on a live capture (`mock-btmon_2026-07-17_12-51.btsnoop`): the app's
-device (an iPad, confirmed by cross-referencing the mock's own `BLE client connected:
-66:F2:AC:84:E1:6D` log line against the capture) sends an SMP Pairing Request twice during one
-session (at t=13.5s and t=61.5s), requesting Bonding, Secure Connections, EncKey/IdKey/LinkKey
-distribution. The mock's BlueZ stack rejects both with `SMP: Pairing Failed (0x05) — Pairing
-not supported`, since this protocol is deliberately unencrypted at the BLE layer (PIN checks
-happen at the application layer via proc `0x44`/`0x64`, never real SMP pairing — see
-`memory/ble-link-layer-security.md`).
+**Corrected direction (initial read of a partial `btmon` excerpt got this backwards — see
+below):** confirmed via `tshark -Y btsmp` on the existing nRF52840 capture
+(`onboarding-and-firmware-update-against-mera-mock-no-success.pcapng`), the full three-message
+sequence is:
 
-**Caveat — checked and ruled out as a red herring in most other captures**: `SMP: Pairing
+```
+Peripheral (mock) → Central (app):  SMP Security Request  (AuthReq: Bonding, MITM, SecureConnection)
+Central (app)     → Peripheral:     SMP Pairing Request    (app cooperating: LTK/IRK/Linkkey both directions)
+Peripheral (mock) → Central:        SMP Pairing Failed — Pairing Not Supported
+```
+
+**The mock/BlueZ initiates this, unsolicited — the app is just cooperating with what the mock
+itself demanded, then getting rejected by the same side that asked.** This is deliberately
+unencrypted-at-the-BLE-layer protocol (PIN checks happen at the application layer via proc
+`0x44`/`0x64`, never real SMP pairing — see `memory/ble-link-layer-security.md`), so the mock
+has no business sending a Security Request at all.
+
+**Frequency and timing — the actual reason this looks important:** happens **7 times** across
+one ~6.5-minute capture, at t=34.9s, 145.8s, 216.2s, 263.7s, 311.2s, 347.0s, 394.6s — roughly
+every 40–90s. That count and cadence is suspiciously close to the 7 app-initiated
+"Remote User Terminated" disconnects found earlier in the same investigation (§ above). Working
+hypothesis: the mock spontaneously demands security, the app cooperates, the demand is
+immediately rejected by the same side that made it, and the app reasonably gives up on the
+connection shortly after — this could be the actual mechanism behind the periodic disconnect
+pattern chased earlier via BlueZ-desync/GATT-discovery-stall theories (both of which were ruled
+out as insufficient explanations on their own).
+
+**Confirmed NOT caused by an explicit per-characteristic encryption flag**: grepped every
+`@characteristic(...)` declaration in `mera_mock.py` — all use plain `READ` /
+`WRITE_WITHOUT_RESPONSE` / `NOTIFY`; none use `ENCRYPT_READ`/`ENCRYPT_WRITE`/
+`ENCRYPT_AUTHENTICATED_*` (bluez_peripheral does support these flags — checked
+`bluez_peripheral/gatt/characteristic.py` on the mock VM, confirming the flag values exist and
+aren't being set anywhere in our code). So the Security Request isn't triggered by anything
+explicit in the mock's own GATT declarations — it's coming from BlueZ or `bluez_peripheral`
+itself, root cause not yet found.
+
+**Caveat — checked and ruled out as a red herring in most *other* captures**: `SMP: Pairing
 Failed` events appear in nearly every historical btsnoop capture on the mock VM going back to
 June 13 (Alba probes, HACS zeroconf tests, unrelated old Mera runs) — but cross-checking one of
 those (`alba-ble20-probe-2.14.1_btmon__2026-06-14_10-01.btsnoop`) shows the failing address
 there is `88:66:5A:EF:F7:BC`, a **public** Apple MAC (typical of an accessory like AirPods/
-Watch attempting its own unrelated pairing) — not a resolvable random address, and not tied to
-any GATT session in that capture. So the *presence* of `Pairing Failed` events alone is not
-meaningful; only this session's specific case is confirmed as the actual app/iPad, via the
-direct address cross-reference above.
+Watch attempting its own unrelated pairing), not tied to any GATT session in that capture. This
+specific session's case is confirmed as the actual mock↔app exchange via direct cross-reference
+(the app's address, `66:F2:AC:84:E1:6D`, matches the mock's own `BLE client connected:` log
+line for that session) — most other occurrences of this event type are unrelated ambient noise.
 
-**Not yet answered:**
-- What in the app's flow triggers it to attempt pairing at those two specific moments —
-  possibly in response to the `ATT Error Resp ... error=0x05 (Insufficient Authentication)`
-  seen on handle `0x001B` on every connection (real hypothesis, not yet confirmed) — attempting
-  to satisfy an authentication requirement before retrying a characteristic read.
-- Handle `0x001B` sits right after the Battery Service declaration in the mock's GATT table —
-  worth checking whether `BatteryService`'s characteristic in `mera_mock.py` is incorrectly
-  requiring authenticated/encrypted access when it shouldn't be.
-- Whether the pairing rejection has any downstream effect on the app's behavior (e.g.
-  contributing to the periodic disconnect pattern, or the "needs update" fallback), or whether
-  the app simply shrugs it off and moves on.
+**Root cause found and fixed (2026-07-17, same day) — but it wasn't the disconnect cause.**
+`bluetoothd` on anneubuntu-studio was running as the plain systemd default
+(`/usr/libexec/bluetooth/bluetoothd`, no arguments) for this entire investigation — every
+`systemctl restart bluetooth` (done repeatedly today for the Trap 16 fixes) silently ran with
+BlueZ's built-in **battery plugin** active. That plugin acts as its own GATT *client*, reading
+Battery Level from the connected iPad immediately on connect; iOS rejects that read requiring
+authentication; BlueZ escalates via the spontaneous Security Request found above; rejected
+(`pairable=off`). This exact mechanism was already documented in
+`docs/developer/mock-geberit-mera.md` § "Battery plugin interaction" from much earlier work —
+the fix (`--noplugin=battery`) had just never been carried into the systemd-managed
+`bluetooth.service`, only ever applied when launching a manual/custom `bluetoothd`. Also found:
+the *previous* "not necessary" verdict on running a separate custom BlueZ 5.77 `bluetoothd`
+was itself correct but incomplete — `bluetoothd --version` reports 5.77 while `dpkg -l bluez`
+still claims 5.72, meaning the custom-built 5.77 binary was installed directly over the
+system's binary path at some point, making a *second* manually-launched instance redundant —
+but `--noplugin=battery` was a separate runtime flag bundled into that same old recommendation,
+and got silently dropped along with the "redundant binary" part instead of being carried into
+the systemd service definition.
+
+**Fix applied**: systemd drop-in override (`/etc/systemd/system/bluetooth.service.d/
+override.conf`) forcing `ExecStart=/usr/libexec/bluetooth/bluetoothd --noplugin=battery`,
+confirmed via `ps aux` after `daemon-reload` + `restart bluetooth`.
+
+**Verified via two fresh test sessions post-fix** (`mock-btmon_2026-07-17_14-54.btsnoop` /
+`_14-58.btsnoop`): zero SMP events (`Security Request`/`Pairing Request`/`Pairing Failed`) in
+either — the mechanism is fully eliminated. **But**: the periodic disconnect pattern is
+*unchanged* — still every ~40–90s (64s/42s in one session, 75s/59s in the other) — and
+`0x40/0x52` (StartFirmwareUpdate) still never gets sent, 0 occurrences in either session. So
+the battery-plugin/SMP-pairing cycle, while a real and now-fixed bug, was **not** the cause of
+the periodic disconnects or the core "update never starts" mystery. Both the BlueZ-desync
+theory (Trap 16) and this battery-plugin theory are now ruled out as explanations for that
+specific pattern — it remains unsolved.
+
+**Not yet answered — back to an open question, no remaining hypothesis:**
+- Why the app still disconnects every ~40–90s with the battery-plugin cycle eliminated.
+- Why `0x40/0x52` never gets sent even during connections with no observed protocol error at
+  all (attempts 1/2 in the pre-fix test on 2026-07-17 12:27 were clean, stable, 60-80s
+  sessions with zero stalls or pairing attempts, and still never sent it).
+- The `ATT Error Resp ... error=0x05 (Insufficient Authentication)` on handle `0x001B` (Battery
+  Level, near the Battery Service in the GATT table) still occurs on every connection even with
+  the battery plugin disabled — worth re-checking whether it's now coming from the app's own
+  attempt to read the mock's Battery Level characteristic directly (unrelated to BlueZ's
+  plugin), and whether that's connected to anything else.
 
 ---
 
