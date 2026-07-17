@@ -727,6 +727,22 @@ the blank-version/"current" display not yet found — needs tracing what the app
 requests specifically when navigating to that menu (not just the onboarding-time check), which
 is now finally traceable without disconnects fighting for attention at the same time.
 
+**Confirmed clean (2026-07-17, same session) — not confounded by device identity.** The first
+successful test above reconnected to a device originally onboarded with the old
+`tools/mock-geberit-mera.py` v1.63.0b1 script, raising the possibility the app-side
+`CRC32(SAP)`-keyed persistence hypothesis (see the superseded "Fehler on every mock connect"
+section above) was doing some of the work rather than the uniform-RS28.0 profile itself. Redone
+as a fully clean test: fresh onboarding, current mock only (v1.88.0b1), no reused device
+identity. **Identical result** — dismissible Fehler (confirmed OK), all other menus and settings
+changes working normally, Maintenance → Firmware Update still showing "current" / blank `"--"`.
+Rules out the device-identity confound; the uniform-RS28.0 mechanism reproduces independently.
+
+**UI design clarification (same session)**: the app's Firmware Update screen shows exactly **one**
+overall version string, not a per-component breakdown, on both the mock and the real device — by
+design ("more would only confuse the user," per direct observation). Still open: whether that one
+string ever renders as blank `"--"` on a real device under any circumstance, or whether blank is
+mock-specific — not yet confirmed either way.
+
 ---
 
 ## Open questions
