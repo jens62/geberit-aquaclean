@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.84.0b1"
+_MOCK_VERSION = "1.85.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -1575,7 +1575,15 @@ class MeraMock:
                 {"value": "rs28", "label": "RS28.0 TS199 (needs update)"},
             ],
         }
-        fw_rows = [profile_row] + [
+        trigger_row = {
+            "id": "trigger-update",
+            "name": "Manual Trigger",
+            "kind": "button",
+            "label": "Trigger Update" if self._fw_update_state == "idle" else f"Update: {self._fw_update_state}",
+            "value": None,
+            "writeUrl": "/settings/trigger-firmware-update",
+        }
+        fw_rows = [profile_row, trigger_row] + [
             {
                 "id": cid,
                 "name": _FW_COMPONENT_NAMES.get(cid, f"Component {cid}"),
@@ -1627,6 +1635,24 @@ class MeraMock:
         if profile not in _FW_PROFILES:
             return web.json_response({"error": f"unknown profile {profile!r}"}, status=400)
         self._apply_firmware_profile(profile)
+        return web.json_response({"ok": True})
+
+    async def _handle_trigger_fw_update(self, request):
+        """Webui-only manual trigger for the Phase 9b firmware-update state
+        machine — same entry point as ctx=0x40/proc=0x52 (StartFirmwareUpdate),
+        for testing the progress-notify/poll/finalize flow without depending
+        on the real app ever sending that write."""
+        from aiohttp import web
+        if self._fw_update_state != "idle":
+            return web.json_response(
+                {"error": f"update already in progress (state={self._fw_update_state})"},
+                status=409,
+            )
+        self._fw_update_state = "started"
+        if self._gatt_service is not None:
+            self._gatt_service._fw_bulk_bytes = {"A1": 0, "A2": 0, "A3": 0, "A4": 0}
+        self._log("·", f"Firmware update started (webui-triggered, simulated, {_FW_UPDATE_BUSY_SECONDS}s)")
+        asyncio.ensure_future(self._fw_update_run())
         return web.json_response({"ok": True})
 
     async def _handle_events(self, request):
@@ -2077,6 +2103,7 @@ class MeraMock:
         app.router.add_post("/settings/common/{setting_id}", self._handle_write_common_setting)
         app.router.add_post("/settings/profile/{setting_id}", self._handle_write_profile_setting)
         app.router.add_post("/settings/firmware-profile", self._handle_set_firmware_profile)
+        app.router.add_post("/settings/trigger-firmware-update", self._handle_trigger_fw_update)
         app.router.add_get("/events", self._handle_events)
         app.router.add_static("/static/", path=str(Path(__file__).parent / "static"))
 

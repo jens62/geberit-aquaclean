@@ -55,6 +55,7 @@ def _build_app(mock: MeraMock) -> web.Application:
     app.router.add_post("/settings/common/{setting_id}", mock._handle_write_common_setting)
     app.router.add_post("/settings/profile/{setting_id}", mock._handle_write_profile_setting)
     app.router.add_post("/settings/firmware-profile", mock._handle_set_firmware_profile)
+    app.router.add_post("/settings/trigger-firmware-update", mock._handle_trigger_fw_update)
     app.router.add_get("/events", mock._handle_events)
     app.router.add_static("/static/", path=_STATIC_DIR)
     return app
@@ -69,9 +70,9 @@ async def test_settings_table_data_sections():
         assert titles == ["Profile Settings", "Common Settings", "Firmware Versions"]
         assert len(data["sections"][0]["rows"]) == len(mock._STORED_PROFILE_SETTINGS)
         assert len(data["sections"][1]["rows"]) == len(mock._STORED_COMMON_SETTINGS)
-        # +1 for the "Firmware Profile" selector row prepended ahead of the
-        # per-component readonly rows.
-        assert len(data["sections"][2]["rows"]) == len(mock._FW_COMPONENT_VERSIONS) + 1
+        # +2 for the "Firmware Profile" selector row and the "Manual Trigger"
+        # button row, both prepended ahead of the per-component readonly rows.
+        assert len(data["sections"][2]["rows"]) == len(mock._FW_COMPONENT_VERSIONS) + 2
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -192,6 +193,30 @@ async def test_firmware_profile_switch():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_trigger_firmware_update_manual():
+    """Webui manual trigger for the Phase 9b state machine (docs/developer/
+    mock-service-requirements.md) — same entry point as ctx=0x40/proc=0x52,
+    reachable without depending on a real BLE write ever arriving."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            assert mock._fw_update_state == "idle"
+            r = await client.post("/settings/trigger-firmware-update", json={})
+            assert r.status == 200
+            assert mock._fw_update_state == "started"
+
+            r2 = await client.post("/settings/trigger-firmware-update", json={})
+            assert r2.status == 409
+        finally:
+            await client.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def test_sse_events_pushes_on_write():
     """/events (docs/developer/mock-service-requirements.md §6 SSE) sends an
     initial state snapshot on connect, then a fresh push after a settings
@@ -238,6 +263,7 @@ async def _run_all():
         test_write_common_setting_persists,
         test_write_profile_setting_persists,
         test_firmware_profile_switch,
+        test_trigger_firmware_update_manual,
         test_sse_events_pushes_on_write,
     ]
     passed = 0

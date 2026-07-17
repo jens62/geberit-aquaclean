@@ -74,8 +74,21 @@ function mcBuildControl(row) {
     case 'select':  return mcBuildSelect(row);
     case 'swatch':  return mcBuildSwatch(row);
     case 'text':    return mcBuildText(row);
+    case 'button':  return mcBuildButton(row);
     default:        return mcBuildReadonly(row);
   }
+}
+
+// Plain action button — POSTs {value: true} to writeUrl with no user input,
+// e.g. "Trigger Update" (docs/developer/mock-service-requirements.md Phase 9b
+// manual-trigger testing aid). row.label overrides the button text.
+function mcBuildButton(row) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'mc-step-btn';
+  btn.textContent = row.label || row.name;
+  btn.onclick = function () { mcWrite(row.writeUrl, true, btn); };
+  return btn;
 }
 
 function mcBuildReadonly(row) {
