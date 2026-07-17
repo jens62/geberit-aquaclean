@@ -701,6 +701,32 @@ normally on the device's detail screen for 5+ minutes) — if the real device sh
 disconnect pattern under equivalent idle conditions, this reframes as normal Geberit Home App
 behavior rather than a mock defect.
 
+### Resolution (2026-07-17, same day) — the periodic disconnect was a symptom, not an independent bug
+
+The real-device comparison above became unnecessary. Testing the mock with `_FW_COMPONENT_VERSIONS_RS28`
+changed to report `RS28.0 TS199` **uniformly across every component** (not just 1+11 — see the
+consolidated summary below) produced: the dismissible "Fehler" (confirmed working), successful
+navigation through other app menus, **and a single BLE connection lasting 9 minutes 27 seconds
+with zero disconnects** (`uniform-rs28-fehler-dismissed-firmware-current-blank-version_2026-07-17_20-04.log`,
+connect 20:07:33 → last activity 20:17:00, no `BLE client disconnected` line anywhere in the file).
+Every single prior test that day, without exception, showed a disconnect every ~35–90s.
+
+**Conclusion: the periodic disconnect was downstream of the app being stuck in the blocking
+force-update screen, not an independent BLE/mock-level bug.** Once the app isn't stuck there,
+the connection is completely stable. This resolves the disconnect thread from the consolidated
+summary below — it wasn't a fifth theory to test, it was a side effect of the same root
+condition (heterogeneous per-component values triggering the blocking screen) all along.
+
+**Remaining, smaller, distinct problem**: with uniform RS28.0 applied, the app's Maintenance →
+Firmware Update screen states the firmware **is current** and shows a blank `"--"` for the
+version — even though every component is reporting a version below the RS30.0 target. Checked
+and ruled out: `GetSOCApplicationVersions` (proc `0x81`) is not the cause — confirmed via the
+real capture that it stays constant (`31 30 12 00`, "SOC 10.18") across the genuine RS28→RS30
+update on the real device too, and the mock's hardcoded value already matches it. Root cause of
+the blank-version/"current" display not yet found — needs tracing what the app actually
+requests specifically when navigating to that menu (not just the onboarding-time check), which
+is now finally traceable without disconnects fighting for attention at the same time.
+
 ---
 
 ## Open questions
