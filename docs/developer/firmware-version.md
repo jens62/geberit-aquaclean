@@ -522,6 +522,63 @@ reconnects, the hypothesis is confirmed. The correct response values are unknown
 real firmware update BLE capture.
 
 **Status: behavioral inference only** — not code-confirmed, not confirmed by testing.
+**Superseded 2026-07-17 — see "Investigation update" below.** Proc 0x00 (ctx=0x40) and 0x01
+(ctx=0x00) are now implemented (mera_mock.py Phase 9b) with well-formed, cleanly-ACKed
+responses. The Fehler/update-flow behavior did not change as this hypothesis predicted — the
+actual blocker turned out to be something else entirely (see below), so this hypothesis is not
+confirmed and is no longer the leading theory.
+
+---
+
+## Investigation update (2026-07-17) — mock-vs-real BLE capture comparison
+
+First side-by-side capture of the Geberit Home App talking to the mock itself (not just the
+real device), via `--btmon-capture` on anneubuntu-studio plus a simultaneous nRF52840 sniff.
+Files: `local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/
+firmware-update-against-mera-mock/`. Compared against the real device's regular onboarding
+(`.../geberit-home-app/onboarding-real-mera.pcapng`) and the real firmware-update capture
+(`.../firmware-update-mera-comfort/firmware-update-vom-mac.md`).
+
+**Test setup:** freshly-installed Geberit Home App, mock's firmware profile set to RS28.0 via
+the webui, tapped "Update Now" after the expected update-required prompt appeared. Result: no
+progress, stuck at 0%, eventually "update failed" after ~9 minutes.
+
+**Ruled out:**
+- **Not a framing/ACK bug.** The mock's `0x40/0x00` responses are well-formed and cleanly
+  ACKed every single time (confirmed from the mock's own log) — the app is receiving them
+  correctly.
+- **Not a hidden GATT characteristic.** A `READ_BLOB_REQ` on handle `0x0020` in the real
+  capture looked like a lead, but `--gatt-map` resolved it to the standard GAP Device Name
+  characteristic (UUID `0x2A00`) — present on the mock too, just at a different handle number
+  (`0x0003`, since handle numbers depend on GATT table registration order and aren't
+  protocol-meaningful across different server implementations). The sniff confirms the app
+  reads it against the mock as well. Not a divergence.
+- **`0x40/0x52` (StartFirmwareUpdate) is confirmed never sent** — 0 occurrences across the
+  whole ~6-minute session, verified independently via both the mock's own log and the nRF
+  sniff. Not a logging blind spot on the mock's side; the write genuinely never happens over
+  the air, regardless of tapping "Update Now".
+
+**New lead — the app disconnects from the mock every ~35–70s, reason `0x13` (Remote User
+Terminated, i.e. app-initiated, confirmed at the HCI level via btmon):**
+- 7 disconnects across the ~6-minute test session.
+- After **every single one**, the app re-runs `GetFirmwareVersionList` from scratch —
+  effectively restarting the firmware-check flow each time.
+- Compared against `onboarding-real-mera.pcapng`: the real device *also* gets
+  "Remote User Terminated" disconnects during normal onboarding (twice in 28s — the documented
+  two-connection onboarding dance, see `.claude/rules/ble-protocol.md`/historical notes). So
+  periodic app-initiated disconnects are normal baseline behavior on their own, not inherently
+  a mock bug.
+- But compared against `firmware-update-vom-mac.md`: once the real device's update flow
+  actually engages, the connection holds rock-steady — **zero** disconnects across the entire
+  ~40s pre-update poll and the ~3-minute update itself.
+
+**Current working theory:** not the `0x40/0x00` payload content (the earlier, now-superseded
+theory) — the connection to the mock never settles into the single sustained session the real
+device holds once genuinely engaged with the update screen. Every ~35–70s the app tears the
+connection down and restarts the firmware-check from zero, so tapping "Update Now" never
+survives long enough to fire the BLE write. **Not yet answered: why** the mock's connection
+gets bounced this often in this state when the real device's doesn't — this is the next thread
+to pull, in preference to the payload-content angle.
 
 ---
 
