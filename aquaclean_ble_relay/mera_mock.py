@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.90.0b1"
+_MOCK_VERSION = "1.91.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -185,19 +185,22 @@ _FW_COMPONENT_VERSIONS = {
     15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
 }
 
-# Incremental test (2026-07-17), reversed direction — start from the CONFIRMED-WORKING
-# uniform-RS28.0-everywhere baseline (dismissible Fehler, stable 9+ minute connections,
-# confirmed twice) and revert ONLY component 11 back to its real value, leaving the other
-# 12 components (including 1) at the uniform RS28.0 TS199 that's known to work. Component
-# 11 chosen because it's the other component that actually changed in the real RS28->RS30
-# update (alongside 1) — a meaningful choice, not arbitrary. Isolates: does moving a single
-# component away from uniformity, in this direction, already break the working state?
-# (Earlier attempt moved 12 components away from uniformity at once while "changing" only
-# component 1 — not actually a single-variable test; see docs/developer/firmware-version.md
-# "Consolidated summary" for that and the other variants tried.)
+# Incremental test (2026-07-17), third variant — every component EXCEPT 1 and 11 at its
+# real, always-correct value (3,4,5,6,7,8,9,10,12,14,15 — genuinely never changed in the
+# real RS28->RS30 update); component 1 (main controller) at its real pre-update value,
+# RS28.0 TS199 — also genuinely correct; component 11 (motion detection) ALSO set to
+# RS28.0 TS199 — deliberately NOT its real pre-update value (which was RS07.0 TS22).
+# So exactly one value (component 11) is "wrong" compared to real life, everything else
+# is real/correct. Distinct from the already-tested fully-correct real pre-update state
+# (component 1=RS28.0 TS199 real, component 11=RS07.0 TS22 real, rest real) — that
+# configuration reliably BLOCKS on the mock despite being proven to work on real hardware
+# (July 14 capture). This variant asks: does swapping component 11's one real value for an
+# artificial-but-plausible one change that outcome? See docs/developer/firmware-version.md
+# "Consolidated summary" for the other variants tried and their results.
 _FW_COMPONENT_VERSIONS_RS28 = {
-    **{cid: (0x32, 0x38, 0xC7) for cid in _FW_COMPONENT_VERSIONS},
-    11: _FW_COMPONENT_VERSIONS[11],
+    **_FW_COMPONENT_VERSIONS,
+    1: (0x32, 0x38, 0xC7),
+    11: (0x32, 0x38, 0xC7),
 }
 
 # Canonical firmware profiles selectable via the webui — keyed by the value the
