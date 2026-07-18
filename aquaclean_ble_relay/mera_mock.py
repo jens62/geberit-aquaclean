@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.95.0b1"
+_MOCK_VERSION = "1.96.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -239,6 +239,22 @@ _FACTORY_IDENTITY = {
     # ServicesResolved), i.e. read from GATT 0x2a00 — different from the advertised
     # local name ("Geberit AC PRO").
     "device_name": "Geberit AquaClean pro",
+}
+
+# Real-device reference values shown as the webui's "real: ..." hint next to each
+# identity field. Distinct from _FACTORY_IDENTITY (the mock's actual startup
+# defaults) because ONE field's factory default is deliberately fictional:
+# serial_number ("HB2300EU000001") is chosen specifically to avoid a CRC32(SAP)
+# collision with a real device (see mock-geberit-mera.md) — showing that same
+# fictional value as if it were the "real" reference was a bug (2026-07-18).
+# Confirmed real value from aquaclean-...SILLY.log line 3619 ("DeviceIdentification:
+# SapNumber=146.21x.xx.1, SerialNumber=HB2304EU298413, ...") and line 9314 (MQTT
+# publish of the same). All other fields' factory defaults already match the real
+# device (independently confirmed against the same SILLY log and
+# onboarding-real-mera.md), so they fall through to _FACTORY_IDENTITY unchanged.
+_IDENTITY_REAL_REFERENCE = {
+    **_FACTORY_IDENTITY,
+    "serial_number": "HB2304EU298413",
 }
 
 # identity field key -> instance attribute name, shared by __init__'s persisted-value
@@ -1762,7 +1778,7 @@ class MeraMock:
                 "kind": "text",
                 "value": getattr(self, _IDENTITY_ATTR_MAP[key]),
                 "max": max_len,
-                "hint": f"real: {_FACTORY_IDENTITY[key]}",
+                "hint": f"real: {_IDENTITY_REAL_REFERENCE[key]}",
                 "writeUrl": f"/settings/identity/{key}",
             }
             for key, label, max_len in _IDENTITY_FIELD_META
@@ -1772,7 +1788,7 @@ class MeraMock:
             "name": "Variant (model byte)",
             "kind": "text",
             "value": f"0x{self._VARIANT:02X}",
-            "hint": f"real: 0x{_FACTORY_IDENTITY['variant']:02X}",
+            "hint": f"real: 0x{_IDENTITY_REAL_REFERENCE['variant']:02X}",
             "writeUrl": "/settings/identity/variant",
         })
 
