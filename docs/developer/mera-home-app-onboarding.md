@@ -13,29 +13,50 @@ BLE LL encryption: **none** (confirmed — same unencrypted path as bridge)
 
 ## BLE Advertising payload
 
-The toilet advertises manufacturer-specific data only — no local name.
+**Corrected 2026-07-18** — the "one 11-byte payload" model below was wrong. The real device
+splits its manufacturer-specific data across **two separate packets**, not one AD structure:
+ADV_IND carries a 6-byte payload (state + article) under company `0x0100`; a *second*,
+independent Manufacturer Specific Data AD entry — using a throwaway/non-standard "company ID"
+that's really just 2 of its own payload bytes — lives in the **SCAN_RSP** packet and carries
+the RS-firmware-prefix tail. A scanner that merges ADV_IND+SCAN_RSP into one device view (nRF
+Connect, and apparently the app itself) sees what looks like two Manufacturer Data blocks for
+the same device. Confirmed byte-for-byte via `tools/nrf-ble-analyze.py --adv` (extended the
+same day to show every AD entry, not just the first) against
+`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/onboarding-real-mera.pcapng`,
+and independently via a live nRF Connect (Android) scan against the real device.
 
-| AD type | Value | Notes |
-|---------|-------|-------|
-| `0xFF` | Company `0x0100`, 11-byte payload | State bytes + fw byte + article + RS fw |
-| `0x02` | `0x3EA0` | 16-bit UUID (incomplete list) |
+The toilet advertises no local name in ADV_IND — the name (`"Geberit AC PRO"`) is in SCAN_RSP.
 
-Company `0x0100` = TomTom International BV (Bluetooth SIG assigned).
-Confirmed from `on-board-geberit-Home-app-to-mera.pcapng` (tshark: `company_id=0x0100`).
+**ADV_IND** — one AD entry, `0xFF` Company `0x0100`, 6-byte payload (`length=9`: type+company+data):
 
-Manufacturer-specific payload layout (11 bytes, confirmed from app source analysis):
-
-| Offset | Value | Name | Notes |
+| Offset (in payload, after company ID) | Value | Name | Notes |
 |--------|-------|------|-------|
-| 0 | `0x00` / `0xAA` | state_A | `IsEmergencyConnectPermitted = (byte[0] == 0xAA)` |
-| 1 | e.g. `0x00` | fw_byte | firmware version indicator — not checked by iOS app |
-| 2 | `0x00` / `0x01` | state_B | **`IsButtonPressed = (byte[2] == 0x01)`** ← iOS scans this |
-| 3–7 | e.g. `"14621"` | article | 5-char ASCII article number |
-| 8–10 | e.g. `"30\x00"` | rs_fw | RS firmware prefix (3 bytes) |
+| 0 | `0x00` / `0xAA` (adv byte after company) | state_A | `IsEmergencyConnectPermitted` — confirmed 2026-07-18: on button press the low byte of the COMPANY ID itself flips to `0xAA` (i.e. the ADV_IND's company field becomes `0x01AA`), not a separate payload byte |
+| 1 | `0x00` / `0x01` | state_B | **`IsButtonPressed = (byte == 0x01)`** ← iOS/Android both key onboarding-selection off this |
+| 2–6 | e.g. `"14621"` | article | 5-char ASCII article number |
 
-The iOS app identifies the toilet by company ID `0x0100` and reads byte[2] (`state_B`) from
-every received advertisement to determine `IsButtonPressed`. Only when `IsButtonPressed=True`
-does the app select the device and attempt a BLE connection.
+Live nRF Connect confirms both flags flip together on a real button press: idle
+`company=0x0100, data=00 31 34 36 32 31`; after pressing the pairing button:
+`company=0x01AA, data=01 31 34 36 32 31` (state_B also flips to `0x01`).
+
+**SCAN_RSP** — separate AD entries: `0x09` Complete Local Name (`"Geberit AC PRO"`),
+`0x12` Peripheral Connection Interval Range, `0x0A` Tx Power Level, and a second `0xFF`
+Manufacturer-Specific-Data entry, 3 raw bytes `[0x00, rs_char1, rs_char2]` (dissected by
+tshark as a bogus 2-byte "company ID" + 1 data byte, since it's just 2 ASCII digits
+misaligned into the company-ID field position): the RS firmware major-version prefix, e.g.
+`00 32 38` = "28" (RS28.0, pre-update) in the older real capture, `00 33 30` = "30" (RS30.0,
+post-update) in a 2026-07-18 live scan — consistent with the confirmed RS28→RS30 update.
+
+Company `0x0100` = TomTom International BV (Bluetooth SIG assigned, reused by Geberit as a
+convenient existing ID, unrelated to TomTom).
+
+The app identifies the toilet by company ID `0x0100` in ADV_IND and reads the state_B byte
+from every received advertisement to determine `IsButtonPressed`. Only when
+`IsButtonPressed=True` does the app select the device and attempt a BLE connection. Whether
+the app's onboarding-selection logic ever reads the SCAN_RSP's RS-firmware-prefix tail at all
+is unconfirmed — the mock has worked for onboarding for months while sending that tail merged
+into ADV_IND instead of split into SCAN_RSP, suggesting the app's selection logic doesn't
+depend on that byte's exact packet placement.
 
 ---
 

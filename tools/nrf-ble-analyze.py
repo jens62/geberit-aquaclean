@@ -172,14 +172,17 @@ def _find_tshark() -> str:
 
 
 def _run_tshark(tshark: str, pcapng: Path, display_filter: str,
-                fields: list) -> list:
+                fields: list, occurrence: str = "f") -> list:
     """
     Run tshark with a display filter and field list.
     Returns list of rows, each row being a list of field strings.
     Separator is | (pipe) — safe because BLE values never contain it.
+    occurrence: "f" (first, default) or "a" (all, comma-joined per field) —
+    "a" is needed when one packet can carry more than one instance of the
+    same AD-structure field (e.g. two Manufacturer Specific Data entries).
     """
     cmd = [tshark, "-r", str(pcapng), "-Y", display_filter,
-           "-T", "fields", "-E", "separator=|", "-E", "occurrence=f"]
+           "-T", "fields", "-E", "separator=|", "-E", f"occurrence={occurrence}"]
     for f in fields:
         cmd += ["-e", f]
 
@@ -1040,15 +1043,24 @@ def _get_adv_packets(tshark: str, pcapng: Path, mac: str) -> list:
         a = addr_field.strip().lower()
         return a == mac_lower or a == ""
 
-    # ADV_IND (pdu_type=0): primary advertisement — contains UUID16, manufacturer data
+    # ADV_IND (pdu_type=0): primary advertisement — contains UUID16, manufacturer data.
+    # occurrence="a" on type/company_id/data (not the tool's usual "f"/first-only) —
+    # a single ADV_IND can carry more than one Manufacturer Specific Data (0xFF) AD
+    # structure, e.g. Mera's real advertisement: company=0x0100 (state+article) is a
+    # SEPARATE, shorter AD entry from a second one under a bogus/reserved company ID
+    # (2026-07-18 finding — see docs/developer/mera-home-app-onboarding.md). "f" would
+    # silently report only the first and hide the second.
     for row in _run_tshark(tshark, pcapng,
                            "btle.advertising_header.pdu_type == 0x00",
                            ["frame.time_relative", "btle.advertising_address",
                             "btcommon.eir_ad.entry.uuid_16",
-                            "btcommon.eir_ad.entry.company_id"]):
-        if len(row) < 4:
+                            "btcommon.eir_ad.entry.type",
+                            "btcommon.eir_ad.entry.company_id",
+                            "btcommon.eir_ad.entry.data"],
+                           occurrence="a"):
+        if len(row) < 6:
             continue
-        ts_s, addr, uuid_raw, company_raw = row[0], row[1], row[2], row[3]
+        ts_s, addr, uuid_raw, type_raw, company_raw, data_raw = row[:6]
         if addr.strip().lower() != mac_lower:
             continue
         try:
@@ -1056,11 +1068,17 @@ def _get_adv_packets(tshark: str, pcapng: Path, mac: str) -> list:
         except ValueError:
             continue
         uuids = [_norm_uuid(u) for u in uuid_raw.split(",") if u.strip()]
+        ad_types = [t.strip() for t in type_raw.split(",") if t.strip()]
+        ad_companies = [c.strip() for c in company_raw.split(",") if c.strip()]
+        ad_datas = [d.strip() for d in data_raw.split(",") if d.strip()]
         packets.append({
             "ts": ts, "pdu": "ADV_IND",
             "uuids16": uuids,
-            "company": company_raw.strip() or None,
+            "company": ad_companies[0] if ad_companies else None,
             "name": None,
+            "ad_types": ad_types,
+            "ad_companies": ad_companies,
+            "ad_datas": ad_datas,
         })
 
     # SCAN_RSP (pdu_type=4): Wireshark 4.x exposes raw payload in btle.scan_response_data
@@ -1131,14 +1149,23 @@ def _print_adv_packets(packets: list, mac: str, pcapng_name: str) -> None:
 
     seen: set = set()
     for p in packets:
-        key = (p["pdu"], tuple(sorted(p["uuids16"])), p["company"], p["name"])
+        ad_companies = tuple(p.get("ad_companies") or ())
+        ad_datas = tuple(p.get("ad_datas") or ())
+        key = (p["pdu"], tuple(sorted(p["uuids16"])), ad_companies, ad_datas, p["name"])
         if key in seen:
             continue
         seen.add(key)
         uuids_str = ", ".join(f"0x{u.upper()}" for u in p["uuids16"]) if p["uuids16"] else "(none)"
         print(f"  t={p['ts']:>8.1f}s  {p['pdu']:<16}  UUIDs={uuids_str}")
-        if p["company"]:
-            print(f"              {'':16}  company={p['company']}")
+        # Print each Manufacturer Specific Data AD entry separately — a single
+        # advertisement can carry more than one (2026-07-18 finding).
+        ad_types = p.get("ad_types") or ()
+        for i, company in enumerate(ad_companies):
+            type_hex = ad_types[i] if i < len(ad_types) else "?"
+            data_hex = ad_datas[i] if i < len(ad_datas) else ""
+            print(f"              {'':16}  AD type={type_hex}  company={company}  data=0x{data_hex}")
+        if len(ad_companies) > 1:
+            print(f"              {'':16}  ↑ {len(ad_companies)} separate Manufacturer Specific Data AD structures in this packet")
         if p["name"]:
             print(f"              {'':16}  name={p['name']!r}")
 

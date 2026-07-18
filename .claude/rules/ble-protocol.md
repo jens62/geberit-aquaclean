@@ -298,19 +298,33 @@ byte-exact items.
 
 ## BLE advertising payload — SensorState
 
-The device broadcasts BLE advertisements while idle. Manufacturer-specific payload:
+**Corrected 2026-07-18** (was a single "11-byte payload" model — wrong; see
+`docs/developer/mera-home-app-onboarding.md` for the full byte-level evidence). The real
+device splits this across TWO packets, not one AD structure, and `IsEmergencyConnectPermitted`
+is encoded in the advertised COMPANY ID itself, not a separate payload byte:
 
-| Offset | Content |
+**ADV_IND** — one `0xFF` Manufacturer-Specific-Data entry, company `0x0100` normally /
+`0x01AA` when `IsEmergencyConnectPermitted`, 6-byte data payload:
+
+| Payload offset | Content |
 |--------|---------|
-| 0 | State byte A — `0xAA` means `IsEmergencyConnectPermitted` |
-| 1 | firmware version chars |
-| 2 | State byte B — `0x01` means `IsButtonPressed` |
-| 3–7 | Article number characters |
-| 8–10 | RS firmware number chars (11-byte variant only) |
+| 0 | State byte B — `0x01` means `IsButtonPressed` (iOS/Android key onboarding selection off this) |
+| 1–5 | Article number characters (e.g. `"14621"`) |
 
-`SensorState` = 2 bits: `IsButtonPressed` (bit 0) + `IsEmergencyConnectPermitted` (bit 1).
-**No proximity or approach detection bit.** Hardware nodes `0x0A`/`0x0B` drive lid opening
-locally — no BLE event is emitted, no GATT characteristic changes.
+Confirmed live (nRF Connect, 2026-07-18): idle = company `0x0100`, data `00 31 34 36 32 31`;
+button pressed = company `0x01AA`, data `01 31 34 36 32 31` — both flags flip together on a
+real button press.
+
+**SCAN_RSP** — separate `0x09` Complete Local Name (`"Geberit AC PRO"`) plus a second, distinct
+`0xFF` entry: 3 raw bytes `[0x00, rs_char1, rs_char2]` — the RS firmware major-version prefix
+(e.g. `00 33 30` = "30" for RS30.0). A scanner that merges ADV_IND+SCAN_RSP into one device
+view (nRF Connect, apparently the app too) shows this as if it were a second "Manufacturer
+data" block on the same packet — it isn't; it's a separate PDU.
+
+`SensorState` = 2 bits: `IsButtonPressed` (bit 0, ADV_IND payload) + `IsEmergencyConnectPermitted`
+(bit 1, ADV_IND company-ID low byte). **No proximity or approach detection bit.** Hardware
+nodes `0x0A`/`0x0B` drive lid opening locally — no BLE event is emitted, no GATT characteristic
+changes.
 `AC_STATUS_USER_PRESENT` (SPL index 0) = seat detection only, not approach detection.
 
 ---
