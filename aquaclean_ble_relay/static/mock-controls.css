@@ -48,6 +48,22 @@
 .mc-row-label { flex-shrink: 0; }
 .mc-readonly { color: var(--mc-muted); }
 
+/* Device Identity: align every row's Save button at the same X position,
+   regardless of label length or hint text length (2026-07-18 ask). The base
+   .mc-row right-aligns the whole control group via space-between, so a
+   row's Save button position drifts with its own hint-text width — fix by
+   giving the label a fixed column and left-aligning the control group
+   instead, plus a fixed input width so Save always immediately follows it. */
+.mc-section--device-identity .mc-row {
+  justify-content: flex-start;
+}
+.mc-section--device-identity .mc-row-label {
+  flex: 0 0 16rem;
+}
+.mc-section--device-identity .mc-text {
+  width: 11rem;
+}
+
 /* iOS-style toggle switch */
 .mc-toggle { position: relative; display: inline-block; width: 46px; height: 28px; flex-shrink: 0; }
 .mc-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }

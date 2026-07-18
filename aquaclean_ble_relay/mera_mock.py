@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.93.0b1"
+_MOCK_VERSION = "1.94.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -900,6 +900,8 @@ _HTML = """\
               background: #0066cc; color: white; border: none; border-radius: 4px; }}
     button:hover {{ background: #0088ff; }}
     .danger {{ background: #cc3300; }}
+    #press-btn.pressed {{ background: #ffdd00; color: #1a1a2e; box-shadow: 0 0 8px #ffdd00; }}
+    #press-btn.pressed:hover {{ background: #ffe64d; }}
     table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; }}
     th,td {{ text-align: left; padding: 4px 8px; border-bottom: 1px solid #333; }}
     th {{ color: #00d4aa; }}
@@ -914,10 +916,12 @@ _HTML = """\
     BLE: <span class="badge {conn_cls}" id="conn-badge">{conn_txt}</span>
     &nbsp;
     Button: <span class="badge {btn_cls}" id="btn-badge">{btn_txt}</span>
+    &nbsp;
+    <span class="mc-hint" id="btn-times">{btn_times}</span>
   </p>
   <h2>Controls</h2>
   <form method="post" action="/button">
-    <button type="submit">Press Button (confirm pairing)</button>
+    <button type="submit" class="{btn_press_cls}" id="press-btn">Press Button (confirm pairing)</button>
   </form>
   <form method="post" action="/clear-log" style="display:inline">
     <button type="submit" class="danger">Clear log</button>
@@ -941,6 +945,17 @@ _HTML = """\
         var bb = document.getElementById('btn-badge');
         bb.className = 'badge ' + (data.button_pressed ? 'ok' : 'warn');
         bb.textContent = data.button_pressed ? 'Pressed' : 'Waiting';
+        var pb = document.getElementById('press-btn');
+        pb.className = data.button_pressed ? 'pressed' : '';
+      }}
+      if (data.button_pressed_at !== undefined) {{
+        var bt = document.getElementById('btn-times');
+        var text = '';
+        if (data.button_pressed_at) {{
+          text = 'pressed ' + data.button_pressed_at;
+          if (data.button_released_at) text += ' · released (auto) ' + data.button_released_at;
+        }}
+        bt.textContent = text;
       }}
     }});
   </script>
@@ -1041,6 +1056,8 @@ class MeraMock:
         self._session_log: list = []
         self._sse_queues: list = []  # webui /events subscribers (docs/developer/mock-service-requirements.md §6)
         self._button_pressed = False
+        self._button_pressed_at = None   # "%H:%M:%S" — when the webui button was clicked
+        self._button_released_at = None  # "%H:%M:%S" — when the mock auto-released it (see _send_info_frame_burst)
         self._registration_level: int = 0   # 0=Not registered, 1=Private, 2=Public — real device returns 0 during onboarding
         self._connected = False
         self._connection_gen = 0     # incremented on each new connection; guards stale burst tasks
@@ -1091,10 +1108,24 @@ class MeraMock:
             "settings": self._settings_table_data(),
             "connected": self._connected,
             "button_pressed": self._button_pressed,
+            "button_pressed_at": self._button_pressed_at,
+            "button_released_at": self._button_released_at,
             "log_html": self._render_log(),
         }
         for q in list(self._sse_queues):
             q.put_nowait(data)
+
+    def _button_times_text(self) -> str:
+        """Human-readable press/release history for the webui (2026-07-18 ask) —
+        distinguishes "I clicked press" from "the mock auto-released it" (see
+        _send_info_frame_burst — the mock has no physical button, so release is
+        triggered by BLE-connection progress, not a user action)."""
+        if not self._button_pressed_at:
+            return ""
+        text = f"pressed {self._button_pressed_at}"
+        if self._button_released_at:
+            text += f" · released (auto) {self._button_released_at}"
+        return text
 
     def _rs_fw_prefix(self) -> str:
         """2-char RS firmware major-version prefix for the advertisement's second
@@ -1627,6 +1658,7 @@ class MeraMock:
             self._log("·", f"Attempt {gen}: A6 CCCD not set within 3 s — skipping A6 burst")
         if self._button_pressed:
             self._button_pressed = False
+            self._button_released_at = time.strftime("%H:%M:%S")
             await self._update_advert(0)      # await: HCI commands must finish before A5 responses start
         service._a6_burst_done.set()     # bursts complete — A5 responses may now proceed
 
@@ -1760,6 +1792,8 @@ class MeraMock:
             conn_txt="Connected" if self._connected else "Idle",
             btn_cls="ok" if self._button_pressed else "warn",
             btn_txt="Pressed" if self._button_pressed else "Waiting",
+            btn_press_cls="pressed" if self._button_pressed else "",
+            btn_times=self._button_times_text(),
             log_html=self._render_log(),
             settings_json=json.dumps(self._settings_table_data()),
         )
@@ -1900,6 +1934,8 @@ class MeraMock:
                 "settings": self._settings_table_data(),
                 "connected": self._connected,
                 "button_pressed": self._button_pressed,
+                "button_pressed_at": self._button_pressed_at,
+                "button_released_at": self._button_released_at,
                 "log_html": self._render_log(),
             })
             while True:
@@ -1924,6 +1960,8 @@ class MeraMock:
         if self._button_pressed:
             raise web.HTTPFound("/")
         self._button_pressed = True
+        self._button_pressed_at = time.strftime("%H:%M:%S")
+        self._button_released_at = None
         self._log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
         # Do NOT set pairable=on here (v1.31.0 removed it once already, v1.31.0 changelog:
         # "removes btmgmt pairable=on to fix iOS pairing dialog"; v2.14.x's RC-pairing-stub
@@ -1942,6 +1980,8 @@ class MeraMock:
                 "mock_version": _MOCK_VERSION,
                 "connected": self._connected,
                 "button_pressed": self._button_pressed,
+                "button_pressed_at": self._button_pressed_at,
+                "button_released_at": self._button_released_at,
                 "log_entries": len(self._session_log),
             }),
         )

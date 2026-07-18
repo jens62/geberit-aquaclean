@@ -44,7 +44,11 @@ function mcRenderSettingsTable(container, data) {
   (data.sections || []).forEach(function (section) {
     if (!section.rows || !section.rows.length) return;
     const sec = document.createElement('div');
-    sec.className = 'mc-section';
+    // Slug from the section title (e.g. "Device Identity" -> "device-identity") lets
+    // CSS scope layout tweaks (e.g. aligning Save buttons) to one section without
+    // affecting the others' — see .mc-section--device-identity in mock-controls.css.
+    const slug = (section.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    sec.className = 'mc-section' + (slug ? ' mc-section--' + slug : '');
     const title = document.createElement('div');
     title.className = 'mc-section-title';
     title.textContent = section.title;

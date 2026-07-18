@@ -59,6 +59,7 @@ def _build_app(mock: MeraMock) -> web.Application:
     app.router.add_post("/settings/identity/{field}", mock._handle_write_identity)
     app.router.add_post("/settings/factory-reset", mock._handle_factory_reset)
     app.router.add_post("/settings/trigger-firmware-update", mock._handle_trigger_fw_update)
+    app.router.add_post("/button", lambda r: mock._handle_button(r, None))
     app.router.add_get("/events", mock._handle_events)
     app.router.add_static("/static/", path=_STATIC_DIR)
     return app
@@ -358,6 +359,40 @@ async def test_trigger_firmware_update_manual():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_button_press_release_timestamps():
+    """Webui press/release visualization (2026-07-18 ask) — distinguishes "user
+    clicked press" from "mock auto-released it" (_send_info_frame_burst, not a
+    user action). Auto-release isn't exercised here (needs a full BLE session);
+    just the press-side timestamp and the already-pressed no-op guard."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            assert mock._button_times_text() == ""
+            r = await client.post("/button", allow_redirects=False)
+            assert r.status in (302, 303)
+            assert mock._button_pressed is True
+            assert mock._button_pressed_at is not None
+            assert mock._button_released_at is None
+            assert mock._button_times_text() == f"pressed {mock._button_pressed_at}"
+
+            # Pressing again while already pressed is a no-op redirect, not a re-press.
+            first_pressed_at = mock._button_pressed_at
+            r2 = await client.post("/button", allow_redirects=False)
+            assert r2.status in (302, 303)
+            assert mock._button_pressed_at == first_pressed_at
+
+            mock._button_released_at = "12:00:00"
+            assert mock._button_times_text() == f"pressed {first_pressed_at} · released (auto) 12:00:00"
+        finally:
+            await client.close()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def test_sse_events_pushes_on_write():
     """/events (docs/developer/mock-service-requirements.md §6 SSE) sends an
     initial state snapshot on connect, then a fresh push after a settings
@@ -410,6 +445,7 @@ async def _run_all():
         test_advertisement_two_manufacturer_entries,
         test_factory_reset_restores_defaults,
         test_trigger_firmware_update_manual,
+        test_button_press_release_timestamps,
         test_sse_events_pushes_on_write,
     ]
     passed = 0
