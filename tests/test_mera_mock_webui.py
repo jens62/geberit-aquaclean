@@ -282,24 +282,25 @@ async def test_rs_fw_prefix_reflects_active_profile():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def test_advertisement_two_manufacturer_entries():
-    """_MeraAdvertisement (2026-07-18 fix) must send TWO separate company-ID-keyed
-    Manufacturer Specific Data entries — one for state+article, one for the RS
-    firmware-version tail — matching the real device's byte-for-byte layout
-    confirmed via tools/nrf-ble-analyze.py --adv and a live nRF Connect scan (see
-    docs/developer/mera-home-app-onboarding.md). Not one combined 9-byte blob."""
+async def test_advertisement_single_manufacturer_entry():
+    """_MeraAdvertisement — reverted 2026-07-18 back to ONE combined Manufacturer
+    Specific Data entry under company 0x0100 (state+article+0x00+rs_prefix). A
+    same-day attempt to split this into two company-ID-keyed entries (matching how
+    the real device splits ADV_IND/SCAN_RSP) resulted in BOTH landing in ADV_IND
+    (bluez_peripheral/BlueZ gives no control over which PDU each entry lands in) —
+    a packet shape never sent before, onboarding failed completely afterward (zero
+    LE Connection Complete events). Reverted rather than half-matching the real
+    device in a new, untested way — see docs/developer/
+    nrf-ble-analyze-completeness-audit.md and memory for the full history."""
     advert = mera_mock._MeraAdvertisement("14621", state_b=0, rs_prefix="30")
     md = advert.ManufacturerData
-    assert set(md.keys()) == {0x0100, 0x3300}
-    assert bytes(md[0x0100].value) == b"\x0014621"
-    assert bytes(md[0x3300].value) == b"0"
+    assert set(md.keys()) == {0x0100}
+    assert bytes(md[0x0100].value) == b"\x0014621\x0030"
 
     pressed = mera_mock._MeraAdvertisement("14621", state_b=1, rs_prefix="30")
     md_pressed = pressed.ManufacturerData
-    # IsEmergencyConnectPermitted is the company-ID low byte flipping to 0xAA,
-    # confirmed live 2026-07-18 — not a separate payload byte.
-    assert set(md_pressed.keys()) == {0x01AA, 0x3300}
-    assert bytes(md_pressed[0x01AA].value) == b"\x0114621"
+    assert set(md_pressed.keys()) == {0x0100}
+    assert bytes(md_pressed[0x0100].value) == b"\x0114621\x0030"
 
 
 async def test_factory_reset_restores_defaults():
@@ -442,7 +443,7 @@ async def _run_all():
         test_write_fw_component_free_text_persists,
         test_write_identity_field_persists,
         test_rs_fw_prefix_reflects_active_profile,
-        test_advertisement_two_manufacturer_entries,
+        test_advertisement_single_manufacturer_entry,
         test_factory_reset_restores_defaults,
         test_trigger_firmware_update_manual,
         test_button_press_release_timestamps,

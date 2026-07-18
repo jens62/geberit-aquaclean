@@ -13,6 +13,17 @@ BLE LL encryption: **none** (confirmed — same unencrypted path as bridge)
 
 ## BLE Advertising payload
 
+**Mock reverted 2026-07-18, same day** — the mock briefly tried replicating the two-packet
+split below by giving `bluez_peripheral` a `manufacturerData` dict with two company-ID keys.
+BlueZ gives no control over which PDU (ADV_IND vs SCAN_RSP) each entry lands in — it put BOTH
+in ADV_IND, a packet shape neither the real device nor the mock had ever sent before, and
+onboarding failed completely afterward (zero LE Connection Complete events in the capture).
+Reverted `_MeraAdvertisement` back to one combined 11-byte entry rather than half-matching the
+real device in a new, untested way. The facts below about the REAL DEVICE remain true and
+confirmed — only the mock's ability to replicate the ADV_IND/SCAN_RSP split is unresolved
+(bluez_peripheral/BlueZ tooling limitation, not a correction to what the real device does).
+See `docs/developer/nrf-ble-analyze-completeness-audit.md` and memory for the full history.
+
 **Corrected 2026-07-18** — the "one 11-byte payload" model below was wrong. The real device
 splits its manufacturer-specific data across **two separate packets**, not one AD structure:
 ADV_IND carries a 6-byte payload (state + article) under company `0x0100`; a *second*,

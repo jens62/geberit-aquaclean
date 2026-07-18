@@ -125,12 +125,19 @@ nRF Connect: present only while the button is physically pressed, gone the insta
 released, independent of any BLE connection. See `docs/developer/mera-home-app-onboarding.md`
 "BLE Advertising payload" for the full byte-level evidence.
 
+**Reverted the same day**: the mock briefly implemented this company-ID flip (alongside
+splitting the advertisement into two Manufacturer Specific Data entries) — both were reverted
+together after onboarding failed completely with them in place (see the revert note in
+`mera-home-app-onboarding.md`). `company` is currently always `0x0100`; only `state_b` flips.
+The code example below predates the revert and shows the pre-revert intent, kept for context
+on the release-timing mechanism itself (which is unaffected by the revert):
+
 The mock has no physical button, so "release" can't be a hardware signal. Instead,
 `_send_info_frame_burst()` (step 8 above) auto-releases it:
 ```python
 if self._button_pressed:
     self._button_pressed = False
-    await self._update_advert(0)      # flips company 0x01AA -> 0x0100, state_b -> 0
+    await self._update_advert(0)      # state_b -> 0 (company stays 0x0100, pre-revert intent shown)
 ```
 This fires right after the A6 InfoFrame burst completes — i.e. *after* the app has already
 connected via BLE, once the A6 CCCD is confirmed ready (or after a 3 s timeout). So the

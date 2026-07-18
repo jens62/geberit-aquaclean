@@ -298,6 +298,16 @@ byte-exact items.
 
 ## BLE advertising payload — SensorState
 
+**Mock reverted 2026-07-18, same day as the correction below** — attempting to replicate the
+two-packet split in `_MeraAdvertisement` (via a `manufacturerData` dict with two company-ID
+keys) resulted in BlueZ putting both entries in ADV_IND instead of splitting them ADV_IND/
+SCAN_RSP as the real device does — a packet shape never sent before, and onboarding failed
+completely (zero BLE connections) immediately after. Reverted to one combined 11-byte entry.
+The real-device facts below are still correct and confirmed — only the mock's ability to
+replicate the split is unresolved (bluez_peripheral/BlueZ gives no control over which PDU an
+entry lands in). See `docs/developer/nrf-ble-analyze-completeness-audit.md` for the audit that
+led here, and `docs/developer/mera-home-app-onboarding.md` for the full revert note.
+
 **Corrected 2026-07-18** (was a single "11-byte payload" model — wrong; see
 `docs/developer/mera-home-app-onboarding.md` for the full byte-level evidence). The real
 device splits this across TWO packets, not one AD structure, and `IsEmergencyConnectPermitted`
