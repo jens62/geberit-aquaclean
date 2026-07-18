@@ -222,6 +222,33 @@ Not observed in any log. To find: BLE-sniff the official Geberit Home app.
 
 ---
 
+## Multi-frame request framing (FIRST+CONS) — confirmed 2026-07-18
+
+A single 20-byte request frame carries at most 9 args bytes (`frame[11:20]`). Any proc call
+whose args need more than that — e.g. `0x0E` GetFirmwareVersionList's 12-component onboarding
+query (`count`+12 IDs = 13 bytes) — is split across a FIRST frame (header `0x11|(n_cons<<1)`,
+declaring the *total* args length across all frames in its `arg_len` byte, not just this
+frame's own contribution) followed by `n_cons` CONS frames (header `0x10|(i<<1)`), each
+contributing up to 19 more bytes. Confirmed byte-for-byte from real device raw ATT traffic
+(`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/onboarding-real-mera.md`,
+14:11:09.414-.564).
+
+**The receiver must ack every frame, not just the last one, or the sender won't continue.**
+Real capture sequence for a 2-frame request: `App→Dev FIRST` → `Dev→App CTRL byte0=0x70`
+(bitmap acking the FIRST frame) → `App→Dev CONS` → `Dev→App CTRL byte0=0x70` (bitmap acking
+FIRST+CONS) → only then does the device send its actual response. This applies even to
+plain single-frame requests (the real device acks a `GetSOCApplicationVersions` single-frame
+request too, before responding) — every received frame gets acked before any response is
+sent for it. Getting this wrong (e.g. acking only every 4th frame or only at completion, which
+is how the *response*-side ack batching already works) means the sender never gets an ack
+after a short request's FIRST frame and just retries it instead of ever sending CONS.
+
+Full incident writeup (found via `mera_mock.py` never reassembling incoming multi-frame
+requests, which silently dropped 4 of 12 requested firmware components on every onboarding
+attempt regardless of firmware content): `memory/mera-firmware-update-request-truncation.md`.
+
+---
+
 ## Firmware update procedures (ctx=0x40)
 
 Decoded from a genuine RS28.0→RS30.0 Mera Comfort update capture, 2026-07-14

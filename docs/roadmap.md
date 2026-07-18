@@ -673,6 +673,73 @@ The mock would then `from aquaclean_core.Frames.FrameFactory import FrameFactory
 
 ---
 
+### Split `mera_mock.py` / `alba_mock.py` into packages — both well past the 1,000-line guideline
+
+`aquaclean_ble_relay/mera_mock.py` is 2,414 lines; `aquaclean_ble_relay/alba_mock.py` is
+2,196 lines (2026-07-18). Both are well past the standard Python module-length guideline
+(sweet spot 100–300 lines, warning at 500, hard code-smell at 1,000 — Pylint's own default
+`max-module-lines`; PEP 8 itself is silent on file length, only line length). No
+`.pylintrc`/`max-module-lines` is configured in this repo.
+
+Each file currently mixes several distinct responsibilities in one module: device-identity/
+firmware constants and codecs, the GATT service class(es), the advertisement class, the
+procedure-dispatch/protocol logic, the webui HTML/handlers, and `run()`'s D-Bus setup —
+exactly the "can't describe it without 'and'" smell.
+
+**Suggested split per mock** (package `mera_mock/` / `alba_mock/` replacing the single file):
+- `__init__.py` — public API (the `MeraMock`/`AlbaMock` class re-export)
+- `identity.py` — identity/firmware constants, codecs, `_FACTORY_*` defaults
+- `gatt.py` — GATT service class(es), advertisement class
+- `protocol.py` — procedure dispatch (`_proc_*` handlers)
+- `webui.py` — HTML template, settings-table builder, aiohttp route handlers
+- `service.py` (or keep in `__init__.py`) — `run()`'s D-Bus/adapter setup, main loop
+
+**Status:** not started. Flagged as a refactor candidate per `memory/python-module-length-
+should-fix.md`; not urgent, doesn't block current feature work, but should be picked up
+before either file grows meaningfully larger.
+
+---
+
+### Mera mock: "real reference" identity/firmware values are hardcoded to our one test device
+
+`_IDENTITY_REAL_REFERENCE` in `mera_mock.py` (the "real: ..." hint shown next to each
+webui-editable identity field) is hardcoded to values confirmed from *our* test device
+(serial `HB2304EU298413`, etc. — see `aquaclean-...SILLY.log`). A different user running this
+mock against their own real Mera Comfort would have a different serial, possibly different
+SAP-number formatting, different firmware-version history — our hardcoded hints would be
+actively wrong for them, not just unhelpful. Same concern likely applies to `_FW_COMPONENT_VERSIONS`
+(the "real" per-component firmware versions used by the `rs30`/`rs28` profile dropdown).
+
+**Raised by the user 2026-07-18**, explicitly deferred — "leave as is for the time being."
+
+**Second, independent argument for the same fix (also raised 2026-07-18):** security/privacy,
+not just portability. `_FACTORY_IDENTITY`/`_IDENTITY_REAL_REFERENCE` (and the equivalent
+real-value citations scattered across docs/tools/tests) put one specific real device's
+identity — SAP article prefix, serial number, production date, etc. — directly in a public
+repo. Not a remotely-exploitable credential like the Alba `PAIRING_SECRET` PIN (no cloud API
+ties to it — see `memory/feedback_test_setup_no_cloud_connectivity.md`), but still real
+device-identifying data that shouldn't need to live in source at all. The existing scope
+(confirmed via `git log -S`, 2026-07-18) is large — real serial/SAP values appear in ~40
+files including docs, tools, and tests, present since commit `f1dcf5d` (2026-04-23, ~3 months
+before this note), already pushed to the public GitHub repo. **Explicitly deferred alongside
+the portability concern — leave as is for now.** Do not re-raise or re-investigate scope
+in a future session without being asked; this is a recorded, closed-for-now decision, not an
+open question to re-litigate.
+
+**Suggested design when picked up:** move the "real reference" values into the persistence
+database (same `mock_persistence` mechanism the actual current-value fields already use),
+with the hardcoded dicts only as a fallback default for a fresh install. Add a small script
+that connects to a real device once (reusing the standalone bridge's own
+`GetDeviceIdentification`/`GetFirmwareVersionList` calls, `aquaclean_console_app`'s existing
+client code) and writes what it reads straight into that namespace — so a new user runs the
+script against their own device once, and the mock's hints/profiles become personal to them
+without editing Python source. This also resolves the security concern: no real device data
+would need to ship in source/docs at all, only in the user's own local, gitignored database.
+
+**Status:** not started, intentionally deferred (portability + security, both 2026-07-18).
+
+---
+
 ### Refactor web UI (`static/index.html`)
 
 `aquaclean_console_app/static/index.html` is a single monolithic file that has grown too

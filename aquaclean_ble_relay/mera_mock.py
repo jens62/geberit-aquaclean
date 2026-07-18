@@ -76,6 +76,7 @@ from aquaclean_console_app.aquaclean_core.Message.CrcMessage                    
 from aquaclean_console_app.aquaclean_core.Frames.FrameFactory                       import FrameFactory     as _FrameFactory  # noqa: E402
 from aquaclean_console_app.aquaclean_core.Frames.Frames.FrameType                  import FrameType        as _FrameType     # noqa: E402
 from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame            import FlowControlFrame as _FlowControlFrame  # noqa: E402
+from aquaclean_console_app.aquaclean_core.Frames.FrameCollector                     import FrameCollector   as _FrameCollector  # noqa: E402
 
 from aquaclean_ble_relay.mock_bluez_adapter import select_adapter  # noqa: E402
 from aquaclean_ble_relay import mock_persistence  # noqa: E402
@@ -84,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.96.0b1"
+_MOCK_VERSION = "1.99.1b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -400,26 +401,31 @@ _COMMON_SETTING_META = {
 _ADVERT_PATH = "/com/spacecheese/bluez_peripheral/advert0"
 
 
-def _parse_request(frame: bytes):
-    """Parse 20-byte request frame -> (ctx, proc, args). Pure function, no
-    instance state — kept module-level (identical to the original script).
+def _parse_reassembled_request(data: bytes):
+    """Parse a fully reassembled request body -> (ctx, proc, args). Pure
+    function, no instance state.
 
-    Request layout (SINGLE 0x11, FIRST 0x13/15/17):
-      frame[0]    type header
-      frame[1]    CrcMessage.id = 4 (CRC_REQ)
-      frame[2]    segments = 255
-      frame[3:5]  len (hi, lo)
-      frame[5:7]  crc16 (hi, lo)
-      frame[7]    node = 0x01
-      frame[8]    ctx
-      frame[9]    proc
-      frame[10]   arg_len
-      frame[11:]  args
+    `data` is the concatenation of each frame's `Payload` (data[1:20] per
+    frame — see FrameCollector/SingleFrame.create_single_frame in the
+    bridge's aquaclean_core.Frames), i.e. every frame's leading type-header
+    byte already stripped. For a single-frame request this is just one
+    19-byte chunk; for a multi-frame request (e.g. GetFirmwareVersionList's
+    12-component query, which needs 13 args bytes — more than the 9 that fit
+    in one frame) it's the FIRST frame's payload followed by one or more
+    CONS frames' payloads, in order. Field offsets below are the original
+    20-byte-frame offsets (see git history) shifted left by 1 to account for
+    the stripped header byte:
+      data[0:6]   CrcMessage header (id, segments, len, crc16) — unused here
+      data[6]     node = 0x01
+      data[7]     ctx
+      data[8]     proc
+      data[9]     arg_len
+      data[10:]   args
     """
-    ctx     = frame[8]
-    proc    = frame[9]
-    arg_len = frame[10]
-    args    = bytes(frame[11:11 + arg_len]) if arg_len else b""
+    ctx     = data[7]
+    proc    = data[8]
+    arg_len = data[9]
+    args    = bytes(data[10:10 + arg_len]) if arg_len else b""
     return ctx, proc, args
 
 
@@ -548,6 +554,29 @@ class MeraService(Service):
         self._last_a5_frames: list = []   # last response frames; used for FlowControl retransmit
         self._last_a5_proc: int = 0       # proc code of last multi-frame response (for progress log)
         self._retransmit_count: int = 0   # retransmits for current transaction; reset on new proc
+        # Reassembles multi-frame WRITE requests (FIRST+CONS) — reused from the
+        # bridge's own aquaclean_core.Frames.FrameCollector rather than
+        # reimplementing it. The bridge only ever uses this to reassemble
+        # multi-frame NOTIFY *responses* (it's a client, never a request
+        # receiver); the mock is the peripheral side of the exact same wire
+        # format, receiving multi-frame *requests* — same primitive, opposite
+        # direction. Previously missing entirely: the mock dispatched on the
+        # FIRST frame alone and silently dropped CONS continuations (see
+        # memory/mera-firmware-update-request-truncation.md), which is why
+        # GetFirmwareVersionList's 12-component query (13 args bytes, more
+        # than the 9 that fit in one frame) always came back short.
+        self._frame_collector = _FrameCollector()
+        self._frame_collector.TransactionCompleteFC += self._on_request_reassembled
+        # Ack bitmap for the request currently being reassembled — set/sent
+        # per-frame in _handle_request (see _send_request_ack). NOT the same
+        # as FrameCollector's own SendControlFrame event: that one only fires
+        # every 4 frames or at completion (fine for the *response* side, where
+        # the app acks a whole batch), but a real capture (onboarding-real-
+        # mera.md, 14:11:09.414-.504) shows the real device acking every
+        # single frame of an incoming request — after the FIRST frame alone
+        # (of a 2-frame request) and again after the CONS frame — and the app
+        # does not send CONS at all without that first per-frame ack.
+        self._request_ack_bitmap = bytearray(8)
         self._request_lock = asyncio.Lock()   # serialise _handle_request — prevents concurrent frame interleave
         self._a6_burst_done: asyncio.Event = asyncio.Event()
         self._a6_burst_done.set()         # no burst in progress initially
@@ -700,38 +729,78 @@ class MeraService(Service):
                 return
 
             if ft == _FrameType.SINGLE:
+                # SubFrameCountOrIndex packs two different meanings depending on
+                # IsSubFrameCount (bit 0): on a FIRST/SINGLE frame it's n_cons
+                # (how many CONS frames follow, 0 for a plain single-frame
+                # request); on a CONS frame it's that frame's own index.
+                # Mirrors FrameService.process_data's SINGLE-frame branch in
+                # the bridge's aquaclean_core.Frames — same collector, same
+                # start_transaction(n+1)/add_frame(i, payload) pattern, just
+                # reused here for the opposite (request-receiving) direction.
+                sub_frame_count_or_index = (hdr >> 1) & 3
                 if hdr & 0x01:
-                    # SINGLE (SubFrameCount=0) or FIRST[N] (N>0) — new request
-                    # Wait for any in-progress A6 burst to finish; prevents ATT congestion
-                    # that causes iOS to drop A5 frames and send a partial FlowControl ACK.
-                    try:
-                        await asyncio.wait_for(self._a6_burst_done.wait(), timeout=3.0)
-                    except asyncio.TimeoutError:
-                        mock._log("·", "A6 burst wait timed out — sending A5 response anyway")
-                    ctx, proc, args = _parse_request(raw)
-                    mock._log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
-                    # Connection 2 (Save) runs on the SAME BLE connection as Connection 1.
-                    # iOS re-subscribes CCCDs but BlueZ omits the external callback when
-                    # the value is unchanged -> no new burst from _on_device_connected.
-                    # Fire A6 burst whenever proc 0x82 arrives and the initial burst is done.
-                    if proc == 0x82 and self._a6_burst_done.is_set():
-                        a6 = self._notify_a6_iface
-                        if a6 is not None and a6._notify:
-                            asyncio.ensure_future(mock._send_a6_reconnect_burst(self, mock._connection_gen))
-                    frames = mock._dispatch(ctx, proc, args)
-                    self._last_a5_frames = frames   # store for potential FlowControl retransmit
-                    self._last_a5_proc = proc
-                    self._retransmit_count = 0
-                    for i, frame in enumerate(frames):
-                        if i:
-                            await asyncio.sleep(0.012)  # 12ms > CI(10ms): each frame its own CE
-                        await self._push_method(i)(frame)
-                    if len(frames) == 1:
-                        name = _PROC_NAMES.get(proc, f"0x{proc:02X}")
-                        mock._log("✅", f"{name}")
+                    # FIRST frame (n_cons may be 0, i.e. a complete single-frame request)
+                    self._request_ack_bitmap = bytearray(8)
+                    self._request_ack_bitmap[0] |= 1
+                    await self._send_request_ack()
+                    await self._frame_collector.start_transaction(sub_frame_count_or_index + 1)
+                    await self._frame_collector.add_frame(0, raw[1:20])
                 else:
-                    # CONS continuation frame (bit 0 = 0) — multi-frame request not yet assembled
-                    mock._log("·", f"CONS frame received (multi-frame request not yet assembled): {raw[:4].hex()}")
+                    # CONS continuation frame
+                    frame_index = sub_frame_count_or_index
+                    self._request_ack_bitmap[frame_index // 8] |= (1 << (frame_index % 8))
+                    await self._send_request_ack()
+                    await self._frame_collector.add_frame(frame_index, raw[1:20])
+
+    async def _on_request_reassembled(self, sender, data: bytes) -> None:
+        """FrameCollector.TransactionCompleteFC handler — fires once every
+        expected frame (FIRST + all CONS) of one request has arrived. `data`
+        is the concatenation of each frame's Payload in order (see
+        _parse_reassembled_request); for a single-frame request this fires
+        immediately with just that one frame's payload."""
+        mock = self._mock
+        ctx, proc, args = _parse_reassembled_request(bytes(data))
+        # Wait for any in-progress A6 burst to finish; prevents ATT congestion
+        # that causes iOS to drop A5 frames and send a partial FlowControl ACK.
+        try:
+            await asyncio.wait_for(self._a6_burst_done.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            mock._log("·", "A6 burst wait timed out — sending A5 response anyway")
+        mock._log("←", f"proc 0x{proc:02X}  ctx={ctx}  args={args.hex() if args else '(none)'}")
+        # Connection 2 (Save) runs on the SAME BLE connection as Connection 1.
+        # iOS re-subscribes CCCDs but BlueZ omits the external callback when
+        # the value is unchanged -> no new burst from _on_device_connected.
+        # Fire A6 burst whenever proc 0x82 arrives and the initial burst is done.
+        if proc == 0x82 and self._a6_burst_done.is_set():
+            a6 = self._notify_a6_iface
+            if a6 is not None and a6._notify:
+                asyncio.ensure_future(mock._send_a6_reconnect_burst(self, mock._connection_gen))
+        frames = mock._dispatch(ctx, proc, args)
+        self._last_a5_frames = frames   # store for potential FlowControl retransmit
+        self._last_a5_proc = proc
+        self._retransmit_count = 0
+        for i, frame in enumerate(frames):
+            if i:
+                await asyncio.sleep(0.012)  # 12ms > CI(10ms): each frame its own CE
+            await self._push_method(i)(frame)
+        if len(frames) == 1:
+            name = _PROC_NAMES.get(proc, f"0x{proc:02X}")
+            mock._log("✅", f"{name}")
+
+    async def _send_request_ack(self) -> None:
+        """Acks the frame just received (via self._request_ack_bitmap) with a
+        CONTROL frame on A5 — sent immediately per-frame, BEFORE feeding the
+        frame into self._frame_collector (which may synchronously trigger the
+        full dispatch+response chain once the last expected frame arrives).
+        Ordering confirmed from a real capture (onboarding-real-mera.md,
+        14:11:09.414-.564): ack-FIRST, then CONS, then ack-CONS, and only
+        *then* the response — the ack always precedes any response, even for
+        the frame that completes the transaction. Required, not optional:
+        without the ack after FIRST, the real app resends FIRST a few times
+        and gives up rather than ever sending CONS."""
+        control = _FrameFactory.BuildControlFrame(bytes(self._request_ack_bitmap)).serialize()
+        self._mock._log("→", f"CTRL ack (bitmap=0x{self._request_ack_bitmap[0]:02x})")
+        await self._push_method(0)(bytes(control))
 
     @characteristic(_WRITE_0_UUID, CharFlags.WRITE_WITHOUT_RESPONSE)
     def write_0(self, options):
@@ -1399,9 +1468,12 @@ class MeraMock:
         count = min(args[0], len(args) - 1)
         comp_ids = list(args[1:1 + count])
         records = bytes([len(comp_ids)])
+        served = []
         for cid in comp_ids:
             v1, v2, build = self._FW_COMPONENT_VERSIONS.get(cid, (0x30, 0x30, 0))
             records += bytes([cid, v1, v2, build, 0])
+            served.append(f"{cid}={_format_fw_version(v1, v2, build)}")
+        self._log("→", f"GetFirmwareVersionList served: {', '.join(served)}")
         return records + bytes(max(0, 61 - len(records)))  # always pad to 61 bytes
 
     def _set_fw_version(self, component_id: int, v1: int, v2: int, build: int) -> None:

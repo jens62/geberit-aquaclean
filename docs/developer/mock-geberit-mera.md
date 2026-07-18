@@ -834,6 +834,32 @@ Node IDs: `[03, 04, 05, 06, 07, 08, 09, 0A, 0B, 0C, 0E, 0F]` (12 nodes)
 
 ### GetFirmwareVersionList (proc `0x0E`) — per requested component
 
+**RESOLVED 2026-07-18 (mock v1.99.1b1) — the "must be uniform RS30.0" theory below was
+wrong; the real root cause was a request-parsing bug, not firmware version content at
+all.** Confirmed working end-to-end with the `rs28` profile (genuinely non-uniform,
+real per-component values — component 1 = RS28.0 TS199, component 11 = RS07.0 TS22, and
+each other component at its own real, differing version) plus the real device's serial
+number: no blocking update screen, no "Fehler", correct version shown in
+Maintenance→Firmware. Two compounding mock bugs, both in `_handle_request`:
+
+1. The mock never reassembled multi-frame incoming WRITE requests — it dispatched on the
+   FIRST frame alone and silently discarded any CONS continuation. The app's 12-component
+   query (13 args bytes, more than the 9 that fit in one 20-byte frame) was always
+   truncated to 8 components (missing 10, 11, 12, 14), regardless of what version values
+   were configured — this, not the firmware values, is what looked like an unconditional
+   blocking screen across every profile ever tested.
+2. Fixing (1) alone made onboarding *worse* (0/4 connections): the real device sends a
+   FlowControl CTRL ack after every frame of an incoming request (confirmed byte-for-byte
+   from `onboarding-real-mera.md`, 14:11:09.414-.564) — the app will not send the CONS
+   continuation without that ack. The mock now sends it per-frame before dispatch.
+
+Full writeup, including why the earlier "uniform RS30.0" empirical finding was a red
+herring: `memory/mera-firmware-update-request-truncation.md` (local Claude memory, not in
+this repo).
+
+<details>
+<summary>Original (incorrect) theory, kept for history</summary>
+
 All components: version `"30"`, build `206` → `RS30.0 TS206`
 
 **ALL components MUST return RS30.0 TS206 — including sub-nodes 3–15.**
@@ -850,6 +876,8 @@ real sub-node versions, yet does NOT trigger the blocking screen. This discrepan
 unexplained — see `docs/developer/firmware-version.md` § "iOS app — firmware update check
 mechanism" and `local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md`
 § "v1.75.0b1 empirical finding" for the full analysis.
+
+</details>
 
 ### GetDeviceInitialOperationDate (proc `0x86`)
 
@@ -994,7 +1022,7 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | No pairing dialog (`btmgmt pairable off` at startup) | ✅ v1.32.0 |
 | `IsButtonPressed` latched until burst sent | ✅ v1.28.0 |
 | GetDeviceIdentification (proc `0x82`) | ✅ v1.54.0b1 — confirmed |
-| GetFirmwareVersionList (proc `0x0E`) | ✅ v1.54.0b1 — confirmed |
+| GetFirmwareVersionList (proc `0x0E`) | ✅ v1.54.0b1 — confirmed request/response shape; ⚠️ **request truncated to 8/12 components until v1.99.1b1** — see below |
 | GetSystemParameterList (proc `0x0D`) | ✅ v1.55.0b1 — format fixed (index bytes per item, 9 Mera Comfort items) |
 | GetDeviceInitialOperationDate (proc `0x86`) | ✅ v1.54.0b1 — confirmed |
 | GetFilterStatus (proc `0x59`) | ✅ v1.60.0b1 — id=4/id=8 set to dynamic Unix timestamps (17 days ago); id=3=1, id=6=3, id=7=348, id=10=5 |
@@ -1008,6 +1036,20 @@ flow confirmed working with Geberit Home App v2.14.1 on real iPhone.
 | GetStoredProfileSetting (proc `0x53`) | ✅ v1.64.0b1 — per-ID values from real device capture (was returning 0 for all IDs) |
 | GetPerNodeProfileSetting (proc `0x07`) | ✅ v1.64.0b1 — per-node values from real device capture (was returning 0 for all nodes) |
 | "Descaling necessary" warning | ✅ v1.59.0b1 — confirmed fixed (2026-06-25); root cause was SPL index 13=0 |
+
+---
+
+### Firmware-update-request blocker — RESOLVED, mock v1.99.1b1 (2026-07-18)
+
+Full onboarding confirmed end-to-end with a genuinely non-uniform, real firmware profile
+(`rs28`) and the real device's serial number: no blocking "update required" screen, no
+"Fehler", correct firmware version shown in Maintenance→Firmware. See the corrected
+"GetFirmwareVersionList" section above for the root cause (request-frame truncation +
+missing per-frame FlowControl ack — a request-side wire-protocol bug, not a firmware-value
+issue). Full incident writeup: `memory/mera-firmware-update-request-truncation.md`.
+
+Not yet tested: an actual simulated firmware *upgrade* through this now-working onboarding
+path (Phase 9b's `ctx=0x40` state machine) — that's the next thing being tested.
 
 ---
 
