@@ -700,6 +700,25 @@ before either file grows meaningfully larger.
 
 ---
 
+### `mock_service.py`: startup self-check for the bluetoothd `--noplugin=battery` systemd override
+
+A standing VM setup requirement (see `docs/developer/test-infrastructure.md` §"BlueZ battery
+plugin also initiates its own SMP pairing") is easy to silently lose: a fresh VM, an OS
+reinstall, or simply never having applied the systemd drop-in override on a new test machine
+all reintroduce the battery-plugin SMP pairing-failure cycle, and nothing currently detects
+this — the mock just starts up and behaves oddly (spurious SMP events, possible
+disconnect-pattern confusion re-litigating an already-closed investigation).
+
+**Suggested design:** on startup, `mock_service.py` runs something like
+`ps aux | grep bluetoothd` (or reads `/proc/<pid>/cmdline` for the running `bluetoothd`) and
+warns loudly (not a hard failure — the mock can still run) if `--noplugin=battery` is absent,
+pointing at the exact `test-infrastructure.md` section with the fix commands.
+
+**Status:** not started, low priority — the override is already applied and verified on
+anneubuntu-studio; this would mainly help future setups on a new/rebuilt machine.
+
+---
+
 ### Mera mock: "real reference" identity/firmware values are hardcoded to our one test device
 
 `_IDENTITY_REAL_REFERENCE` in `mera_mock.py` (the "real: ..." hint shown next to each

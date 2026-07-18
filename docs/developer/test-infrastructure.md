@@ -277,6 +277,42 @@ daemon session succeed without retry.
 reads the mock's own battery level later in the connection, though this direction has
 not been observed as the cause of disconnect.
 
+### Related but separate: BlueZ battery plugin also initiates its own SMP pairing (fixed via systemd, 2026-07-17)
+
+Distinct from the trap above (which is BlueZ reading *iOS's* battery service and disconnecting
+on ATT Error 0x05). This one is BlueZ's battery plugin acting as its own **GATT client**,
+spontaneously sending an unsolicited SMP Security Request to escalate before it reads the
+connected device's battery level — the app cooperates with a Pairing Request, and BlueZ then
+rejects its own solicited pairing (the protocol is deliberately unencrypted at the BLE layer).
+Confirmed via pcapng: 7 occurrences in one ~6.5-min session, initially suspected (then ruled
+out) as the cause of an unrelated periodic-disconnect investigation.
+
+**This is a standing VM setup requirement, not a per-session flag** — the plain systemd
+default (`/usr/libexec/bluetooth/bluetoothd`, no args) re-enables the battery plugin on every
+`systemctl restart bluetooth`, silently undoing any manual `--noplugin=battery` testing done
+in a previous session. Apply once per machine:
+
+```bash
+sudo mkdir -p /etc/systemd/system/bluetooth.service.d
+sudo tee /etc/systemd/system/bluetooth.service.d/override.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/libexec/bluetooth/bluetoothd --noplugin=battery
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart bluetooth
+```
+
+Verify it's active:
+```bash
+ps aux | grep bluetoothd   # must show --noplugin=battery
+```
+
+Already applied on anneubuntu-studio (confirmed present as of 2026-07-18). A fresh VM/machine
+needs this applied before testing — nothing currently checks for it automatically (see
+`docs/roadmap.md` for a proposed `mock_service.py` startup self-check). Full incident:
+`memory/mera-mock-battery-plugin-fix.md` (local Claude memory) and
+`docs/developer/firmware-version.md` § "battery plugin" investigation.
+
 ### Apply the descriptor.py Python 3.12 patch
 
 `tools/patch_bluez_peripheral_py312.py` now patches **both** `characteristic.py` and
