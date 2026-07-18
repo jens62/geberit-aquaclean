@@ -444,7 +444,7 @@ diffed value (component 1 = RS30.0 TS206, components 3–15 = their actual real 
 RS07–RS11 versions — same shape as the "not sufficient" v1.74.0b1 config above, but with
 correctly diffed sub-component values instead of whatever v1.74.0b1 used). **Tested
 against the real Geberit Home App (2026-07-15):** the app still requests a firmware
-upgrade regardless — consistent with the decompiled finding above that
+upgrade regardless — consistent with the finding above (from source analysis) that
 `IsForceUpdateNecessary` is unconditionally `true` for every Mera connect, independent of
 the actual version delta — and resolves to the **dismissible "Fehler" popup**, not the
 blocking UI. Confirmed working end-to-end by the user (2026-07-16): "Fehler" appears, "OK"
@@ -485,7 +485,7 @@ predates the empirical v1.76.0b1 test above and its conclusions may not hold.**
 The real device sends RS28.0 TS199 for component 1 and real sub-node versions for 3–15 —
 yet does NOT trigger the blocking update UI. This is an open question; see the analysis file.
 
-**Full analysis with call chain, decompiled source, and empirical log comparison:**
+**Full analysis with call chain, source analysis, and empirical log comparison:**
 `local-assets/geberit-home-v2.14.1-from-iOS/firmware-update-check-analysis.md` —
 section "v1.75.0b1 empirical finding: component 1 alone at RS30.0 is NOT sufficient".
 
@@ -500,7 +500,7 @@ If Geberit updates the bundled firmware to RS31+, the mock would need updating a
 including reconnects with a saved/existing configuration — not only on first-time onboarding.
 The real Mera never shows the Fehler after initial setup.
 
-**What the decompiled code confirmed:**
+**What the source analysis confirmed:**
 - The app computes a `UniqueId` as CRC32 of the SAP string — the per-device key in local
   storage (confirmed from `ProductIdentifier` source analysis).
 - `FirmwareForceUpdateViewModel` has an `_E012` instance field set to `true` after the
@@ -508,7 +508,7 @@ The real Mera never shows the Fehler after initial setup.
   resets to `false` every time the ViewModel is recreated and does NOT persist across
   reconnects on its own.
 
-**Behavioral inference — NOT seen in decompiled code:**
+**Behavioral inference — NOT seen in the analyzed source:**
 The real Mera never shows the Fehler after initial setup; the mock shows it on every connect
 including reconnects with a saved configuration. This suggests the app writes a persistent
 "update flow completed" state after proc 0x00 / proc 0x01 finish successfully. The mock

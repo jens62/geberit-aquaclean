@@ -1241,11 +1241,11 @@ responses matching real device values.
    mock currently returns `b""` which should be correct but confirm no error check.
 
 Consider analysing the Sela firmware before building the mock:
-- Node 0x01 (`0x01_decompiled.c`, 18,739 lines) — main controller; contains SPL dispatcher,
+- Node 0x01 (main controller source, 18,739 lines) — contains SPL dispatcher,
   procedure handlers, and the CommonSetting/ProfileSetting switch tables.
 - Sela-specific nodes not present in Mera Comfort: 0x0F (Durchlauferhitzer / tankless heater).
 - BLE controller (node 0x00) is identical to Mera Comfort (same binary, RS10 TS18).
-- Decompiled output: `local-assets/firmware/FwPkg_F806_V8.2.57.251023_0650871a_Sela_F8_06_RS_08_02_TS_57_extracted/`
+- Extracted output: `local-assets/firmware/FwPkg_F806_V8.2.57.251023_0650871a_Sela_F8_06_RS_08_02_TS_57_extracted/`
 
 ---
 

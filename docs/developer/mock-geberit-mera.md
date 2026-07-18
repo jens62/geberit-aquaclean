@@ -650,7 +650,7 @@ reconnect). Appeared consistently from v1.54.0b1.
 **Root cause A — InfoFrame burst sent on A5 instead of A6 (primary, fixed v1.61.0b1):**
 
 `GeberitDeviceCoreService.Connect()` checks `ConnectionState == Ready` after
-`EstablishAsync()` returns (line 175 in decompiled source). `ConnectionState` is set to
+`EstablishAsync()` returns (line 175 in the analyzed source). `ConnectionState` is set to
 `Ready` only when InfoFrames are received on **A6** — not A5. The mock was sending the
 burst on A5 only (since v1.41.0b1). The procs (0x82, 0x0E, 0x0D, 0x59) all succeed
 because they are independent of `ConnectionState`. But `Connect()` finds

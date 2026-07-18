@@ -258,15 +258,15 @@ the Geberit cloud, hand out setting min/max ranges at runtime? Investigated agai
    feature, not protocol-level value bounds. Every other `/Settings/*` call in the capture
    returned `"Data": null`.
 3. **So where do min/max actually live?** Not firmware, not cloud, as far as this project
-   has already reverse-engineered — `docs/developer/alba-dpid-reference.md` already
-   documents its own Min/Max columns as *"value range from protocol spec"*, i.e.
-   reverse-engineered from the decompiled Home App's own DataPoint definitions. The app
-   validates client-side using ranges compiled into the app binary. No accessible
-   firmware-side bounds-check was found in the decompiled Mera `0x01_decompiled.c` (the
-   switch dispatch doesn't decompile to labeled proc-ID cases, so confirming firmware-side
-   enforcement would need real disassembly effort) — plausible the firmware also rejects
-   out-of-range writes, but unconfirmed, and it doesn't change what we need to do: the
-   engineering instinct that this should be authoritative somewhere durable was right, but
+   has already determined — `docs/developer/alba-dpid-reference.md` already documents its
+   own Min/Max columns as *"value range from protocol spec"*, i.e. derived from analysis of
+   the Home App's own DataPoint definitions. The app validates client-side using ranges
+   compiled into the app binary. No accessible firmware-side bounds-check was found in the
+   analyzed Mera main-controller source (the switch dispatch doesn't resolve to labeled
+   proc-ID cases, so confirming firmware-side enforcement would need deeper binary-analysis
+   effort) — plausible the firmware also rejects out-of-range writes, but unconfirmed, and it
+   doesn't change what we need to do: the engineering instinct that this should be
+   authoritative somewhere durable was right, but
    empirically it's the app that's authoritative today, not the firmware. Since we already
    have that "protocol spec" transcribed into `ble-protocol.md` / `alba-dpid-reference.md`,
    the mock's metadata tables just reproduce the same source the real app uses — nothing new
@@ -1059,3 +1059,16 @@ Root-causing this needs a fresh nRF52840 capture of the Geberit Home App talking
 itself (not just the existing real-device capture) — pending, needs the user's sniffing
 hardware. Until that's resolved, the busy-window code above is implemented and byte-verified
 in isolation, but unconfirmed end-to-end.
+
+**Requirement — completeness scope (2026-07-18):** the simulation above only changes
+*reported* component version strings at the end of a simulated update; it does not represent
+any other behavioral change the corresponding real firmware update may have introduced. When
+a real device firmware update is known to change anything BLE-observable for an affected
+component (a proc's response format, an SPL parameter's semantics, a newly supported
+command, a fixed protocol bug, etc.), the mock's code for that component should be updated to
+match — not just its reported version number. No such behavioral difference between RS28.0
+and RS30.0 (or RS07.0/RS08.0 for the motion-detection component) has been found or is
+currently suspected from any live capture; this is a completeness requirement for whenever
+one is found, not a known current gap. See `local-assets/firmware/mock-firmware-update-
+completeness-scope.md` for the analysis approach (not detailed here — see CLAUDE.md's rule on
+sensitive methodology terms in tracked files).

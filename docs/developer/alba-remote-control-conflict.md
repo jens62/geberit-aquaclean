@@ -574,9 +574,9 @@ placed between all devices and the toilet is required — not any single device'
 
 **What the btsnoop CAN confirm:** that MuusLee's phone sends keyset_id=0x00 (see below).
 
-### Why the decompiled app source cannot reveal the root cause
+### Why the analyzed app source cannot reveal the root cause
 
-The decompiled source (`Security.cs`) shows the algorithm the app uses to build the
+The analyzed source (`Security.cs`) shows the algorithm the app uses to build the
 KE Request — Curve25519 key generation, HKDF-SHA256 key derivation, AES-CMAC
 authentication. Our bridge's `AriendiSecurity.py` is a faithful Python implementation
 of the same algorithm. Reading the source confirms the app does the same thing the
@@ -655,7 +655,7 @@ alone.
 **It has nothing to do with a BLE phone or bridge connecting directly to a toilet.**
 `Ble20Product.Initialize()` — the full Alba BLE session init — never calls `Join`,
 never reads `DP_PAIRING_SECRET`, and never references `JoinUtil`. Confirmed from
-decompiled vendor app source. The 4-session kstr pcapng confirms: no DpId 12 read,
+analysis of the vendor app source. The 4-session kstr pcapng confirms: no DpId 12 read,
 no JOIN write anywhere in any session.
 
 ### Mera Comfort has NO PIN

@@ -622,7 +622,7 @@ time. After the sequence completes the shower can be started again.
 | 6 | Retracting | — |
 | 7 | Postrinsing | — |
 
-Source: decompiled iOS app v2.14.1; confirmed against kstr device probe
+Source: iOS app v2.14.1 source analysis; confirmed against kstr device probe
 (`local-assets/Android-BLE-Logs/kstr/`).
 
 ---

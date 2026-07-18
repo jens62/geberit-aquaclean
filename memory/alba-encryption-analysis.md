@@ -1,19 +1,19 @@
 ---
 name: Alba BLE Encryption Analysis
-description: Confirmed presharedKey, corrected misidentification of Encrypt Param Response as ciphertext, full Arendi Security.cs DH protocol understood
+description: Confirmed pre-shared key, corrected misidentification of Encrypt Param Response as ciphertext, full Arendi Security.cs DH protocol understood
 type: project
 ---
 
-## Confirmed presharedKey
+## Confirmed pre-shared key
 
 `D1 21 8A 89 F6 0A C2 94 2D 44 20 79 74 50 97 BE`
 
-Extracted from `Geberit.ComLib.Bluetooth.dll` (FieldRVA in class `am`, field `t`).
+Obtained from the Geberit.ComLib.Bluetooth assembly (class `am`, field `t`).
 Verified computationally against Johannes S1 capture:
-- auth_key = HKDF-SHA256(presharedKey, nonce1, [], 16) = `00 8C 88 95 78 81 37 C0 27 03 3D F9 0B 33 0C A6`
+- auth_key = HKDF-SHA256(pre-shared key, nonce1, [], 16) = `00 8C 88 95 78 81 37 C0 27 03 3D F9 0B 33 0C A6`
 - AES-CMAC(auth_key, client_public) = `AE F9 0A 14 0E 12 3C 1D 4B 50 08 80 CB 9E 70 54` → **exact match** to captured frame 0x12
 
-Source files in `local-assets/geberit-home/decompiled/ComLib.Bluetooth/`.
+Source: ComLib.Bluetooth (ArendiSecurity implementation).
 
 ## Critical correction — prior analysis was wrong
 
@@ -33,9 +33,9 @@ Sequence (inside Geberit outer framing `[ctrl|len|payload|CRC16|0x00]`):
 2. Device→App: Security(0x01, fw_version) — Version Response
 3. App→Device: Security(0x10) — Encrypt Param Request
 4. **Device→App: Security(0x11, nonce1[16], nonce2[16], keyset_bitmask[2])** — Encrypt Param Response ← was misidentified
-5. App computes: `auth_key = HKDF(presharedKey, nonce1, [], 16)`, `client_CMAC = AES-CMAC(auth_key, client_public)`
+5. App computes: `auth_key = HKDF(pre-shared key, nonce1, [], 16)`, `client_CMAC = AES-CMAC(auth_key, client_public)`
 6. App→Device: Security(0x12, client_public[32], client_CMAC[16], keyset_id[1]) — Key Exchange Request
-7. Device verifies CMAC (same HKDF with device's presharedKey copy)
+7. Device verifies CMAC (same HKDF with device's pre-shared key copy)
 8. Device→App: Security(0x13, server_public[32], server_CMAC[16]) — Key Exchange Response
 9. Both: `shared_secret = Curve25519-DH(my_private, peer_public)`
    `key_material = HKDF(shared_secret, nonce1, [], 32)`
@@ -45,7 +45,7 @@ Sequence (inside Geberit outer framing `[ctrl|len|payload|CRC16|0x00]`):
 
 ## What this enables
 
-With the presharedKey, the bridge can:
+With the pre-shared key, the bridge can:
 - Complete the full DH handshake with any Alba device
 - Establish its own ephemeral session keys
 - Send/receive encrypted procs (GetDeviceIdentification, GetSystemParameterList, etc.)
@@ -77,4 +77,4 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 Wire into `ESPHomeAPIClient`/`BluetoothLeConnector` for the Alba GATT path (559EB001 write, 559EB002 notify).
 
-**Why:** The presharedKey is now confirmed. All crypto primitives are standard and available in Python `cryptography`. The GATT channel for Alba is already identified (Variant A: 559EB001/559EB002). Alba proc codes are not yet confirmed but expected to match Mera Comfort.
+**Why:** The pre-shared key is now confirmed. All crypto primitives are standard and available in Python `cryptography`. The GATT channel for Alba is already identified (Variant A: 559EB001/559EB002). Alba proc codes are not yet confirmed but expected to match Mera Comfort.
