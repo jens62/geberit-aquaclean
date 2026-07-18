@@ -85,7 +85,7 @@ function mcBuildControl(row) {
 function mcBuildButton(row) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'mc-step-btn';
+  btn.className = 'mc-btn' + (row.danger ? ' mc-btn-danger' : '');
   btn.textContent = row.label || row.name;
   btn.onclick = function () { mcWrite(row.writeUrl, true, btn); };
   return btn;
@@ -224,6 +224,14 @@ function mcBuildText(row) {
   btn.onclick = function () { mcWrite(row.writeUrl, input.value, btn); };
   wrap.appendChild(input);
   wrap.appendChild(btn);
+  // Reference value shown alongside the field (e.g. the real device's value)
+  // so it can be read/copied without needing to revert the edit first.
+  if (row.hint) {
+    const hint = document.createElement('span');
+    hint.className = 'mc-hint';
+    hint.textContent = row.hint;
+    wrap.appendChild(hint);
+  }
   return wrap;
 }
 

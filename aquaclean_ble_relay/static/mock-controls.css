@@ -153,3 +153,26 @@
 .mc-text-save:disabled { opacity: 0.5; cursor: not-allowed; }
 .mc-text-save.success { border-color: var(--mc-success); color: var(--mc-success); }
 .mc-text-save.error { border-color: var(--mc-error); color: var(--mc-error); }
+
+/* Reference/hint text next to an editable field (e.g. the real device's value) */
+.mc-hint { color: var(--mc-muted); font-size: 0.78rem; font-style: italic; white-space: nowrap; }
+
+/* Plain action buttons (Manual Trigger, Factory Reset, ...) — sized for a
+   text label, unlike .mc-step-btn's fixed narrow +/- width. */
+.mc-btn {
+  background: var(--mc-surface);
+  color: var(--mc-text);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mc-btn:hover { background: rgba(255,255,255,0.08); }
+.mc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mc-btn.success { border-color: var(--mc-success); color: var(--mc-success); }
+.mc-btn.error { border-color: var(--mc-error); color: var(--mc-error); }
+.mc-btn-danger { border-color: var(--mc-error); color: var(--mc-error); }
+.mc-btn-danger:hover { background: rgba(244,67,54,0.12); }

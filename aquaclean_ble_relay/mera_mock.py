@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.91.0b1"
+_MOCK_VERSION = "1.92.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -185,30 +185,108 @@ _FW_COMPONENT_VERSIONS = {
     15: (0x30, 0x31, 0x00),  # RS01.0 TS0   — Schnittstellenmodul
 }
 
-# Incremental test (2026-07-17), third variant — every component EXCEPT 1 and 11 at its
-# real, always-correct value (3,4,5,6,7,8,9,10,12,14,15 — genuinely never changed in the
-# real RS28->RS30 update); component 1 (main controller) at its real pre-update value,
-# RS28.0 TS199 — also genuinely correct; component 11 (motion detection) ALSO set to
-# RS28.0 TS199 — deliberately NOT its real pre-update value (which was RS07.0 TS22).
-# So exactly one value (component 11) is "wrong" compared to real life, everything else
-# is real/correct. Distinct from the already-tested fully-correct real pre-update state
-# (component 1=RS28.0 TS199 real, component 11=RS07.0 TS22 real, rest real) — that
-# configuration reliably BLOCKS on the mock despite being proven to work on real hardware
-# (July 14 capture). This variant asks: does swapping component 11's one real value for an
-# artificial-but-plausible one change that outcome? See docs/developer/firmware-version.md
-# "Consolidated summary" for the other variants tried and their results.
+# True real-life pre-update snapshot (2026-07-18) — the genuine RS28->RS30 capture
+# (memory/mera-firmware-update-ble-protocol.md) showed only components 1 and 11
+# actually changed: component 1 (main controller) RS28.0 TS199 -> RS30.0 TS206,
+# component 11 (motion detection) RS07.0 TS22 -> RS08.0 TS23. Every other component
+# was byte-identical before/after. This is the accurate real pre-update device
+# state — not an experimental/synthetic variant (see docs/developer/
+# firmware-version.md "Consolidated summary" for the several synthetic variants
+# tried on 2026-07-17 before landing back on the real data here).
 _FW_COMPONENT_VERSIONS_RS28 = {
     **_FW_COMPONENT_VERSIONS,
-    1: (0x32, 0x38, 0xC7),
-    11: (0x32, 0x38, 0xC7),
+    1: (0x32, 0x38, 0xC7),   # RS28.0 TS199 — real pre-update value
+    11: (0x30, 0x37, 0x16),  # RS07.0 TS22  — real pre-update value
 }
 
-# Canonical firmware profiles selectable via the webui — keyed by the value the
-# generic <select> control (mock-controls.js) writes/reads.
+# Canonical, real-life firmware profiles selectable via the webui dropdown — keyed
+# by the value the generic <select> control (mock-controls.js) writes/reads. Both
+# apply the full real-life 13-component set matching the main controller's (component
+# 1) version, not a synthetic/uniform value (2026-07-18 correction — see above).
 _FW_PROFILES = {
     "rs30": _FW_COMPONENT_VERSIONS,
     "rs28": _FW_COMPONENT_VERSIONS_RS28,
 }
+
+# Mock-engineering factory default (v1.88.0b1) — uniform RS28.0 TS199 across every
+# component. NOT a real device state (unlike _FW_PROFILES above) — this is the
+# specific synthetic baseline confirmed on 2026-07-17 to avoid the app's blocking
+# force-update screen (dismissible "Fehler" + stable connection), kept only as the
+# "Reset to Factory Settings" recovery target, deliberately excluded from the
+# real-life profile dropdown.
+_FW_COMPONENT_VERSIONS_FACTORY = {cid: (0x32, 0x38, 0xC7) for cid in _FW_COMPONENT_VERSIONS}
+
+# Device-identity factory defaults (unchanged since v1.88.0b1) — used both as
+# __init__'s hardcoded starting point and as the "Reset to Factory Settings"
+# target. Field names corrected 2026-07-18: proc 0x82 offset 0 is SapNumber (dotted
+# format, e.g. "146.21x.xx.1"), not "ArticleNumber" as this file and mock-geberit-
+# mera.md previously labeled it — confirmed by the app's own DeviceIdentification
+# log line and docs/mqtt.md's dotted-format Identification/SapNumber topic. Offset
+# 12 is plain SerialNumber (previously mislabeled "SerialNumber (SAP)").
+_FACTORY_IDENTITY = {
+    "article": "14621",                    # BLE advertisement model-lookup prefix (proc 0x82 unrelated)
+    "sap_number": "146.21x.xx.1",          # proc 0x82 offset 0  — SapNumber
+    "serial_number": "HB2300EU000001",     # proc 0x82 offset 12 — SerialNumber (fictional, avoids CRC32(SAP) collision — see mock-geberit-mera.md)
+    "production_date": "11.04.2023",       # proc 0x82 offset 32 — ProductionDate
+    "description": "AquaClean Mera Comfort",  # proc 0x82 offset 42 — Description
+    "variant": 0x0D,                       # Mera Comfort
+    "initial_operation_date": "31.05.2024",  # proc 0x86
+    "soc_version": "10.18",                # proc 0x81
+}
+
+# identity field key -> instance attribute name, shared by __init__'s persisted-value
+# overlay, the webui write handler, and factory reset.
+_IDENTITY_ATTR_MAP = {
+    "article": "_ARTICLE",
+    "sap_number": "_SAP_NUMBER",
+    "serial_number": "_SERIAL_NUMBER",
+    "production_date": "_PRODUCTION_DATE",
+    "description": "_DESCRIPTION",
+    "variant": "_VARIANT",
+    "initial_operation_date": "_INITIAL_OPERATION_DATE",
+    "soc_version": "_SOC_VERSION",
+}
+
+# (label, max ascii-byte length) for each free-text identity field — max lengths
+# match proc 0x82's fixed-width fields where applicable; "variant" is handled
+# separately (hex byte, not text) both here and in the webui rows.
+_IDENTITY_FIELD_META = [
+    ("article", "Article (BLE adv. model prefix)", 5),
+    ("sap_number", "SAP Number (proc 0x82 offset 0)", 12),
+    ("serial_number", "Serial Number (proc 0x82 offset 12)", 20),
+    ("production_date", "Production Date (proc 0x82 offset 32)", 10),
+    ("description", "Description (proc 0x82 offset 42)", 40),
+    ("initial_operation_date", "Initial Operation Date (proc 0x86)", 10),
+    ("soc_version", "SOC Application Version (proc 0x81)", 5),
+]
+
+_DEFAULT_PROFILE_SETTINGS = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+_DEFAULT_COMMON_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+
+
+def _format_fw_version(v1: int, v2: int, build: int) -> str:
+    return f"RS{chr(v1)}{chr(v2)}.0 TS{build}"
+
+
+def _parse_fw_version(text: str) -> tuple:
+    """Inverse of _format_fw_version — webui free-text firmware-version edits.
+    Raises ValueError with a user-facing message on malformed input."""
+    import re
+    m = re.fullmatch(r"RS(\d)(\d)\.0 TS(\d{1,4})", text.strip())
+    if not m:
+        raise ValueError(f'expected format "RS30.0 TS206", got {text!r}')
+    d1, d2, build = m.groups()
+    return (ord(d1), ord(d2), int(build))
+
+
+def _encode_soc_version(version_str: str) -> bytes:
+    """proc 0x81 payload: major_str(2) + minor_byte + null. "10.18" -> b"10\\x12\\x00"."""
+    major, _, minor = version_str.partition(".")
+    try:
+        minor_byte = int(minor) & 0xFF
+    except ValueError:
+        minor_byte = 0
+    return major.encode("ascii", errors="replace")[:2].ljust(2, b"0") + bytes([minor_byte, 0x00])
 
 # Friendly names for the webui's read-only Firmware Versions section — mirrors
 # _FW_COMPONENT_VERSIONS's own trailing comments (duplicated as structured data
@@ -817,15 +895,6 @@ _HTML = """\
     &nbsp;
     Button: <span class="badge {btn_cls}" id="btn-badge">{btn_txt}</span>
   </p>
-  <h2>Identity</h2>
-  <table>
-    <tr><th>Article</th><td>{article}</td></tr>
-    <tr><th>SAP</th><td>{sap}</td></tr>
-    <tr><th>Serial</th><td>{serial}</td></tr>
-    <tr><th>Description</th><td>{description}</td></tr>
-    <tr><th>Variant</th><td>0x{variant:02X}</td></tr>
-    <tr><th>Device Name (0x2a00)</th><td>ro</td></tr>
-  </table>
   <h2>Controls</h2>
   <form method="post" action="/button">
     <button type="submit">Press Button (confirm pairing)</button>
@@ -893,14 +962,10 @@ class MeraMock:
 
         # ---- identity (was module-level constants; instance now so a future
         # variant/model registry can override per instance without touching
-        # this class again) ----
-        self._ARTICLE      = "14621"          # BLE advertisement article prefix (model lookup)
-        self._ARTICLE_FULL = "146.21x.xx.1"  # proc 0x82 ArticleNumber field: 12-char fixed-width
-        self._SAP_NUMBER      = "HB2300EU000001"
-        self._SERIAL          = "HB2300EU000001"
-        self._PRODUCTION_DATE = "11.04.2023"  # real device format: DD.MM.YYYY
-        self._DESCRIPTION     = "AquaClean Mera Comfort"
-        self._VARIANT     = 0x0D   # Mera Comfort
+        # this class again). All writable through the webui + persisted —
+        # see _IDENTITY_ATTR_MAP / _FACTORY_IDENTITY. ----
+        for _field, _attr in _IDENTITY_ATTR_MAP.items():
+            setattr(self, _attr, _FACTORY_IDENTITY[_field])
 
         # SPL values for indices that need non-zero defaults (none currently needed).
         self._SPL_MERA_VALUES: dict = {}
@@ -912,9 +977,9 @@ class MeraMock:
         # proc 0x08 (SetActiveProfileSetting) — session-only, never persisted,
         # same as ACTIVE_COMMON_SETTINGS below; it has no confirmed getter of its
         # own so it's never read back, only written.
-        self._ACTIVE_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
-        self._STORED_PROFILE_SETTINGS  = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
-        self._STORED_COMMON_SETTINGS   = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
+        self._ACTIVE_PROFILE_SETTINGS  = dict(_DEFAULT_PROFILE_SETTINGS)
+        self._STORED_PROFILE_SETTINGS  = dict(_DEFAULT_PROFILE_SETTINGS)
+        self._STORED_COMMON_SETTINGS   = dict(_DEFAULT_COMMON_SETTINGS)
         self._PER_NODE_PROFILE_SETTINGS = {
             0x00: 1, 0x01: 1, 0x02: 2, 0x03: 1, 0x04: 2,
             0x05: 1, 0x06: 4, 0x07: 0, 0x08: 3, 0x09: 1, 0x0d: 1,
@@ -929,6 +994,11 @@ class MeraMock:
         persisted = mock_persistence.load_all("mera", self._adapter_tag)
         for key, value in persisted.items():
             namespace, _, idx_str = key.partition(":")
+            if namespace == "identity":
+                attr = _IDENTITY_ATTR_MAP.get(idx_str)
+                if attr:
+                    setattr(self, attr, value)
+                continue
             try:
                 idx = int(idx_str)
             except ValueError:
@@ -1106,14 +1176,19 @@ class MeraMock:
         """GetDeviceIdentification: 82-byte fixed-width payload.
 
         AcDeviceIdentification requires exactly 82 bytes (null-padded, no leading variant byte):
-          ArticleNumber[12] + SerialNumber[20] + ProductionDate[10] + Description[40]
+          SapNumber[12] + SerialNumber[20] + ProductionDate[10] + Description[40]
+
+        Field names corrected 2026-07-18: offset 0 is SapNumber (dotted format, e.g.
+        "146.21x.xx.1"), not "ArticleNumber" as this method and mock-geberit-mera.md
+        previously labeled it — confirmed by the app's own DeviceIdentification log
+        line and docs/mqtt.md's dotted-format Identification/SapNumber topic.
         """
         def _pad(s: str, n: int) -> bytes:
             b = s.encode("ascii")[:n]
             return b + bytes(n - len(b))
         return (
-            _pad(self._ARTICLE_FULL, 12)      # ArticleNumber  offset  0
-            + _pad(self._SAP_NUMBER, 20)      # SerialNumber   offset 12
+            _pad(self._SAP_NUMBER, 12)        # SapNumber      offset  0
+            + _pad(self._SERIAL_NUMBER, 20)   # SerialNumber   offset 12
             + _pad(self._PRODUCTION_DATE, 10) # ProductionDate offset 32
             + _pad(self._DESCRIPTION, 40)     # Description    offset 42
         )                                     # total = 82 bytes
@@ -1125,9 +1200,10 @@ class MeraMock:
 
     def _proc_81(self) -> bytes:
         """GetSOCApplicationVersions: major_str(2) + minor_byte + null = 4 bytes.
-        Real device sends "10.18" as b"10" + 0x12 + 0x00.
+        Writable via webui/persistence (self._SOC_VERSION, "MM.mm" text) — real
+        device sends "10.18" as b"10" + 0x12 + 0x00.
         """
-        return b"10\x12\x00"
+        return _encode_soc_version(self._SOC_VERSION)
 
     def _proc_0d(self, args: bytes) -> bytes:
         """GetSystemParameterList: count(1) + count x (index(1)+value_le(4)).
@@ -1323,8 +1399,9 @@ class MeraMock:
         self._log("·", "Simulated reboot complete — device reachable again")
 
     def _proc_86(self) -> bytes:
-        """GetDeviceInitialOperationDate: UTF-8 date string, no null terminator (real device: 31.05.2024)."""
-        return b"31.05.2024"
+        """GetDeviceInitialOperationDate: UTF-8 date string, no null terminator.
+        Writable via webui/persistence (self._INITIAL_OPERATION_DATE)."""
+        return self._INITIAL_OPERATION_DATE.encode("ascii")
 
     def _proc_07(self, args: bytes) -> bytes:
         """GetPerNodeProfileSetting: args[0] = node_id, returns 16-bit LE value."""
@@ -1584,16 +1661,50 @@ class MeraMock:
             {
                 "id": cid,
                 "name": _FW_COMPONENT_NAMES.get(cid, f"Component {cid}"),
-                "kind": "readonly",
-                "value": f"RS{chr(v1)}{chr(v2)}.0 TS{build}",
+                "kind": "text",
+                "value": _format_fw_version(v1, v2, build),
+                "writeUrl": f"/settings/fw-component/{cid}",
             }
             for cid, (v1, v2, build) in sorted(self._FW_COMPONENT_VERSIONS.items())
         ]
 
+        identity_rows = [
+            {
+                "id": key,
+                "name": label,
+                "kind": "text",
+                "value": getattr(self, _IDENTITY_ATTR_MAP[key]),
+                "max": max_len,
+                "hint": f"real: {_FACTORY_IDENTITY[key]}",
+                "writeUrl": f"/settings/identity/{key}",
+            }
+            for key, label, max_len in _IDENTITY_FIELD_META
+        ]
+        identity_rows.append({
+            "id": "variant",
+            "name": "Variant (model byte)",
+            "kind": "text",
+            "value": f"0x{self._VARIANT:02X}",
+            "hint": f"real: 0x{_FACTORY_IDENTITY['variant']:02X}",
+            "writeUrl": "/settings/identity/variant",
+        })
+
+        reset_row = {
+            "id": "factory-reset",
+            "name": "Factory Reset",
+            "kind": "button",
+            "label": "Reset to Factory Settings",
+            "value": None,
+            "writeUrl": "/settings/factory-reset",
+            "danger": True,
+        }
+
         return {"sections": [
+            {"title": "Device Identity", "rows": identity_rows},
             {"title": "Profile Settings", "rows": _rows(_PROFILE_SETTING_META, self._STORED_PROFILE_SETTINGS, "/settings/profile")},
             {"title": "Common Settings", "rows": _rows(_COMMON_SETTING_META, self._STORED_COMMON_SETTINGS, "/settings/common")},
             {"title": "Firmware Versions", "rows": fw_rows},
+            {"title": "Danger Zone", "rows": [reset_row]},
         ]}
 
     async def _handle_root(self, request):
@@ -1604,8 +1715,6 @@ class MeraMock:
             conn_txt="Connected" if self._connected else "Idle",
             btn_cls="ok" if self._button_pressed else "warn",
             btn_txt="Pressed" if self._button_pressed else "Waiting",
-            article=self._ARTICLE, sap=self._SAP_NUMBER, serial=self._SERIAL,
-            description=self._DESCRIPTION, variant=self._VARIANT,
             log_html=self._render_log(),
             settings_json=json.dumps(self._settings_table_data()),
         )
@@ -1632,6 +1741,72 @@ class MeraMock:
         if profile not in _FW_PROFILES:
             return web.json_response({"error": f"unknown profile {profile!r}"}, status=400)
         self._apply_firmware_profile(profile)
+        return web.json_response({"ok": True})
+
+    async def _handle_write_fw_component(self, request):
+        """Free-text per-component firmware-version edit (webui) — e.g. "RS28.0
+        TS199" — same _set_fw_version write path as the profile selector and
+        the real Phase 9b OTA finalize, so single-variable experiments no
+        longer require a code change/redeploy (2026-07-18 ask)."""
+        from aiohttp import web
+        try:
+            component_id = int(request.match_info["component_id"])
+        except ValueError:
+            return web.json_response({"error": "invalid component id"}, status=400)
+        if component_id not in self._FW_COMPONENT_VERSIONS:
+            return web.json_response({"error": f"unknown component {component_id}"}, status=400)
+        body = await request.json()
+        try:
+            v1, v2, build = _parse_fw_version(str(body.get("value", "")))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        self._set_fw_version(component_id, v1, v2, build)
+        return web.json_response({"ok": True})
+
+    async def _handle_write_identity(self, request):
+        """Free-text/hex edit for one device-identity field (Article, SAP,
+        Serial, ProductionDate, Description, Variant, InitialOperationDate,
+        SOC Version) — 2026-07-18 ask: no more hardcoded-only identity data."""
+        from aiohttp import web
+        field = request.match_info["field"]
+        attr = _IDENTITY_ATTR_MAP.get(field)
+        if attr is None:
+            return web.json_response({"error": f"unknown identity field {field!r}"}, status=400)
+        body = await request.json()
+        raw = body.get("value")
+        if field == "variant":
+            try:
+                value = int(raw, 0) if isinstance(raw, str) else int(raw)
+            except (TypeError, ValueError):
+                return web.json_response({"error": f"invalid variant {raw!r} — expected 0-255 or 0xNN"}, status=400)
+            if not (0 <= value <= 0xFF):
+                return web.json_response({"error": "variant must be 0-255"}, status=400)
+        else:
+            value = str(raw)
+            max_len = next((m for k, _, m in _IDENTITY_FIELD_META if k == field), None)
+            if max_len and len(value.encode("ascii", errors="replace")) > max_len:
+                return web.json_response({"error": f"{field} exceeds {max_len} bytes (proc 0x82 fixed-width field)"}, status=400)
+        setattr(self, attr, value)
+        mock_persistence.save("mera", self._adapter_tag, f"identity:{field}", value)
+        self._log("·", f"SetIdentity field={field} value={value!r} — persisted")
+        return web.json_response({"ok": True})
+
+    async def _handle_factory_reset(self, request):
+        """Reset ALL mutable/persisted mock state (identity, firmware versions,
+        profile/common settings) back to v1.88.0b1 defaults — the "in case I
+        mess it up completely" recovery button (2026-07-18 ask). Takes effect
+        immediately, no restart needed."""
+        from aiohttp import web
+        mock_persistence.reset("mera", self._adapter_tag)
+        self._STORED_PROFILE_SETTINGS = dict(_DEFAULT_PROFILE_SETTINGS)
+        self._STORED_COMMON_SETTINGS = dict(_DEFAULT_COMMON_SETTINGS)
+        self._ACTIVE_COMMON_SETTINGS = dict(self._STORED_COMMON_SETTINGS)
+        for component_id, (v1, v2, build) in _FW_COMPONENT_VERSIONS_FACTORY.items():
+            self._set_fw_version(component_id, v1, v2, build)
+        for field, value in _FACTORY_IDENTITY.items():
+            setattr(self, _IDENTITY_ATTR_MAP[field], value)
+            mock_persistence.save("mera", self._adapter_tag, f"identity:{field}", value)
+        self._log("·", "Factory reset — all settings restored to v1.88.0b1 defaults")
         return web.json_response({"ok": True})
 
     async def _handle_trigger_fw_update(self, request):
@@ -2100,6 +2275,9 @@ class MeraMock:
         app.router.add_post("/settings/common/{setting_id}", self._handle_write_common_setting)
         app.router.add_post("/settings/profile/{setting_id}", self._handle_write_profile_setting)
         app.router.add_post("/settings/firmware-profile", self._handle_set_firmware_profile)
+        app.router.add_post("/settings/fw-component/{component_id}", self._handle_write_fw_component)
+        app.router.add_post("/settings/identity/{field}", self._handle_write_identity)
+        app.router.add_post("/settings/factory-reset", self._handle_factory_reset)
         app.router.add_post("/settings/trigger-firmware-update", self._handle_trigger_fw_update)
         app.router.add_get("/events", self._handle_events)
         app.router.add_static("/static/", path=str(Path(__file__).parent / "static"))

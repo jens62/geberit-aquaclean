@@ -780,10 +780,16 @@ See § GetFirmwareVersionList below.
 
 ### GetDeviceIdentification (proc `0x82`) — 82 bytes
 
+Field names corrected 2026-07-18: offset 0 is `SapNumber` (dotted format), not
+"ArticleNumber" as this table previously labeled it — confirmed by the app's own
+`DeviceIdentification` log line (`SapNumber=146.21x.xx.1, SerialNumber=...`) and
+`docs/mqtt.md`'s dotted-format `Identification/SapNumber` topic. Offset 12 is
+plain `SerialNumber` (previously mislabeled "SerialNumber (SAP)").
+
 | Field | Value |
 |---|---|
-| ArticleNumber | `146.21x.xx.1` |
-| SerialNumber (SAP) | `HB2300EU000001` |
+| SapNumber (offset 0) | `146.21x.xx.1` |
+| SerialNumber (offset 12) | `HB2300EU000001` |
 | ProductionDate | `11.04.2023` |
 | Description | `AquaClean Mera Comfort` |
 

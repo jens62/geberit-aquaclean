@@ -123,12 +123,21 @@ async def test_settings_table_data_sections():
         layer = _make_layer("test-device")
         data = layer._settings_table_data()
         titles = [s["title"] for s in data["sections"]]
-        assert titles == ["Settings", "Identity & Firmware"]
+        assert titles == ["Settings", "Identity & Firmware", "DpId Reference (all)"]
         writable_ids = {r["id"] for r in data["sections"][0]["rows"]}
         readonly_ids = {r["id"] for r in data["sections"][1]["rows"]}
         assert writable_ids == {13, 580, 581, 582, 583, 795}  # the Nvm (behavior==3) DpIds
         assert 12 in readonly_ids  # PAIRING_SECRET — Protected, must stay read-only
         assert 369 in readonly_ids  # SALES_PRODUCT_SERIAL_NUMBER — Protected
+
+        # DpId Reference (2026-07-18 ask): every (dp_id, instance) in the store,
+        # not just the ~14 curated Settings/Identity rows above.
+        reference_rows = data["sections"][2]["rows"]
+        assert len(reference_rows) == len(layer._store)
+        assert all(r["kind"] == "readonly" for r in reference_rows)
+        names = [r["name"] for r in reference_rows]
+        assert any(n.startswith("0: DEVICE_SERIES") for n in names)
+        assert any(n.startswith("786: GEBERIT_LOADER_VERSION (inst=2)") for n in names)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

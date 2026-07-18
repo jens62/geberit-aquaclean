@@ -55,6 +55,9 @@ def _build_app(mock: MeraMock) -> web.Application:
     app.router.add_post("/settings/common/{setting_id}", mock._handle_write_common_setting)
     app.router.add_post("/settings/profile/{setting_id}", mock._handle_write_profile_setting)
     app.router.add_post("/settings/firmware-profile", mock._handle_set_firmware_profile)
+    app.router.add_post("/settings/fw-component/{component_id}", mock._handle_write_fw_component)
+    app.router.add_post("/settings/identity/{field}", mock._handle_write_identity)
+    app.router.add_post("/settings/factory-reset", mock._handle_factory_reset)
     app.router.add_post("/settings/trigger-firmware-update", mock._handle_trigger_fw_update)
     app.router.add_get("/events", mock._handle_events)
     app.router.add_static("/static/", path=_STATIC_DIR)
@@ -67,12 +70,15 @@ async def test_settings_table_data_sections():
         mock = _make_mock(tmp)
         data = mock._settings_table_data()
         titles = [s["title"] for s in data["sections"]]
-        assert titles == ["Profile Settings", "Common Settings", "Firmware Versions"]
-        assert len(data["sections"][0]["rows"]) == len(mock._STORED_PROFILE_SETTINGS)
-        assert len(data["sections"][1]["rows"]) == len(mock._STORED_COMMON_SETTINGS)
+        assert titles == ["Device Identity", "Profile Settings", "Common Settings", "Firmware Versions", "Danger Zone"]
+        # +1 for the "Variant" row, appended after the free-text identity fields.
+        assert len(data["sections"][0]["rows"]) == len(mera_mock._IDENTITY_FIELD_META) + 1
+        assert len(data["sections"][1]["rows"]) == len(mock._STORED_PROFILE_SETTINGS)
+        assert len(data["sections"][2]["rows"]) == len(mock._STORED_COMMON_SETTINGS)
         # +2 for the "Firmware Profile" selector row and the "Manual Trigger"
-        # button row, both prepended ahead of the per-component readonly rows.
-        assert len(data["sections"][2]["rows"]) == len(mock._FW_COMPONENT_VERSIONS) + 2
+        # button row, both prepended ahead of the per-component editable rows.
+        assert len(data["sections"][3]["rows"]) == len(mock._FW_COMPONENT_VERSIONS) + 2
+        assert len(data["sections"][4]["rows"]) == 1  # Factory Reset button
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -164,12 +170,12 @@ async def test_write_profile_setting_persists():
 
 async def test_firmware_profile_switch():
     """The webui firmware-profile selector (docs/developer/mock-service-
-    requirements.md §6). 2026-07-17, third variant: components 3-15 (except 11)
-    at their real, always-correct values; component 1 at its real pre-update
-    value RS28.0 TS199; component 11 ALSO set to RS28.0 TS199, deliberately not
-    its real pre-update value (RS07.0 TS22) — exactly one value is "wrong"
-    compared to real life, everything else is real. See docs/developer/
-    firmware-version.md "Consolidated summary" for other variants tried."""
+    requirements.md §6). 2026-07-18 correction: the dropdown now applies the
+    true real-life snapshot matching the main controller's version — only
+    components 1 and 11 actually changed in the genuine RS28->RS30 capture,
+    everything else is real/unchanged in both options. See docs/developer/
+    firmware-version.md "Consolidated summary" for the earlier synthetic
+    variants tried before landing back on the real data."""
     tmp = tempfile.mkdtemp()
     try:
         mock = _make_mock(tmp)
@@ -181,9 +187,9 @@ async def test_firmware_profile_switch():
             r = await client.post("/settings/firmware-profile", json={"value": "rs28"})
             assert r.status == 200
             assert mock._current_firmware_profile() == "rs28"
-            assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)  # real pre-update value
-            assert mock._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)  # deliberately NOT real (0x30,0x37,0x16)
-            assert mock._FW_COMPONENT_VERSIONS[3] == (0x30, 0x38, 0x1F)  # real, unchanged
+            assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)   # RS28.0 TS199 — real pre-update
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x30, 0x37, 0x16)  # RS07.0 TS22  — real pre-update
+            assert mock._FW_COMPONENT_VERSIONS[3] == (0x30, 0x38, 0x1F)   # real, unchanged
 
             r2 = await client.post("/settings/firmware-profile", json={"value": "not-a-real-profile"})
             assert r2.status == 400
@@ -192,6 +198,104 @@ async def test_firmware_profile_switch():
 
         mock2 = _make_mock(tmp)
         assert mock2._current_firmware_profile() == "rs28"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_write_fw_component_free_text_persists():
+    """Per-component free-text firmware-version edit (2026-07-18 ask) — no more
+    code-change/redeploy cycle for single-variable experiments."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            r = await client.post("/settings/fw-component/11", json={"value": "RS28.0 TS199"})
+            assert r.status == 200
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)
+
+            r2 = await client.post("/settings/fw-component/11", json={"value": "not-a-version"})
+            assert r2.status == 400
+
+            r3 = await client.post("/settings/fw-component/999", json={"value": "RS30.0 TS206"})
+            assert r3.status == 400
+        finally:
+            await client.close()
+
+        mock2 = _make_mock(tmp)
+        assert mock2._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_write_identity_field_persists():
+    """Device-identity webui edits (Article/SAP/Serial/ProductionDate/
+    Description/Variant/InitialOperationDate/SOCVersion) — 2026-07-18 ask."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            r = await client.post("/settings/identity/sap_number", json={"value": "146.21x.xx.9"})
+            assert r.status == 200
+            assert mock._SAP_NUMBER == "146.21x.xx.9"
+
+            r2 = await client.post("/settings/identity/variant", json={"value": "0x0E"})
+            assert r2.status == 200
+            assert mock._VARIANT == 0x0E
+
+            r3 = await client.post("/settings/identity/variant", json={"value": "not-hex"})
+            assert r3.status == 400
+
+            # proc 0x82 offset 0 (12 bytes) — too long must be rejected, not silently truncated.
+            r4 = await client.post("/settings/identity/sap_number", json={"value": "x" * 13})
+            assert r4.status == 400
+
+            r5 = await client.post("/settings/identity/not-a-field", json={"value": "x"})
+            assert r5.status == 400
+        finally:
+            await client.close()
+
+        mock2 = _make_mock(tmp)
+        assert mock2._SAP_NUMBER == "146.21x.xx.9"
+        assert mock2._VARIANT == 0x0E
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_factory_reset_restores_defaults():
+    """"Reset to Factory Settings" (2026-07-18 ask) — recovers from a broken
+    experiment without a mock restart. Factory firmware baseline is the
+    v1.88.0b1 uniform RS28.0 TS199 (distinct from the real-life "rs28" profile
+    option, which is the mixed real pre-update snapshot)."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        server = TestServer(_build_app(mock))
+        client = TestClient(server)
+        await client.start_server()
+        try:
+            await client.post("/settings/identity/sap_number", json={"value": "broken"})
+            await client.post("/settings/fw-component/1", json={"value": "RS01.0 TS1"})
+            await client.post("/settings/common/1", json={"value": 0})
+            assert mock._SAP_NUMBER == "broken"
+
+            r = await client.post("/settings/factory-reset", json={})
+            assert r.status == 200
+            assert mock._SAP_NUMBER == "146.21x.xx.1"
+            assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)  # uniform factory default
+            assert mock._STORED_COMMON_SETTINGS[1] == mera_mock._DEFAULT_COMMON_SETTINGS[1]
+        finally:
+            await client.close()
+
+        mock2 = _make_mock(tmp)
+        assert mock2._SAP_NUMBER == "146.21x.xx.1"
+        assert mock2._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -266,6 +370,9 @@ async def _run_all():
         test_write_common_setting_persists,
         test_write_profile_setting_persists,
         test_firmware_profile_switch,
+        test_write_fw_component_free_text_persists,
+        test_write_identity_field_persists,
+        test_factory_reset_restores_defaults,
         test_trigger_firmware_update_manual,
         test_sse_events_pushes_on_write,
     ]

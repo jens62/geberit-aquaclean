@@ -57,7 +57,7 @@ import struct
 import sys
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.23.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.24.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging (unused today — ported for parity, same as the original script)
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -157,14 +157,22 @@ def _inner_cobs_encode(data: bytes) -> bytes:
 
 # ---------------------------------------------------------------------------
 # DpId value codecs for the webui settings table (docs/developer/mock-service-
-# requirements.md §6) — datatype legend per _DEFAULT_STORE's own comment
-# (8=String, 9=Counter 4-byte LE, everything else here is a 1-byte enum/offon).
+# requirements.md §6) — datatype legend per _DEFAULT_STORE's own comment.
+# 1=Binary/2=MilliSeconds/3=Seconds/9=Counter/13=TimeStampUtc are all stored as
+# 4-byte LE per _DEFAULT_STORE's own struct.pack('<I', ...) values; only
+# 10=Enum/11=OffOn are genuinely 1-byte. Fixed 2026-07-18 — previously only 8/9
+# were special-cased, so 1/2/3/13 silently showed just their low byte; never
+# noticed because none of the ~14 curated Settings/Identity rows used those
+# types, but the new full DpId Reference table (all 79) does.
 # ---------------------------------------------------------------------------
+
+_DPID_4BYTE_LE_TYPES = (1, 2, 3, 9, 13)
+
 
 def _decode_dpid_value(datatype: int, raw: bytes):
     if datatype == 8:  # String
         return raw.decode('ascii', 'replace')
-    if datatype == 9:  # Counter, 4-byte LE
+    if datatype in _DPID_4BYTE_LE_TYPES:
         return struct.unpack('<I', raw.ljust(4, b'\x00')[:4])[0]
     return raw[0] if raw else 0
 
@@ -172,7 +180,7 @@ def _decode_dpid_value(datatype: int, raw: bytes):
 def _encode_dpid_value(datatype: int, value) -> bytes:
     if datatype == 8:  # String
         return str(value).encode('ascii')
-    if datatype == 9:  # Counter, 4-byte LE
+    if datatype in _DPID_4BYTE_LE_TYPES:
         return struct.pack('<I', int(value))
     return bytes([int(value) & 0xFF])
 
@@ -325,6 +333,48 @@ class _Ble20AppLayer:
     }
     _SETTINGS_DPIDS = tuple(_DPID_NAMES.keys())
 
+    # Full reference names for every DpId in _DEFAULT_STORE (2026-07-18 ask: show
+    # ALL DpIds in the webui, not just the ~14 writable/identity ones above) —
+    # names taken verbatim from _DEFAULT_STORE's own inline comments.
+    _ALL_DPID_NAMES = {
+        0: "DEVICE_SERIES", 1: "DEVICE_VARIANT", 2: "DEVICE_NUMBER",
+        3: "DEVICE_PRODUCTION_DATE", 4: "DEVICE_SAP_NUMBER",
+        8: "FW_RS_VERSION", 9: "FW_TS_VERSION", 10: "HW_RS_VERSION",
+        12: "PAIRING_SECRET", 13: "ACCESS_CODE", 14: "ACCESS_REVOCATION",
+        15: "RTC_TIME", 16: "DP_NAME", 62: "RESET", 83: "START_BOOTLOADER",
+        93: "POWER_SUPPLY_ERROR_STATUS", 148: "OPERATION_TIME_TOTAL",
+        149: "OPERATION_TIME_SINCE_POWER_UP", 153: "RESTART",
+        236: "UNIQUE_DEVICE_NUMBER", 270: "SET_RTC_TIME", 313: "SALES_SAP_NUMBER",
+        337: "BOOTLOADER_VARIANT", 369: "SALES_PRODUCT_SERIAL_NUMBER",
+        370: "SALES_PRODUCT_PRODUCTION_DATE", 371: "SALES_PRODUCT_SAP_NUMBER",
+        431: "OPERATION_TIME_OFFSET", 563: "START_STOP_ANAL_SHOWER",
+        564: "ANAL_SHOWER_STATUS", 566: "START_STOP_SPRAY_ARM_CLEANING",
+        567: "SPRAY_ARM_CLEANING_STATUS", 569: "LOAD_PROFILE",
+        570: "SET_ACTIVE_ANAL_SPRAY_INTENSITY", 571: "ACTIVE_ANAL_SPRAY_INTENSITY_STATUS",
+        572: "SET_ACTIVE_ANAL_SPRAY_ARM_POSITION", 573: "ACTIVE_ANAL_SPRAY_ARM_POSITION_STATUS",
+        574: "SET_ACTIVE_SHOWER_WATER_TEMPERATURE", 575: "ACTIVE_SHOWER_WATER_TEMPERATURE_STATUS",
+        576: "SET_ACTIVE_ANAL_SPRAY_ARM_OSCILLATION", 577: "ACTIVE_ANAL_SPRAY_ARM_OSCILLATION_STATUS",
+        580: "STORED_ANAL_SPRAY_INTENSITY", 581: "STORED_ANAL_SPRAY_ARM_POSITION",
+        582: "STORED_SHOWER_WATER_TEMPERATURE", 583: "STORED_ANAL_SPRAY_ARM_OSCILLATION",
+        584: "START_STOP_DESCALING", 585: "DESCALING_STATUS",
+        588: "UNACCOUNTED_SHOWER_CYCLES", 589: "DAYS_UNTIL_NEXT_DESCALING",
+        590: "TIMESTAMP_OF_LAST_DESCALING", 591: "TIMESTAMP_OF_LAST_DESCALING_REQUEST",
+        592: "DESCALING_CYCLES", 607: "USER_DETECTION_STATUS",
+        711: "STATISTIC_COUNTER_SINCE_POWER_UP_SUM", 764: "WATER_HEATER_ERROR_STATUS",
+        765: "LEVEL_CONTROL_ERROR_STATUS", 766: "USER_DETECTION_ERROR_STATUS",
+        781: "CREDITS_UNTIL_NEXT_DESCALING", 789: "WATER_PUMP_ERROR_STATUS",
+        790: "SPRAY_ARM_DRIVE_ERROR_STATUS", 795: "DEMO_MODE",
+        796: "PRODUCT_REGISTRATION_LEVEL", 802: "START_USER_SESSION",
+        803: "SHOWROOM_MODE", 810: "DRY_RUN_MODE", 820: "MAINTENANCE_REQUEST_STATUS",
+        977: "DESCALING_DEVICE_LOCK_REMAINING_DAYS", 978: "DESCALING_UNLOCK_DEVICE",
+        979: "DESCALING_DEVICE_RELOCK_REMAINING_CYCLES", 982: "DESCALING_ERROR_STATUS",
+        983: "DESCALING_DEVICE_LOCK_STATUS", 786: "GEBERIT_LOADER_VERSION",
+        785: "FUS_VERSION", 787: "WIRELESS_STACK_VERSION", 565: "ANAL_SHOWER_PROGRESS",
+        568: "SPRAY_ARM_CLEANING_PROGRESS", 586: "DESCALING_PROGRESS",
+        405: "STATISTIC_COUNTER_SINCE_POWER_UP", 688: "STATISTIC_COUNTER_SINCE_RESET",
+        689: "STATISTIC_COUNTER_TOTAL",
+    }
+
     @staticmethod
     def _generate_identity_value(dp_id: int) -> bytes:
         if dp_id == 12:  # PAIRING_SECRET — 4-digit numeric PIN, same format as _DEFAULT_STORE's default
@@ -436,9 +486,27 @@ class _Ble20AppLayer:
             else:
                 row["kind"] = "readonly"
                 info_rows.append(row)
+
+        # Full DpId reference (2026-07-18 ask) — every (dp_id, instance) this
+        # mock tracks, read-only, live-decoded straight from self._store. Not
+        # a substitute for the writable Settings section above — this is a
+        # lookup/copy aid while testing (BLE_COMMAND_REFERENCE.md's DpId table,
+        # but scoped to what this mock actually implements and its live values).
+        reference_rows = []
+        for (dp_id, instance), entry in sorted(self._store.items()):
+            name = self._ALL_DPID_NAMES.get(dp_id, f"DpId {dp_id}")
+            if instance is not None:
+                name = f"{name} (inst={instance})"
+            value = _decode_dpid_value(entry['datatype'], bytes(entry['value']))
+            reference_rows.append({
+                "id": f"{dp_id}-{instance}", "name": f"{dp_id}: {name}",
+                "kind": "readonly", "value": value,
+            })
+
         return {"sections": [
             {"title": "Settings", "rows": settings_rows},
             {"title": "Identity & Firmware", "rows": info_rows},
+            {"title": "DpId Reference (all)", "rows": reference_rows},
         ]}
 
     def _write_dpid_setting(self, dp_id: int, raw_value) -> None:
