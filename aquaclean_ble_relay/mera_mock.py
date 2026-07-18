@@ -84,7 +84,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.92.0b1"
+_MOCK_VERSION = "1.93.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -232,6 +232,13 @@ _FACTORY_IDENTITY = {
     "variant": 0x0D,                       # Mera Comfort
     "initial_operation_date": "31.05.2024",  # proc 0x86
     "soc_version": "10.18",                # proc 0x81
+    # GATT 0x2a00 (Device Name), served via the adapter's Alias property. Corrected
+    # 2026-07-18 — was hardcoded to "ro" with a comment claiming it "matches real Mera
+    # Comfort"; that was false. Real value confirmed via aquaclean-...SILLY.log:
+    # BlueZ's Device1.Name changes to this 270ms after connecting (before
+    # ServicesResolved), i.e. read from GATT 0x2a00 — different from the advertised
+    # local name ("Geberit AC PRO").
+    "device_name": "Geberit AquaClean pro",
 }
 
 # identity field key -> instance attribute name, shared by __init__'s persisted-value
@@ -245,6 +252,7 @@ _IDENTITY_ATTR_MAP = {
     "variant": "_VARIANT",
     "initial_operation_date": "_INITIAL_OPERATION_DATE",
     "soc_version": "_SOC_VERSION",
+    "device_name": "_DEVICE_NAME",
 }
 
 # (label, max ascii-byte length) for each free-text identity field — max lengths
@@ -258,6 +266,7 @@ _IDENTITY_FIELD_META = [
     ("description", "Description (proc 0x82 offset 42)", 40),
     ("initial_operation_date", "Initial Operation Date (proc 0x86)", 10),
     ("soc_version", "SOC Application Version (proc 0x81)", 5),
+    ("device_name", "Device Name (GATT 0x2a00)", 40),
 ]
 
 _DEFAULT_PROFILE_SETTINGS = {0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 0, 6: 1, 7: 1, 8: 0, 9: 0}
@@ -823,40 +832,51 @@ class _RCPairingService(Service):
 
 # ---- Advertisement ----
 class _MeraAdvertisement(Advertisement):
-    """Advertisement matching the real Mera Comfort BLE payload (11-byte total).
+    """Advertisement matching the real Mera Comfort BLE payload.
 
-    BlueZ exposes manufacturer data as (company_id, payload). The iOS app receives the
-    full manufacturer-specific data INCLUDING the 2-byte company ID, so byte offsets
-    in AquaCleanProduct.cs are counted from the company ID:
+    Corrected 2026-07-18 — this used to send everything as ONE 11-byte Manufacturer
+    Specific Data entry. The real device sends it as TWO SEPARATE company-ID-keyed
+    entries; BlueZ decides which PDU (ADV_IND vs SCAN_RSP) each lands in, same as it
+    already does for `localName` below. Confirmed byte-for-byte via
+    `tools/nrf-ble-analyze.py --adv` against a real capture and a live nRF Connect scan
+    (2026-07-18) — see docs/developer/mera-home-app-onboarding.md for the full evidence.
 
-      full_data[0]   company ID low  0x00  (Geberit 0x0100) | 0xAA = IsEmergencyConnectPermitted
-      full_data[1]   company ID high 0x01
-      full_data[2]   payload[0]      state_b  0x00 idle | 0x01 = IsButtonPressed <- iOS reads THIS
-      full_data[3-7] payload[1-5]    article  5-char ASCII (e.g. "14621") -> model detection
-      full_data[8]   payload[6]      0x00
-      full_data[9-10]payload[7-8]    RS fw prefix "30"
+    Entry 1 — identity/state, company 0x0100 normally / 0x01AA when
+    IsEmergencyConnectPermitted, 6-byte payload:
+      payload[0]   state_b  0x00 idle | 0x01 = IsButtonPressed <- iOS/Android read THIS
+      payload[1-5] article  5-char ASCII (e.g. "14621") -> model detection
 
-    Total: 2 (company ID) + 9 (payload) = 11 bytes — the "11-byte variant" in ble-protocol.md.
+    Entry 2 — RS firmware major-version prefix (2 ASCII chars, e.g. "30" for RS30.0):
+    the real device sends this as [0x00, rs_char1, rs_char2], which — because it's
+    ALSO type 0xFF — gets read by any generic EIR parser as company_id=(0x00 |
+    rs_char1<<8), data=bytes([rs_char2]). Not a real registered company ID; just an
+    artifact of squeezing 2 ASCII chars through the company-ID field position.
 
-    AquaCleanProduct.cs UpdateAdvertisingData():
-      IsButtonPressed             = (full_data[2] == 1)    <- payload[0] = state_b
-      IsEmergencyConnectPermitted = (full_data[0] == 0xAA) <- company ID low byte
+    AquaCleanProduct.cs UpdateAdvertisingData() (entry 1 only):
+      IsButtonPressed             = (payload[0] == 1)
+      IsEmergencyConnectPermitted = (company low byte == 0xAA)
 
     The iOS 15-second scan loop selects a device only when IsButtonPressed=True.
-    _update_advert(1) sets state_b=0x01 -> full_data[2]=0x01 -> triggers Connection 1.
+    _update_advert(1) sets state_b=0x01 -> triggers Connection 1.
 
     `article` used to be a module-level constant; now a constructor arg so each
-    MeraMock instance can (eventually) advertise its own identity.
+    MeraMock instance can (eventually) advertise its own identity. `rs_prefix`
+    mirrors whichever firmware profile is currently active (self._FW_COMPONENT_VERSIONS[1])
+    instead of a hardcoded "30" — previously always "30" regardless of the selected profile.
     """
 
-    def __init__(self, article: str, state_b: int = 0):
+    def __init__(self, article: str, state_b: int = 0, rs_prefix: str = "30"):
+        company = 0x01AA if state_b else 0x0100
+        rs_company = ord(rs_prefix[0]) << 8
+        rs_data = bytes([ord(rs_prefix[1])])
         super().__init__(
             "Geberit AC PRO",                            # name -> SCAN_RSP (BlueZ splits automatically)
             ["00003ea0-0000-1000-8000-00805f9b34fb"],    # service_uuids -> ADV_IND
             appearance=0,
             timeout=0,
             manufacturerData={
-                0x0100: bytes([state_b]) + article.encode("ascii") + bytes([0x00]) + b"30"
+                company: bytes([state_b]) + article.encode("ascii"),
+                rs_company: rs_data,
             },
         )
 
@@ -1032,6 +1052,7 @@ class MeraMock:
         self._advert_adapter = None  # Adapter stored for advert updates
         self._advert_lock: asyncio.Lock | None = None  # created in run(), needs a running loop
         self._bus = None             # system D-Bus connection; set in run()
+        self._adapter_path = None    # set in run(); reused by _apply_device_name_to_adapter()
 
         # ---- per-instance logger — console + per-device file + combined file,
         # device tag at a fixed position in every line (docs/developer/
@@ -1075,6 +1096,30 @@ class MeraMock:
         for q in list(self._sse_queues):
             q.put_nowait(data)
 
+    def _rs_fw_prefix(self) -> str:
+        """2-char RS firmware major-version prefix for the advertisement's second
+        Manufacturer Specific Data entry — mirrors whichever component-1 firmware
+        version is currently active instead of a hardcoded constant."""
+        v1, v2, _build = self._FW_COMPONENT_VERSIONS.get(1, (0x33, 0x30, 0))
+        return chr(v1) + chr(v2)
+
+    async def _apply_device_name_to_adapter(self) -> None:
+        """Push self._DEVICE_NAME to the adapter's Alias property (BlueZ serves this
+        as GATT 0x2a00, Device Name). Called at startup and best-effort from the
+        webui identity write / factory-reset handlers — a live BlueZ connection is
+        required (self._bus/self._adapter_path), so this is a no-op before run()
+        has initialised them."""
+        if not self._adapter_path or self._bus is None:
+            return
+        try:
+            ai = await self._bus.introspect("org.bluez", self._adapter_path)
+            ap = self._bus.get_proxy_object("org.bluez", self._adapter_path, ai)
+            props = ap.get_interface("org.freedesktop.DBus.Properties")
+            await props.call_set("org.bluez.Adapter1", "Alias", Variant("s", self._DEVICE_NAME))
+            self.logger.info("Adapter alias set to %r  (GATT 0x2a00 Device Name)", self._DEVICE_NAME)
+        except Exception as e:
+            self.logger.warning("could not set adapter alias: %s", e)
+
     async def _update_advert(self, state_b: int) -> None:
         """Unregister current advertisement and re-register with updated IsButtonPressed flag.
 
@@ -1094,7 +1139,7 @@ class MeraMock:
                 await mgr.call_unregister_advertisement(_ADVERT_PATH)
             except Exception as e:
                 self.logger.warning("advert unregister: %s", e)
-            self._advert = _MeraAdvertisement(self._ARTICLE, state_b)
+            self._advert = _MeraAdvertisement(self._ARTICLE, state_b, rs_prefix=self._rs_fw_prefix())
             try:
                 await self._advert.register(self._advert_bus, self._advert_adapter)
                 self._log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}")
@@ -1789,13 +1834,17 @@ class MeraMock:
         setattr(self, attr, value)
         mock_persistence.save("mera", self._adapter_tag, f"identity:{field}", value)
         self._log("·", f"SetIdentity field={field} value={value!r} — persisted")
+        if field == "device_name":
+            asyncio.ensure_future(self._apply_device_name_to_adapter())
         return web.json_response({"ok": True})
 
     async def _handle_factory_reset(self, request):
         """Reset ALL mutable/persisted mock state (identity, firmware versions,
-        profile/common settings) back to v1.88.0b1 defaults — the "in case I
+        profile/common settings) back to known-good defaults — the "in case I
         mess it up completely" recovery button (2026-07-18 ask). Takes effect
-        immediately, no restart needed."""
+        immediately, no restart needed. Firmware/profile/common defaults match
+        v1.88.0b1; device_name is the 2026-07-18-corrected real value, not
+        v1.88.0b1's literal (wrong) "ro" — see memory/mera-device-name-ro-is-wrong.md."""
         from aiohttp import web
         mock_persistence.reset("mera", self._adapter_tag)
         self._STORED_PROFILE_SETTINGS = dict(_DEFAULT_PROFILE_SETTINGS)
@@ -1806,7 +1855,8 @@ class MeraMock:
         for field, value in _FACTORY_IDENTITY.items():
             setattr(self, _IDENTITY_ATTR_MAP[field], value)
             mock_persistence.save("mera", self._adapter_tag, f"identity:{field}", value)
-        self._log("·", "Factory reset — all settings restored to v1.88.0b1 defaults")
+        asyncio.ensure_future(self._apply_device_name_to_adapter())
+        self._log("·", "Factory reset — all settings restored to known-good defaults")
         return web.json_response({"ok": True})
 
     async def _handle_trigger_fw_update(self, request):
@@ -1954,18 +2004,17 @@ class MeraMock:
             return
         self.logger.info("Adapter: %s  path: %s", adapter_addr, adapter_path)
 
-        # Set Device Name (GATT 0x2a00) to "ro" — cosmetic, matches real Mera Comfort.
-        # The App's actual button-state gating check reads the READ characteristic
-        # (UUID 0x3A2B, handle 0x0020) which also returns b"ro". Both are set to "ro".
+        # Set Device Name (GATT 0x2a00) via the adapter's Alias property.
+        # Corrected 2026-07-18 — this used to hardcode "ro" with a comment claiming it
+        # "matches real Mera Comfort"; that was false (confirmed via a real SILLY log:
+        # BlueZ's Device1.Name reads back "Geberit AquaClean pro" from GATT 0x2a00 after
+        # connecting — see memory/mera-device-name-ro-is-wrong.md). Now uses
+        # self._DEVICE_NAME (webui-writable, see _IDENTITY_ATTR_MAP), not a literal.
+        # button_state_read (UUID 0x3A2B, handle 0x0020) separately returns b"ro" — that
+        # one IS a confirmed real gating-state sentinel, unrelated to this.
+        self._adapter_path = adapter_path
         if adapter_path:
-            try:
-                ai = await bus.introspect("org.bluez", adapter_path)
-                ap = bus.get_proxy_object("org.bluez", adapter_path, ai)
-                props = ap.get_interface("org.freedesktop.DBus.Properties")
-                await props.call_set("org.bluez.Adapter1", "Alias", Variant("s", "ro"))
-                self.logger.info("Adapter alias set to 'ro'  (GATT 0x2a00 Device Name)")
-            except Exception as e:
-                self.logger.warning("could not set adapter alias: %s", e)
+            await self._apply_device_name_to_adapter()
 
         # Register GATT services.
         #
@@ -2134,7 +2183,7 @@ class MeraMock:
         # on button press.
         self._advert_bus = bus
         self._advert_adapter = adapter_wrapper
-        self._advert = _MeraAdvertisement(self._ARTICLE)
+        self._advert = _MeraAdvertisement(self._ARTICLE, rs_prefix=self._rs_fw_prefix())
         await self._advert.register(bus, adapter_wrapper)
         self.logger.info(
             "Advertising: UUID=0x3EA0  company=0x0100  byte[2]=0x00 (IsButtonPressed=False)"

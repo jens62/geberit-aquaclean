@@ -267,6 +267,40 @@ async def test_write_identity_field_persists():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_rs_fw_prefix_reflects_active_profile():
+    """_rs_fw_prefix() feeds the advertisement's RS-version tail (2026-07-18 fix) —
+    must track whichever firmware profile/component-1 value is currently active,
+    not a hardcoded "30"."""
+    tmp = tempfile.mkdtemp()
+    try:
+        mock = _make_mock(tmp)
+        assert mock._rs_fw_prefix() == "30"
+        mock._apply_firmware_profile("rs28")
+        assert mock._rs_fw_prefix() == "28"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_advertisement_two_manufacturer_entries():
+    """_MeraAdvertisement (2026-07-18 fix) must send TWO separate company-ID-keyed
+    Manufacturer Specific Data entries — one for state+article, one for the RS
+    firmware-version tail — matching the real device's byte-for-byte layout
+    confirmed via tools/nrf-ble-analyze.py --adv and a live nRF Connect scan (see
+    docs/developer/mera-home-app-onboarding.md). Not one combined 9-byte blob."""
+    advert = mera_mock._MeraAdvertisement("14621", state_b=0, rs_prefix="30")
+    md = advert.ManufacturerData
+    assert set(md.keys()) == {0x0100, 0x3300}
+    assert bytes(md[0x0100].value) == b"\x0014621"
+    assert bytes(md[0x3300].value) == b"0"
+
+    pressed = mera_mock._MeraAdvertisement("14621", state_b=1, rs_prefix="30")
+    md_pressed = pressed.ManufacturerData
+    # IsEmergencyConnectPermitted is the company-ID low byte flipping to 0xAA,
+    # confirmed live 2026-07-18 — not a separate payload byte.
+    assert set(md_pressed.keys()) == {0x01AA, 0x3300}
+    assert bytes(md_pressed[0x01AA].value) == b"\x0114621"
+
+
 async def test_factory_reset_restores_defaults():
     """"Reset to Factory Settings" (2026-07-18 ask) — recovers from a broken
     experiment without a mock restart. Factory firmware baseline is the
@@ -352,8 +386,8 @@ async def test_sse_events_pushes_on_write():
             line2 = await resp.content.readline()
             await resp.content.readline()  # blank line terminator again
             pushed = json.loads(line2[len(b"data: "):])
-            common_rows = pushed["settings"]["sections"][1]["rows"]
-            row = next(x for x in common_rows if x["id"] == 1)
+            common_section = next(s for s in pushed["settings"]["sections"] if s["title"] == "Common Settings")
+            row = next(x for x in common_section["rows"] if x["id"] == 1)
             assert row["value"] == new_value
             resp.close()
         finally:
@@ -372,6 +406,8 @@ async def _run_all():
         test_firmware_profile_switch,
         test_write_fw_component_free_text_persists,
         test_write_identity_field_persists,
+        test_rs_fw_prefix_reflects_active_profile,
+        test_advertisement_two_manufacturer_entries,
         test_factory_reset_restores_defaults,
         test_trigger_firmware_update_manual,
         test_sse_events_pushes_on_write,
