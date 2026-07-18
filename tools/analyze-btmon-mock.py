@@ -1149,8 +1149,14 @@ def print_summary(btsnoop_events: list[BtsnoopEvent],
         for e in adv_data_legacy:
             print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
     if extended_enables:
-        print(f"\n✗ EXTENDED advertising (ADV_EXT_IND): {len(extended_enables)} enable command(s)")
-        print("  → iOS CANNOT see this in scan-all mode (Mera app path uses legacy scan only)")
+        print(f"\n· EXTENDED advertising HCI commands (ADV_EXT_IND API): {len(extended_enables)} enable command(s)")
+        print("  → host-side HCI command set only, NOT necessarily the on-air PDU format.")
+        print("  → Corrected 2026-07-18: this used to claim iOS CANNOT see this — that overstated")
+        print("    the risk. The 'properties' bits below usually include LEGACY-PDU (confirmed by")
+        print("    both a real scanner reporting 'Advertising type: Legacy' for this exact")
+        print("    advertisement, and a known-good capture using this identical HCI pattern while")
+        print("    completing a full, successful onboarding session). Not a reliable signal of an")
+        print("    iOS-visibility problem by itself — check LEGACY-PDU below before suspecting this.")
         for e in extended_enables:
             print(f"    {_format_ts(e.ts_dt)}  {e.summary}")
         for e in adv_data_ext:
