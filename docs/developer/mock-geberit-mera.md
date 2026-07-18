@@ -117,6 +117,30 @@ each burst the instant BlueZ sets the respective CCCD to `True`. A fixed timer M
 be used — it fires after iOS has already shown "cannot connect" and disconnected.
 The `_a6_burst_done` event keeps A5 responses blocked during both bursts (v1.41.0b1+).
 
+**Button-press/release timing — mock vs. real device (2026-07-18)**
+
+On a real Mera Comfort, the advertisement's `IsEmergencyConnectPermitted` flag (company ID
+`0x0100` -> `0x01AA`) tracks the *physical button's actual held state* — confirmed live via
+nRF Connect: present only while the button is physically pressed, gone the instant it's
+released, independent of any BLE connection. See `docs/developer/mera-home-app-onboarding.md`
+"BLE Advertising payload" for the full byte-level evidence.
+
+The mock has no physical button, so "release" can't be a hardware signal. Instead,
+`_send_info_frame_burst()` (step 8 above) auto-releases it:
+```python
+if self._button_pressed:
+    self._button_pressed = False
+    await self._update_advert(0)      # flips company 0x01AA -> 0x0100, state_b -> 0
+```
+This fires right after the A6 InfoFrame burst completes — i.e. *after* the app has already
+connected via BLE, once the A6 CCCD is confirmed ready (or after a 3 s timeout). So the
+mock's press→release cycle is triggered by BLE-connection progress, not by a webui
+button-release click or any timer tied to user action. Before 2026-07-18 this flip was only
+partially real: `_update_advert(0)` correctly reset `state_b`, but the advertisement's
+company ID was *always* `0x0100` regardless of `state_b` — the mock never actually sent
+`0x01AA` in the first place, so there was nothing genuine to "release" on the company-ID
+side. Fixed the same day alongside the ADV_IND/SCAN_RSP split (see `_MeraAdvertisement`).
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

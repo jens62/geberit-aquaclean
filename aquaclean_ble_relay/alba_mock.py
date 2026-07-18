@@ -55,9 +55,10 @@ import pathlib
 import random
 import struct
 import sys
+from datetime import datetime, timezone
 
 _SCRIPT_HASH = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()[:16]
-_MOCK_VERSION = "2.24.0"  # bump this on every functional change — user-visible at startup
+_MOCK_VERSION = "2.26.0"  # bump this on every functional change — user-visible at startup
 _VERBOSE = False  # set by --verbose; enables raw ATT hex per-write logging (unused today — ported for parity, same as the original script)
 _ui_notify_state: dict = {"607": False, "564": 1}  # 607: bool; 564: int (1=disabled,2=ready,5=running)
 try:
@@ -164,14 +165,36 @@ def _inner_cobs_encode(data: bytes) -> bytes:
 # were special-cased, so 1/2/3/13 silently showed just their low byte; never
 # noticed because none of the ~14 curated Settings/Identity rows used those
 # types, but the new full DpId Reference table (all 79) does.
+#
+# datatype 13 (TimeStampUtc) — the name says it: UTC, not local time. Displayed
+# as a human-readable UTC string (2026-07-18 ask) rather than a raw epoch int;
+# only this type gets the string treatment — 1/2/3/9 are durations/counters,
+# not points in time, so a raw int stays correct for those.
 # ---------------------------------------------------------------------------
 
 _DPID_4BYTE_LE_TYPES = (1, 2, 3, 9, 13)
+_DPID_TIMESTAMP_TYPE = 13
+
+
+def _format_dpid_timestamp(epoch_seconds: int) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _parse_dpid_timestamp(value) -> int:
+    """Inverse of _format_dpid_timestamp — accepts either the formatted string
+    or a raw epoch int (no writable DpId uses datatype 13 today, but keeping
+    this symmetric avoids a landmine if one ever is)."""
+    if isinstance(value, str) and "UTC" in value:
+        dt = datetime.strptime(value.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    return int(value)
 
 
 def _decode_dpid_value(datatype: int, raw: bytes):
     if datatype == 8:  # String
         return raw.decode('ascii', 'replace')
+    if datatype == _DPID_TIMESTAMP_TYPE:
+        return _format_dpid_timestamp(struct.unpack('<I', raw.ljust(4, b'\x00')[:4])[0])
     if datatype in _DPID_4BYTE_LE_TYPES:
         return struct.unpack('<I', raw.ljust(4, b'\x00')[:4])[0]
     return raw[0] if raw else 0
@@ -180,6 +203,8 @@ def _decode_dpid_value(datatype: int, raw: bytes):
 def _encode_dpid_value(datatype: int, value) -> bytes:
     if datatype == 8:  # String
         return str(value).encode('ascii')
+    if datatype == _DPID_TIMESTAMP_TYPE:
+        return struct.pack('<I', _parse_dpid_timestamp(value))
     if datatype in _DPID_4BYTE_LE_TYPES:
         return struct.pack('<I', int(value))
     return bytes([int(value) & 0xFF])
@@ -1305,21 +1330,35 @@ class BatteryService(Service):
 # Helper functions
 # ---------------------------------------------------------------------------
 
-async def safe_call(obj, method_name, *args, **kwargs):
+async def safe_call(obj, method_name, *args, timeout: float = 3.0, **kwargs):
     """Module-level, not a method — no `self.logger` in scope. Every object
     this is called with (GATT services, the advertisement) now has its own
-    `.logger` (Phase 7), so use that instead of a separate fallback logger."""
+    `.logger` (Phase 7), so use that instead of a separate fallback logger.
+
+    timeout (2026-07-18): every caller of this is a D-Bus round trip to BlueZ
+    during shutdown. An unbounded await here — the previous behavior — hangs
+    run()'s finally block forever if BlueZ never replies (stale adapter state,
+    busy daemon, etc.), meaning Ctrl-C is received but the process never
+    actually exits. Confirmed as the root cause of exactly that symptom
+    (mera_mock.py's run() has no equivalent cleanup step and always exits
+    promptly on Ctrl-C). Bounding every cleanup call guarantees shutdown
+    eventually completes."""
     fn = getattr(obj, method_name, None)
     if not fn:
         return False
     try:
         if inspect.iscoroutinefunction(fn):
-            await fn(*args, **kwargs)
+            await asyncio.wait_for(fn(*args, **kwargs), timeout=timeout)
         else:
             result = fn(*args, **kwargs)
             if inspect.isawaitable(result):
-                await result
+                await asyncio.wait_for(result, timeout=timeout)
         return True
+    except asyncio.TimeoutError:
+        getattr(obj, "logger", logging.getLogger("mock.alba.setup")).warning(
+            f"Cleanup: calling {method_name} timed out after {timeout}s — BlueZ unresponsive, continuing shutdown anyway"
+        )
+        return False
     except Exception as e:
         getattr(obj, "logger", logging.getLogger("mock.alba.setup")).info(f"Cleanup: calling {method_name} raised: {e}")
         return False
@@ -1439,7 +1478,7 @@ class AlbaMock:
 
         if not adapter_wrapper:
             self.logger.info("No adapter wrapper available; cannot register GATT services/advertisement.")
-            await bus.disconnect()
+            await safe_call(bus, "disconnect")
             return
 
         # D-Bus GATT application paths, tagged with the adapter so two instances
@@ -2082,10 +2121,7 @@ class AlbaMock:
             if server_task and not server_task.done():
                 server_task.cancel()
             if _agent_mgr is not None:
-                try:
-                    await _agent_mgr.call_unregister_agent(_AGENT_DBUS_PATH)
-                except Exception:
-                    pass
+                await safe_call(_agent_mgr, "call_unregister_agent", _AGENT_DBUS_PATH)
             if adv_registered:
                 await safe_call(adv, "unregister", bus, adapter_wrapper)
                 await safe_call(adv, "unregister", adapter_wrapper)
@@ -2094,12 +2130,7 @@ class AlbaMock:
             await safe_call(geb_service, "unregister")
             await safe_call(sig_service, "unregister")
             await safe_call(dis_service, "unregister")
-            try:
-                result = bus.disconnect()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as e:
-                self.logger.info(f"Error disconnecting bus: {e}")
+            await safe_call(bus, "disconnect")
             self.logger.info("Cleanup complete. Exiting.")
 
 

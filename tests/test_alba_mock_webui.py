@@ -138,6 +138,14 @@ async def test_settings_table_data_sections():
         names = [r["name"] for r in reference_rows]
         assert any(n.startswith("0: DEVICE_SERIES") for n in names)
         assert any(n.startswith("786: GEBERIT_LOADER_VERSION (inst=2)") for n in names)
+
+        # Timestamps (datatype 13, TimeStampUtc — 2026-07-18 ask) render as human-
+        # readable UTC strings, not raw epoch ints; other 4-byte-LE types (e.g.
+        # DEVICE_SERIES, datatype 9/Counter) are unaffected and stay plain ints.
+        rtc_row = next(r for r in reference_rows if r["id"] == "15-None")
+        assert rtc_row["value"] == "2000-01-07 23:07:23 UTC"
+        series_row = next(r for r in reference_rows if r["id"] == "0-None")
+        assert series_row["value"] == 250
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
