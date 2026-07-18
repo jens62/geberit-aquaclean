@@ -538,6 +538,39 @@ def _detect_device(tshark: str, pcapng: Path, addr_field: str) -> tuple:
 # GATT handle → UUID mapping
 # ---------------------------------------------------------------------------
 
+def _run_tshark_pdml(tshark: str, pcapng: Path, display_filter: str) -> list:
+    """Run tshark with -T pdml (XML) and return every matching frame's
+    <proto name="btatt"> element.
+
+    PDML is the only tshark output format that preserves the REAL tree
+    structure of repeated sibling fields without collapsing or flattening
+    them by field name. Confirmed 2026-07-14/18 (see docs/developer/
+    nrf-ble-analyze-completeness-audit.md): for GATT discovery response
+    opcodes (0x05/0x09/0x11), the SAME field name (e.g. btatt.uuid16) can
+    appear at multiple tree depths per frame — once as the real per-entry
+    value, and again as an unrelated "attribute type" echo or a decorative
+    per-handle lookup annotation. -T fields (used by _run_tshark) flattens
+    by field name regardless of depth, silently conflating these. -T json
+    is no better — it collapses repeated same-named sibling elements (e.g.
+    multiple attribute_data entries) down to just the last one. Only PDML's
+    XML tree lets us walk each entry's DIRECT children explicitly and avoid
+    both traps.
+    """
+    import xml.etree.ElementTree as ET
+    cmd = [tshark, "-r", str(pcapng), "-Y", display_filter, "-T", "pdml"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        root = ET.fromstring(result.stdout)
+    except ET.ParseError:
+        return []
+    return [
+        proto
+        for packet in root.findall("packet")
+        for proto in packet.findall("proto")
+        if proto.get("name") == "btatt"
+    ]
+
+
 def _extract_gatt_handles(tshark: str, pcapng: Path) -> dict:
     """Extract handle→UUID map from GATT discovery frames in a capture.
 
@@ -546,52 +579,54 @@ def _extract_gatt_handles(tshark: str, pcapng: Path) -> dict:
       0x09 READ_BY_TYPE_RSP        — characteristic declarations (decl+value handles, UUID)
       0x05 FIND_INFO_RSP            — descriptor handles (handle, UUID — 1:1 mapping)
 
+    Rewritten 2026-07-18 to use -T pdml (_run_tshark_pdml) instead of flat
+    -T fields extraction. All three opcodes routinely pack MULTIPLE entries
+    into one response PDU — not an edge case, the common case for any
+    service/characteristic list longer than one item — and each entry's own
+    handle/UUID fields share a name with unrelated fields at other tree
+    depths in the same frame (see _run_tshark_pdml's docstring). The
+    previous -T fields + occurrence="a" + comma-split approach (the code
+    already anticipated multi-value output, it just never got any, and
+    naively "fixing" that by flipping occurrence produced MISALIGNED
+    handle<->UUID pairs, confirmed by direct testing — worse than the
+    original under-reporting).
+
+    Both 0x11 and 0x09 use the wire-format element name "attribute_data";
+    0x05 uses "information_data". Each entry's LAST direct-child
+    "btatt.handle" is the real addressable handle (for 0x09 this correctly
+    picks the characteristic VALUE handle, not the declaration handle, since
+    it's the second of two handle children in document order); the entry's
+    own direct-child uuid16/uuid128 (not any uuid16 nested inside a handle's
+    own sub-tree, which is a decorative "known attribute" annotation, not
+    the entry's real value) is the UUID.
+
     Returns dict[int handle → str uuid].  Called from --gatt-map and included
     in markdown output so future captures can be explored without ad-hoc tshark.
     """
     handle_map: dict = {}
-
-    for opcode in ("0x11", "0x09", "0x05"):
-        rows = _run_tshark(
-            tshark, pcapng,
-            f"btatt.opcode == {opcode}",
-            ["btatt.handle", "btatt.uuid128", "btatt.uuid16"],
-        )
-        for row in rows:
-            if not row or not row[0].strip():
-                continue
-            handles_raw = row[0].strip()
-            uuid128_raw = row[1].strip() if len(row) > 1 else ""
-            uuid16_raw  = row[2].strip() if len(row) > 2 else ""
-
-            handles = []
-            for h in handles_raw.split(","):
-                h = h.strip()
-                if h:
-                    try:
-                        handles.append(_parse_int(h))
-                    except ValueError:
-                        pass
-
-            # Collect UUIDs: 128-bit first, then 16-bit promoted to 0xXXXX strings
-            uuids: list = []
-            for u in uuid128_raw.split(","):
-                u = u.strip()
-                if u:
-                    uuids.append(u)
-            for u in uuid16_raw.split(","):
-                u = u.strip()
-                if u:
-                    try:
-                        uuids.append(f"0x{int(u, 16):04X}")
-                    except ValueError:
-                        pass
-
-            # Pair handles with UUIDs (best-effort; tshark may not align 1:1)
-            for i, handle in enumerate(handles):
-                if handle not in handle_map and i < len(uuids):
-                    handle_map[handle] = uuids[i]
-
+    dfilter = "btatt.opcode == 0x11 || btatt.opcode == 0x09 || btatt.opcode == 0x05"
+    for btatt in _run_tshark_pdml(tshark, pcapng, dfilter):
+        for entry_name in ("btatt.attribute_data", "btatt.information_data"):
+            for entry in btatt.findall(f"field[@name='{entry_name}']"):
+                handle = None
+                uuid = None
+                for child in entry:
+                    name = child.get("name")
+                    if name == "btatt.handle":
+                        try:
+                            handle = int(child.get("show"), 16)
+                        except (TypeError, ValueError):
+                            pass
+                    elif name == "btatt.uuid128":
+                        uuid = child.get("show")
+                    elif name == "btatt.uuid16":
+                        raw = child.get("show")
+                        try:
+                            uuid = f"0x{int(raw, 16):04X}"
+                        except (TypeError, ValueError):
+                            uuid = raw
+                if handle is not None and uuid is not None and handle not in handle_map:
+                    handle_map[handle] = uuid
     return handle_map
 
 
@@ -1272,8 +1307,9 @@ def _decode_gatt_frame(opcode: int, handle_raw: str,
     if opcode == 0x06:   # FIND_BY_TYPE_VALUE_REQ — value field = UUID (2 bytes LE)
         uuid = int.from_bytes(raw_bytes[:2], "little") if len(raw_bytes) >= 2 else 0
         return "App→Dev", f"GATT  FIND_BY_TYPE_VALUE_REQ  UUID=0x{uuid:04X}"
-    if opcode == 0x07:   # FIND_BY_TYPE_VALUE_RSP — handle field = found handle
-        return "Dev→App", f"GATT  FIND_BY_TYPE_VALUE_RSP  found=0x{first_h:04X}"
+    if opcode == 0x07:   # FIND_BY_TYPE_VALUE_RSP — handle field = found handle(s)
+        hdls = "  ".join(f"0x{_ph(p):04X}" for p in parts)
+        return "Dev→App", f"GATT  FIND_BY_TYPE_VALUE_RSP  found={hdls}"
     if opcode == 0x0c:   # READ_BLOB_REQ
         return "App→Dev", f"READ_BLOB_REQ  handle=0x{first_h:04X}  offset={offset_val}"
     if opcode == 0x0d:   # READ_BLOB_RSP
@@ -1315,9 +1351,18 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
     if mac:
         dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
 
+    # occurrence="a" (2026-07-18): 0x05/0x11 (FIND_INFO_RSP/READ_BY_GROUP_TYPE_RSP)
+    # routinely pack multiple handles into one frame — _decode_gatt_frame already
+    # has comma-split logic for exactly this (was dead code under the default
+    # occurrence="f", which only ever returns the first handle). Safe here
+    # specifically because this call queries btatt.handle/value/offset only, not
+    # uuid16/uuid128 — those fields have a tree-depth-conflation trap for these
+    # same opcodes (see _extract_gatt_handles / _run_tshark_pdml's docstring)
+    # that btatt.handle itself does not have.
     rows = _run_tshark(tshark, pcapng, dfilter,
                        ["frame.time_relative", "btatt.opcode",
-                        "btatt.handle", "btatt.value", "btatt.offset"])
+                        "btatt.handle", "btatt.value", "btatt.offset"],
+                       occurrence="a")
 
     frames = []
     for row in rows:
@@ -1513,6 +1558,17 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
                 ev["error_code"] = int(err_code_raw.strip(), 16) if err_code_raw.strip() else 0xFF
             except (ValueError, AttributeError):
                 ev["error_code"] = 0xFF
+        elif opcode == _OP_READ_BY_TYPE_RSP:
+            # READ_BY_TYPE_RSP routinely packs MULTIPLE (handle, UUID) pairs into
+            # one PDU (confirmed 2026-07-18: 25/26 real frames in one capture).
+            # handle_raw/value_raw here only ever see the first pair (occurrence
+            # is deliberately left at "f" — btatt.uuid16 for this opcode has a
+            # tree-depth-conflation trap, see _run_tshark_pdml's docstring, so
+            # simply switching to occurrence="a" would produce a WRONG single
+            # value here, not just an incomplete one). Flag it plainly instead
+            # of silently showing a partial decode as if it were the full
+            # response — --gatt-map has the correct, complete decode (-T pdml).
+            ev["value"] = "(multi-entry characteristic discovery — see --gatt-map for the full list)"
         elif handle_raw.strip():
             try:
                 handle = _parse_int(handle_raw)
