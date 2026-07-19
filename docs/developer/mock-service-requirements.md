@@ -1658,20 +1658,56 @@ In Progress
 Added 2026-07-17, revised 2026-07-19 after re-checking the actual current mock source
 against the claims in this REQ and in `docs/roadmap.md`.
 
-**Mera — infrastructure present but pairing is currently impossible by design:**
-`mera_mock.py` has Device Information Service (`0x180A`, real Mera version string) and
+**Mera — infrastructure present, `pairable off` still in place, but "architectural blocker" is
+now downgraded to an open question — corrected 2026-07-19, third revision of this REQ the same
+week.** `mera_mock.py` has Device Information Service (`0x180A`, real Mera version string) and
 `_RCPairingService` (GATT service UUID `0xC526`, so the RC's `FIND_BY_TYPE_VALUE` pre-pairing
 check succeeds) since commit `2b565b0`, plus a GATT re-registration race fix
-(`_force_remove_and_reregister`). **However**, the mock unconditionally sets the adapter to
-`pairable off` at startup (`mera_mock.py` line ~2119) and deliberately never turns it back on
-— the button-press handler has an explicit "Do NOT set pairable=on here" comment (line ~2065),
-because `pairable=on` is adapter-wide in BlueZ: turning it on for the RC also makes the mock
-answer iOS's own system-Bluetooth pairing dialog during normal Home App onboarding, which
-broke onboarding and was reverted twice (v1.31.0, then again 2026-07-16 after commit
-`2b565b0` reintroduced it). **Net effect: SMP-level pairing cannot complete with any device
-today, RC included** — this is the actual confirmed current blocker, and it is architectural
-(needs pairing scoped to just the RC's address, or a dedicated time-boxed "RC pairing mode"
-separate from the general button-press advertisement path), not a data/protocol gap.
+(`_force_remove_and_reregister`). The mock unconditionally sets the adapter to `pairable off`
+at startup (`mera_mock.py` line ~2119) and never turns it back on — the button-press handler
+has an explicit "Do NOT set pairable=on here" comment (line ~2065), because turning it on
+reportedly also makes the mock answer iOS's own system-Bluetooth pairing dialog during normal
+Home App onboarding, which broke onboarding and was reverted twice (v1.31.0, then again
+2026-07-16 after commit `2b565b0` reintroduced it).
+
+**What's actually confirmed vs. assumed, per real capture evidence:**
+- The real Home App's full onboarding session (`onboarding-real-mera.pcapng`, 663 ATT frames)
+  contains **zero `LL_ENC_REQ`** frames — the Home App never attempts BLE-level SMP pairing at
+  all on real hardware. This matches the user's observation that the Home App never shows as
+  "paired" in iOS's Bluetooth settings when connected to the mock either — there's nothing to
+  bond in the first place.
+- The RC captures, by contrast, show a complete `LL_ENC_REQ`/`LL_ENC_RSP`/`LL_START_ENC_REQ`/
+  `LL_START_ENC_RSP` sequence every time it connects — real hardware clearly does respond to
+  SMP requests when one arrives.
+- Real Mera has a single physical button and a single procedure for both RC pairing and Home
+  App onboarding (per the user, 2026-07-19) — it has no way to know in advance which kind of
+  client is about to connect, so it cannot be toggling a "pairable" adapter flag depending on
+  who's asking. The simplest model consistent with all of the above: real Mera's BLE stack is
+  simply always willing to respond to an SMP request if one arrives (functionally always
+  "pairable"), and the Home App just never sends one. Whatever the button actually gates is
+  connection *acceptance* (the `IsButtonPressed`/`IsEmergencyConnectPermitted` advertising
+  mechanism, `.claude/rules/ble-protocol.md` § "SensorState") — a separate concern from BLE
+  pairability.
+- **This means the mock's `pairable=on` → iOS-dialog symptom was never verified to be a
+  real-hardware-matching constraint.** It's equally, perhaps more plausibly, a mock-specific
+  BlueZ/`bluez_peripheral` side effect (e.g. the adapter or a GATT characteristic's permission
+  flags proactively issuing a Security Request once pairable, something real hardware's
+  embedded stack apparently never does regardless of pairable state, since the Home App never
+  triggers one there either way). That hasn't been dug into yet — see the Open Question below.
+- **Practical consequence**: don't design the "scoped RC-only pairing mode" work item below as
+  settled architecture. If the mock's dialog trigger turns out to be a fixable BlueZ/GATT
+  permission bug, the correct fix is simpler — leave `pairable on` permanently (matching real
+  hardware's apparent always-on-but-never-asked behavior) and fix whatever proactively
+  triggers the Security Request, rather than building a time-boxed pairing-mode workaround for
+  a constraint that may not actually exist on real hardware.
+
+**Open question, not yet investigated**: what exactly in the mock's BlueZ configuration issues
+the Security Request when `pairable=on`. Candidates: `bluez_peripheral`'s default agent/IO
+capability behavior on connect; a GATT characteristic defined with an encrypted read/write
+permission flag (intentional or accidental); or BlueZ auto-pairing on connect when a specific
+adapter mode is set. Needs direct investigation of `mera_mock.py`'s GATT service/characteristic
+definitions and the `bluez_peripheral` library's connect-time behavior before this REQ's scope
+can be trusted.
 
 **The "pre-existing bond" explanation is an unconfirmed hypothesis, not a demonstrated root
 cause** — corrected 2026-07-19 after the user pushed back on it being stated as settled.
@@ -1720,11 +1756,15 @@ already in progress (not solutions to this REQ): `memory/mera-comfort-displaceme
 `memory/alba-remote-control-conflict.md` / `memory/alba-session-caching-fix.md` (Alba
 remote-displacement root cause still open).
 
-Scope, updated 2026-07-19: (1) **Mera** — design and implement a pairing mode scoped to just
-the RC's address (or a short time-boxed window entered via a dedicated web-UI action, not the
-existing button-press handler) so `pairable on` no longer has to be adapter-wide; only once
-that exists can the bond-mismatch hypothesis above actually be tested. When testing, trigger
-the button-pressed state first, per the correlation finding above. (2) **Alba** —
+Scope, updated 2026-07-19 (twice): (1) **Mera** — first, investigate what specifically triggers
+the iOS pairing dialog when `pairable=on` (the Open Question above) — GATT characteristic
+permission flags, `bluez_peripheral` agent defaults, or BlueZ auto-pairing behavior. Only after
+that's identified should the pairing-mode design be decided: if the trigger is a fixable
+mock-specific bug, the right fix is likely "leave `pairable on` permanently and fix the actual
+trigger," not "build a time-boxed pairing mode scoped to the RC's address" — the latter was
+this REQ's prior assumption and may be solving a problem real hardware doesn't actually have.
+Once pairing works at all, the bond-mismatch hypothesis above can finally be tested; when
+testing, trigger the button-pressed state first, per the correlation finding above. (2) **Alba** —
 discovery surface identified and stubbed the same way Mera's is, plus the same pairing-mode
 work Mera needs. (3) For both — enough of the post-pairing encrypted protocol
 decoded/implemented to respond meaningfully rather than just complete pairing and go silent.

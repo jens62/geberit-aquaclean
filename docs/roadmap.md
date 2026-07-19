@@ -1100,22 +1100,31 @@ cannot be put back to RS28.0 after the update.
 
 ### Mock Mera: RC pairing follow-up — clear bond and test (from commit 2b565b0) ★ NEXT
 
-**Corrected 2026-07-19** — the framing below overstated certainty; see
+**Corrected 2026-07-19, twice** — the framing below overstated certainty both times; see
 `docs/developer/mock-service-requirements.md` REQ-052 for the full corrected analysis. Kept
-here for the concrete bond-clearing commands, but read the confirmed-blocker note first.
+here for the concrete bond-clearing commands, but read the Open Question note first.
 
 **Context:** commit 2b565b0 (2026-06-26, v1.73.0b1) added Device Information Service
 (0x180A), the RC pairing service stub (0xC526), and fixed the "Already Exists" GATT
 re-registration race (`_force_remove_and_reregister`). It also reintroduced
 `btmgmt pairable on/off` toggling in the button-press handler — **but that was reverted again
-on 2026-07-16** (adapter-wide `pairable=on` also makes the mock answer iOS's own system
-pairing dialog during normal Home App onboarding, breaking it). As of today the mock
+on 2026-07-16** (adapter-wide `pairable=on` reportedly also makes the mock answer iOS's own
+system pairing dialog during normal Home App onboarding, breaking it). As of today the mock
 unconditionally sets `pairable off` at startup and never turns it back on.
 
-**Confirmed current blocker (not the bond):** SMP-level pairing cannot complete with *any*
-device right now, RC included, because the adapter is never made pairable. This must be
-solved first — via a pairing mode scoped to just the RC's address, or a dedicated time-boxed
-web-UI action — before the bond question below is even testable.
+**Open question, not a confirmed blocker (downgraded again 2026-07-19):** it's unverified
+whether `pairable=on` breaking Home App onboarding is a real-hardware-matching constraint at
+all. `onboarding-real-mera.pcapng` (a full real Home App onboarding session) contains **zero**
+`LL_ENC_REQ` frames — the Home App never attempts BLE pairing on real hardware, matching the
+observation that it never shows as "paired" in iOS either way. The RC's captures, by contrast,
+show a real SMP sequence every time. Real Mera has one physical button/procedure for both RC
+and Home App pairing, so it can't be toggling "pairable" based on who's connecting — the
+simplest explanation is that real Mera is always willing to respond to SMP if asked, and the
+Home App just never asks. That means the mock's dialog-on-`pairable=on` symptom may be a
+mock-specific BlueZ/`bluez_peripheral` bug (e.g. a proactive Security Request from GATT
+permission flags or agent defaults), not something to design a scoped-pairing workaround
+around. Investigate the actual trigger before deciding between "fix the bug, leave `pairable
+on` permanently" and "build a time-boxed RC-only pairing mode."
 
 **Bond mismatch — unconfirmed hypothesis, not a demonstrated root cause.** The RC
 (`B0:10:A0:68:5C:8B`) does hold a bond (LTK) with the real toilet (`38:AB:41:2A:0D:67`), and
