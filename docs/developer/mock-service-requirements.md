@@ -1655,25 +1655,56 @@ In Progress
 
 #### Implementation Details
 
-Added 2026-07-17. Neither mock has this as a working feature yet.
-**Mera:** `_RCPairingService` (`mera_mock.py`) is a discovery-only stub — it advertises GATT
-service UUID `0xC526` so the RC's `FIND_BY_TYPE_VALUE` pre-pairing check succeeds, but
-implements nothing else. The RC then attempts real BLE pairing (`LL_ENC_REQ`) — untested
-whether the mock's BlueZ stack actually completes pairing/bonding, and all post-pairing RC
-traffic is encrypted and not yet decoded (`memory/geberit-remote-control-ble.md`), so even a
-successful pairing wouldn't yet produce meaningful behavior. **Alba:** no RC-related GATT
-service exists at all — unknown whether Alba's real RC pairing uses the same `0xC526` UUID as
-Mera or a different one; needs a real-hardware BLE sniff of an Alba+RC pairing, analogous to
-the existing Mera capture. Relevant background investigations already in progress (not
-solutions to this REQ): `memory/mera-comfort-displacement-baseline.md` (remote recovers ~9s
-after app disconnect on real Mera hardware) and `memory/alba-remote-control-conflict.md` /
-`memory/alba-session-caching-fix.md` (Alba remote-displacement root cause still open). Scope
-not yet broken down in detail — likely needs: (1) BLE pairing/bonding support in the mock's
-GATT server stack (SMP/LTK, not just GATT characteristics — may require
-`bluez_peripheral`/BlueZ agent-level changes beyond what either mock currently does), (2)
-Alba's discovery surface identified and stubbed the same way Mera's is, (3) enough of the
-post-pairing encrypted protocol decoded/implemented for either mock to respond meaningfully
-rather than just complete pairing and go silent.
+Added 2026-07-17, revised 2026-07-19 after re-checking the actual current mock source
+against the claims in this REQ and in `docs/roadmap.md`.
+
+**Mera — infrastructure present but pairing is currently impossible by design:**
+`mera_mock.py` has Device Information Service (`0x180A`, real Mera version string) and
+`_RCPairingService` (GATT service UUID `0xC526`, so the RC's `FIND_BY_TYPE_VALUE` pre-pairing
+check succeeds) since commit `2b565b0`, plus a GATT re-registration race fix
+(`_force_remove_and_reregister`). **However**, the mock unconditionally sets the adapter to
+`pairable off` at startup (`mera_mock.py` line ~2119) and deliberately never turns it back on
+— the button-press handler has an explicit "Do NOT set pairable=on here" comment (line ~2065),
+because `pairable=on` is adapter-wide in BlueZ: turning it on for the RC also makes the mock
+answer iOS's own system-Bluetooth pairing dialog during normal Home App onboarding, which
+broke onboarding and was reverted twice (v1.31.0, then again 2026-07-16 after commit
+`2b565b0` reintroduced it). **Net effect: SMP-level pairing cannot complete with any device
+today, RC included** — this is the actual confirmed current blocker, and it is architectural
+(needs pairing scoped to just the RC's address, or a dedicated time-boxed "RC pairing mode"
+separate from the general button-press advertisement path), not a data/protocol gap.
+
+**The "pre-existing bond" explanation is an unconfirmed hypothesis, not a demonstrated root
+cause** — corrected 2026-07-19 after the user pushed back on it being stated as settled.
+`docs/roadmap.md`'s 2026-06-25 test log shows only that the RC never appeared in the mock's
+log at all; no capture has ever shown the RC actually sending `LL_ENC_REQ` against the mock
+and failing. Given `pairable` is unconditionally off, a fresh test today would fail for the
+confirmed reason above regardless of whether the RC's stored LTK matches — the bond-mismatch
+theory has never actually been tested against the current mock and should not be treated as
+established until it is (clearing the RC's bond, per `docs/roadmap.md`, is worth trying but
+only after the pairable-scoping problem is solved, not before).
+
+**Mock advertisement fidelity is unrelated to this REQ** — confirmed 2026-07-19: the RC
+reconnects as an already-bonded BLE central via direct `CONNECT_IND` (never scans/advertises
+itself, per `memory/geberit-remote-control-ble.md`) independent of the toilet's
+`IsButtonPressed`/`IsEmergencyConnectPermitted` advertisement state (see
+`.claude/rules/ble-protocol.md` § "BLE advertising payload — SensorState"). Work to make the
+mock's advertisement byte-for-byte closer to a real device does not move this REQ forward.
+
+**Alba:** no RC-related GATT service exists at all — unknown whether Alba's real RC pairing
+uses the same `0xC526` UUID as Mera or a different one; needs a real-hardware BLE sniff of an
+Alba+RC pairing, analogous to the existing Mera capture. Relevant background investigations
+already in progress (not solutions to this REQ): `memory/mera-comfort-displacement-baseline.md`
+(remote recovers ~9s after app disconnect on real Mera hardware) and
+`memory/alba-remote-control-conflict.md` / `memory/alba-session-caching-fix.md` (Alba
+remote-displacement root cause still open).
+
+Scope, updated 2026-07-19: (1) **Mera** — design and implement a pairing mode scoped to just
+the RC's address (or a short time-boxed window entered via a dedicated web-UI action, not the
+existing button-press handler) so `pairable on` no longer has to be adapter-wide; only once
+that exists can the bond-mismatch hypothesis above actually be tested. (2) **Alba** —
+discovery surface identified and stubbed the same way Mera's is, plus the same pairing-mode
+work Mera needs. (3) For both — enough of the post-pairing encrypted protocol
+decoded/implemented to respond meaningfully rather than just complete pairing and go silent.
 
 ### REQ-053 — Firmware-update procedure simulation
 

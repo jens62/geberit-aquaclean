@@ -1100,20 +1100,32 @@ cannot be put back to RS28.0 after the update.
 
 ### Mock Mera: RC pairing follow-up — clear bond and test (from commit 2b565b0) ★ NEXT
 
-**Context:** commit 2b565b0 (2026-06-26, v1.73.0b1) added everything the RC needs to
-attempt pairing with the mock:
-- Device Information Service (0x180A) returning the real Mera version string
-- RC pairing service stub (0xC526) that the RC verifies exists before SMP
-- `btmgmt pairable on/off` toggled by the mock's button-press handler so the RC can
-  complete SMP without sending unsolicited Security Requests to the iOS app
-- "Already Exists" GATT re-registration race fixed (`_force_remove_and_reregister`)
+**Corrected 2026-07-19** — the framing below overstated certainty; see
+`docs/developer/mock-service-requirements.md` REQ-052 for the full corrected analysis. Kept
+here for the concrete bond-clearing commands, but read the confirmed-blocker note first.
 
-**One remaining blocker:** the RC (`B0:10:A0:68:5C:8B`) still holds a bond (LTK) with
-the real toilet (`38:AB:41:2A:0D:67`). On connect it immediately sends `LL_ENC_REQ` with
-the stored EDIV+Rand — the mock VM has no matching LTK → encryption fails → disconnect
-before GATT is reached.
+**Context:** commit 2b565b0 (2026-06-26, v1.73.0b1) added Device Information Service
+(0x180A), the RC pairing service stub (0xC526), and fixed the "Already Exists" GATT
+re-registration race (`_force_remove_and_reregister`). It also reintroduced
+`btmgmt pairable on/off` toggling in the button-press handler — **but that was reverted again
+on 2026-07-16** (adapter-wide `pairable=on` also makes the mock answer iOS's own system
+pairing dialog during normal Home App onboarding, breaking it). As of today the mock
+unconditionally sets `pairable off` at startup and never turns it back on.
 
-**Next step — clear the RC bond on the machine running mera-mock** (mock must be stopped first).
+**Confirmed current blocker (not the bond):** SMP-level pairing cannot complete with *any*
+device right now, RC included, because the adapter is never made pairable. This must be
+solved first — via a pairing mode scoped to just the RC's address, or a dedicated time-boxed
+web-UI action — before the bond question below is even testable.
+
+**Bond mismatch — unconfirmed hypothesis, not a demonstrated root cause.** The RC
+(`B0:10:A0:68:5C:8B`) does hold a bond (LTK) with the real toilet (`38:AB:41:2A:0D:67`), and
+if it reconnects with a stale EDIV+Rand the mock would have no matching LTK. But the
+2026-06-25 test this was inferred from only showed the RC **never appearing in the mock's log
+at all** — no capture has ever shown the RC actually sending `LL_ENC_REQ` against the mock and
+failing. Don't treat this as verified; test it only after the pairable-scoping blocker above
+is fixed, with a sniffer running to see what actually happens.
+
+**Bond-clearing commands, for use once pairable-scoping is fixed** (mock must be stopped first):
 
 Bonds (LTKs) are stored persistently in `/var/lib/bluetooth/<adapter-MAC>/` and survive
 reboots until explicitly removed.
