@@ -1728,6 +1728,23 @@ that environment (battery plugin still active) no longer matches current `anneub
    repo-level warning. Worth its own tracked item regardless of how step 2 turns out — either
    document it as a mandatory one-time mock setup step, or script it.
 
+**Step 1/2 done, 2026-07-19 — clean result, but re-test was worth being skeptical of.**
+`pairable on` restored in both `mera_mock.py` (v1.101.0b1) and `mock-geberit-mera.py`
+(v1.78.0b1), tested against `anneubuntu-studio` with the systemd override confirmed active
+(`--noplugin=battery`, running since 2026-07-18) — Home App onboarding via mock+bridge v3.1.2
+worked with no pairing dialog. **But a clean onboarding alone doesn't prove `pairable=on`
+actually took effect** — Home App onboarding never attempts BLE pairing regardless of adapter
+state (same reasoning as above), and the code's `subprocess.run()` call logged success
+unconditionally without checking the result. Directly queried instead: `bluetoothctl show` on
+the VM confirmed `Pairable: yes` for that run. Added `_set_pairable_on_verified()` (v1.102.0b1
+/ v1.79.0b1) to check the command's return code and read back `btmgmt info` going forward — and
+caught a real bug while writing it: `btmgmt info`'s "current settings" line reports this
+setting as `bondable`, never as `pairable` (`pairable` is only a command-name alias, confirmed
+via `btmgmt --help`); the first version of the verification check looked for the wrong string
+and would have always logged a false "not verified" warning. Fixed before commit. **Still
+open**: RC pairing itself hasn't been tested yet — only the Home App side. That's the actual
+test of whether the fix solved the real problem.
+
 **The "pre-existing bond" explanation is an unconfirmed hypothesis, not a demonstrated root
 cause** — corrected 2026-07-19 after the user pushed back on it being stated as settled.
 `docs/roadmap.md`'s 2026-06-25 test log shows only that the RC never appeared in the mock's
