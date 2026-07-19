@@ -309,9 +309,11 @@ def _find_mac_occurrences(tshark: str, pcapng: Path, mac: str) -> list:
     anywhere at all".
     """
     mac_lower = mac.lower()
+    # MUST NOT quote the MAC literal below — see the identical note in
+    # _get_connection_events's ADV_DIRECT_IND query. Quoting silently matches zero rows.
     rows = _run_tshark(tshark, pcapng,
-                       f'btle.advertising_address == "{mac_lower}" '
-                       f'|| btle.initiator_address == "{mac_lower}"',
+                       f'btle.advertising_address == {mac_lower} '
+                       f'|| btle.initiator_address == {mac_lower}',
                        ["frame.time_relative",
                         "btle.advertising_header.pdu_type",
                         "btle.advertising_address",
@@ -391,9 +393,19 @@ def _get_connection_events(tshark: str, pcapng: Path,
 
     # ADV_DIRECT_IND (pdu_type=1) FROM the toilet
     # btle.initiator_address holds TargetA (directed destination) in this PDU type
+    #
+    # MUST NOT quote the MAC literal below — confirmed 2026-07-19 via direct testing:
+    # tshark's ether-address field comparison (btle.advertising_address == "xx:xx:...")
+    # silently matches ZERO rows when the value is quoted as a string, regardless of
+    # case; unquoted (== xx:xx:...) works correctly. This bug was present here from
+    # this function's introduction, meaning every "ADV_DIRECT_IND from toilet: 0
+    # frame(s)" this tool has ever printed was unconditionally 0 regardless of what
+    # was actually in the capture — the filter could never have matched anything.
+    # See tools/find-geberit-remote.py-style unquoted patterns (mac.lower() with no
+    # quotes) elsewhere in this file for the pattern that does work.
     rows = _run_tshark(tshark, pcapng,
                        f'btle.advertising_header.pdu_type == 0x01 '
-                       f'&& btle.advertising_address == "{toilet_lower}"',
+                       f'&& btle.advertising_address == {toilet_lower}',
                        ["frame.time_relative", "btle.initiator_address"])
     directed_advs = []
     for row in rows:
