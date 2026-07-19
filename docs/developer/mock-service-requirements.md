@@ -504,6 +504,30 @@ reliably. Deliberately does **not** stop/restart the systemd `bluetooth` service
 manual commands exactly; if systemd's `bluetoothd` is already holding the D-Bus name,
 `--bluetoothd-debug` just fails to bind, same as running the command by hand.
 
+**Known bug — `--bluetoothd-debug` does not work in either configuration (2026-07-18).**
+The flag is currently unusable in practice, not just under an edge case:
+- **As documented above** (don't stop systemd first): fails to bind, since systemd's
+  `bluetoothd` already holds the `org.bluez` D-Bus name in the normal case (systemd's
+  `bluetooth.service` is running by default on any test machine).
+- **Working around that** by running `sudo systemctl stop bluetooth` first (the obvious
+  fix) instead triggers a D-Bus-activation race: `org.bluez` is D-Bus-activated, so systemd
+  repeatedly tries to auto-restart its own `bluetoothd` to reclaim the name — racing against
+  and failing to bind after the `--bluetoothd-debug` instance claims it first. Confirmed live:
+  5 rapid `bluetoothd[PID]: = src/main.c:main() Unable to get on D-Bus` failures in ~1.7s,
+  which killed that entire test session before it reached the onboarding attempt at all, and
+  left the systemd `bluetooth` unit in `failed` state (needs `systemctl reset-failed bluetooth`
+  before `systemctl start bluetooth` works again).
+
+So there is currently no way to invoke `--bluetoothd-debug` that reliably produces a working
+debug session — every attempt either fails to bind immediately or takes down the whole test
+run via the restart race. **Avoid `--bluetoothd-debug` for routine tests; use
+`--btmon-capture` alone instead**, which never exhibited either problem. Not yet fixed —
+would need either detecting/handling the D-Bus race (e.g. `systemctl stop bluetooth`,
+poll until `org.bluez` is actually released, *then* start the debug instance, restoring
+systemd's `bluetooth.service` on exit) or dropping the flag in favor of documenting the
+manual two-terminal workflow it was meant to replace. Full incident:
+`memory/mera-advertisement-two-entry-regression-confirmed.md` (local Claude memory).
+
 ## 8. DRY — shared modules, not per-mock duplication
 
 - Adapter selection: already extracted (Alba's `--adapter` feature, merged to main) —
