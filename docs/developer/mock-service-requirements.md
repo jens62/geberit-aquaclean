@@ -1683,12 +1683,32 @@ theory has never actually been tested against the current mock and should not be
 established until it is (clearing the RC's bond, per `docs/roadmap.md`, is worth trying but
 only after the pairable-scoping problem is solved, not before).
 
-**Mock advertisement fidelity is unrelated to this REQ** — confirmed 2026-07-19: the RC
-reconnects as an already-bonded BLE central via direct `CONNECT_IND` (never scans/advertises
-itself, per `memory/geberit-remote-control-ble.md`) independent of the toilet's
-`IsButtonPressed`/`IsEmergencyConnectPermitted` advertisement state (see
-`.claude/rules/ble-protocol.md` § "BLE advertising payload — SensorState"). Work to make the
-mock's advertisement byte-for-byte closer to a real device does not move this REQ forward.
+**Mock advertisement fidelity — retracted 2026-07-19, was wrong.** This REQ previously stated
+(same day, since corrected) that advertisement fidelity was unrelated because the RC connects
+independent of the toilet's `IsButtonPressed`/`IsEmergencyConnectPermitted` state. Investigating
+all 8 captures in `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/`
+overturned that: in the only two captures where the RC's own `CONNECT_IND` was ever observed
+(`toogle-lid-with-remote-without-running-bridge.pcapng`, `pairing with RC and toggle lid.pcapng`),
+a fresh RC connection is preceded within a few seconds (0.5s and ~3.1s respectively) by exactly
+this advertising flip — no counter-example exists in the data set. See
+`docs/developer/ble-advertising-button-press-confirmation.md` § "Source 5" for the full
+evidence and appropriate hedging (2 instances is a correlation, not a proven mechanism).
+**Practical consequence for testing:** trigger the mock's "button pressed" web-UI action
+shortly before attempting an RC connection — that matches the only two conditions under which
+a real RC connection has ever actually been captured.
+
+**Bridge identified in three failed RC-attempt captures — but it's not blocking a connection
+slot.** Three more captures in that same directory (`pair1.pcapng`, `pair2.pcapng`,
+`toogle-lid-with-remote.pcapng`) show only one connected central each — `94:A9:90:68:B0:E2`,
+one digit off the bridge's ESP32 proxy address `94:A9:90:68:B0:E0` (`docs/connection-test.md`
+Step 2) — and the RC never appears in any of the three. This is **not** displacement:
+`memory/mera-comfort-displacement-baseline.md` already confirms real Mera Comfort supports
+simultaneous multi-client connections (app + remote polling in parallel). The better-supported
+explanation is the button-press finding above — none of these three captures show the
+advertising flip at all, so the RC most likely never had a trigger to attempt a connection in
+the first place, independent of whether the bridge was connected. Don't cite this as evidence
+that the bridge needs to be stopped for RC testing; the actionable takeaway is still the
+button-press trigger above.
 
 **Alba:** no RC-related GATT service exists at all — unknown whether Alba's real RC pairing
 uses the same `0xC526` UUID as Mera or a different one; needs a real-hardware BLE sniff of an
@@ -1701,7 +1721,8 @@ remote-displacement root cause still open).
 Scope, updated 2026-07-19: (1) **Mera** — design and implement a pairing mode scoped to just
 the RC's address (or a short time-boxed window entered via a dedicated web-UI action, not the
 existing button-press handler) so `pairable on` no longer has to be adapter-wide; only once
-that exists can the bond-mismatch hypothesis above actually be tested. (2) **Alba** —
+that exists can the bond-mismatch hypothesis above actually be tested. When testing, trigger
+the button-pressed state first, per the correlation finding above. (2) **Alba** —
 discovery surface identified and stubbed the same way Mera's is, plus the same pairing-mode
 work Mera needs. (3) For both — enough of the post-pairing encrypted protocol
 decoded/implemented to respond meaningfully rather than just complete pairing and go silent.

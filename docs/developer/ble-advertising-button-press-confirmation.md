@@ -125,12 +125,83 @@ atomically.
 All five additional captures share the same RF-noise caveat as Source 3 — treat only the
 specific rows above as reliable, not the files as clean general-purpose references.
 
+**Lag between the two bits is variable, not a fixed ~5s** — corrected 2026-07-19 after Source 5
+below turned up much shorter gaps in two more captures: `no-pairing.pcapng` shows the flip only
+0.1s apart (`t=18.2s` → `t=18.3s`), and `pairing-ok-toggle-lid-not-followed-any-devices.pcapng`
+shows it ~0.9s apart (`t=8.7s` → `t=9.6s`). Combined with the ~5s gaps in Source 4, the lag
+ranges from ~0.1s to ~5s across five observed instances — the two bits are clearly sequenced
+(data-byte first, company-ID second, never the reverse, never simultaneous), but the interval
+between them isn't fixed and shouldn't be cited as "~5s" going forward.
+
+## Source 5 — `geberit-remote-control/` directory, all 8 captures (2026-07-19)
+
+Investigated every `.pcapng` in
+`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/` with
+`nrf-ble-analyze.py --markdown --include-adv` (two tool bugs found and fixed along the way —
+see `tools/nrf-ble-analyze.py` commit `f8f381a`: MAC auto-detect failure was silently blanking
+connection events/device labels, and captures with no decodable ATT and no LL encryption
+produced no output at all instead of showing advertising/connection data).
+
+**Bridge identified as the only connected central in three RC-attempt captures — but this is
+NOT displacement.** Three captures named for Remote-Control pairing attempts (`pair1.pcapng`,
+`pair2.pcapng`, `toogle-lid-with-remote.pcapng`) show only one connected central each — MAC
+`94:A9:90:68:B0:E2`, one digit off the bridge's ESP32 BLE proxy address `94:A9:90:68:B0:E0`
+(confirmed in `docs/connection-test.md` Step 2, `aquaclean-proxy-c3`) — and the physical RC
+(`B0:10:A0:68:5C:8B`) never appears in any of the three. The obvious first read is "the bridge
+occupied the connection slot and blocked the RC" — **but that's contradicted by
+`memory/mera-comfort-displacement-baseline.md`**, a real capture confirming Mera Comfort
+supports simultaneous multi-client connections (app + remote polling in parallel, no
+displacement). A busy bridge connection doesn't by itself prevent the RC from also connecting.
+
+The better-supported explanation, given the finding below: **none of these three captures show
+the button-press advertising flip at all** (checked via `grep -n "data=0x01\|company=0x01aa"` —
+zero hits in all three). Combined with the correlation below (RC connections are only ever
+observed shortly after that flip), the RC most likely never attempted a connection in these
+three captures because nothing triggered it — not because the bridge was blocking it. This also
+explains, after the fact, why a dedicated `toogle-lid-with-remote-**without-running-bridge**.pcapng`
+test exists — not because the bridge needed to be stopped for the RC to get a connection slot,
+but likely because that was also the test run where the button happened to get pressed.
+
+**New finding — RC connections are preceded by the button-press advertising flip.** In both
+captures where the RC's `CONNECT_IND` actually appears (`toogle-lid-with-remote-without-running-bridge.pcapng`
+and `pairing with RC and toggle lid.pcapng`), a fresh RC connection is preceded within a few
+seconds by the same `IsButtonPressed`/`IsEmergencyConnectPermitted` advertising flip documented
+in Sources 1–4:
+
+| Capture | Data-byte flip | Company-ID flip | RC `CONNECT_IND` |
+|---|---|---|---|
+| `toogle-lid-with-remote-without-running-bridge.pcapng` | `t=17.4s` | not seen in this capture | `t=17.9s` (+0.5s) |
+| `pairing with RC and toggle lid.pcapng` | `t=4330.9s` | `t=4332.0s` (+1.1s) | `t=4335.1s` (+3.1s from company flip) |
+
+In the second capture, a *second* RC `CONNECT_IND` at `t=4350.6s` follows the data byte
+returning to idle (`0x00` at `t=4348.2s`) with no new flip beforehand — consistent with that
+second event being a supervision-timeout reconnect of the same ongoing session (`supv=2000ms`
+in both `CONNECT_IND`s), not a fresh button-gated one.
+
+This is a correlation from only two ground-truth instances, not proof of a causal mechanism —
+plausible explanations range from "the RC only attempts to connect while the toilet is
+advertising a fast/high-visibility mode triggered by the button" to "the human tester happened
+to press the physical button as a habit before picking up the remote, unrelated to any RC-side
+requirement." But there is no counter-example in this data set (no RC `CONNECT_IND` ever
+appears *without* a preceding flip), and it directly bears on `docs/developer/mock-service-
+requirements.md` REQ-052: testing the physical RC against the mock should include triggering
+the mock's "button pressed" web-UI action shortly beforehand, matching the only two conditions
+under which a real RC connection has ever actually been observed.
+
+**The two captures with no toilet connection at all** (`no-pairing.pcapng`,
+`pairing-ok-toggle-lid-not-followed-any-devices.pcapng`) both show the advertising flip
+happening but **no connection to the toilet follows in either** — confirming the flip alone
+isn't sufficient to produce a connection (matches their filenames). Whether an RC connection
+was attempted-but-missed by the sniffer, or never attempted at all, can't be determined from
+these two captures.
+
 ## Bottom line
 
 | Claim | Confirmed by |
 |-------|-------------|
-| Idle payload `00 31 34 36 32 31` | Sources 1, 2, 3, 4 |
-| Button-pressed payload `01 31 34 36 32 31` | Sources 1, 2, 3, 4 |
-| Company-ID flip `0x0100`→`0x01AA` on button press | Sources 1, 2, and 2 of the 5 captures in Source 4 |
-| The two bits flip simultaneously | **Contradicted** by Source 4 — data-byte flip consistently precedes the company-ID flip by ~5s in both captures that show both |
+| Idle payload `00 31 34 36 32 31` | Sources 1, 2, 3, 4, 5 |
+| Button-pressed payload `01 31 34 36 32 31` | Sources 1, 2, 3, 4, 5 |
+| Company-ID flip `0x0100`→`0x01AA` on button press | Sources 1, 2, and several captures in Sources 4/5 |
+| The two bits flip simultaneously | **Contradicted** — data-byte flip always precedes the company-ID flip, by anywhere from ~0.1s to ~5s across five observed instances (Sources 4, 5), never simultaneous, never reversed |
+| A fresh RC connection is preceded by the button-press flip | Source 5 — 2/2 available ground-truth RC-connect captures, no counter-examples, but too few instances to call it proven causation |
 | SCAN_RSP RS-firmware-prefix entry, unaffected by button state | Source 2 (the `--adv` output doesn't decode SCAN_RSP manufacturer data content, only name) |
