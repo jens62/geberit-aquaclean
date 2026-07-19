@@ -85,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.101.0b1"
+_MOCK_VERSION = "1.102.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -1181,6 +1181,51 @@ class MeraMock:
             return self.adapter[3:]
         return "0"
 
+    def _set_pairable_on_verified(self) -> None:
+        """Set the adapter pairable=on and verify it actually took effect —
+        added 2026-07-19 after a report of a clean Home App onboarding being read as
+        proof pairable=on succeeded, which it isn't: Home App onboarding never attempts
+        BLE pairing regardless of adapter state (see run()'s comment above this call),
+        so a smooth onboarding is not evidence either way. Checks the command's own
+        return code, then reads back `btmgmt info` to confirm "bondable" — the mgmt
+        setting name `pairable` is an alias for — is actually listed under "current
+        settings", rather than trusting the command silently."""
+        idx = self._hci_index()
+        result = subprocess.run(
+            ["btmgmt", "-i", idx, "pairable", "on"], capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            self.logger.warning(
+                "btmgmt pairable on FAILED (exit %s): %s",
+                result.returncode, (result.stderr or result.stdout).strip(),
+            )
+            return
+
+        info = subprocess.run(
+            ["btmgmt", "-i", idx, "info"], capture_output=True, text=True,
+        )
+        settings_line = next(
+            (line for line in info.stdout.splitlines() if "current settings" in line.lower()),
+            None,
+        )
+        if settings_line is None:
+            self.logger.warning(
+                "Could not verify pairable state — `btmgmt info` output had no "
+                "'current settings' line (exit %s): %s",
+                info.returncode, (info.stderr or info.stdout).strip(),
+            )
+        # `btmgmt info` reports this setting as "bondable" — "pairable" is only the
+        # btmgmt *command* name (an alias, confirmed via `btmgmt --help`: both
+        # "bondable" and "pairable" commands say "Toggle bondable state"); the
+        # settings list itself never contains the literal word "pairable".
+        elif "bondable" in settings_line.lower():
+            self.logger.info("Adapter confirmed pairable=on (verified via btmgmt info)")
+        else:
+            self.logger.warning(
+                "btmgmt pairable on reported success but adapter is NOT pairable "
+                "per readback — settings line: %s", settings_line.strip(),
+            )
+
     def _log(self, direction: str, msg: str) -> None:
         entry = (time.strftime("%H:%M:%S"), direction, msg)
         self._session_log.append(entry)
@@ -2128,8 +2173,7 @@ class MeraMock:
         # ExecStart` should include `--noplugin=battery`) — do not immediately re-revert to
         # pairable=off without checking that first. See
         # docs/developer/mock-service-requirements.md REQ-052 for the full history.
-        subprocess.run(["btmgmt", "-i", self._hci_index(), "pairable", "on"], capture_output=True)
-        self.logger.info("Adapter set to pairable=on (re-enabled 2026-07-19 — see run() comment)")
+        self._set_pairable_on_verified()
 
         from aiohttp import web
 

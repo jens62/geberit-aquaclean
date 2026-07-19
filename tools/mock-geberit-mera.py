@@ -77,7 +77,7 @@ from aquaclean_console_app.aquaclean_core.Frames.Frames.FlowControlFrame        
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.78.0b1"
+_MOCK_VERSION = "1.79.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -182,6 +182,51 @@ async def _update_advert(state_b: int) -> None:
             _log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}")
         except Exception as e:
             logger.error("advert re-register failed: %s", e)
+
+
+def _set_pairable_on_verified() -> None:
+    """Set the adapter pairable=on and verify it actually took effect —
+    added 2026-07-19 after a report of a clean Home App onboarding being read as
+    proof pairable=on succeeded, which it isn't: Home App onboarding never attempts
+    BLE pairing regardless of adapter state (see main()'s comment above this call),
+    so a smooth onboarding is not evidence either way. Checks the command's own
+    return code, then reads back `btmgmt info` to confirm "bondable" — the mgmt
+    setting name `pairable` is an alias for — is actually listed under "current
+    settings", rather than trusting the command silently."""
+    result = subprocess.run(
+        ["btmgmt", "-i", "0", "pairable", "on"], capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        logger.warning(
+            "btmgmt pairable on FAILED (exit %s): %s",
+            result.returncode, (result.stderr or result.stdout).strip(),
+        )
+        return
+
+    info = subprocess.run(
+        ["btmgmt", "-i", "0", "info"], capture_output=True, text=True,
+    )
+    settings_line = next(
+        (line for line in info.stdout.splitlines() if "current settings" in line.lower()),
+        None,
+    )
+    if settings_line is None:
+        logger.warning(
+            "Could not verify pairable state — `btmgmt info` output had no "
+            "'current settings' line (exit %s): %s",
+            info.returncode, (info.stderr or info.stdout).strip(),
+        )
+    # `btmgmt info` reports this setting as "bondable" — "pairable" is only the
+    # btmgmt *command* name (an alias, confirmed via `btmgmt --help`: both
+    # "bondable" and "pairable" commands say "Toggle bondable state"); the
+    # settings list itself never contains the literal word "pairable".
+    elif "bondable" in settings_line.lower():
+        logger.info("Adapter confirmed pairable=on (verified via btmgmt info)")
+    else:
+        logger.warning(
+            "btmgmt pairable on reported success but adapter is NOT pairable "
+            "per readback — settings line: %s", settings_line.strip(),
+        )
 
 
 def _log(direction: str, msg: str) -> None:
@@ -1228,8 +1273,7 @@ async def main(web_port: int = 8765) -> None:
     # ExecStart` should include `--noplugin=battery`) — do not immediately re-revert to
     # pairable=off without checking that first. See
     # docs/developer/mock-service-requirements.md REQ-052 for the full history.
-    subprocess.run(["btmgmt", "-i", "0", "pairable", "on"], capture_output=True)
-    logger.info("Adapter set to pairable=on (re-enabled 2026-07-19 — see main() comment)")
+    _set_pairable_on_verified()
 
     from aiohttp import web
 
