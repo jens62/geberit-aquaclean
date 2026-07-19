@@ -1770,27 +1770,41 @@ current advertisement — which already includes the matching service UUID and "
 SCAN_RSP name, just under `A0:AD:9F:72:C4:0F` instead of `38:AB:41:2A:0D:67` — might already be
 enough to be discovered, with **no MAC-spoofing needed at all**.
 
-**Open question, unresearched**: how does the Geberit Remote Control itself initiate pairing
-with a *new* toilet (as opposed to reconnecting to a known one)? Likely some physical action on
-the remote (a button sequence, a factory-reset-equivalent), not investigated yet — no existing
-capture of a Remote Control's *first-time* pairing exists in this repo, only reconnections to
-an already-bonded device. Until this is known, today's "no success" result doesn't distinguish
-between two different explanations: (a) the remote was simply in reconnect-only mode and never
-looked for anything else, regardless of what the mock advertised; or (b) the remote does
-attempt discovery-based scanning but for some other reason still didn't find/accept the mock.
+**Answered, 2026-07-19 — official procedure found.** Sourced from the Geberit PDF
+`966.731.00.0_05.pdf` ("Fernbedienung neu zuweisen" / "Reassign remote control"): press `<+>`
+on the Remote Control **and** `<up>` on the toilet's side control panel **simultaneously, for
+~30 seconds**, until `[Pairing ok]` appears on the toilet's display. Full text and analysis:
+`memory/geberit-remote-control-pairing-procedure.md`.
 
-**MAC-spoofing capability doesn't exist in either mock** (confirmed: the only "MAC spoof via
-`btmgmt public-addr`" mention in this repo is `docs/roadmap.md`'s unrelated, not-yet-started
-"Alba-Hub" relay design) — but per the correction above, don't assume it's needed until the
-remote's fresh-pairing mechanism is understood. It may turn out relevant later (e.g. if the
-remote's discovery step also checks some device-identity field beyond the BLE MAC and
-advertising signature), but it is not confirmed to be the blocker the way the paragraph above
-originally claimed.
+This retroactively explains the earlier button-press/RC-connect correlation
+(`docs/developer/ble-advertising-button-press-confirmation.md` § "Source 5") as most likely
+coincidence, not causation — those captures showed the flip and the RC's `CONNECT_IND` only a
+few seconds apart, never anywhere near a 30-second hold. They were almost certainly normal
+reconnections of jens's already-bonded remote, with an unrelated brief button press nearby.
 
-**Next step**: figure out how to put jens's physical Remote Control into "pair with a new
-device" mode (check the Geberit user manual / support documentation, or experiment with the
-remote's own buttons) and re-test against the mock in that mode before concluding anything
-further about MAC identity requirements.
+**Corrected again within the hour — "the mock needs a new sustained-hold feature" was also an
+overreach.** Checked `_send_info_frame_burst` in `mera_mock.py`: the mock's existing button
+only auto-releases (`self._button_pressed = False`) when an actual BLE connection completes
+the Home-App-specific A6 info burst — there's no timer. If nothing connects in the meantime,
+`_button_pressed` (and the advertised `IsButtonPressed` bit) stays `True` indefinitely. So the
+existing single button can already sustain a 30+ second "held" state for free — click it once,
+and it stays pressed until something else connects. **Confirmed directly by the user**: today's
+test never actually reached `[Pairing ok]`, meaning the correct 30-second combined hold
+(mock button clicked + `<+>` held on the physical remote, continuously, for the full duration)
+was simply never attempted yet — "no success" so far tells us nothing about mock capability.
+
+**Confirmed by the user — it's the same button.** The user had already stated this earlier the
+same day, in the exact prompt that kicked off the pairable=on re-investigation: "There is only
+[one] button [that] needs to [be] kept pressed in order to 'pair' with Remote Control or
+pairing with Geberit Home App. The procedure is the same for both." This was missed and
+re-asked as if still open — it isn't. The toilet has one physical button, used identically for
+both flows; the mock's existing single web-UI button already represents it correctly. No new
+mock feature is needed for the button itself.
+
+**Next step, simple**: click the mock's existing button once, then hold `<+>` on the physical
+remote continuously for the full ~30+ seconds (longer than tried before), and see whether
+`[Pairing ok]` appears — try this before building anything new. Only revisit MAC-spoofing or
+the bond-mismatch hypothesis if a properly-timed attempt still fails.
 
 **The "pre-existing bond" explanation is an unconfirmed hypothesis, not a demonstrated root
 cause** — corrected 2026-07-19 after the user pushed back on it being stated as settled.
