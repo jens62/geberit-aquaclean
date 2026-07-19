@@ -497,6 +497,46 @@ file's own directory, not the repo root) failed with `ModuleNotFoundError` befor
 the later insert. `mera_mock.py` already did this in the correct order; `alba_mock.py` didn't.
 Fixed by moving the insert before both import groups it serves.
 
+### "User sitting" webui toggle — Mera parity with Alba (formalized 2026-07-19)
+
+**Requirement.** `mera_mock.py` needs the same "User sitting" simulation Alba already has.
+Without it, the Geberit Home App's Remote Control area stays greyed out during mock
+testing — the app only enables shower/dryer buttons there when the seat sensor reports a
+user sitting. Informally requested earlier in `docs/roadmap.md` §"Mock Mera: add 'User
+sitting' toggle button to web UI"; this section supersedes that sketch with the actual
+mechanism confirmed by reading Alba's real implementation (the roadmap sketch guessed at a
+route name/shape that doesn't quite match what Alba really does).
+
+**Alba's actual mechanism** (`alba_mock.py`, confirmed 2026-07-19 — the roadmap sketch's
+`POST /set-user-sitting` guess was close but not exact):
+- A `_user_sitting: bool` variable, toggled two ways:
+  - **Manual webui button**: `POST /notify/607/toggle` (DpId 607, `USER_DETECTION_STATUS`) —
+    flips `_ui_notify_state["607"]`, pushes a notify frame, and updates DpId 564 (shower-
+    dispenser ready-state) in tandem (`2`=ready when sitting, `1`=disabled when not). Button
+    label: "ON (sitting)" / "OFF (absent) → Toggle".
+  - **Automatic**: also flips at the end of every completed BLE session, independent of the
+    button — simulates a different user each session without manual intervention.
+- Applies to whichever data store representation is live in that mode (`_ble20_app._store`
+  for DpId-based Alba).
+
+**Mera equivalent.** Mera has no DpId layer — the corresponding field is `StateUserPresent`
+(SPL index 0, read via proc `0x0D` `GetSystemParameterList`). Needed:
+- A `self._user_sitting: bool` instance attribute (mirrors the identity/firmware pattern —
+  persisted via `mock_persistence.py`, not just in-memory, so it survives a mock restart).
+- Webui button, same visual pattern as the existing settings-table buttons (see "Manual
+  Trigger" firmware-update button for a same-file precedent): "Simulate: User Sitting ON /
+  OFF" → toggle route (exact path TBD when implemented — follow this doc's existing
+  `/settings/...` convention rather than copying Alba's `/notify/{id}/toggle` literally,
+  since Mera's webui doesn't have a DpId-notify concept).
+- SPL index-0 handler reads `self._user_sitting` instead of returning a hardcoded value.
+- Decide when implementing: does Mera also want the automatic per-session flip, or is the
+  manual toggle alone sufficient? Alba's automatic flip exists to simulate session-to-session
+  variability without manual clicking; not yet decided whether that's wanted for Mera too.
+
+**Status:** not started — requirement only, formalized here per explicit request; §4a's "no
+hardcoded values" principle applies here too (the state should persist, not just live
+in-memory across a single process run).
+
 ## 7. Logging
 
 - One logger per device instance, named by the same `(model, adapter)` key used for
@@ -705,6 +745,7 @@ of it.
 | 9c | Firmware profile selector — Mera done, Alba pending a real capture | **Mera done, VM-verified** (2026-07-16) — see §6 "Firmware profile selector"; Alba not started |
 | 10 | Wire remaining Mera `SetCommand` (proc 0x09) codes — action simulation, not persistence | Not started — see §9 |
 | 13 | No hardcoded values — configurable identity/firmware sourcing (webui typed/imported, headless file, real-device-via-bridge), named settings profiles, `mock_service.py --version` | Not started — see §4a |
+| 14 | "User sitting" webui toggle for Mera (parity with Alba) | Not started — see §6 "User sitting webui toggle" |
 
 ### Phase 2 — scope decision (2026-07-16)
 
