@@ -121,3 +121,53 @@ overwriting their `.md` companions:
 Spot-checked: GATT discovery log lines that previously would have shown only the first handle
 (e.g. `services=0x001E`) now correctly show every handle in the frame (e.g.
 `services=0x001E  0x0029  0x002D`), while genuinely single-entry frames are unchanged.
+
+## Unrelated bug class found 2026-07-19 — mac fallback and no-ATT-frames early return
+
+Found while investigating RC pairing captures in `geberit-remote-control/`
+(`docs/developer/ble-advertising-button-press-confirmation.md` § "Source 5"). Unrelated to the
+`occurrence="f"` bug class above — a different mechanism, found independently.
+
+### 1. Empty MAC not falling back to `DEFAULT_MAC`
+
+When device auto-detection fails, `main()` passes `mac=""` into `_analyze_mera()`. Four call
+sites downstream used this empty string directly instead of falling back to `DEFAULT_MAC`
+(`38:AB:41:2A:0D:67`), the way `_get_adv_packets()` already did:
+- `_get_connection_events(tshark, pcapng, mac)` — filters `CONNECT_IND` by exact MAC match; an
+  empty string matches nothing, silently producing "No CONNECT_IND ... found" even when the
+  capture clearly contains the toilet's real connection events.
+- `_render_ll_encryption_markdown(enc, pcapng, mac, ...)` — rendered `**Device:** \`\`` (blank)
+  in the header.
+- `_android_ble.render_markdown_android(...)` and `_print_mera_table(...)` — same blank-MAC
+  header, in the main (ATT-events-found) code path.
+
+**Fix**: all four call sites now use `mac or DEFAULT_MAC`. Commits `f8f381a`, `4a8fd52`.
+
+### 2. No-ATT-frames-found path discarded computed advertising/connection data
+
+When a capture has no decodable Geberit ATT frames and no `LL_ENC_REQ`, `_analyze_mera()`
+printed only `"No Geberit ATT frames found"` and returned — even when `--include-adv` had
+already computed a usable advertising section, or real `CONNECT_IND`/`ADV_DIRECT_IND` events
+existed for the target MAC. Both were silently discarded.
+
+**Fix**: added a fallback that renders the advertising section and/or connection events
+instead, with a note explaining the likely cause (sniffer didn't follow the data channel's
+hopping sequence, or the connection closed before any GATT activity). Commit `f8f381a`.
+
+### Files found affected and fixed
+
+A repo-wide grep for the bug's signature (a blank `Device:` MAC, or the literal text "No
+CONNECT_IND or ADV_DIRECT_IND frames found") found 5 more pre-existing `.md` files affected
+outside the RC directory (none git-tracked — all under gitignored `local-assets/`). Regenerated
+4 with the fixed tool:
+- `geberit-home-app/onboard-Geberit-Home-App_against_mera-mock_v1.68.0b1_1.md`
+- `geberit-home-app/onboard-Geberit-Home-App_against_mera-mock_v1.65.0b1_1.md`
+- `geberit-home-app/onboard-Geberit-Home-App_against_mera-mock_v1.65.0b1.md`
+- `firmware-update-mera-comfort/firmware-update-against-mera-mock/onboarding-and-firmware-update-against-mera-mock.md`
+
+**Left stale, not regenerated**: `geberit-home-app/compare-mock_v1.68.0b1-vs-real-mera.md` — a
+derived diff (via `tools/compare-nrf-md.py`) of the first file above against
+`onboarding-real-mera.md`. Regenerating it correctly requires knowing the original `--from`/
+`--to` filter flags used, which weren't recorded anywhere; guessing them risked producing a
+subtly wrong comparison, so it was left as-is and flagged here instead of silently going stale
+with no record.
