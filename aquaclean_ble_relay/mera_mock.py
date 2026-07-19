@@ -85,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.99.1b1"
+_MOCK_VERSION = "1.100.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -209,13 +209,14 @@ _FW_PROFILES = {
     "rs28": _FW_COMPONENT_VERSIONS_RS28,
 }
 
-# Mock-engineering factory default (v1.88.0b1) — uniform RS28.0 TS199 across every
-# component. NOT a real device state (unlike _FW_PROFILES above) — this is the
-# specific synthetic baseline confirmed on 2026-07-17 to avoid the app's blocking
-# force-update screen (dismissible "Fehler" + stable connection), kept only as the
-# "Reset to Factory Settings" recovery target, deliberately excluded from the
-# real-life profile dropdown.
-_FW_COMPONENT_VERSIONS_FACTORY = {cid: (0x32, 0x38, 0xC7) for cid in _FW_COMPONENT_VERSIONS}
+# "Reset to Factory Settings" recovery target. Was a synthetic uniform-RS28.0-TS199
+# baseline (v1.88.0b1) — a workaround chosen 2026-07-17 to avoid the app's blocking
+# force-update screen, before the real root cause (request-frame truncation + missing
+# per-frame FlowControl ack in _handle_request, fixed v1.98.0b1-v1.99.1b1) was found.
+# Updated 2026-07-19 to the real, non-uniform rs28 profile — the actual configuration
+# confirmed end-to-end (full onboarding, no blocker, no "Fehler", correct version shown)
+# once the real bug was fixed. See memory/mera-firmware-update-request-truncation.md.
+_FW_COMPONENT_VERSIONS_FACTORY = dict(_FW_COMPONENT_VERSIONS_RS28)
 
 # Device-identity factory defaults (unchanged since v1.88.0b1) — used both as
 # __init__'s hardcoded starting point and as the "Reset to Factory Settings"

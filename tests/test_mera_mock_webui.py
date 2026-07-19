@@ -305,9 +305,11 @@ async def test_advertisement_single_manufacturer_entry():
 
 async def test_factory_reset_restores_defaults():
     """"Reset to Factory Settings" (2026-07-18 ask) — recovers from a broken
-    experiment without a mock restart. Factory firmware baseline is the
-    v1.88.0b1 uniform RS28.0 TS199 (distinct from the real-life "rs28" profile
-    option, which is the mixed real pre-update snapshot)."""
+    experiment without a mock restart. Factory firmware baseline updated
+    2026-07-19 to the real, non-uniform rs28 profile — the configuration
+    confirmed end-to-end (no update blocker, no "Fehler") once the real bug
+    (request-frame truncation + missing per-frame ack) was fixed; superseded
+    the earlier v1.88.0b1 synthetic uniform-RS28.0-TS199 workaround."""
     tmp = tempfile.mkdtemp()
     try:
         mock = _make_mock(tmp)
@@ -323,8 +325,8 @@ async def test_factory_reset_restores_defaults():
             r = await client.post("/settings/factory-reset", json={})
             assert r.status == 200
             assert mock._SAP_NUMBER == "146.21x.xx.1"
-            assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
-            assert mock._FW_COMPONENT_VERSIONS[11] == (0x32, 0x38, 0xC7)  # uniform factory default
+            assert mock._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)   # RS28.0 TS199 — real pre-update
+            assert mock._FW_COMPONENT_VERSIONS[11] == (0x30, 0x37, 0x16)  # RS07.0 TS22  — real pre-update
             assert mock._STORED_COMMON_SETTINGS[1] == mera_mock._DEFAULT_COMMON_SETTINGS[1]
         finally:
             await client.close()
@@ -332,6 +334,7 @@ async def test_factory_reset_restores_defaults():
         mock2 = _make_mock(tmp)
         assert mock2._SAP_NUMBER == "146.21x.xx.1"
         assert mock2._FW_COMPONENT_VERSIONS[1] == (0x32, 0x38, 0xC7)
+        assert mock2._FW_COMPONENT_VERSIONS[11] == (0x30, 0x37, 0x16)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
