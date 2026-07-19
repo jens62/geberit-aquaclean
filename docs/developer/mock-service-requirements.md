@@ -1,1200 +1,1265 @@
 # Mock Service — Requirements Definition
 
-**Status:** requirements defined, not yet implemented.
-**Scope:** `mock_service.py` (new, thin CLI orchestrator) + refactor of
-`tools/mock-geberit-mera.py`, `tools/mock-geberit-alba.py`, and the planned Sela mock into
-importable units + shared modules in `aquaclean_ble_relay/`.
+**Scope:** `mock_service.py` (thin CLI orchestrator) + `aquaclean_ble_relay/mera_mock.py` /
+`alba_mock.py` (importable per-model classes) + shared modules (`mock_persistence.py`,
+`mock_bluez_adapter.py`, `mock_logging.py`) + the planned Sela mock.
 
 See `docs/roadmap.md` → "Mock service: Mera namespace/index enumeration" for the full
-per-index persistence table this doc's schema requirement (§5) is built on — not duplicated
-here.
+per-index persistence table REQ-014's schema is built on — not duplicated here.
+
+**Document structure, refactored 2026-07-19:** every detailed requirement below has a unique
+`REQ-NNN` ID (stable — never reused or renumbered once assigned), a `Type` (`Functional` |
+`Technical`), a declarative present-tense `Statement` of the actual/intended behavior, a
+`Status` (`Open | In Progress | Done | Deferred | Superseded`), and — whenever `Status` is not
+`Open` — `Implementation Details` carrying the full history: root causes, decisions,
+verification evidence, bug postmortems, exact bytes/commits/dates. The previous "Decisions
+log" (§10) and "Implementation plan & phase status" (§11) tables have been retired in favor of
+this — every decision and every phase's status now lives on the REQ(s) it was actually about;
+see "Retired sections" at the end for exactly where each one moved and a slim
+phase-dependency-order table (the one thing the old phase table conveyed that isn't
+otherwise implicit in a flat REQ list).
 
 ---
 
-## 0. Goal & acceptance criterion
+## Requirements Index
 
-Replace per-model standalone scripts with one thin CLI entry point, `mock_service.py`,
-capable of running several mocked devices concurrently in one process.
-
-**Acceptance test:** change a setting via the Geberit Home App against a mocked device →
-close the app → stop `mock_service.py` → restart `mock_service.py` → the changed setting is
-still there. Must hold independently for every concurrently-running device.
+| ID | Type | Status | Summary |
+|---|---|---|---|
+| REQ-001 | Functional | Done | A setting changed via the app survives a mock restart, independently per device |
+| REQ-002 | Technical | Done | `mock_service.py` contains no protocol logic; one script, N devices |
+| REQ-003 | Technical | In Progress | One process/one event loop/one task per device; independent cleanup on shutdown |
+| REQ-004 | Technical | Done | Each device task bound to its own adapter via shared, non-duplicated adapter-selection code |
+| REQ-005 | Technical | Done | Repeatable `--device model=...,adapter=...,...` composite CLI flag, not zipped positional lists |
+| REQ-006 | Technical | Done | Each mock is a refactored, instantiable class — no shared module-level state across instances |
+| REQ-007 | Technical | Done | Single-device standalone scripts remain, as thin wrappers around the refactored class |
+| REQ-008 | Functional | Done | Bad startup config (unknown model, adapter conflict, missing adapter) fails fast, before any BLE/D-Bus activity |
+| REQ-009 | Technical | Done | Single open-ended `--model` registry maps a name to its protocol module + default identity |
+| REQ-010 | Functional | Done | `--help`/`--list-models` enumerates every registered model and its defaults |
+| REQ-011 | Functional | Superseded (by REQ-012) | `--firmware "RS28.0 TS199"` CLI override, parsed per-protocol |
+| REQ-012 | Technical | Open | No hardcoded identity/firmware values — every value's source of truth lives in the persistence DB |
+| REQ-013 | Functional | In Progress | Webui form-field editing of identity/firmware values |
+| REQ-014 | Functional | Open | Webui import-from-file for identity/firmware values |
+| REQ-015 | Functional | Open | Headless CLI file-based identity/firmware input (no webui) |
+| REQ-016 | Functional | Open | Populate mock identity/firmware from a real device via the bridge |
+| REQ-017 | Functional | Open | Webui button: save current live values as the new factory-settings baseline |
+| REQ-018 | Functional | Open | Webui: save and name a settings profile |
+| REQ-019 | Functional | Open | Webui: load a previously saved named settings profile |
+| REQ-020 | Functional | Open | `aquaclean_ble_relay.mock_service --version` |
+| REQ-021 | Technical | Done | One shared SQLite file; per-device isolation via a composite primary key, not one file per device |
+| REQ-022 | Technical | Done | Multiple per-model index spaces addressed via `namespace:index` encoding in one free-form key column |
+| REQ-023 | Technical | Done | Datatype/behavior/min/max metadata lives in static Python tables, never the DB |
+| REQ-024 | Technical | Done | Persist-vs-live-only classification is a code-side decision, not a stored column |
+| REQ-025 | Functional | In Progress | Every persist-classified setting round-trips a mock restart |
+| REQ-026 | Functional | Done | Every setting write commits synchronously and immediately, never batched |
+| REQ-027 | Functional | Done | Startup never overwrites an existing persisted value with a hardcoded default |
+| REQ-028 | Functional | Done | Factory-reset acts on exactly one device's store, never all devices' |
+| REQ-029 | Functional | Done | Each Alba mock instance has a stable, unique, persisted serial number and pairing PIN |
+| REQ-030 | Functional | Superseded (by REQ-012) | Mera has the same per-instance identity treatment as Alba (Phase 2c) |
+| REQ-031 | Functional | Done | Reported firmware/component versions persist across a mock restart, for both Mera and Alba |
+| REQ-032 | Technical | Done | Each device keeps its own independent webui server/port — no unified landing page |
+| REQ-033 | Functional | Done | Full per-device settings table (value/datatype/behavior/min-max) with inline edit and scoped factory-reset |
+| REQ-034 | Functional | Done | Webui state updates live via SSE, not full-page-reload polling |
+| REQ-035 | Functional | Done | Mera webui offers a firmware-profile selector between real captured snapshots |
+| REQ-036 | Functional | Open | Alba webui offers the equivalent firmware-profile selector |
+| REQ-037 | Technical | Done | Webui controls are built on one shared, generic, metadata-driven module — not per-feature bespoke markup |
+| REQ-038 | Functional | Open | Mera webui has a "User sitting" simulation toggle, parity with Alba |
+| REQ-039 | Technical | Done | One logger per device instance, keyed by `(model, adapter)` — never a shared hardcoded logger name |
+| REQ-040 | Functional | Done | The device tag sits at a fixed position in every log line |
+| REQ-041 | Functional | Done | Both a combined and a per-device log file exist simultaneously |
+| REQ-042 | Technical | Done | Log filenames follow the same `<model>-<adapter>` convention as the persistence DB |
+| REQ-043 | Functional | Done | `--btmon-capture` automates a clean btmon capture around a mock run |
+| REQ-044 | Functional | In Progress | `--bluetoothd-debug` produces a working bluetoothd debug session |
+| REQ-045 | Technical | Done | Adapter-selection logic is shared, never reimplemented per model |
+| REQ-046 | Technical | Done | Persistence is one shared schema/module, reused by every model |
+| REQ-047 | Technical | Done | CLI parsing, task orchestration, and shutdown handling live once, in `mock_service.py` |
+| REQ-048 | Technical | Done | Firmware-string validation and namespace/persist classification follow one shared pattern per protocol module |
+| REQ-049 | Functional | Open | A single device's webui bind failure has a defined effect on the rest of the service |
+| REQ-050 | Functional | Open | The Mera mock simulates the effect of every `SetCommand` (proc `0x09`) code, not just two |
+| REQ-051 | Functional | Open | The webui shows every piece of state the mock tracks, not a curated subset |
+| REQ-052 | Functional | In Progress | A real Geberit Remote Control can discover, pair with, and connect to both mocks |
+| REQ-053 | Functional | In Progress | The mock simulates the real device's `ctx=0x40` firmware-update BLE procedure sequence |
+| REQ-054 | Functional | Open | The mock's post-update behavior reflects any BLE-observable delta a real update introduces, not just the version string |
+| REQ-055 | Functional | Done | Active settings (`0x0A`/`0x0B`) are session-scoped, re-derived from Stored NVM on every restart, and never persisted themselves |
 
 ---
 
-## 1. Single thin CLI entry point
+## Goal
 
-`mock_service.py` is the only script a user runs. It contains no protocol logic itself — it
-parses arguments, instantiates one device object per `--device` entry, and orchestrates
-them. All BLE/protocol behavior lives in the existing per-model modules, refactored per §2.
+### REQ-001 — A changed setting survives a mock restart, per device
 
-## 2. Multi-device orchestration
+**Type:** Functional
+**Statement:** A setting changed via the Geberit Home App against a mocked device is still
+present after the app is closed and `mock_service.py` is stopped and restarted. This holds
+independently for every concurrently-running device.
+**Status:** Done
+**Implementation Details:** This is the acceptance test the rest of this document exists to
+satisfy. Proven directly (not just by argument) for Mera in the Phase 2b verification pass:
+`SetStoredCommonSetting` (WaterHardness id=0 → 2) and `SetStoredProfileSetting`
+(AnalShowerPressure id=2 → 4) both mutate immediately and are still present after destroying
+the `MeraMock` instance and constructing a fresh one against the same `state_dir`/adapter —
+run against the real persistence logic, not yet against a live BLE session at that point. For
+Alba, proven the same way in the Phase 3 verification pass: writing DpId 580
+(`STORED_ANAL_SPRAY_INTENSITY`, Nvm) persists immediately and survives a fresh
+`_Ble20AppLayer` construction with the same `device_key`; a non-Nvm DpId (564,
+`ANAL_SHOWER_STATUS`) correctly does not survive, confirming the Nvm/non-Nvm boundary is
+exactly right (raw DB after the sequence: exactly `{'dpid:580': '02'}`, nothing leaked).
+Not yet run for either model: a live session where the *real* Geberit Home App itself
+(not a script calling `_dispatch()`/`_dispatch_sync()` directly) changes a setting through
+its own UI and that specific setting is confirmed to survive a restart — flagged as a
+follow-up in both Phase 2b and Phase 3, not blocking, since the underlying mutation and
+persistence logic is verified directly.
 
-- One process, one asyncio event loop, one task per device (`asyncio.gather`/`TaskGroup`).
-- Each task bound to its own BlueZ adapter (reuse the adapter-selection code already merged
-  from the Alba `--adapter` feature — do not reimplement per model, see §8).
-- CLI shape — one repeatable composite flag per device, not zipped positional lists (avoids
-  index-mismatch bugs):
-  ```
-  mock_service.py --device model=mera,adapter=hci1 \
-                  --device model=sela,adapter=hci2 \
-                  --device model=alba,adapter=hci3 \
-                  --state-dir mock_state/
-  ```
-- **Precondition — refactor each mock into an importable unit.** Current mocks carry
-  module-level state (device dicts, notify-handler tables, a single hardcoded
-  `logging.getLogger("mera_mock")`). Each must become a class/async-factory taking
-  `(adapter, variant, firmware, state_dir, ...)` so N instances coexist in one interpreter
-  without clobbering each other's globals.
-- **Standalone parity, decided (see §10 decision 2):** `tools/mock-geberit-mera.py` and
-  `tools/mock-geberit-alba.py` keep working as single-device scripts — each becomes a thin
-  wrapper that instantiates exactly one instance of the refactored class. Not retired. This
-  also doubles as the regression baseline during the refactor: before `mock_service.py`
-  orchestration exists at all, the wrapper must behave identically to the pre-refactor
-  script, and the §0 acceptance test is provable against it standalone first.
-- **Startup validation, upfront, not mid-run:** reject unknown `--model` values, reject two
-  `--device` entries pointing at the same adapter, fail fast with a clear message if a named
-  adapter doesn't exist or is already claimed by BlueZ/another process — rather than
-  surfacing as a cryptic D-Bus error after the event loop is already running.
-- **Shutdown ordering:** SIGINT/SIGTERM must cancel all device tasks and let each run its own
-  cleanup (unsubscribe GATT notifications, write `TimestampAtLastPowerdown`, close its DB
-  connection, flush its log handler) — one device's slow/failed cleanup must not block or
-  corrupt another's.
+---
 
-## 3. Model / variant / protocol addressing — DECIDED
+## CLI Entry Point & Multi-Device Orchestration
 
-**Decision: single `--model`, open-ended lookup table.** Not a separate `--protocol` +
-`--model` split.
+### REQ-002 — One thin orchestrator, no embedded protocol logic
 
-Background: `--model` implicitly does two jobs — selecting *which protocol module* to load,
-and selecting *which device identity/variant* to present within that family. `mera` and
-`sela` both speak the same legacy proc/ctx protocol (Sela = different variant byte +
-different default identity strings + AcSela-only features like `ToggleOrientationLight`);
-`alba` speaks an entirely different protocol (Ble20/Arendi). So the `--model` →
-protocol-module mapping is not 1:1 with the module boundary — that's fine, it's exactly what
-an internal lookup table is for.
+**Type:** Technical
+**Statement:** `mock_service.py` is the only script a user runs to start any mock. It parses
+arguments, instantiates one device object per `--device` entry, and orchestrates them. All
+BLE/protocol behavior lives in the per-model modules (REQ-006).
+**Status:** Done
+**Implementation Details:** Implemented as Phase 4 (single device) then Phase 5 (multiple
+devices, see REQ-003). `--device model=NAME,adapter=HCI[,...]` resolves through the
+`_MODEL_REGISTRY` (REQ-009); every field besides `model` passes straight through as a
+constructor kwarg to whichever class `model` maps to (numeric-looking values coerced to
+`int`/`float`), merged over the registry's own per-model defaults — explicit `--device`
+fields always win. This is what lets `mode=`/`send_delay_sec=` (Alba-only) and
+`web_port=`/`state_dir=` (both) reach the right model without `mock_service.py` hardcoding
+either model's parameter list. `--state-dir` (global) is passed through as `state_dir` and
+also anchors the auto-named log file (REQ-042).
+**Bug found and fixed (2026-07-16):** `--mode ble20` starts a `uvicorn` server; `uvicorn`
+calls `sys.stdout.isatty()` during its own logging setup. The interim single-device stdout/
+stderr tee (`_Tee`, since replaced per-device by REQ-039's logger handlers) only implemented
+`write()`/`flush()`, so this crashed with `AttributeError`. Fixed by adding `isatty()`
+(delegated to the real console stream) plus a generic `__getattr__` fallback delegating
+anything else (`fileno`, `encoding`, ...) — so the next library that probes an unexpected
+file-like attribute on `sys.stdout` doesn't hit the same class of bug.
+**Verified on the mock VM:** `--list-models`, `--help`, and all startup-validation error paths
+(REQ-008) each produce the expected error/exit code. Live end-to-end run against the real
+Geberit Home App (`mock_service.py --device model=alba,adapter=hci0`, defaulting to
+`mode=ble20` per the registry): full Arendi handshake completed three times across
+reconnects, 268 lines of Inventory/Read activity.
+**Related operational gotcha (not a bug in this code, worth remembering):** getting to that
+live run first hit the Geberit Home App refusing to discover the Alba mock at all, because a
+*different* mock model (Mera) was still registered in the app's own device list at the same
+adapter's BLE MAC — the app's device list is keyed by MAC, not GATT profile, so this bites in
+either direction (a Mera entry blocks a later Alba mock at the same MAC and vice versa, and
+will affect Sela once it exists). Deleting the stale app-side entry fixed it immediately. A
+`btmon` capture during the failure initially pointed at BT5 Extended Advertising as a
+plausible cause (the same issue Mera hit in June, commits `e905a33`/`e05fc99`) — that was a
+red herring; the advertisement payload was confirmed byte-identical to the known-working
+original script. Full detail also in `docs/developer/mock-geberit-alba.md` §"Known
+behaviour/gotchas" #5. Worth checking the app's own device list first when switching
+`--device model=` between test sessions on a shared adapter, before suspecting a regression.
 
-**Implementation implication:** a registry (dict or similar) mapping model name →
-`(protocol_module, default_identity)`, open-ended (`mera`, `sela`, `mera-classic`, `alba`,
-`alba-kstr`, ...). `mock_service.py` looks up the protocol module from this registry per
-`--device` entry; it never branches on protocol itself.
+### REQ-003 — Concurrent devices, isolated lifecycle
 
-**Discoverability requirement:** since the table is open-ended and otherwise undiscoverable
-without reading source, `mock_service.py --help` (or a dedicated `--list-models` flag) must
-enumerate every registered model/variant value.
+**Type:** Technical
+**Statement:** One process runs one asyncio event loop with one task per configured device.
+Each device task's shutdown (unsubscribe GATT notifications, write
+`TimestampAtLastPowerdown`, close its DB connection, flush its log handler) is independent —
+one device's slow or failed cleanup does not block or corrupt another's.
+**Status:** In Progress
+**Implementation Details:** The concurrency half is implemented and verified; the
+shutdown-isolation half has no explicit test evidence yet (see caveat below).
+Reframed while implementing Phase 5: the original plan assumed devices need separate
+adapters. Wrong — BlueZ supports multiple GATT applications and multiple advertisement
+instances per adapter (confirmed: the mock VM's single adapter reports
+`SupportedInstances: 0x03`), so two devices *can* share one adapter. The real constraint is
+narrower: no two devices may register under the same D-Bus object paths or bind the same TCP
+port. Three concrete bugs found this way, invisible with only one device running (Phases
+2–4), all fixed:
+1. **D-Bus GATT app path collision between different models on the same adapter** — paths
+   were tagged by adapter only; `battery`/`dis` are generic service names both models use, so
+   a Mera+Alba pair sharing an adapter collided on e.g. `/org/bluez/example/battery_hci0`.
+   Fixed: paths now prefixed by model name *and* adapter in both files.
+2. **`MeraMock`'s `_emit_interface_added` suppression patched the class, not the instance** —
+   flagged as a known limitation back when the Mera class was first written, revisited here.
+   Fixed: patches `bus._emit_interface_added` as an instance attribute on that device's own
+   `bus` object instead of `dbus_next.message_bus.BaseMessageBus` at the class level, so two
+   concurrent registrations no longer race each other's patch/restore.
+3. **Webui port collision** — both mocks default `web_port=8765` and each binds a real
+   listener there; found via `OSError: address already in use` deep inside `uvicorn`'s
+   startup on the second device's task. Fixed the same way as the `(model, adapter)`
+   duplicate check (REQ-008): 2+ `--device` entries now require an explicit, distinct
+   `web_port=` on every one, checked before any device starts.
+**Correction found the same day:** sharing one adapter is not a good test of "the Geberit
+Home App discovers two devices independently." The BlueZ-multiplexing argument above is
+correct at the D-Bus/GATT/advertising-instance level, but `bluez_peripheral`'s `Advertisement`
+object doesn't configure per-instance private/random addressing, and this adapter advertises
+with its real public MAC (confirmed, privacy off — `memory/mock-ble-advertising-mac.md`). So
+two advertisement instances on the same adapter very likely transmit two different payloads
+from the identical MAC simultaneously — reproducing (arguably worsening) the MAC-keyed-device-
+list confusion noted in REQ-002's gotcha, just concurrent instead of sequential. Sharing one
+adapter is still good for testing GATT/protocol/persistence correctness concurrently via
+direct-connect tooling (bleak, `gatttool`, a bridge-side automated test connecting by MAC +
+service UUID); it is *not* good for getting the real app to treat two mocks as independently
+discoverable — that needs two physically separate adapters (a hardware requirement, not a
+code limitation). The mock VM has exactly that available (`hci0`
+`A0:AD:9F:72:C4:0F` Realtek BT5.1; `hci1` `00:1A:7D:DA:71:13` CSR BT4.0, previously unused).
+**First live run** (`hci0`=Mera + `hci1`=Alba): Alba connected and saved cleanly. Mera hit an
+unrelated, pre-existing bug (not a concurrency issue — present in the original unrefactored
+script too): an iOS system pairing dialog interrupted the connection (root cause/fix:
+`docs/developer/mock-geberit-mera.md` §"Battery plugin interaction"). Once past that, Mera
+reached the already-expected "firmware update required" state. Concurrent registration
+itself was not the blocker.
+**Not yet verified:** two devices actually registering and advertising concurrently, tested
+via the two-separate-adapters plan above (needs `sudo`, not available over the SSH session
+that did this work) — and, separately, no test evidence exists yet for the shutdown-isolation
+half of this requirement's statement (one device's cleanup failure not affecting another's) —
+`mock_service.py`'s use of `asyncio.gather` provides this by default at the asyncio level, but
+it hasn't been deliberately exercised (e.g. by forcing one device's cleanup to raise).
 
-## 4. Firmware version override *(future)*
+### REQ-004 — Shared adapter selection
 
-`--firmware "RS28.0 TS199"` is a human-readable string that needs parsing into whatever
-internal representation each protocol module already uses (Mera's `_FW_COMPONENT_VERSIONS`
-byte-tuples; Alba's own firmware DpId encoding — these differ per protocol). Parsing belongs
-inside each protocol module's own default-firmware setter, not as one shared parser in
-`mock_service.py` — the internal representations aren't the same shape across protocols (§8
-DRY still applies, but at the "each protocol owns its own parser" level). Input must be
-validated against a format regex at CLI-parse time with a clear error on mismatch; omitting
-`--firmware` falls back to that model's existing hardcoded default.
+**Type:** Technical
+**Statement:** Each device task is bound to its own BlueZ adapter through one shared
+adapter-selection implementation (`mock_bluez_adapter.select_adapter`), not a per-model copy.
+**Status:** Done
+**Implementation Details:** Originally an Alba-only inline lookup (its own `--adapter`
+feature); extracted to `mock_bluez_adapter.py` and reused by Mera and (once built) Sela — see
+also REQ-045, which states the general "reuse, don't reimplement" policy this satisfies for
+adapters specifically.
 
-## 4a. No hardcoded values — configurable identity/firmware sourcing, named profiles (future)
+### REQ-005 — Composite `--device` CLI flag
 
-**Requirement added 2026-07-19.** Generalizes and supersedes the narrower precursors below:
-Phase 2c ("Per-device identity for Mera") and §4's `--firmware` single-flag idea. Also
-formalizes what was informally discussed and deferred 2026-07-18 (see `docs/roadmap.md`
-§"Mera mock: 'real reference' identity/firmware values are hardcoded to our one test
-device" and `memory/mera-mock-real-values-hardcoded-deferred.md`) — this section is now the
-authoritative requirement; those are historical context, not separate open items.
+**Type:** Technical
+**Statement:** Each device is specified with one repeatable composite flag,
+`--device model=NAME,adapter=HCI[,...]`, not zipped positional lists — avoiding
+index-mismatch bugs between separate `--model`/`--adapter` list flags.
+**Status:** Done
+**Implementation Details:** See REQ-002's Implementation Details for exactly how fields
+route to constructor kwargs via `_MODEL_REGISTRY`.
 
-Concretely, the values currently hardcoded as Python constants that this applies to:
-Mera's `_FACTORY_IDENTITY`, `_FW_COMPONENT_VERSIONS`/`_FW_COMPONENT_VERSIONS_RS28`,
+### REQ-006 — Each mock is an instantiable class
+
+**Type:** Technical
+**Statement:** Each mock model is a class (or async-factory) taking
+`(adapter, variant, firmware, state_dir, ...)`, so N instances coexist in one interpreter
+without clobbering each other's globals — not a script carrying module-level device dicts,
+notify-handler tables, or one hardcoded logger.
+**Status:** Done
+**Implementation Details — Mera (`MeraMock`, `aquaclean_ble_relay/mera_mock.py`):**
+`tools/mock-geberit-mera.py`'s `_dispatch()` was checked before wiring anything in, rather
+than assuming there was something to persist: *every write procedure the mock handled was a
+no-op stub* (`0x09` SetCommand, `0x08`/`0x14`/`0x15`, `0x0B` SetActiveProfileSetting all just
+`return b""`) — nothing mutated state, not even in-memory, so REQ-001's acceptance test had no
+genuine hook yet on this model. Decided scope: a structural port only for this first pass —
+module-level globals become instance attributes, the hardcoded
+`logging.getLogger("mera_mock")` is replaced by a per-instance logger, adapter selection goes
+through REQ-004 instead of an inline copy; `tools/mock-geberit-mera.py` itself is left
+untouched (its logic duplicated into the new class for now, accepted temporarily, see
+REQ-007); the stubbed `Set*` procedures ported as the same no-op stubs, no new mutation logic
+yet; real persistence wiring deferred to a follow-up pass (below).
+Real mutation + persistence wiring, follow-up pass: cross-checking `_PROC_NAMES`, dispatch
+comments, and `.claude/rules/ble-protocol.md` found a real pre-existing bug (carried over
+faithfully from the structural port, not introduced by it): `_PROC_NAMES` labels `0x0A`/`0x0B`
+as `GetActiveCommonSetting`/`SetActiveCommonSetting` (matching `ble-protocol.md`'s "Active vs
+Stored" section — 0x0A/0x0B operate on the same CommonSetting ID space as 0x51/0x52, applied
+immediately, no power-cycle), but the shipped `_proc_0a()` docstring said
+`GetActiveProfileSetting` and read `_ACTIVE_PROFILE_SETTINGS` (a *ProfileSetting*-shaped
+dict) — contradicting its own proc's name. Fixed: `0x0A`/`0x0B` now read/write a
+session-scoped active-common-setting store (seeded from `_STORED_COMMON_SETTINGS` at mock
+startup, never re-seeded per BLE session — a deliberate scope simplification); `0x52`/`0x54`
+mutate `_STORED_COMMON_SETTINGS`/`_STORED_PROFILE_SETTINGS` for real, wired to
+`mock_persistence.py` write-through (arg format assumed identical to `0x08`'s confirmed
+`[count=3, setting_id, value]` shape — not independently confirmed for `0x52`/`0x54`, flagged
+in code); `0x08` mutates `_ACTIVE_PROFILE_SETTINGS`, in-memory only; `0x09` gets real mutation
+for the two commands with an unambiguous SPL effect (`ToggleAnalShower` code 0 flips
+`spl[1]`, `ToggleLadyShower` code 1 flips `spl[2]`, both classified NO PERSIST — live sensor
+state — so only `_SPL_MERA_VALUES` mutates, no persistence call; see REQ-050 for the ~18
+other command codes, still no-ops); `MeraMock.__init__` gains `state_dir`, calls
+`mock_persistence.set_state_dir()` once (process-wide, since all instances share one DB file
+per REQ-021), and loads persisted rows at construction, overriding hardcoded defaults only
+where a persisted value exists (REQ-027).
+**Verification (Mera):** byte-for-byte dispatch comparison against the original script for
+all 13 then-implemented procedures — identical output for every one. Live run against the
+real Geberit Home App on the mock VM: adapter correctly resolved, GATT registered, all four
+notify characteristics wired, advertisement correct, a real device connected, multi-frame
+responses fully ACKed, clean shutdown on Ctrl+C, app behavior (firmware-update-required
+screen) identical to the unrefactored script — confirmed not a regression. Follow-up
+verification of the real-mutation pass, same VM: the 10 untouched procedures still matched
+byte-for-byte (no regression); Stored settings persist and survive a simulated restart
+(REQ-001); Active settings correctly do *not* persist (REQ-055); the `SetCommand` toggle
+correctly does not persist; exactly the expected two rows landed in the DB after the whole
+sequence, nothing else leaked in. Not yet exercised: multi-instance-specific paths
+(adapter-tagged D-Bus app paths/log filenames for a non-`hci0` adapter) — the VM only has one
+physical adapter available for this specific check; got its first real test in REQ-003.
+**Implementation Details — Alba (`AlbaMock`, `aquaclean_ble_relay/alba_mock.py`):**
+`tools/mock-geberit-alba.py` was read fully before assuming it needed the same two-pass
+treatment as Mera — it didn't. The DpId store and Arendi crypto session were already
+instance-scoped classes (`_Ble20AppLayer`, `_AriendiServerSide`), not module globals
+(`grep '^    global '` returns nothing in the whole file; the one true module-level mutable,
+`_VERBOSE`, was already dead — set but never read, in both the original script and this
+port). So the "globals → instance attributes" work was already done; this pass mainly
+wrapped `main()`'s ~600-line orchestration body into `AlbaMock.run()`. `_Ble20AppLayer._write()`
+already did real mutation — nothing was stubbed, so persistence wiring landed in the same
+pass, not a separate follow-up. Every DpId row already carries a `behavior` field (0=Info
+1=Status 2=Command 3=Nvm 4=Protected) in `_DEFAULT_STORE`; only `behavior==3` (Nvm) is a
+genuinely durable setting, so the persist decision falls straight out of existing data — no
+separate namespace/persist classification needed, unlike Mera's overlapping index spaces.
+Six DpIds are Nvm: 13 (ACCESS_CODE), 580–583 (STORED_ANAL_SPRAY_*), 795 (DEMO_MODE).
+`_Ble20AppLayer` is deliberately reconstructed fresh every BLE session (unchanged — simulates
+a clean device state machine per connection); each fresh construction now reloads persisted
+Nvm values, so this "fresh per session" design gives Alba's mock *better* restart fidelity
+than Mera's for free — a setting survives not just a mock restart but every single new BLE
+session. Logging conversion was deliberately deferred rather than done piecemeal here (see
+REQ-039's Implementation Details). D-Bus GATT app paths tagged with the adapter, same
+reasoning as Mera. Adapter selection routed through REQ-004, removing this script's own
+byte-identical inline copy (confirmed identical before removing it).
+**Verification (Alba):** import-only smoke test clean. Byte-for-byte protocol comparison
+between the original script and the new class in the same interpreter: `_inventory()` matched
+for all 80 DpIds, `_read()` matched for all 79 addressable DpIds in `_DEFAULT_STORE`.
+Persistence round-trip: writing DpId 580 (Nvm) persists immediately and survives a fresh
+`_Ble20AppLayer` with the same `device_key`; writing DpId 564 (Status, not Nvm) correctly does
+not persist; raw DB after the sequence exactly `{'dpid:580': '02'}`. Not yet run: a live
+session against the real app or the bridge's `Ble20Client` completing the full Arendi
+handshake against this class (same limitation as Mera's scripted-only verification) — flagged
+as a follow-up, not blocking, since the D-Bus/GATT/advertisement wiring is a near-verbatim
+port of Mera's already-verified pattern.
+
+### REQ-007 — Standalone single-device scripts remain
+
+**Type:** Technical
+**Statement:** `tools/mock-geberit-mera.py` and `tools/mock-geberit-alba.py` keep working as
+single-device scripts — each is a thin wrapper instantiating exactly one instance of the
+refactored class (REQ-006), not retired.
+**Status:** Done
+**Implementation Details:** Decided explicitly (this is what the old §10 decision-log entry
+#2 recorded) so the standalone scripts also serve as the regression baseline during the
+refactor: before `mock_service.py` orchestration existed at all, each wrapper had to behave
+identically to the pre-refactor script, and REQ-001's acceptance test was proven against each
+standalone first (see REQ-006's verification notes) before multi-device orchestration was
+built on top.
+
+### REQ-008 — Fail-fast startup validation
+
+**Type:** Functional
+**Statement:** An unknown `--model` value, two `--device` entries pointing at the same
+adapter, a named adapter that doesn't exist, an unexpected kwarg for a given model, a missing
+`web_port=` with 2+ devices, and a duplicate `web_port=` each produce a clear error and a
+non-zero exit code before the event loop starts or any D-Bus/BLE activity happens — never a
+cryptic D-Bus error surfacing mid-run.
+**Status:** Done
+**Implementation Details:** All requested adapters are validated to exist via one throwaway
+D-Bus connection before any device starts, so a typo'd `--adapter` fails the whole batch
+immediately rather than only the affected device failing deep inside GATT registration.
+Verified on the mock VM: missing `--device`, duplicate `(model, adapter)`, unknown adapter
+(fails the whole batch, confirmed via a real throwaway D-Bus connection listing `hci0` as the
+only available adapter at the time), missing `web_port` with 2+ devices, duplicate
+`web_port`, and an unexpected kwarg for a model (caught via `TypeError`) — each produces the
+expected `argparse`-level error and exit code 2.
+
+---
+
+## Model / Variant / Protocol Addressing
+
+### REQ-009 — Single open-ended `--model` registry
+
+**Type:** Technical
+**Statement:** One registry maps a `--model` name to `(protocol_module, default_identity)`.
+There is no separate `--protocol` flag — `--model` alone decides both which protocol module
+to load and which device identity/variant to present within that family.
+**Status:** Done
+**Implementation Details:** Background for why this shape, not a `--protocol`+`--model`
+split: `mera` and `sela` both speak the same legacy proc/ctx protocol (Sela = different
+variant byte + different default identity strings + AcSela-only features like
+`ToggleOrientationLight`); `alba` speaks an entirely different protocol (Ble20/Arendi). The
+`--model` → protocol-module mapping is therefore not 1:1 with the module boundary — exactly
+what an open-ended lookup table is for. Implemented as `_MODEL_REGISTRY` in `mock_service.py`
+(`{"mera": {"cls": MeraMock, "defaults": {}}, "alba": {"cls": AlbaMock, "defaults":
+{"mode": "ble20"}}}`). Registry defaults can differ from a class's own constructor default —
+`AlbaMock` itself still defaults to `mode="unsupported"` (faithful to the original script,
+which deliberately uses that to test the HACS unsupported-device screen), but nobody saying
+"mock an Alba" through the orchestrator wants that by default, so the *registry* overrides it
+to `mode="ble20"` while leaving the class's own default untouched —
+`model=alba,adapter=hci0` alone now gives a fully functional Alba mock; an explicit
+`mode=unsupported` still reaches the original behavior.
+
+### REQ-010 — Registry is discoverable
+
+**Type:** Functional
+**Statement:** Since the model registry is open-ended and otherwise undiscoverable without
+reading source, `mock_service.py --help` or `--list-models` enumerates every registered
+model/variant value and its defaults.
+**Status:** Done
+**Implementation Details:** `--list-models` prints the registry and each model's defaults,
+e.g. `alba (defaults: {'mode': 'ble20'})`. Verified by hand on the mock VM.
+
+---
+
+## Identity & Firmware Value Sourcing
+
+### REQ-011 — `--firmware` CLI override *(superseded)*
+
+**Type:** Functional
+**Statement:** `--firmware "RS28.0 TS199"` overrides a model's default firmware string at
+startup, parsed into whatever internal representation that protocol module already uses.
+**Status:** Superseded by REQ-012
+**Implementation Details:** Never implemented. Superseded 2026-07-19 by the broader REQ-012
+through REQ-020 (configurable value sourcing generally, not just firmware, via more than one
+CLI flag). Original design note, kept for anyone implementing an eventual single-value
+CLI override anyway: parsing belongs inside each protocol module's own default-firmware
+setter, not one shared parser in `mock_service.py`, since Mera's `_FW_COMPONENT_VERSIONS`
+byte-tuples and Alba's own firmware DpId encoding aren't the same shape (REQ-048 still
+applies at the "each protocol owns its own concrete parser" level); input would need
+validation against a format regex at CLI-parse time.
+
+### REQ-012 — No hardcoded identity/firmware values
+
+**Type:** Technical
+**Statement:** Every mock identity/firmware constant currently hardcoded as a Python literal
+— Mera's `_FACTORY_IDENTITY`, `_FW_COMPONENT_VERSIONS`/`_FW_COMPONENT_VERSIONS_RS28`,
 `_IDENTITY_REAL_REFERENCE` (`mera_mock.py`); Alba's `_DEFAULT_STORE` default values
-(`alba_mock.py`). Applies to both models — §"Mock feature parity" still holds unless a
-protocol-level reason blocks one side.
+(`alba_mock.py`) — has its actual value living in the persistence DB (REQ-021), not a Python
+literal. A hardcoded literal remains acceptable only as a documented fallback default for a
+never-configured fresh install, not as the primary source of truth.
+**Status:** Open
+**Implementation Details:** *(none — not started; recorded here per explicit request so the
+scope is written down precisely before any code changes begin.)* Generalizes and supersedes
+REQ-011 and REQ-030 (Mera per-instance identity, a narrower precursor). Also formalizes what
+was informally discussed and deferred 2026-07-18 — see `docs/roadmap.md` §"Mera mock: 'real
+reference' identity/firmware values are hardcoded to our one test device" and
+`memory/mera-mock-real-values-hardcoded-deferred.md` for that history; this REQ is now the
+authoritative statement, those are background only. Applies to both models — the mock
+feature-parity policy (REQ-031's Implementation Details) still holds unless a protocol-level
+reason blocks one side. Do not begin implementing without a separate go-ahead.
 
-1. **No hardcoded values in the code.** Every one of the constants above should have its
-   actual value live in `mock_persistence.py`'s database, not as a Python literal. A
-   hardcoded literal remains acceptable only as a documented fallback default for a
-   never-configured fresh install (see item 2c below) — not as the primary source of truth.
+### REQ-013 — Webui form-field editing of identity/firmware
 
-2. **Multiple ways to feed "real" values in:**
-   - **a. Through the webui:**
-     - **a.1.** Typing into form fields — already exists for Mera identity/firmware
-       (§6 "Full webui write access"); needs the equivalent audit/completion for Alba, and
-       for whichever Mera fields still aren't covered.
-     - **a.2.** Import from a file — a new webui action: upload/select a file (format TBD —
-       likely the same JSON shape as item 2b) and apply all its values in one action,
-       instead of one form field at a time.
-   - **b. Headless, no webui**: a new CLI arg (e.g. `--identity-file <path>`) read at
-     startup, for scripted/automated setups where a person isn't clicking through the
-     webui at all.
-   - **c. Read from a real device, via the bridge**: a new script/mode that connects to an
-     actual Geberit device (reusing the standalone bridge's existing
-     `GetDeviceIdentification`/`GetFirmwareVersionList` client calls — no new protocol code)
-     and writes what it reads directly into the mock's persistence namespace. This is the
-     path that makes the mock's "real reference" values genuinely personal to whichever
-     device a given user owns, instead of hardcoded to one specific test unit.
+**Type:** Functional
+**Statement:** A user can type a new identity or firmware value directly into a webui form
+field, for any identity/firmware field on any model.
+**Status:** In Progress
+**Implementation Details:** Already exists for Mera identity/firmware, as part of REQ-037's
+generic settings-table module (`/settings/identity/{field}`, `/settings/fw-component/{id}`
+write routes). Needs the equivalent audit/completion for Alba, and confirmation that every
+Mera identity/firmware field is actually covered (not just the ones exercised so far).
 
-3. **Webui: button to save current (live) values as the new factory-settings baseline.**
-   Distinct from a normal field edit — this promotes whatever the mock is currently
-   reporting into the persisted "factory default" that a future factory-reset returns to,
-   rather than just changing the live value.
+### REQ-014 — Webui import-from-file
 
-4. **Webui: option to save and name a settings set.** Beyond a single factory baseline —
-   support multiple named, persisted snapshots (e.g. "my real Mera Comfort", "test unit B").
+**Type:** Functional
+**Statement:** A user can upload or select a file in the webui and apply every value in it in
+one action, instead of editing one form field at a time.
+**Status:** Open
+**Implementation Details:** *(none — not started.)* File format not yet decided; likely the
+same JSON shape as REQ-015's headless file input, so one format serves both paths.
 
-5. **Webui: options to read (load/apply) a previously saved named settings set.**
-   Counterpart to item 4 — select a saved name, apply its values as the mock's current
-   live state.
+### REQ-015 — Headless file-based value input
 
-6. **Add `--version` to `aquaclean_ble_relay.mock_service`.** Prints the orchestrator's own
-   version and exits — currently there's no way to check this without reading source.
-   (Distinct from each model's own `_MOCK_VERSION`, e.g. `mera_mock.py`'s — this is the
-   `mock_service.py` CLI entry point's version, if it has one separate from the per-model
-   ones; clarify/establish that distinction as part of implementing this.)
+**Type:** Functional
+**Statement:** A new CLI arg (e.g. `--identity-file <path>`) lets identity/firmware values be
+read at startup with no webui interaction at all, for scripted/automated setups.
+**Status:** Open
+**Implementation Details:** *(none — not started.)*
 
-**Status:** not started — requirements only, recorded here per the user's explicit request.
-Do not begin implementing without a separate go-ahead; this section exists so the scope is
-written down precisely before any code changes.
+### REQ-016 — Populate from a real device via the bridge
 
-## 5. Persistence
+**Type:** Functional
+**Statement:** A script/mode connects to an actual Geberit device — reusing the standalone
+bridge's existing `GetDeviceIdentification`/`GetFirmwareVersionList` client calls, no new
+protocol code — and writes what it reads directly into the mock's persistence namespace, so
+the mock's reference values are personal to whichever device a given user owns instead of
+hardcoded to one specific test unit.
+**Status:** Open
+**Implementation Details:** *(none — not started.)* This is the requirement that ultimately
+makes REQ-012 viable without losing the "shows the real device's actual values" behavior the
+hardcoded constants currently provide.
 
-**Corrected from an earlier draft of this doc, against what's actually implemented in
-`aquaclean_ble_relay/mock_persistence.py` (scaffolded before this section was written).**
-The original draft assumed one SQLite *file* per device instance
-(`mock_state/<model>-<adapter>.sqlite3`). What's actually there — and what this section now
-documents — is a single shared DB file with per-device isolation via a composite key. Since
-the existing design already satisfies every real requirement below, the doc was fixed to
-match the code rather than the code rewritten to match a speculative doc.
+### REQ-017 — Save current values as factory-settings baseline
 
-- **One shared SQLite file**, `mock_state.db`, under a configurable directory
-  (`set_state_dir()`, driven by `mock_service.py --state-dir`) — not one file per device.
-- **Isolation via composite primary key**, not separate files:
-  `(device_type, device_key, state_key) → value`. `device_type` = model name (`"mera"`,
-  `"alba"`); `device_key` = the adapter name (`"hci1"`) or advertised MAC, falls back to
-  `"default"` for single-instance use. Mera on `hci1` and Sela on `hci2` cannot collide —
-  they never share a primary key.
-- **`namespace`/`index` addressing** (needed because Mera has multiple index spaces that
-  each restart at 0 — `profile_setting`, `common_setting`, `active_setting`, `spl`) is
-  encoded into `state_key` as `f"{namespace}:{index}"`, e.g. `"common_setting:0"`. No schema
-  change needed — `state_key` was already a free-form string. Alba's flat DpId space fits
-  the same shape (`state_key = f"dpid:{dp_id}"`).
-- **`datatype`/`behavior`/`min`/`max` are NOT stored in the DB.** They're static per-model
-  Python tables, not mutable state — see "Provenance of min/max values" below for why this
-  is not a shortcut, it's where the real app gets them too. The webui's full settings table
-  (§6) joins static metadata with `load_all()`'s current values at render time.
-- **`persist` is not a DB column either** — it's a code-side decision. A protocol module
-  only calls `save()` for `(namespace, index)` pairs classified as durable (see the Mera
-  enumeration in `docs/roadmap.md`); live-state indices are simply never written. Nothing to
-  filter on read.
-- **Coverage requirement:** every `persist`-classified row in that enumeration must actually
-  round-trip through this store — the full real-device settings surface, not a convenience
-  subset. If a setting exists on a real toilet and is writable, it must survive a mock
-  restart.
-- **Write-through, not write-on-shutdown.** `save()` already commits synchronously on every
-  call — every setting change arriving over the protocol (`SetStoredProfileSetting`,
-  `SetActiveCommonSetting`, DpId write, etc.) persists immediately, not batched or flushed
-  at shutdown. This is what makes the §0 acceptance test hold even under an abrupt
-  SIGINT/SIGTERM.
-- **Startup never overwrites an existing store.** `load_all()` returns whatever's on disk;
-  a protocol module seeds hardcoded defaults only for `(namespace, index)` pairs missing
-  from the result. An existing value always wins.
-- **Reset-to-factory is already correctly scoped.** `reset(device_type, device_key)` deletes
-  exactly one device's rows — already satisfies "acts on exactly one device's store, never
-  all of them" (§6).
+**Type:** Functional
+**Statement:** A webui button promotes whatever the mock is currently reporting into the
+persisted "factory default" that a future factory-reset (REQ-028) returns to — distinct from
+a normal field edit, which only changes the live value.
+**Status:** Open
+**Implementation Details:** *(none — not started.)*
 
-### Per-device identity (serial number, PIN) — implemented for Alba (2026-07-16)
+### REQ-018 — Save and name a settings profile
 
-**Coverage gap found:** "store all data which is stored on a real device" (§0/§5's coverage
-requirement) was being interpreted as "settings a real device lets you change" — but a real
-device also has a unique serial number and pairing PIN printed on its own sticker, set once
-at manufacturing and never changed. Every `_DEFAULT_STORE` row for these (DpId 12
+**Type:** Functional
+**Statement:** A webui action saves the current settings as a new, persisted, named snapshot
+(e.g. "my real Mera Comfort", "test unit B") — not limited to a single factory baseline.
+**Status:** Open
+**Implementation Details:** *(none — not started.)*
+
+### REQ-019 — Load a named settings profile
+
+**Type:** Functional
+**Statement:** A webui action selects a previously saved named snapshot (REQ-018) and applies
+its values as the mock's current live state.
+**Status:** Open
+**Implementation Details:** *(none — not started.)*
+
+### REQ-020 — `mock_service.py --version`
+
+**Type:** Functional
+**Statement:** `aquaclean_ble_relay.mock_service --version` prints the orchestrator's own
+version and exits.
+**Status:** Open
+**Implementation Details:** *(none — not started.)* Distinct from each model's own
+`_MOCK_VERSION` (e.g. `mera_mock.py`'s) — this is the `mock_service.py` CLI entry point's own
+version, if it ends up having one separate from the per-model ones; clarify/establish that
+distinction during implementation.
+
+---
+
+## Persistence
+
+### REQ-021 — One shared DB file, composite-key isolation
+
+**Type:** Technical
+**Statement:** All devices share one SQLite file, `mock_state.db`, under a configurable
+directory (`set_state_dir()`, driven by `mock_service.py --state-dir`). Per-device isolation
+comes from a composite primary key `(device_type, device_key, state_key) → value` —
+`device_type` is the model name (`"mera"`, `"alba"`), `device_key` is the adapter name
+(`"hci1"`) or advertised MAC, falling back to `"default"` for single-instance use. Mera on
+`hci1` and Sela on `hci2` cannot collide — they never share a primary key. Not one file per
+device instance.
+**Status:** Done
+**Implementation Details:** Corrected from an earlier draft of this document, which assumed
+one SQLite file per device instance (`mock_state/<model>-<adapter>.sqlite3`) — that's not
+what `mock_persistence.py` actually implements (it was scaffolded before this section was
+written), and the existing design already satisfies every real requirement here, so the
+document was fixed to match the code rather than the reverse.
+
+### REQ-022 — `namespace:index` key encoding
+
+**Type:** Technical
+**Statement:** Mera's multiple index spaces that each restart at 0 (`profile_setting`,
+`common_setting`, `active_setting`, `spl`) are addressed by encoding `state_key` as
+`f"{namespace}:{index}"`, e.g. `"common_setting:0"`. Alba's flat DpId space fits the same
+shape (`f"dpid:{dp_id}"`). No schema change is needed for either — `state_key` was already a
+free-form string.
+**Status:** Done
+
+### REQ-023 — Static metadata lives in code, not the DB
+
+**Type:** Technical
+**Statement:** `datatype`/`behavior`/`min`/`max` are static per-model Python tables, never
+stored in the DB — they are not mutable state. The webui's full settings table (REQ-033)
+joins this static metadata with `load_all()`'s current values at render time.
+**Status:** Done
+**Implementation Details — provenance (why these are code, not DB or a live fetch):**
+Checked rather than assumed: does firmware or the Geberit cloud hand out setting min/max
+ranges at runtime? Investigated against a full-session Charles capture from a real Mera
+Comfort firmware update
+(`local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/firmware-update.har`).
+Findings: (1) firmware version checks on startup are confirmed real —
+`prod.firmwarev1.services.geberit.com/api` → `/api/version` + `/api/firmwares` (an 809 KB
+firmware catalog) hit repeatedly, exactly the "check for available updates" mechanism; (2)
+setting min/max ranges are not in the cloud at all — the only other Geberit endpoint hit,
+`mobileappsv1.services.geberit.com/api/Settings/*`, returns generic app feature-flags (device-
+type gating for a remote-support feature), and every other `/Settings/*` call returned
+`"Data": null`; (3) so where do min/max actually live? Not firmware, not cloud, as far as this
+project has determined — `docs/developer/alba-dpid-reference.md` already documents its own
+Min/Max columns as "value range from protocol spec," i.e. derived from analysis of the Home
+App's own DataPoint definitions; the app validates client-side using ranges compiled into the
+app binary. No accessible firmware-side bounds-check was found in the analyzed Mera
+main-controller source (the switch dispatch doesn't resolve to labeled proc-ID cases, so
+confirming firmware-side enforcement would need deeper binary-analysis effort) — plausible the
+firmware also rejects out-of-range writes, but unconfirmed. Conclusion: empirically the app is
+authoritative today, not the firmware or cloud, and that's already transcribed into
+`ble-protocol.md`/`alba-dpid-reference.md` — the mock's metadata tables just reproduce the
+same source the real app uses, nothing new to fetch.
+
+### REQ-024 — Persist classification is code-side
+
+**Type:** Technical
+**Statement:** Whether a `(namespace, index)` pair is durable ("persist") or live-only is a
+code-side decision, not a DB column. A protocol module only calls `save()` for pairs
+classified as durable; live-state indices are simply never written, so there is nothing to
+filter on read.
+**Status:** Done
+**Implementation Details:** The concrete Mera classification enumeration lives in
+`docs/roadmap.md`, not duplicated here.
+
+### REQ-025 — Full persist coverage
+
+**Type:** Functional
+**Statement:** Every `persist`-classified `(namespace, index)` pair actually round-trips
+through the store — the full real-device settings surface, not a convenience subset. If a
+setting exists on a real toilet and is writable, it survives a mock restart.
+**Status:** In Progress
+**Implementation Details:** True for every setting currently wired (Stored common/profile
+settings for Mera, Nvm DpIds for Alba, firmware versions for both — REQ-001, REQ-031). Not yet
+true for Mera's `SetCommand` (proc `0x09`) channel, where ~18 of ~20 command codes are still
+unsimulated no-ops rather than persisted or correctly-classified-as-live — tracked
+separately as REQ-050, since that's a simulation gap (nothing happens at all) rather than a
+persistence-classification gap (something happens but isn't saved).
+
+### REQ-026 — Write-through, not write-on-shutdown
+
+**Type:** Functional
+**Statement:** `save()` commits synchronously on every call. Every setting change arriving
+over the protocol (`SetStoredProfileSetting`, `SetActiveCommonSetting`, a DpId write, etc.)
+persists immediately, not batched or flushed at shutdown.
+**Status:** Done
+**Implementation Details:** This is what makes REQ-001's acceptance test hold even under an
+abrupt SIGINT/SIGTERM.
+
+### REQ-027 — Startup never overwrites existing state
+
+**Type:** Functional
+**Statement:** `load_all()` returns whatever is already on disk; a protocol module seeds
+hardcoded defaults only for `(namespace, index)` pairs missing from that result. An existing
+persisted value always wins over a hardcoded default.
+**Status:** Done
+
+### REQ-028 — Factory-reset is single-device-scoped
+
+**Type:** Functional
+**Statement:** `reset(device_type, device_key)` deletes exactly one device's rows, never all
+devices' — "Reset to Factory Settings" in the webui (REQ-033) acts on exactly one device's
+store.
+**Status:** Done
+
+### REQ-029 — Per-instance identity for Alba
+
+**Type:** Functional
+**Statement:** Each Alba mock instance has its own stable, unique, persisted serial number
+and pairing PIN — not one hardcoded value shared by every instance.
+**Status:** Done
+**Implementation Details:** Gap found 2026-07-16: REQ-025's coverage requirement ("store all
+data which is stored on a real device") had been interpreted as "settings a real device lets
+you change," but a real device also has a unique serial number and pairing PIN, set once at
+manufacturing and never changed. Every `_DEFAULT_STORE` row for these (DpId 12
 `PAIRING_SECRET`, DpId 369 `SALES_PRODUCT_SERIAL_NUMBER`) was one hardcoded value shared by
-every `AlbaMock` instance — two mocked Albas (e.g. Phase 5's `hci0`+`hci1` test) would show
-identical "S/N" and PIN, which no real fleet of devices looks like.
+every `AlbaMock` instance — two mocked Albas (e.g. REQ-003's `hci0`+`hci1` test) would show
+identical S/N and PIN, unlike any real fleet of devices. Both DpIds are `behavior==4`
+(Protected — factory-set, never written over BLE), so the Nvm write-through path never
+touches them; `_Ble20AppLayer.__init__` now generates a value for each on first construction
+for a given `device_key`, persists it immediately (same `dpid:{id}` key scheme as Nvm
+settings), and reapplies the persisted value on every later session/restart. **Bug found and
+fixed during verification:** the first pass skipped correctly *applying* an already-persisted
+identity value back into `self._store` (the reload loop only applied persisted overrides to
+`behavior==3` rows) — a restart silently reverted to the `_DEFAULT_STORE` default instead of
+the previously-generated identity. Fixed by applying the persisted value directly for these
+two DpIds, bypassing the Nvm-only reload loop. Verified on the mock VM: `hci0` and `hci1` get
+distinct serial+PIN, and `hci0`'s identity survives a simulated restart unchanged. Webui: the
+Alba control page shows a sticker-style block (model, S/N, PIN) reading live from the active
+session's store. **Security finding along the way:** `_DEFAULT_STORE`'s `PAIRING_SECRET`
+comment named a real physical device's actual pairing PIN as a formatting example —
+redacted in both `tools/mock-geberit-alba.py` and `alba_mock.py` (a real device's BLE pairing
+PIN is a real credential, not safe to reference in a public repo regardless of framing; this
+violated an already-documented rule, `memory/kstr-probe-findings.md`, ~55 days earlier). The
+value was already present in pushed history (confirmed via `git log -S`, present since commit
+`7ac384c`, ~255 commits and 38 already-published GitHub Release tags downstream by the time
+this was found). **Decided (2026-07-16): leave history as-is, do not rewrite** — rewriting
+would force-push `main`, orphan 38 published HACS release tags, and diverge every existing
+clone, for a leak whose real-world exploitability is narrow (a 4-digit BLE pairing PIN, usable
+only by someone who both knows the specific device's MAC and is within physical BLE range) and
+which rewriting wouldn't even fully undo, since anyone who already cloned/installed the repo
+keeps the old value regardless. This is a closed decision, not a pending TODO — do not re-raise
+it as an open task.
 
-**Implementation:** both DpIds are `behavior==4` (Protected — factory-set, never written
-over BLE), so the existing Nvm (`behavior==3`) write-through path never touches them.
-`_Ble20AppLayer.__init__` now generates a value for each on first construction for a given
-`device_key`, persists it immediately (same `dpid:{id}` key scheme as Nvm settings), and
-reapplies the persisted value on every later session/restart — stable per device, exactly
-like a sticker that never changes once printed, distinct across devices.
+### REQ-030 — Per-instance identity for Mera *(superseded)*
 
-**Bug found and fixed during verification:** the first pass skipped *regenerating* an
-already-persisted identity value correctly, but never actually applied the persisted value
-back into `self._store` (the reload loop only applies persisted overrides to
-`behavior==3` rows) — so a restart silently reverted to the `_DEFAULT_STORE` default instead
-of the previously-generated identity. Fixed by applying the persisted value directly for
-these two DpIds, bypassing the Nvm-only reload loop. Verified on the mock VM: `hci0` and
-`hci1` get distinct serial+PIN, and `hci0`'s identity survives a simulated restart
-unchanged.
+**Type:** Functional
+**Statement:** Each Mera mock instance has its own varied, per-adapter identity
+(`_SAP_NUMBER`/`_SERIAL`), the same way REQ-029 does for Alba, instead of fixed instance
+attributes set once in `__init__`.
+**Status:** Superseded by REQ-012
+**Implementation Details:** Never implemented (tracked historically as "Phase 2c"; the
+concrete ask and REQ-003's multi-instance test case were Alba-only, so it was never ported to
+Mera). Superseded 2026-07-19 by REQ-012's broader "no hardcoded values, configurable sourcing"
+requirement, which subsumes this. Worth remembering if REQ-012 is picked up: this is one of
+the concrete gaps it needs to close for Mera specifically.
 
-**Web UI:** the Alba control page now shows a sticker-style block (model, S/N, PIN) reading
-live from the active session's store, so the two values are visible without needing a BLE
-client.
+### REQ-031 — Firmware version persistence
 
-**Security finding along the way:** `_DEFAULT_STORE`'s `PAIRING_SECRET` comment named a real
-physical device's actual pairing PIN as a formatting example. Redacted (both
-`tools/mock-geberit-alba.py` and `aquaclean_ble_relay/alba_mock.py`) — a real device's BLE
-pairing PIN is a real credential, not safe to reference in a public repo regardless of
-framing. **This wasn't just an oversight — it violated an already-documented project rule**:
-`memory/kstr-probe-findings.md` (~55 days earlier) explicitly said "Do not log or commit
-actual values" for this exact DpId and the SAP/serial DpIds. The redaction fixes the rule
-violation going forward.
+**Type:** Functional
+**Statement:** Reported firmware/component versions durably change after a simulated update
+and survive a mock restart, for both Mera and Alba — matching a real device's flash-backed
+version storage, not read-only in-memory data.
+**Status:** Done
+**Implementation Details:** Gap found 2026-07-16: both mocks reported firmware/component
+versions as read-only, in-memory-only data (Mera's `_FW_COMPONENT_VERSIONS` module-level
+dict; Alba's firmware DpIds 8/9/10/785/786/787) — fine for a static version, but blocked
+REQ-053's update simulation, which needs the reported version to durably change after the
+simulated OTA. Confirmed directly against a real Mera Comfort capture
+(`memory/mera-firmware-update-ble-protocol.md`): `GetFirmwareVersionList` returns RS28.0
+TS199 before an update and RS30.0 TS206 after, for component `0x01`. Implementation, same
+composite-key mechanism as the rest of this section, no schema change: **Mera** —
+`state_key = f"fw:{component_id}"`, same `namespace:index` shape as
+`common_setting:idx`/`profile_setting:idx`; `MeraMock.__init__` copies the module-level
+fallback dict into `self._FW_COMPONENT_VERSIONS`, then overlays persisted values in the same
+loop that handles common/profile settings; `_proc_0e` (`GetFirmwareVersionList`) reads the
+instance dict, not the module dict; `_set_fw_version(component_id, v1, v2, build)` writes
+through and is REQ-053's write hook. **Alba** — `state_key = f"dpid:{dp_id}"`, identical
+scheme to the Nvm/identity DpIds; the six firmware DpIds are Info/Protected, so (like identity)
+they get their own loop outside the Nvm-only reload path; unlike identity there's no random
+generation — first run for a given `device_key` simply persists today's hardcoded
+`_DEFAULT_STORE` default as-is, since firmware versions aren't unique per physical unit;
+`_set_firmware_version(dp_id, value)` is the equivalent write hook. **Parity policy** (explicit
+user instruction, 2026-07-16, applied by default to all mock feature work since): any mock
+feature implemented for one protocol gets mirrored in the other at the same time unless
+there's a concrete protocol-level reason it can't — tracking two mocks that drift
+independently is more housekeeping than doing both up front; this firmware-persistence change
+was the first instance of applying that policy.
 
-**The value was already present in pushed history** (confirmed via `git log -S`, present
-since commit `7ac384c`, ~255 commits and 38 already-published GitHub Release tags
-downstream of it by the time this was found). **Decided (2026-07-16): leave history as-is,
-do not rewrite.** Considered and rejected — rewriting would force-push `main`, orphan 38
-published HACS release tags (each needing manual recreation), and diverge every existing
-clone, for a leak whose real-world exploitability is narrow (a 4-digit BLE pairing PIN,
-usable only by someone who both knows the specific device's BLE MAC and is within physical
-BLE range of it) and which — critically — rewriting wouldn't even fully undo, since anyone
-who already cloned or installed the repo keeps the old value in their local copy regardless.
-Do not re-raise this as an open task in a future session; it's a closed decision, not a
-pending TODO.
+---
 
-**Not yet done — tracked as Phase 2c above, do not forget:** the same per-device-identity gap
-likely applies to `MeraMock` (`_SAP_NUMBER`/`_SERIAL`, currently fixed instance attributes
-set in `__init__`, not persisted or varied per adapter) — not implemented, since the
-concrete ask and Phase 5 test case were Alba-only.
-Worth doing the same way if/when two Mera instances are tested together.
+## Webui
 
-### Firmware version persistence (Mera + Alba) — 2026-07-16
+### REQ-032 — Independent per-device webui
 
-**Gap found:** both mocks reported firmware/component versions as read-only, in-memory-only
-data — Mera's `_FW_COMPONENT_VERSIONS` (module-level dict, `mera_mock.py`) and Alba's
-firmware DpIds (8 `FW_RS_VERSION`, 9 `FW_TS_VERSION`, 10 `HW_RS_VERSION`, 785 `FUS_VERSION`,
-786 `GEBERIT_LOADER_VERSION`, 787 `WIRELESS_STACK_VERSION`, all `behavior==0`/`4` in
-`_DEFAULT_STORE`) were never written to `mock_persistence.py`. Fine for reporting a static
-version, but it blocked simulating a firmware update (§9b below), which needs the reported
-version to durably change after the simulated OTA — exactly what a real device's flash-backed
-version storage does. Confirmed directly: the real Mera Comfort capture in
-`memory/mera-firmware-update-ble-protocol.md` shows `GetFirmwareVersionList` returning
-RS28.0 TS199 before an update and RS30.0 TS206 after, for component `0x01`.
+**Type:** Technical
+**Statement:** Each device keeps its own already-independent web server/port (aiohttp for
+Mera, FastAPI for Alba, each bound to its own `web_port`) — no landing page, no
+single-port/single-server merge.
+**Status:** Done
+**Implementation Details:** Decided 2026-07-16: a user running N mock devices already knows
+each one's port from its own `--device` spec, and unifying aiohttp+FastAPI into one
+process-wide server would add real complexity for no functional gain.
 
-**Implementation — same composite-key mechanism as everything else in this section, no
-schema change:**
-- **Mera** (done, `mera_mock.py`): `state_key = f"fw:{component_id}"` — same
-  `namespace:index` shape as `common_setting:idx`/`profile_setting:idx`. `MeraMock.__init__`
-  copies the module-level `_FW_COMPONENT_VERSIONS` fallback dict into
-  `self._FW_COMPONENT_VERSIONS`, then overlays any persisted values in the same loop that
-  already handles common/profile settings. `_proc_0e` (`GetFirmwareVersionList`) reads the
-  instance dict, not the module dict. New `_set_fw_version(component_id, v1, v2, build)`
-  writes through to `mock_persistence.py` — the hook Phase 9b's update-process simulation
-  will call. Not called anywhere yet.
-- **Alba** (done, `alba_mock.py`): `state_key = f"dpid:{dp_id}"` — identical scheme to the
-  Nvm/identity DpIds already persisted. The six firmware DpIds are Info/Protected, so (like
-  the identity DpIds) they get their own loop outside the Nvm-only reload path. Unlike
-  identity, there's no random generation — first run for a given `device_key` simply persists
-  today's hardcoded `_DEFAULT_STORE` default as-is, since firmware versions aren't unique per
-  physical unit. New `_set_firmware_version(dp_id, value)` is the equivalent write hook, also
-  not called anywhere yet.
+### REQ-033 — Full per-device settings table
 
-**Parity policy (2026-07-16, explicit user instruction):** any mock feature implemented for
-one protocol (Mera or Alba) gets mirrored in the other at the same time, unless there's a
-concrete protocol-level reason it can't apply — tracking two mocks that drift independently
-is more housekeeping than doing both up front. This firmware-persistence change is the first
-instance of applying that policy; apply it by default to future mock feature work.
+**Type:** Functional
+**Statement:** Each device's webui shows a full settings table (value, datatype, behavior,
+min/max) with inline per-row edit, and a "Reset to factory defaults" action scoped to exactly
+that device's store (REQ-028) — never all devices'.
+**Status:** Done
 
-**Not yet done:** the actual update-process simulation that calls the two write hooks above.
-Mera's real `0x40/0x52…0x40/0x04` proc sequence is already decoded in
-`.claude/rules/ble-protocol.md` and `memory/mera-firmware-update-ble-protocol.md`; no
-Alba-side capture exists yet. Tracked as Phase 9b below.
+### REQ-034 — Live SSE updates
 
-### Provenance of min/max values (why they're code, not DB or a live fetch)
+**Type:** Functional
+**Statement:** The webui reflects state changes live via Server-Sent Events, not
+full-page-reload polling — mirroring the real bridge's own `new EventSource(apiBase +
+'/events')` pattern.
+**Status:** Done
+**Implementation Details:** Gap found 2026-07-16: both mocks' update mechanism was a
+full-page reload on a timer (`setTimeout(location.reload(), 3000)` for Mera;
+`<meta http-equiv="refresh" content="2">` for Alba) — not even AJAX polling of a JSON
+endpoint. Every reload wiped any in-progress interaction (a stepper mid-drag, a swatch's
+success/error flash) regardless of whether anything had actually changed. Implemented: both
+mocks now have a real `/events` SSE endpoint mirroring
+`aquaclean_console_app/RestApiService.py`'s exact pattern — one `asyncio.Queue` per connected
+client, a 30s heartbeat when idle, `{"type": "state", ...}` JSON payloads. Client side,
+`mcConnectSSE(url, onState)` (`mock-controls.js`) mirrors `index.html`'s
+`connectSSE()`/`onmessage`; each mock's own page decides what to update instead of reloading
+everything. **Mera:** broadcasting is hooked into the existing `_log()` helper — nearly every
+state-mutating path already calls it, so this covers them all without scattering broadcast
+calls through the codebase. **Alba** was architecturally harder: `_Ble20AppLayer`/
+`_AriendiServerSide` are freshly reconstructed per BLE session inside closures in `run()`, and
+real BLE-side writes happen inside `_Ble20AppLayer._write()`, which had no path back to
+`AlbaMock`'s broadcast queue. Per explicit decision (full proper wiring for both mocks, not a
+shortcut for the harder one): `_Ble20AppLayer.__init__` now takes an optional `broadcast_fn`
+callback (same pattern as REQ-039's `logger` threading), called from both
+`_write_dpid_setting()` (webui writes) and `_write()` (real BLE `WriteCmd`, only when a
+Nvm row actually persists) — so a real Geberit Home App or remote-control write pushes a live
+update too, not just webui-initiated ones. **VM-verified:** Mera's `/events` sends an initial
+snapshot on connect and a fresh push immediately after a settings write; Alba's broadcast
+fires correctly from both the webui write path and a real-BLE-frame-shaped `_write()` call,
+and correctly does *not* fire for a non-Nvm DpId write. Permanent regression tests in
+`tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py`. **Test-isolation bug found and
+fixed along the way (own test code, not production):** `logging.FileHandler` opens its file
+immediately and `mock_logging.py` (REQ-039) caches loggers globally by name — every test using
+`adapter=None` collided on the same cached `"mock.mera.default"`/`"mock.alba.default"`
+logger, and once one test's tmp dir was deleted, a later test reusing that cached logger could
+hit `FileNotFoundError`. Fixed by giving each test construction a unique adapter/logger
+identity derived from its own tmp dir's unique suffix.
 
-Checked before deciding this, rather than guessing: does `RS28.0`/`TS199`-style firmware, or
-the Geberit cloud, hand out setting min/max ranges at runtime? Investigated against
-`local-assets/Bluetooth-Logs/nRF52840/jens62/firmware-update-mera-comfort/firmware-update.har`
-(a full-session Charles capture from a real Mera Comfort firmware update). Findings:
+### REQ-035 — Mera firmware-profile selector
 
-1. **Firmware version checks on startup — confirmed, yes.** The HAR shows
-   `prod.firmwarev1.services.geberit.com/api` → `/api/version` + `/api/firmwares` (an 809 KB
-   firmware catalog) hit repeatedly during the session. That's exactly the "check for
-   available updates" mechanism — real cloud call, real endpoint, confirmed present.
-2. **Setting min/max ranges — not in the cloud, at all.** The only other Geberit endpoint
-   hit is `mobileappsv1.services.geberit.com/api/Settings/*`, and its payloads are generic
-   app feature-flags — e.g. `Settings/43/iotsettings` decodes to
-   `{"min_remote_maintenance_app_version": "2.14.2", "aqua_clean_remote_support":
-   {"supported_devices": ["248_1"..."250_0"]}}` — device-type gating for a remote-support
-   feature, not protocol-level value bounds. Every other `/Settings/*` call in the capture
-   returned `"Data": null`.
-3. **So where do min/max actually live?** Not firmware, not cloud, as far as this project
-   has already determined — `docs/developer/alba-dpid-reference.md` already documents its
-   own Min/Max columns as *"value range from protocol spec"*, i.e. derived from analysis of
-   the Home App's own DataPoint definitions. The app validates client-side using ranges
-   compiled into the app binary. No accessible firmware-side bounds-check was found in the
-   analyzed Mera main-controller source (the switch dispatch doesn't resolve to labeled
-   proc-ID cases, so confirming firmware-side enforcement would need deeper binary-analysis
-   effort) — plausible the firmware also rejects out-of-range writes, but unconfirmed, and it
-   doesn't change what we need to do: the engineering instinct that this should be
-   authoritative somewhere durable was right, but
-   empirically it's the app that's authoritative today, not the firmware. Since we already
-   have that "protocol spec" transcribed into `ble-protocol.md` / `alba-dpid-reference.md`,
-   the mock's metadata tables just reproduce the same source the real app uses — nothing new
-   to fetch.
-
-## 6. Webui
-
-- **Multi-device routing — DECIDED (2026-07-16):** each device keeps its own already-independent
-  web server/port (status quo architecture — aiohttp for Mera, FastAPI for Alba, each bound to
-  its own `web_port`). No landing page, no single-port/single-server merge — a user running N
-  mock devices already knows each one's port from its own `--device` spec, and unifying
-  aiohttp+FastAPI into one process-wide server would add real complexity for no functional gain.
-- Full settings table per device (value, datatype, behavior, min/max), inline per-row edit,
-  **Reset to factory defaults** scoped to exactly one device's store — never all of them.
-
-### Real SSE, not full-page-reload polling — 2026-07-16, VM-verified
-
-**Gap found:** both mocks' webui update mechanism was full-page reload on a timer —
-`setTimeout(location.reload(), 3000)` (Mera) / `<meta http-equiv="refresh" content="2">`
-(Alba) — not even AJAX polling of a JSON endpoint, let alone SSE like the real bridge's
-`new EventSource(apiBase + '/events')` (`index.html:1184`). Every reload wiped any
-in-progress interaction (a stepper mid-drag, a swatch's success/error flash) regardless of
-whether anything had actually changed.
-
-**Implemented:** both mocks now have a real `/events` SSE endpoint, mirroring
-`aquaclean_console_app/RestApiService.py`'s exact pattern — one `asyncio.Queue` per
-connected client, a 30s heartbeat (`: heartbeat\n\n`) when idle, `{"type": "state", ...}`
-JSON payloads. Client side, `mcConnectSSE(url, onState)` (new in `mock-controls.js`) mirrors
-`index.html`'s `connectSSE()`/`onmessage` — each mock's own page decides what to update
-(the settings table via `mcRenderSettingsTable`, plus its own badges/log/notify-button state)
-instead of reloading everything.
-
-- **Mera**: broadcasting is hooked into the existing `_log()` helper — nearly every
-  state-mutating path (settings writes via proc 0x52/0x54 *and* the webui write routes,
-  button press, general BLE activity) already calls `_log()` for the session log, so this
-  covers them all without scattering broadcast calls through the codebase.
-- **Alba** is architecturally harder: `_Ble20AppLayer`/`_AriendiServerSide` are freshly
-  reconstructed per BLE session inside closures in `run()`, and real BLE-side writes happen
-  inside `_Ble20AppLayer._write()`, which had no path back to `AlbaMock`'s broadcast queue.
-  Per explicit decision (full proper wiring for both mocks, not a shortcut for the harder
-  one): `_Ble20AppLayer.__init__` now takes an optional `broadcast_fn` callback (same pattern
-  as Phase 7's `logger` threading), called from both `_write_dpid_setting()` (webui writes)
-  and `_write()` (real BLE `WriteCmd`, only when a Nvm/`behavior==3` row actually persists) —
-  so a real Geberit Home App or remote-control write pushes a live update too, not just
-  webui-initiated ones.
-
-VM-verified on `anneubuntu-studio`: Mera's `/events` sends an initial snapshot on connect and
-a fresh push immediately after a settings write; Alba's broadcast fires correctly from both
-the webui write path and a real-BLE-frame-shaped `_write()` call, and correctly does *not*
-fire for a non-Nvm DpId write (nothing persisted, nothing to broadcast). Permanent regression
-tests added to `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` (skipped via
-`pytest.importorskip` where deps are missing, same as the rest of those files).
-
-**Test-isolation bug found and fixed along the way (own test code, not production):**
-`logging.FileHandler` opens its file immediately and `mock_logging.py` caches loggers
-globally by name — every test that used `adapter=None` collided on the same cached
-`"mock.mera.default"`/`"mock.alba.default"` logger, and once one test's tmp dir was deleted,
-a later test reusing that cached logger could hit `FileNotFoundError` on its next log call.
-Fixed by giving each test construction a unique adapter/logger identity (derived from its own
-tmp dir's unique suffix) instead of relying on the shared "default" bucket.
-
-### Firmware profile selector (Mera only) — 2026-07-16, VM-verified
-
-**Implemented for Mera.** A new "Firmware Profile" `select` row at the top of the Firmware
-Versions section (`/settings/firmware-profile`, body `{"value": "rs28"|"rs30"}`) lets a user
-flip the mock between the two real captured snapshots — `_FW_COMPONENT_VERSIONS` (RS30.0
-TS206, current/default) and the new `_FW_COMPONENT_VERSIONS_RS28` (RS28.0 TS199, pre-update).
-Only components 1 and 11 actually differ between the two — confirmed twice over (`memory/
-mera-firmware-update-ble-protocol.md` and `docs/developer/firmware-version.md`, matching real
-capture bytes) — every other component is identical in both snapshots. Applying a profile
-calls the existing per-component `_set_fw_version()` write hook (Phase 9a) once per component,
-so persistence/logging/SSE-broadcast all stay identical to how an eventual Phase 9b OTA
-simulation would apply the same values one at a time. The currently-active profile is derived
-from component 1's live value (no separate "current profile" flag to keep in sync) —
+**Type:** Functional
+**Statement:** A "Firmware Profile" selector in the Mera webui lets a user flip the mock
+between real captured snapshots (`rs30` current/default, `rs28` pre-update) with one action.
+**Status:** Done
+**Implementation Details:** `/settings/firmware-profile`, body `{"value": "rs28"|"rs30"}`.
+Only components 1 and 11 actually differ between the two snapshots — confirmed twice over
+(`memory/mera-firmware-update-ble-protocol.md` and `docs/developer/firmware-version.md`,
+matching real capture bytes); every other component is identical in both. Applying a profile
+calls the existing per-component `_set_fw_version()` write hook (REQ-031) once per component,
+so persistence/logging/SSE-broadcast stay identical to how REQ-053's update simulation
+applies the same values one at a time. The active profile is derived from component 1's live
+value (no separate "current profile" flag to keep in sync) —
 `_current_firmware_profile()` returns `"custom"` if it matches neither canonical snapshot
-(e.g. after a partial Phase 9b-simulated update).
+(e.g. after a partial simulated update). VM-verified 2026-07-16. As of 2026-07-19, the
+`_FW_COMPONENT_VERSIONS_FACTORY` "Reset to Factory Settings" target (REQ-028) was itself
+updated to the real `rs28` snapshot, replacing an earlier synthetic uniform-RS28.0-TS199
+placeholder that predated understanding REQ-053's real blocker (see REQ-053's Implementation
+Details) — confirmed via the mock's own test suite (14/14 passed) that a factory reset now
+restores the real, non-uniform per-component values. Corrected a stale doc while implementing
+the original selector: `docs/developer/firmware-version.md`'s 2026-06-26 finding ("component
+1 alone at RS30.0 is not sufficient, all components must be RS30.0") was superseded by a real
+on-device test the same day the selector was built (commit `e4295cc`) — the mock's real
+per-component values were already the confirmed-working baseline, not something needing
+further fixing at that time (and were later shown to be irrelevant to the actual firmware-
+update-request blocker anyway — see REQ-053).
 
-**Corrected a stale doc while implementing this:** `docs/developer/firmware-version.md`'s
-2026-06-26 finding ("component 1 alone at RS30.0 is not sufficient, all components must be
-RS30.0") was superseded by the actual v1.76.0b1 commit (`e4295cc`, 2026-07-16) and a real
-on-device test the same day — see that doc for the correction. The mock's real per-component
-values (today's default) are the confirmed-working baseline, not something to fix further.
+### REQ-036 — Alba firmware-profile selector
 
-**Not yet implemented for Alba** — no real pre/post-update firmware capture exists for Alba
-yet (unlike Mera's nRF52840 capture), so there's no confirmed byte-accurate "older" snapshot to
-offer. Tracked as a to-do: once an Alba firmware-update capture exists, mirror this same
-selector for Alba's firmware DpIds (8/9/10/785/786/787).
+**Type:** Functional
+**Statement:** The Alba webui offers the same firmware-profile selection capability as Mera's
+(REQ-035), for Alba's firmware DpIds (8/9/10/785/786/787).
+**Status:** Open
+**Implementation Details:** *(none — not started.)* Blocked on a precondition, not just
+unscheduled: no real pre/post-update firmware capture exists for Alba yet (unlike Mera's
+nRF52840 capture), so there is no confirmed byte-accurate "older" snapshot to offer. Pick up
+once such a capture exists.
 
-### DRY: shared frontend assets with the real bridge webui — 2026-07-16
+### REQ-037 — Shared generic webui control module
 
-**Current state (confirmed by reading all three, not assumed):** there are three fully
-separate HTML/JS sources today, zero sharing between them —
-- the real bridge's `aquaclean_console_app/static/index.html` (2141 lines, one monolithic
-  file, no separate `.js`/`.css` files),
-- Mera mock's inline `_HTML` template (`mera_mock.py`, aiohttp + `str.format()`, ~53 lines —
-  identity table + button-press form + session log only),
-- Alba mock's inline route-handler string (`alba_mock.py`, FastAPI, ~35 lines — identity
-  sticker + two DpId toggle buttons only).
-
-Neither mock currently implements orientation-light control, a settings table, or anything
-else that visibly duplicates the bridge's markup — so there's no duplication to fix *yet*.
-But Phase 6 (the row above) is exactly where both mocks are planned to grow a full settings
-table, and building that twice from scratch — once per mock, independently from the bridge's
-existing solution — would be the third and fourth independent implementation of primitives
-the bridge already solved generically.
-
-**What's actually reusable:** the bridge's `index.html` script block already implements its
-per-feature controls (including orientation light's brightness stepper and color swatches)
-as hand-written HTML wired to a small set of *generic*, data-attribute-driven JS helpers —
-not one bespoke script per feature:
-- `stepDec`/`stepInc` — generic numeric stepper (`data-kind`/`data-id`/`data-min`/`data-max`)
-- `setCommonSetting` / `setProfileSetting` — generic setting-updater dispatch by ID
-- `sendPost` — generic POST helper
-- the `.ps-section`/`.ps-row`/`.ps-stepper` CSS classes these are wired to
-
-These aren't bridge-specific — a mock's future settings table needs the exact same
-primitives (numeric stepper, enum/select, color swatch, toggle button) against the same
-conceptual setting IDs (`common_setting`/`profile_setting`) the bridge already uses them for.
-Only the primitives are candidates for sharing; feature-specific markup (labels, the literal
-orientation-light swatch colors, section titles) stays per-consumer, since each surface
-renders its own device's setting definitions.
-
-**Decided (2026-07-16):** write a new, standalone, metadata-driven JS+CSS module inside
-`aquaclean_ble_relay/` — not extracted from `index.html`, and `index.html` is not modified by
-this work (that stays a separate future item, see below). The module mirrors the bridge's
-visual style (same stepper widget, same color-swatch treatment used for orientation-light-style
-controls, same toggle-switch look) but is architected generically from the start, unlike the
-bridge's current per-ID-hardcoded functions (`onCommonSettings` branches on
-`cs[0]`/`cs[1]`/`cs[2]`... individually; `setCommonSetting`/`setProfileSetting` POST to
-hardcoded bridge-only paths): a metadata list per setting
-(`{id, name, kind: stepper|toggle|select|swatch, min, max, writeUrl}`) drives rendering, value
-updates, and writes generically, so the same renderer serves Mera's `common_setting`/
-`profile_setting` IDs and Alba's DpIds without per-ID branches.
-
-This keeps the work entirely inside `aquaclean_ble_relay/` — no branch needed, straight to main
-like the rest of the mock work — while deliberately building the *forward candidate* for
-eventual sharing: because it's generic rather than mock-specific, refactoring `index.html` later
-becomes "swap its inline per-ID code for calls into this module, supplying the bridge's own
-metadata list" rather than a rewrite from scratch. That refactor is out of scope here — tracked
-as a future item in `docs/roadmap.md` → "Refactor: aquaclean_console_app webui to use the shared
-mock settings-control module" since it touches shipped `aquaclean_console_app` code and needs a
-proper branch/PR, per the existing mock-vs-console-app workflow split
-(`memory/feedback_mock_services_work_on_main.md`).
-
-**Implemented and VM-verified (2026-07-16, commit `d217e46`, VM-verified `2d8a56a`+):**
-`aquaclean_ble_relay/static/mock-controls.js`/`.css` built as described above. Mera got
-`/settings/common/{id}` and `/settings/profile/{id}` write routes (backed by
-`_write_stored_common_setting`/`_write_stored_profile_setting`, shared with proc 0x52/0x54 so
+**Type:** Technical
+**Statement:** Webui controls (numeric stepper, toggle, enum/select, color swatch) are
+rendered by one shared, metadata-driven module — a metadata list per setting
+(`{id, name, kind, min, max, writeUrl}`) drives rendering, value updates, and writes
+generically — not per-feature bespoke markup duplicated across mocks or hardcoded per-ID
+branches.
+**Status:** Done
+**Implementation Details:** Current-state audit before deciding (2026-07-16): three fully
+separate HTML/JS sources existed, zero sharing — the real bridge's
+`aquaclean_console_app/static/index.html` (2141 lines, one monolithic file); Mera's inline
+`_HTML` aiohttp template (~53 lines, identity table + button-press form + session log only);
+Alba's inline FastAPI route-handler string (~35 lines, identity sticker + two DpId toggle
+buttons only). Neither mock at that point implemented anything that visibly duplicated the
+bridge's markup, so there was no duplication to fix *yet* — but REQ-033's planned full
+settings table was exactly where both mocks would grow one, which would have been the third
+and fourth independent implementation of primitives the bridge already solved generically
+(`stepDec`/`stepInc`, `setCommonSetting`/`setProfileSetting`, `sendPost`, the
+`.ps-section`/`.ps-row`/`.ps-stepper` CSS classes `index.html` already uses). Decided: write a
+new, standalone, metadata-driven JS+CSS module inside `aquaclean_ble_relay/` — not extracted
+from `index.html`, and `index.html` is not modified by this work (tracked separately in
+`docs/roadmap.md` → "Refactor: aquaclean_console_app webui to use the shared mock settings-
+control module," since it touches shipped `aquaclean_console_app` code and needs a proper
+branch/PR per the mock-vs-console-app workflow split,
+`memory/feedback_mock_services_work_on_main.md` — out of scope for this REQ). The module
+mirrors the bridge's visual style but is architected generically from the start (unlike the
+bridge's current per-ID-hardcoded functions), so that eventual `index.html` refactor becomes
+"swap its inline per-ID code for calls into this module" rather than a rewrite from scratch.
+**Implemented and VM-verified (commit `d217e46`, VM-verified `2d8a56a`+):**
+`aquaclean_ble_relay/static/mock-controls.js`/`.css`. Mera got `/settings/common/{id}` and
+`/settings/profile/{id}` write routes (backed by the same functions proc `0x52`/`0x54` use, so
 BLE and webui writes stay consistent) plus a read-only Firmware Versions section; Alba got a
-single `/settings/dpid/{id}` write route restricted to Nvm (`behavior==3`) rows, with
-datatype-aware encode/decode helpers, covering the writable Nvm DpIds plus read-only identity/
-firmware DpIds.
+single `/settings/dpid/{id}` write route restricted to Nvm rows, with datatype-aware
+encode/decode helpers. Could not be runtime-verified in the primary dev environment
+(`fastapi`/`aiohttp`/`bluez_peripheral` aren't installed there) — verified on the mock VM
+instead: both mocks import cleanly, the settings table renders, static assets serve, writes
+round-trip and persist, and a write to an Alba Protected DpId (e.g. the pairing PIN) is
+correctly rejected with HTTP 400. All 11 tests passed on the mock VM at the time
+(`tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py`, skipped automatically via
+`pytest.importorskip` in any environment missing the deps). **Bug found and fixed along the
+way (commit `2d8a56a`):** `alba_mock.py` added the repo root to `sys.path` right before its
+`aquaclean_console_app` imports, but its own `aquaclean_ble_relay.*` imports sat above that
+line — standalone-script invocation (where `sys.path[0]` is this file's own directory, not the
+repo root) failed with `ModuleNotFoundError` before ever reaching the later insert.
+`mera_mock.py` already did this in the correct order; fixed by moving the insert before both
+import groups it serves.
 
-Could not be runtime-verified in this dev environment — `fastapi`/`aiohttp`/`bluez_peripheral`
-aren't installed here — so verified on the mock VM (`anneubuntu-studio`, `/home/jens/venv`,
-which does have them): both mocks import cleanly, the settings table renders, static assets
-serve, and writes round-trip and persist (Mera via `common_setting`/`profile_setting`, Alba via
-Nvm DpIds; a write to an Alba Protected DpId — e.g. the pairing PIN — is correctly rejected with
-HTTP 400). Permanent regression coverage added as `tests/test_mera_mock_webui.py` and
-`tests/test_alba_mock_webui.py` — skipped automatically via `pytest.importorskip` in any
-environment missing the deps (this dev venv included), runnable for real wherever they're
-installed. All 11 tests pass on the mock VM.
+### REQ-038 — Mera "User sitting" toggle
 
-**Bug found and fixed along the way (commit `2d8a56a`):** `alba_mock.py` added the repo root to
-`sys.path` right before its `aquaclean_console_app` imports, but its own `aquaclean_ble_relay.*`
-imports sit above that line — so standalone-script invocation (where `sys.path[0]` is this
-file's own directory, not the repo root) failed with `ModuleNotFoundError` before ever reaching
-the later insert. `mera_mock.py` already did this in the correct order; `alba_mock.py` didn't.
-Fixed by moving the insert before both import groups it serves.
+**Type:** Functional
+**Statement:** The Mera webui has a "User sitting" simulation toggle, the same capability
+Alba's webui already has — the Geberit Home App's Remote Control area only enables
+shower/dryer buttons when the seat sensor reports a user sitting, so without this toggle that
+section of the app stays greyed out during mock testing.
+**Status:** Open
+**Implementation Details:** *(none — not started; formalized 2026-07-19, superseding an
+earlier, slightly-off sketch in `docs/roadmap.md` §"Mock Mera: add 'User sitting' toggle
+button to web UI" that guessed at a route name/shape not quite matching Alba's real
+mechanism.)* **Alba's actual mechanism** (confirmed by reading the real implementation): a
+`_user_sitting: bool` variable, toggled two ways — a manual webui button, `POST
+/notify/607/toggle` (DpId 607, `USER_DETECTION_STATUS`), which flips `_ui_notify_state["607"]`,
+pushes a notify frame, and updates DpId 564 (shower-dispenser ready-state) in tandem
+(`2`=ready when sitting, `1`=disabled when not; button label "ON (sitting)"/"OFF (absent) →
+Toggle"); and an automatic flip at the end of every completed BLE session, independent of the
+button, simulating a different user each session without manual intervention. **Mera
+equivalent needed:** Mera has no DpId layer — the corresponding field is `StateUserPresent`
+(SPL index 0, read via proc `0x0D`). Needs: a `self._user_sitting: bool` instance attribute,
+persisted via `mock_persistence.py` (REQ-012's "no hardcoded/in-memory-only values" principle
+applies here too — the state should survive a restart, not just live in-memory for one
+process run); a webui button in the same visual pattern as the existing settings-table
+buttons; a route path TBD at implementation time (follow this document's `/settings/...`
+convention rather than copying Alba's `/notify/{id}/toggle` literally, since Mera's webui has
+no DpId-notify concept); the SPL index-0 handler reading `self._user_sitting` instead of a
+hardcoded value. Open design question for implementation time: does Mera also want the
+automatic per-session flip, or is the manual toggle alone sufficient?
 
-### "User sitting" webui toggle — Mera parity with Alba (formalized 2026-07-19)
+---
 
-**Requirement.** `mera_mock.py` needs the same "User sitting" simulation Alba already has.
-Without it, the Geberit Home App's Remote Control area stays greyed out during mock
-testing — the app only enables shower/dryer buttons there when the seat sensor reports a
-user sitting. Informally requested earlier in `docs/roadmap.md` §"Mock Mera: add 'User
-sitting' toggle button to web UI"; this section supersedes that sketch with the actual
-mechanism confirmed by reading Alba's real implementation (the roadmap sketch guessed at a
-route name/shape that doesn't quite match what Alba really does).
+## Logging
 
-**Alba's actual mechanism** (`alba_mock.py`, confirmed 2026-07-19 — the roadmap sketch's
-`POST /set-user-sitting` guess was close but not exact):
-- A `_user_sitting: bool` variable, toggled two ways:
-  - **Manual webui button**: `POST /notify/607/toggle` (DpId 607, `USER_DETECTION_STATUS`) —
-    flips `_ui_notify_state["607"]`, pushes a notify frame, and updates DpId 564 (shower-
-    dispenser ready-state) in tandem (`2`=ready when sitting, `1`=disabled when not). Button
-    label: "ON (sitting)" / "OFF (absent) → Toggle".
-  - **Automatic**: also flips at the end of every completed BLE session, independent of the
-    button — simulates a different user each session without manual intervention.
-- Applies to whichever data store representation is live in that mode (`_ble20_app._store`
-  for DpId-based Alba).
+### REQ-039 — Per-device logger identity
 
-**Mera equivalent.** Mera has no DpId layer — the corresponding field is `StateUserPresent`
-(SPL index 0, read via proc `0x0D` `GetSystemParameterList`). Needed:
-- A `self._user_sitting: bool` instance attribute (mirrors the identity/firmware pattern —
-  persisted via `mock_persistence.py`, not just in-memory, so it survives a mock restart).
-- Webui button, same visual pattern as the existing settings-table buttons (see "Manual
-  Trigger" firmware-update button for a same-file precedent): "Simulate: User Sitting ON /
-  OFF" → toggle route (exact path TBD when implemented — follow this doc's existing
-  `/settings/...` convention rather than copying Alba's `/notify/{id}/toggle` literally,
-  since Mera's webui doesn't have a DpId-notify concept).
-- SPL index-0 handler reads `self._user_sitting` instead of returning a hardcoded value.
-- Decide when implementing: does Mera also want the automatic per-session flip, or is the
-  manual toggle alone sufficient? Alba's automatic flip exists to simulate session-to-session
-  variability without manual clicking; not yet decided whether that's wanted for Mera too.
+**Type:** Technical
+**Statement:** Each device instance has its own logger, named by the same `(model, adapter)`
+key used for persistence (e.g. `mock.mera.hci1`) — not one shared hardcoded logger name.
+**Status:** Done
+**Implementation Details:** New shared module `aquaclean_ble_relay/mock_logging.py` —
+`get_device_logger(model, adapter)` returns/configures the `mock.<model>.<adapter>` logger
+(idempotent), with three handlers: console, a per-device file, and one combined-file handler
+shared by every device logger created in the process (REQ-041). `MeraMock` swapped its inline
+logger/file-handler setup for a call to this helper. `AlbaMock` needed more — it had no
+`logging.Logger` at all, just a module-level timestamped `print()` override used at ~120 call
+sites across `_Ble20AppLayer`, `_AriendiServerSide`, the four GATT service classes, and
+`AlbaMock` itself. Per explicit decision (full mechanical conversion over a smaller
+`contextvars`-based shortcut, so every call site genuinely holds its own `Logger` rather than
+a shortcut that only observably behaves like one), the override is gone entirely: each of
+those classes now takes an optional `logger` constructor param threaded down from
+`AlbaMock.logger`, and all ~120 `print(...)` sites became `self.logger.info(...)`. Six
+multi-positional-arg `print("text:", var)` calls were collapsed to single f-string args first
+— `logging.Logger.info(msg, *args)` treats extra positional args as `%`-style formatting
+arguments, so passing them through unchanged would have raised `TypeError` at runtime. Two
+call sites aren't methods (`safe_call()`, a module-level function, uses
+`getattr(obj, "logger", ...)`; the `if __name__ == "__main__":` KeyboardInterrupt handler
+uses `mock.logger`). `mock_service.py`'s previous `_Tee` stdout/stderr redirect (keyed by the
+whole `--device` batch rather than per-device) was removed as redundant once every device
+logger had its own combined-file handler. **Follow-up bug (found live on the mock VM, fixed
+same day):** `MeraMock.run()` had a second, later reference to the `log_path` variable this
+refactor removed — crashed every real run with `NameError` as soon as the startup banner tried
+to print it. `get_device_logger()` now stashes the per-device path on the logger itself
+(`logger.device_log_path`) so callers can report it without keeping their own copy.
+**Verified on the mock VM:** device tag confirmed at the fixed post-timestamp position
+(REQ-040), per-device files confirmed isolated, the combined file confirmed shared and
+interleaved across two concurrently-constructed instances, logger-wiring confirmed reaching
+all four previously-print()-only Alba classes. All 11 pre-existing webui tests still passed
+unmodified. Permanent regression coverage in `tests/test_mock_logging.py` — stdlib-only, runs
+in any environment including the primary dev venv, unlike the webui tests.
 
-**Status:** not started — requirement only, formalized here per explicit request; §4a's "no
-hardcoded values" principle applies here too (the state should persist, not just live
-in-memory across a single process run).
+### REQ-040 — Fixed-position device tag
 
-## 7. Logging
+**Type:** Functional
+**Statement:** The device tag sits at a fixed position in every log line, immediately after
+the timestamp, so a script/CI consumer can reliably `grep`/`awk` on it regardless of message
+content.
+**Status:** Done
+**Implementation Details:** The device tag is the logger name itself in the format string
+(`[%(asctime)s] [%(name)s] %(message)s`) — no per-record `extra=` plumbing needed.
 
-- One logger per device instance, named by the same `(model, adapter)` key used for
-  persistence (e.g. `mock.mera.hci1`) — not one shared hardcoded logger name.
-- Device tag at a fixed position in every line (immediately after the timestamp) so a
-  script/CI consumer can reliably `grep`/`awk` on it regardless of message content.
-- Both a combined process-wide log (chronological, cross-device correlation) and a
-  per-device log file, via multiple handlers on the same per-device logger — not a choice
-  between the two.
-- Log filenames follow the same `<model>-<adapter>` naming convention as the persistence DB.
+### REQ-041 — Combined and per-device log files
 
-**Implemented and VM-verified (2026-07-16):** new shared module
-`aquaclean_ble_relay/mock_logging.py` — `get_device_logger(model, adapter)` returns/configures
-the `mock.<model>.<adapter>` logger (idempotent), with three handlers: console, a per-device
-file (`logs/mock-<model>-<adapter>_<timestamp>.log`), and one combined-file handler
-(`logs/mock-combined_<timestamp>.log`) shared by every device logger created in the process.
-Device tag is the logger name itself in the format string (`[%(asctime)s] [%(name)s]
-%(message)s`) — right after the timestamp, no per-record `extra=` plumbing needed.
+**Type:** Functional
+**Statement:** Both a combined, chronological, cross-device-correlation log and a per-device
+log file exist simultaneously, via multiple handlers on the same per-device logger — not a
+choice between the two.
+**Status:** Done
 
-Both mocks now use it: `MeraMock` swapped its inline logger/file-handler setup for a call to
-the shared helper. `AlbaMock` needed more — it had no `logging.Logger` at all, just a
-module-level timestamped `print()` override used at ~120 call sites across `_Ble20AppLayer`,
-`_AriendiServerSide`, the four GATT service classes, and `AlbaMock` itself. Per explicit
-decision (full mechanical conversion over a smaller `contextvars`-based shortcut — the
-mechanical version means every call site genuinely holds its own `Logger`, not a shortcut that
-only observably behaves like one), the override is gone entirely: each of those classes now
-takes an optional `logger` constructor param (threaded down from `AlbaMock.logger` at
-construction), and all ~120 `print(...)` call sites became `self.logger.info(...)`. Six
-multi-positional-arg `print("text:", var)` calls were collapsed to single f-string args first —
-`logging.Logger.info(msg, *args)` treats extra positional args as `%`-style formatting
-arguments, so passing them through unchanged would have raised `TypeError` at runtime. Two call
-sites aren't methods (`safe_call()`, a module-level function — uses
-`getattr(obj, "logger", ...)`; the `if __name__ == "__main__":` KeyboardInterrupt handler —
-uses `mock.logger`).
+### REQ-042 — Log filename convention
 
-`mock_service.py`'s `_Tee` stdout/stderr redirect (the previous stand-in for a combined log,
-keyed by the whole `--device` batch rather than per-device) is removed — redundant now that
-every device logger has its own combined-file handler from `state_dir`, which
-`_resolve_kwargs` already defaults onto every device's constructor kwargs.
+**Type:** Technical
+**Statement:** Log filenames follow the same `<model>-<adapter>` naming convention as the
+persistence DB's `device_type`/`device_key`.
+**Status:** Done
 
-VM-verified on `anneubuntu-studio`: device tag confirmed at the fixed post-timestamp position,
-per-device files confirmed isolated (each device's file contains only its own lines), the
-combined file confirmed shared and interleaved across two concurrently-constructed
-Mera+Alba instances, logger-wiring confirmed reaching all four previously-print()-only classes.
-All 11 pre-existing Phase 6 webui tests still pass unmodified (no regression). Permanent
-regression coverage in `tests/test_mock_logging.py` — stdlib-only (no bluez_peripheral/aiohttp/
-fastapi dependency), runs in any environment including the primary dev venv, unlike the Phase 6
-webui tests.
+### REQ-043 — `--btmon-capture`
 
-**Follow-up bug (found live on the mock VM, fixed same day):** `MeraMock.run()` had a second,
-later reference to the `log_path` variable the Phase 7 refactor removed — crashed every real run
-with `NameError` as soon as the startup banner tried to print it. `get_device_logger()` now
-stashes the per-device path on the logger itself (`logger.device_log_path`) so callers can
-report it without keeping their own copy.
+**Type:** Functional
+**Statement:** `mock_service.py --btmon-capture` starts `sudo btmon -w
+<state-dir>/logs/mock-btmon_<timestamp>.btsnoop` before any device starts and stops it
+cleanly on exit, automating a capture workflow that was previously a separate manual
+terminal command.
+**Status:** Done
+**Implementation Details:** Filenames follow the same `state_dir/logs/mock-*_<timestamp>`
+convention as the per-device/combined logs. Cleanup backs `Popen.terminate()` with a `sudo
+pkill -f` fallback keyed on a distinguishing argument, since `sudo` doesn't always forward
+`SIGTERM` to its child reliably. Never exhibited either problem `--bluetoothd-debug`
+(REQ-044) has.
 
-**`--btmon-capture` / `--bluetoothd-debug` (2026-07-16):** `mock_service.py` can now start
-`sudo btmon -w <state-dir>/logs/mock-btmon_<timestamp>.btsnoop` and/or
-`sudo bluetoothd -n -d --noplugin=battery` (redirected to
-`<state-dir>/logs/mock-bluetoothd-debug_<timestamp>.log`) before any device starts, and stops
-them cleanly on exit — automating a capture workflow that was previously two separate manual
-terminal commands. Filenames follow the same `state_dir/logs/mock-*_<timestamp>` convention as
-the per-device/combined logs. Cleanup backs `Popen.terminate()` with a `sudo pkill -f` fallback
-keyed on a distinguishing argument, since `sudo` doesn't always forward `SIGTERM` to its child
-reliably. Deliberately does **not** stop/restart the systemd `bluetooth` service — mirrors the
-manual commands exactly; if systemd's `bluetoothd` is already holding the D-Bus name,
-`--bluetoothd-debug` just fails to bind, same as running the command by hand.
+### REQ-044 — `--bluetoothd-debug`
 
-**Known bug — `--bluetoothd-debug` does not work in either configuration (2026-07-18).**
-The flag is currently unusable in practice, not just under an edge case:
-- **As documented above** (don't stop systemd first): fails to bind, since systemd's
-  `bluetoothd` already holds the `org.bluez` D-Bus name in the normal case (systemd's
-  `bluetooth.service` is running by default on any test machine).
-- **Working around that** by running `sudo systemctl stop bluetooth` first (the obvious
-  fix) instead triggers a D-Bus-activation race: `org.bluez` is D-Bus-activated, so systemd
-  repeatedly tries to auto-restart its own `bluetoothd` to reclaim the name — racing against
-  and failing to bind after the `--bluetoothd-debug` instance claims it first. Confirmed live:
-  5 rapid `bluetoothd[PID]: = src/main.c:main() Unable to get on D-Bus` failures in ~1.7s,
-  which killed that entire test session before it reached the onboarding attempt at all, and
-  left the systemd `bluetooth` unit in `failed` state (needs `systemctl reset-failed bluetooth`
-  before `systemctl start bluetooth` works again).
-
-So there is currently no way to invoke `--bluetoothd-debug` that reliably produces a working
-debug session — every attempt either fails to bind immediately or takes down the whole test
-run via the restart race. **Avoid `--bluetoothd-debug` for routine tests; use
-`--btmon-capture` alone instead**, which never exhibited either problem. Not yet fixed —
-would need either detecting/handling the D-Bus race (e.g. `systemctl stop bluetooth`,
-poll until `org.bluez` is actually released, *then* start the debug instance, restoring
-systemd's `bluetooth.service` on exit) or dropping the flag in favor of documenting the
-manual two-terminal workflow it was meant to replace. Full incident:
+**Type:** Functional
+**Statement:** `mock_service.py --bluetoothd-debug` starts `sudo bluetoothd -n -d
+--noplugin=battery` (redirected to a log file) before any device starts and stops it cleanly
+on exit, producing a usable bluetoothd debug session — the same automation REQ-043 provides
+for btmon.
+**Status:** In Progress
+**Implementation Details:** Implemented, but currently unusable in either configuration
+(found 2026-07-18) — root cause fully diagnosed, not yet fixed. Deliberately does **not**
+stop/restart the systemd `bluetooth` service (mirrors the manual two-terminal workflow it
+replaces exactly): if systemd's `bluetoothd` already holds the `org.bluez` D-Bus name — the
+normal case, since `bluetooth.service` runs by default on any test machine — the flag simply
+fails to bind, same as running the command by hand. Working around that by running `sudo
+systemctl stop bluetooth` first (the obvious fix) instead triggers a D-Bus-activation race:
+`org.bluez` is D-Bus-activated, so systemd repeatedly tries to auto-restart its own
+`bluetoothd` to reclaim the name, racing against and failing to bind after the
+`--bluetoothd-debug` instance claims it first. Confirmed live: 5 rapid
+`bluetoothd[PID]: = src/main.c:main() Unable to get on D-Bus` failures in ~1.7s, which killed
+that entire test session before it reached the onboarding attempt at all, and left the
+systemd `bluetooth` unit in `failed` state (needs `systemctl reset-failed bluetooth` before
+`systemctl start bluetooth` works again). So there is currently no invocation that reliably
+produces a working debug session — every attempt either fails to bind immediately or takes
+down the whole test run via the restart race. **Avoid `--bluetoothd-debug` for routine tests;
+use `--btmon-capture` alone instead.** Not yet fixed — would need either detecting/handling
+the D-Bus race (`systemctl stop bluetooth`, poll until `org.bluez` is actually released, *then*
+start the debug instance, restoring `bluetooth.service` on exit) or dropping the flag in
+favor of documenting the manual two-terminal workflow it was meant to replace. Full incident:
 `memory/mera-advertisement-two-entry-regression-confirmed.md` (local Claude memory).
 
-## 8. DRY — shared modules, not per-mock duplication
+---
 
-- Adapter selection: already extracted (Alba's `--adapter` feature, merged to main) —
-  Mera/Sela reuse it, don't reimplement.
-- Persistence: one schema/module (`mock_persistence.py`, already scaffolded), reused by
-  every model.
-- CLI parsing, task orchestration, shutdown handling: live once in `mock_service.py`.
-- Firmware-string validation and namespace/persist classification: each protocol module owns
-  its own concrete table/regex, but the *pattern* (validate at parse time, classify
-  persist-vs-live once per namespace) is shared conceptually across models even where the
-  concrete tables differ.
+## Shared Modules (DRY)
 
-## 9. Additional gaps identified
+### REQ-045 — Shared adapter selection *(see REQ-004)*
 
-- **Backward compatibility / migration path — RESOLVED, see §10 decision 2.** Kept as thin
-  single-device wrappers around the refactored class, not retired — see §2.
-- **Webui bind failure — OPEN.** If webui goes single-port-multi-route (§6), does one port
-  conflict abort the whole service, or degrade just that device to headless (no webui, BLE
-  still served)?
-- **Resource conflicts across devices:** need a decision on whether a webui bind failure (or
-  any single-device startup failure) aborts the entire `mock_service.py` run or just that one
-  device, leaving the others running.
-- **Mera `SetCommand` (proc 0x09) is almost entirely unsimulated — found 2026-07-16, tracked as
-  Phase 10.** This is a gap in *action simulation*, distinct from persistence (§5), which is
-  correctly wired for the settings that actually need it. Precisely:
-  - `_write_stored_common_setting`/`_write_stored_profile_setting` (proc 0x52/0x54, "Stored"
-    settings) persist correctly — confirmed working, reused by both the real BLE path and the
-    Phase 6 webui write routes. If the real Geberit Home App changes e.g. orientation light
-    colour against a mocked device, that persists across a mock restart.
-  - `_proc_08`/`_proc_0b` (`SetActiveProfileSetting`/`SetActiveCommonSetting`) are session-only,
-    never persisted — **by design, not a bug**: this correctly mirrors the real device, where
-    Active state is always re-derived from Stored NVM after a power-cycle.
-  - `_proc_09` (`SetCommand`) — the toggle/trigger channel for ~20 command codes
-    (`ToggleLidPosition`, `PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`,
-    `TriggerFlushManually`, `ResetFilterCounter`, `ToggleOrientationLight`, `Stop`, etc., see
-    `.claude/rules/ble-protocol.md` Layer 1 table) — only **2** codes are wired at all
-    (`ToggleAnalShower`/`ToggleLadyShower`, correctly not persisted — they flip live SPL state).
-    Every other code is a silent no-op: the real app or remote control can send them to the mock
-    and nothing happens at all — not even a log line distinguishing "received but ignored" from
-    "not received."
-- **Webui only shows a subset of stored state, not everything the mock tracks — found
-  2026-07-17, tracked as Phase 11.** Requested for both Alba and Mera (parity).
-  - **Alba**: `_Ble20AppLayer._DEFAULT_STORE` holds all 79 DpIds in `self._store`, but
-    `_settings_table_data()` only renders `self._SETTINGS_DPIDS` (14 keys — Nvm settings +
-    identity + firmware). The other ~65 DpIds (shower/descaling status, statistics, error
-    flags, commands, etc.) are fully live in memory but never surfaced in the webui at all.
-    Fix: add a third, read-only "Device State" section listing everything in `self._store`
-    not already in `_SETTINGS_DPIDS`. Needs a full name table extracted from
-    `_DEFAULT_STORE`'s inline comments (only the 14 settings DpIds have structured names
-    today, via `_DPID_NAMES`) — the rest currently only have a trailing `# COMMENT`, not a
-    machine-readable label. Open question: flat list sorted by DpId, or grouped by category
-    (shower / descaling / statistics / errors) mirroring `_DEFAULT_STORE`'s own comment
-    groupings — decide when implementing.
-  - **Mera**: analogous gap — `self._SPL_MERA_VALUES`, `self._PER_NODE_PROFILE_SETTINGS`,
-    `self._ACTIVE_COMMON_SETTINGS`, `self._registration_level`, and other live state are
-    never shown in the webui's three existing sections (Profile Settings, Common Settings,
-    Firmware Versions). Same fix shape: a read-only "Device State" section covering
-    everything not already in an existing section.
-- **Requirement: the real Geberit hardware Remote Control must be able to discover, pair
-  with, and connect to both the mera-mock and the alba-mock — added 2026-07-17, tracked as
-  Phase 12.** Goal: exercise remote-control behavior (button presses, displacement/handoff
-  with a concurrently-connected phone app, etc.) against the mocks instead of requiring real
-  hardware every time. Current state, not yet a working feature on either mock:
-  - **Mera**: `_RCPairingService` (mera_mock.py) is a discovery-only stub — advertises GATT
-    service UUID `0xC526` so the RC's `FIND_BY_TYPE_VALUE` pre-pairing check succeeds, but
-    implements nothing else. The RC then attempts real BLE pairing (`LL_ENC_REQ`) — untested
-    whether the mock's BlueZ stack actually completes pairing/bonding, and all post-pairing RC
-    traffic is encrypted and not yet decoded (see `memory/geberit-remote-control-ble.md`), so
-    even a successful pairing wouldn't yet produce meaningful behavior.
-  - **Alba**: no RC-related GATT service exists at all — unknown whether Alba's real RC
-    pairing uses the same `0xC526` UUID as Mera or a different one; needs investigation
-    (real-hardware BLE sniff of an Alba + RC pairing, analogous to the existing Mera capture).
-  - Both real-hardware investigations already in progress are relevant background, not
-    solutions: `memory/mera-comfort-displacement-baseline.md` (remote recovers ~9s after app
-    disconnect on real Mera hardware) and `memory/alba-remote-control-conflict.md` /
-    `memory/alba-session-caching-fix.md` (Alba remote-displacement root cause still open).
-  - Scope not yet broken down — likely needs: (1) BLE pairing/bonding support in the mock's
-    GATT server stack (SMP/LTK, not just GATT characteristics — may require bluez_peripheral/
-    BlueZ agent-level changes beyond what either mock currently does), (2) Alba's discovery
-    surface identified and stubbed the same way Mera's is, (3) enough of the post-pairing
-    encrypted protocol decoded/implemented for either mock to respond meaningfully rather than
-    just complete pairing and go silent.
+**Type:** Technical
+**Statement:** Adapter-selection logic exists once (`mock_bluez_adapter.py`) and is reused by
+every model — never reimplemented per model.
+**Status:** Done
+**Implementation Details:** See REQ-004; listed again here as this document's general DRY
+policy statement.
 
-## 10. Decisions log
+### REQ-046 — Shared persistence schema
 
-| # | Decision | Status |
-|---|---|---|
-| 1 | `--model` single open-ended lookup table (not `--protocol` + `--model` split) | **Resolved** — §3 |
-| 2 | Standalone single-device mock scripts kept as thin wrappers around the refactored class, not retired | **Resolved** — §2 |
-| 3 | Webui bind failure: abort whole service, or degrade that one device to headless? | Open — §9 |
-| 4 | Frontend sharing: mock-only fresh generic module, not extracted from `index.html` | **Resolved** — §6 |
-| 5 | Multi-device routing: each device keeps its own independent page (no landing page, no single-port merge) | **Resolved** — §6 |
+**Type:** Technical
+**Statement:** Persistence is one schema/module (`mock_persistence.py`), reused by every
+model — not a per-model reimplementation.
+**Status:** Done
+**Implementation Details:** Scaffolded, together with `mock_bluez_adapter.py` (REQ-004), as
+the first implementation step before any per-model refactor — commits `152382c`, `dadde00`,
+`0a85636`.
 
-## 11. Implementation plan & phase status
+### REQ-047 — Shared orchestration
 
-Ordered so each phase is independently testable before the next depends on it, and the §0
-acceptance test gets proven on one device before multi-device orchestration is built on top
-of it.
+**Type:** Technical
+**Statement:** CLI parsing, task orchestration, and shutdown handling live once, in
+`mock_service.py` — not duplicated per model.
+**Status:** Done
 
-| Phase | Goal | Status |
-|---|---|---|
-| 1 | Shared modules: `mock_bluez_adapter.py`, `mock_persistence.py` | **Done** — `152382c`, `dadde00`, `0a85636` |
-| 2 | Refactor Mera mock into an importable class | **Done** — verified on VM, see below |
-| 2b | Real settings mutation + persistence wiring for Mera (follow-up) | **Done** — verified on VM, see below |
-| 2c | Per-device identity (`_SAP_NUMBER`/`_SERIAL`) for Mera (follow-up) | **Not started** — same gap as Alba's §5 fix, not yet ported to Mera |
-| 3 | Refactor Alba mock into an importable class | **Done** — verified on VM, see below |
-| 4 | `mock_service.py` orchestrator, single device only | **Done** — verified on VM, see below |
-| 5 | Multi-device concurrency | **In progress** — validation + fixes done, live concurrent-hardware test pending, see below |
-| 6 | Webui, multi-device | **Done, VM-verified** (2026-07-16) — generic settings table (mock-controls.js/css) + write routes for Mera and Alba (§6 "DRY...") + real SSE via `/events` replacing full-page-reload polling (§6 "Real SSE..."); regression tests in `tests/test_mera_mock_webui.py`/`test_alba_mock_webui.py` |
-| 7 | Logging polish (combined + per-device files) | **Done, VM-verified** (2026-07-16) — `mock_logging.py` shared module, full print()→logger conversion for Alba, see §7 |
-| 8 | Sela mock (separate pre-existing roadmap item; plugs into the same class/registry pattern once built) | Not started |
-| 9 | Firmware override parsing *(future, §4)* | Not started |
-| 9a | Firmware version persistence (Mera + Alba) | **Done** — see §5 "Firmware version persistence" |
-| 9b | Firmware update-process simulation (Mera `0x40` proc sequence; Alba TBD) | Not started — depends on 9a |
-| 9c | Firmware profile selector — Mera done, Alba pending a real capture | **Mera done, VM-verified** (2026-07-16) — see §6 "Firmware profile selector"; Alba not started |
-| 10 | Wire remaining Mera `SetCommand` (proc 0x09) codes — action simulation, not persistence | Not started — see §9 |
-| 13 | No hardcoded values — configurable identity/firmware sourcing (webui typed/imported, headless file, real-device-via-bridge), named settings profiles, `mock_service.py --version` | Not started — see §4a |
-| 14 | "User sitting" webui toggle for Mera (parity with Alba) | Not started — see §6 "User sitting webui toggle" |
+### REQ-048 — Shared validation/classification pattern
 
-### Phase 2 — scope decision (2026-07-16)
+**Type:** Technical
+**Statement:** Firmware-string validation and namespace/persist classification follow one
+shared *pattern* (validate at parse time, classify persist-vs-live once per namespace) across
+models, even where each protocol module's concrete table/regex differs — each protocol module
+owns its own concrete implementation of the shared pattern, not a single shared parser that
+assumes identical internal representations.
+**Status:** Done
+**Implementation Details:** See REQ-011 for why a single shared parser doesn't fit here
+(Mera's byte-tuples vs. Alba's DpId encoding aren't the same shape).
 
-Checked `_dispatch()` in `tools/mock-geberit-mera.py` before wiring persistence in, rather
-than assuming there was already something to persist: **every write procedure the mock
-currently handles is a no-op stub** — `0x09` (SetCommand), `0x08`/`0x14`/`0x15`, `0x0B`
-(SetActiveProfileSetting) all just `return b""`. Nothing mutates state, not even
-in-memory. So there is currently no real setting on the Mera mock that the Home App could
-change — the §0 acceptance test has no genuine hook to attach to yet on this model.
-Wiring `mock_persistence.py` against no-op stubs would prove nothing.
+---
 
-**Decided scope for Phase 2:**
-- New module `aquaclean_ble_relay/mera_mock.py`, class `MeraMock` — a structural port of
-  `tools/mock-geberit-mera.py`: module-level globals become instance attributes, a
-  per-instance logger replaces the single hardcoded `logging.getLogger("mera_mock")`,
-  adapter selection goes through `mock_bluez_adapter.py` instead of the script's own inline
-  adapter lookup.
-- `tools/mock-geberit-mera.py` is left completely untouched. Its logic is duplicated into
-  the new class for now, not shared — accepted temporarily; a later phase decides the
-  cutover to a thin wrapper (§2, decision 2), once the class is proven.
-- The currently-stubbed `Set*` procedures are ported as the same no-op stubs — behavior
-  unchanged, no new mutation logic in this phase.
-- `mock_persistence.py` wiring is **deferred to Phase 2b**, not done in Phase 2.
-- No acceptance-test run in Phase 2 (needs Phase 2b's real mutation first).
+## Outstanding Gaps
 
-**Phase 2b — refined plan (2026-07-16):**
+### REQ-049 — Defined webui bind-failure behavior
 
-Cross-checking `_PROC_NAMES`, the dispatch comments, and `.claude/rules/ble-protocol.md`
-before implementing found a real bug already present in the ported code (not introduced by
-Phase 2, just carried over faithfully since Phase 2 was structural-only):
+**Type:** Functional
+**Statement:** When one device's webui fails to bind (or any single device fails to start),
+the rest of the service has a defined, deliberate response — either the whole
+`mock_service.py` run aborts, or that one device degrades to headless (BLE still served, no
+webui) while the others continue.
+**Status:** Open
+**Implementation Details:** *(none — decision not yet made.)* Originally raised as two
+separate bullet points in this document ("Webui bind failure" and "Resource conflicts across
+devices") — merged here, since on inspection they were the same open question stated twice.
 
-- `0x51`/`0x52` (GetStoredCommonSetting/SetStoredCommonSetting) and `0x53`/`0x54`
-  (GetStoredProfileSetting/SetStoredProfileSetting) are unambiguous — confirmed in both
-  `_PROC_NAMES` and `ble-protocol.md`.
-- `0x09` (SetCommand, 1-byte command code) and `0x08` (SetActiveProfileSetting, confirmed
-  format `[arg_count=3, setting_id, value]` from a real OTA capture) are also unambiguous.
-- **Bug found:** `_PROC_NAMES` labels `0x0A`/`0x0B` as `GetActiveCommonSetting`/
-  `SetActiveCommonSetting`, matching `ble-protocol.md`'s "Active vs Stored" section (0x0A/0x0B
-  operate on the *same CommonSetting ID space* as 0x51/0x52, applied immediately, no
-  power-cycle). But the shipped `_proc_0a()` docstring says `GetActiveProfileSetting` and
-  reads `_ACTIVE_PROFILE_SETTINGS` (a *ProfileSetting*-shaped dict) — contradicting its own
-  proc's name. Fixed in this phase: `0x0A`/`0x0B` now read/write a session-scoped
-  active-common-setting store; `_ACTIVE_PROFILE_SETTINGS` becomes the write-target for `0x08`
-  instead (which never had a confirmed getter of its own).
+### REQ-050 — Full `SetCommand` simulation
 
-**Implementation:**
-1. `0x0A`/`0x0B` → an in-memory "active common setting" store, seeded from
-   `_STORED_COMMON_SETTINGS` at mock startup. Session-scoped, **never persisted** — matches
-   the rule that Active is re-derived from Stored NVM on every real power-cycle. Seeded once
-   at mock startup (not re-seeded per BLE session) — a deliberate scope simplification.
-2. `0x52`/`0x54` → real mutation into `_STORED_COMMON_SETTINGS`/`_STORED_PROFILE_SETTINGS`,
-   **wired to `mock_persistence.py` write-through** — these are exactly the values the §0
-   acceptance test needs to survive a restart. Arg format assumed identical to `0x08`'s
-   confirmed `[count=3, setting_id, value]` shape (structurally the same setter pattern for
-   the sibling Stored pair) — not independently confirmed for `0x52`/`0x54`, flagged in code,
-   verify against a real capture if one surfaces.
-3. `0x08` → real mutation into `_ACTIVE_PROFILE_SETTINGS`, in-memory only, not persisted.
-4. `0x09` → real mutation for the two commands with an unambiguous `spl` effect:
-   `ToggleAnalShower` (code 0) flips `spl[1]`, `ToggleLadyShower` (code 1) flips `spl[2]`.
-   Both are classified **NO PERSIST** (live sensor state) in the roadmap enumeration, so no
-   persistence call here — only `_SPL_MERA_VALUES` mutates. Other command codes stay no-ops;
-   not guessing effects that aren't confirmed anywhere.
-5. `MeraMock.__init__` gains a `state_dir` parameter (calls `mock_persistence.set_state_dir()`
-   once — this is process-wide, since all instances share one DB file) and loads persisted
-   `common_setting:*`/`profile_setting:*` rows for `(device_type="mera", device_key=adapter)`
-   at construction, overriding the hardcoded defaults only where a persisted value exists —
-   startup never overwrites an existing store (§5).
-6. §0 acceptance test run for real against Mera once this lands: change a Stored setting via
-   the Home App, stop the mock, restart, confirm the value survived.
+**Type:** Functional
+**Statement:** The Mera mock simulates the effect of every `SetCommand` (proc `0x09`) code
+(`ToggleLidPosition`, `PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`,
+`TriggerFlushManually`, `ResetFilterCounter`, `ToggleOrientationLight`, `Stop`, etc. — see
+`.claude/rules/ble-protocol.md` Layer 1 table) — not just the two currently wired.
+**Status:** Open
+**Implementation Details:** Found 2026-07-16. This is a gap in *action simulation*, distinct
+from persistence (REQ-025), which is correctly wired for the settings that actually need it.
+Precisely: `_write_stored_common_setting`/`_write_stored_profile_setting` (proc `0x52`/`0x54`)
+persist correctly (REQ-001) — confirmed working, reused by both the real BLE path and the
+webui write routes; if the real app changes e.g. orientation-light colour against a mocked
+device, that persists across a restart. `_proc_08`/`_proc_0b`
+(`SetActiveProfileSetting`/`SetActiveCommonSetting`) are session-only, never persisted, by
+design — REQ-055. `_proc_09` (`SetCommand` itself) has only **2** of ~20 codes wired at all
+(`ToggleAnalShower`/`ToggleLadyShower`, correctly not persisted — they flip live SPL state,
+REQ-006's Mera Implementation Details). Every other code is a silent no-op: the real app or a
+remote control can send them to the mock and nothing happens at all — not even a log line
+distinguishing "received but ignored" from "not received." All of these are otherwise
+"quick-win" commands per `.claude/rules/ble-protocol.md` — each just needs
+`SetCommandAsync(Commands.X)`-shaped wiring, zero new protocol code, but it hasn't been done.
 
-### Phase 2b — verification (2026-07-16)
+### REQ-051 — Complete webui state visibility
 
-Same VM, same technique as Phase 2 (byte-for-byte comparison + a scripted round-trip),
-covering what a single live-App session can't easily exercise in one pass:
+**Type:** Functional
+**Statement:** The webui shows every piece of state the mock tracks, not a curated subset —
+for both Mera and Alba.
+**Status:** Open
+**Implementation Details:** Found 2026-07-17. **Alba:** `_Ble20AppLayer._DEFAULT_STORE` holds
+all 79 DpIds in `self._store`, but `_settings_table_data()` only renders
+`self._SETTINGS_DPIDS` (14 keys — Nvm settings + identity + firmware). The other ~65 DpIds
+(shower/descaling status, statistics, error flags, commands, etc.) are fully live in memory
+but never surfaced in the webui at all. Fix direction: add a third, read-only "Device State"
+section listing everything in `self._store` not already in `_SETTINGS_DPIDS` — needs a full
+name table extracted from `_DEFAULT_STORE`'s inline comments (only the 14 settings DpIds have
+structured names today, via `_DPID_NAMES`; the rest only have a trailing `# COMMENT`, not a
+machine-readable label). Open question for implementation time: flat list sorted by DpId, or
+grouped by category (shower/descaling/statistics/errors) mirroring `_DEFAULT_STORE`'s own
+comment groupings. **Mera:** analogous gap — `self._SPL_MERA_VALUES`,
+`self._PER_NODE_PROFILE_SETTINGS`, `self._ACTIVE_COMMON_SETTINGS`, `self._registration_level`,
+and other live state are never shown in the webui's three existing sections (Profile
+Settings, Common Settings, Firmware Versions). Same fix shape: a read-only "Device State"
+section covering everything not already shown.
 
-1. **No regression on the 10 procedures Phase 2b didn't touch** (`0x82, 0x0D, 0x0E, 0x45,
-   0x59, 0x07, 0x05, 0x81, 0x86, 0x55`) — re-ran the byte-for-byte comparison against
-   `tools/mock-geberit-mera.py`; all still match.
-2. **Stored settings persist and survive a simulated restart.** `SetStoredCommonSetting`
-   (`0x52`, WaterHardness id=0 → 2) and `SetStoredProfileSetting` (`0x54`, AnalShowerPressure
-   id=2 → 4) both mutate immediately and are still present after destroying the `MeraMock`
-   instance and constructing a fresh one against the same `state_dir`/adapter — this **is**
-   the §0 acceptance test, run against real persistence logic (not yet against a live BLE
-   session).
-3. **Active settings correctly do NOT persist.** Writing `SetActiveCommonSetting` (`0x0B`,
-   id=0 → 6) is immediately visible via `GetActiveCommonSetting` (`0x0A`) within the same
-   instance, but after a simulated restart `0x0A` returns `2` — re-seeded from the (persisted)
-   Stored value, not the prior session's transient override. Confirms the "Active is
-   session-scoped, re-derived from Stored NVM on power-cycle" rule holds.
-4. **SetCommand toggle correctly does NOT persist.** `ToggleAnalShower` (`0x09`, code 0)
-   flips `spl[1]` to `1281` (verified byte-for-byte in the little-endian frame payload); after
-   a simulated restart it's back to `0`.
-5. **Nothing leaks into the DB that shouldn't.** Raw persisted rows after the whole sequence:
-   exactly `{'common_setting:0': 2, 'profile_setting:2': 4}` — no `active_*` or `spl` keys.
+### REQ-052 — Remote Control interoperability
 
-Not yet run: a live session against the real Geberit Home App changing a setting through
-its own UI (the scripted test drives `_dispatch()` directly, bypassing GATT/BLE). Worth
-doing once there's a Home App screen that actually calls `0x52`/`0x54` for a setting this
-mock exposes — flagged as a follow-up, not blocking, since the underlying mutation +
-persistence logic is now verified directly.
+**Type:** Functional
+**Statement:** A real Geberit hardware Remote Control can discover, pair with, and connect to
+both the Mera mock and the Alba mock, so remote-control behavior (button presses,
+displacement/handoff with a concurrently-connected phone app, etc.) can be exercised against
+the mocks instead of requiring real hardware every time.
+**Status:** In Progress
+**Implementation Details:** Added 2026-07-17. Neither mock has this as a working feature yet.
+**Mera:** `_RCPairingService` (`mera_mock.py`) is a discovery-only stub — it advertises GATT
+service UUID `0xC526` so the RC's `FIND_BY_TYPE_VALUE` pre-pairing check succeeds, but
+implements nothing else. The RC then attempts real BLE pairing (`LL_ENC_REQ`) — untested
+whether the mock's BlueZ stack actually completes pairing/bonding, and all post-pairing RC
+traffic is encrypted and not yet decoded (`memory/geberit-remote-control-ble.md`), so even a
+successful pairing wouldn't yet produce meaningful behavior. **Alba:** no RC-related GATT
+service exists at all — unknown whether Alba's real RC pairing uses the same `0xC526` UUID as
+Mera or a different one; needs a real-hardware BLE sniff of an Alba+RC pairing, analogous to
+the existing Mera capture. Relevant background investigations already in progress (not
+solutions to this REQ): `memory/mera-comfort-displacement-baseline.md` (remote recovers ~9s
+after app disconnect on real Mera hardware) and `memory/alba-remote-control-conflict.md` /
+`memory/alba-session-caching-fix.md` (Alba remote-displacement root cause still open). Scope
+not yet broken down in detail — likely needs: (1) BLE pairing/bonding support in the mock's
+GATT server stack (SMP/LTK, not just GATT characteristics — may require
+`bluez_peripheral`/BlueZ agent-level changes beyond what either mock currently does), (2)
+Alba's discovery surface identified and stubbed the same way Mera's is, (3) enough of the
+post-pairing encrypted protocol decoded/implemented for either mock to respond meaningfully
+rather than just complete pairing and go silent.
 
-### Phase 2 — verification (2026-07-16)
+### REQ-053 — Firmware-update procedure simulation
 
-Two independent checks, both against the real `hci0` adapter on the mock VM
-(`anneubuntu-studio`, `/home/jens/aquaclean_ble_relay/`), not just a syntax check:
+**Type:** Functional
+**Statement:** The mock simulates the real device's `ctx=0x40` firmware-update BLE procedure
+sequence (`StartFirmwareUpdate`/poll/keepalive/finalize) closely enough that the real Geberit
+Home App can drive a simulated firmware update against it end-to-end.
+**Status:** In Progress
+**Implementation Details:** Implemented for Mera only (`mera_mock.py`, from v1.83.0b1) — no
+real Alba firmware-update capture exists yet, so this is not a parity violation, just nothing
+to base an Alba equivalent on. `_dispatch()` has an early `ctx`-first branch: `ctx=0x40` (plus
+its `ctx=0x00/proc=0x01` companion frame) routes to `_proc_fw_update()` before the existing
+proc-keyed chain, because `proc=0x52`/`0x53` collide numerically with
+`SetStoredCommonSetting`/`GetStoredProfileSetting` under the default ctx (see
+`.claude/rules/ble-protocol.md` §"Firmware update procedures (ctx=0x40)" for the full decoded
+sequence). State machine `self._fw_update_state`: `idle → started → done → rebooting → idle`.
+`0x40/0x52` starts it; `0x40/0x53` polls it (`05`=busy/`06`=done); `0x40/0x04` while `done`
+triggers finalize — applies the `"rs30"` firmware profile via REQ-031's write hook,
+force-disconnects the current BLE link, then resets to `idle` after a delay so the app's
+natural reconnect sees updated firmware on the next `GetFirmwareVersionList`. `0x40/0x00`
+returns a fixed synthetic 12-byte keepalive payload (real captures show this value
+fluctuating per call without gating app progression, so an exact match wasn't pursued).
+Follow-up pass added: progress-notify frames on A5 (`_build_progress_frame()` +
+`_fw_update_run()`, 10 spontaneous notifications during the busy window, byte layout verified
+against the real capture — CRC16 matches exactly for progress=0 and progress=12, only the
+real device's trailing buffer-reuse garbage bytes beyond the declared body length differ, and
+this always zero-pads there instead); byte-count observability logging for the bulk
+firmware-binary transfer instead of a ~14,500-line meaningless hex dump; bulk-transfer
+crash-safety re-verified via code inspection (any non-CONTROL/non-SINGLE frame type falls
+through as a no-op, worst case a spurious "unknown proc" response the app isn't waiting on —
+no unguarded exception path). Deliberately not done: timers remain shortened, not byte-exact
+(`_FW_UPDATE_BUSY_SECONDS=20` vs. the real ~164s flash window; `_FW_UPDATE_REBOOT_SECONDS=8`
+vs. the real ~13.3s reboot silence) — a practicality choice for repeated test iterations; no
+checksum/content validation of the transferred image, since completion is signalled by the
+`0x40/0x53` poll, not the transfer itself. **Caveat, still open as of the last live test:**
+the busy-window behavior above was implemented and byte-verified in isolation but the first
+live test against a freshly-installed Geberit Home App never got past the `0x40/0x00`/
+`0x00/0x01` background-poll loop — the app never sent `0x40/0x52` at all, even after tapping
+"Update Now" and waiting ~9 minutes through repeated BLE reconnects. The mock's `0x40/0x00`
+response is well-formed and cleanly ACKed every time, so this wasn't a framing bug at that
+point — leading theories at the time were a readiness signal encoded in the real device's
+(varying, vs. the mock's static) `0x40/0x00` payload, or an unidentified `READ_BLOB_REQ` on
+handle `0x0020` spotted in the real capture during that window. **Root cause found and fixed
+2026-07-18/19, unrelated to either theory:** the actual blocker was that the mock never
+reassembled multi-frame incoming GATT WRITE requests — `_handle_request` dispatched on the
+FIRST frame of a multi-frame request alone and silently dropped any CONS continuation. The
+app's `GetFirmwareVersionList` 12-component onboarding query needs 13 args bytes (more than
+the 9 that fit in one 20-byte frame), so components 10/11/12/14 were silently missing from
+every response regardless of what firmware values were configured — this, not firmware
+content, is what looked like an unconditional "update required" blocker across every profile
+ever tried. Fixed by reusing the bridge's own `aquaclean_core.Frames.FrameCollector` for
+request-side reassembly (mirrors the bridge's own use of it for response-side reassembly, the
+opposite direction of the same wire format). Fixing that alone made onboarding *worse* (0/4
+connections) until a second, related gap was found: the real device sends a FlowControl
+CONTROL-frame ack after *every* received frame (confirmed byte-for-byte from
+`onboarding-real-mera.md`), not just every 4th frame or at completion (`FrameCollector`'s own
+built-in ack batching, correct for the *response* side, doesn't match this) — the app will not
+send a CONS continuation without that per-frame ack. Fixed by sending the ack directly,
+per-frame, before feeding the frame to the collector. **End-to-end confirmed working
+2026-07-19** (mock v1.99.1b1): full onboarding succeeds with a genuinely non-uniform, real
+firmware profile (`rs28`) and the real device's serial number — no "update required" blocker,
+no "Fehler," correct version shown in Maintenance→Firmware. This also retroactively disproves
+an earlier (now-corrected) theory recorded against REQ-035/REQ-028 that all components needed
+uniform values — that empirical "finding" was itself caused by this same request-truncation
+bug. Full incident write-up: `memory/mera-firmware-update-request-truncation.md` (local Claude
+memory). **Still not run:** an actual simulated firmware *upgrade* through this now-working
+onboarding path — the next planned test. **Also still open:** root-causing anything about
+the original background-poll-loop theories was superseded by finding the real cause above, so
+those specific theories were never individually confirmed or ruled out — moot now that the
+actual blocker is fixed and confirmed, but noted so a future reader doesn't go looking for a
+resolution to them specifically.
 
-1. **Byte-for-byte dispatch comparison.** Loaded `tools/mock-geberit-mera.py` and the new
-   `MeraMock` class in the same interpreter and called `_dispatch()` with identical
-   `(ctx, proc, args)` for all 13 implemented procedures (`0x82, 0x51, 0x53, 0x0A, 0x0D,
-   0x0E, 0x45, 0x59, 0x07, 0x05, 0x81, 0x86, 0x55`). **All 13 produced identical output
-   frames.** This is the part a live BLE run can't easily exercise for every procedure in
-   one pass, so it was checked directly.
-2. **Live run against the real Geberit Home App.** Started
-   `python3 -m aquaclean_ble_relay.mera_mock --port 8765 --adapter hci0` under `sudo` on
-   the VM and connected with the real app. Log confirms: adapter correctly resolved via
-   `select_adapter` (`Adapter: A0:AD:9F:72:C4:0F path: /org/bluez/hci0`), GATT registered,
-   all four notify characteristics (A5–A8) wired, advertisement started with the correct
-   article/company ID, a real device connected, and `GetFirmwareVersionList` /
-   `GetSystemParameterList` / `GetFilterStatus` all completed with every multi-frame
-   response fully ACKed. No warnings, errors, or tracebacks in the 494-line log; clean
-   shutdown on Ctrl+C. The app showed "Das Gerät benötigt einen Firmware-Update" —
-   confirmed to be identical behavior to `tools/mock-geberit-mera.py` (both report the same
-   real per-component firmware versions shipped since v1.76.0b1), not a regression from
-   this refactor.
+### REQ-054 — Post-update behavioral completeness
 
-Not yet exercised: the multi-instance-specific paths (adapter-tagged D-Bus app paths and
-log filenames, `_hci_index()` for a non-`hci0` adapter) — the VM only has one physical
-adapter, so this could only be verified with `adapter=None`/`"hci0"`. Multi-adapter
-behavior will get its first real test in Phase 5.
+**Type:** Functional
+**Statement:** The mock's behavior after a simulated firmware update reflects any
+BLE-observable change the corresponding real update introduced — not just the reported
+version string.
+**Status:** Open
+**Implementation Details:** *(none — not started; this is a completeness requirement for
+whenever a gap is found, not a currently-known gap.)* Added 2026-07-18. REQ-053's simulation
+only changes reported component version strings at the end of a simulated update; it does not
+represent any other behavioral change a real firmware update may have introduced. When a real
+device update is known to change anything BLE-observable for an affected component (a proc's
+response format, an SPL parameter's semantics, a newly supported command, a fixed protocol
+bug, etc.), the mock's code for that component should be updated to match. No such behavioral
+difference between RS28.0 and RS30.0 (or RS07.0/RS08.0 for the motion-detection component) has
+been found or is currently suspected from any live capture. See
+`local-assets/firmware/mock-firmware-update-completeness-scope.md` for the analysis approach
+(kept out of this tracked file per CLAUDE.md's rule on sensitive methodology terms) — in
+short, both the pre- and post-update firmware images are already extracted locally with
+matching per-node files, so this would be a diff between two already-available sources, not
+new extraction work; only a delta that changes what the app can observe over BLE would matter
+here.
 
-### Phase 3 — Alba: scope and how it differs from Mera's Phase 2/2b (2026-07-16)
+### REQ-055 — Active settings never persist
 
-Read `tools/mock-geberit-alba.py` fully before deciding scope, rather than assuming it
-needed the same two-phase treatment as Mera. It doesn't:
+**Type:** Functional
+**Statement:** Active settings (`0x0A`/`0x0B`, `GetActiveCommonSetting`/
+`SetActiveCommonSetting`) are session-scoped and re-derived from Stored NVM on every restart —
+they are never persisted themselves, matching how a real device always re-derives Active
+state from Stored NVM after a power-cycle.
+**Status:** Done
+**Implementation Details:** See REQ-006's Mera Implementation Details for how this is
+implemented (a session-scoped in-memory store seeded from `_STORED_COMMON_SETTINGS` at mock
+startup). Verified: writing `SetActiveCommonSetting` (id=0 → 6) is immediately visible via
+`GetActiveCommonSetting` within the same instance, but after a simulated restart it returns
+the value re-seeded from the (persisted) Stored setting, not the prior session's transient
+override.
 
-- **The DpId store and Arendi crypto session were already instance-scoped classes**
-  (`_Ble20AppLayer`, `_AriendiServerSide`), not module globals — `grep '^    global '`
-  returns nothing in the whole file. Only one true module-level mutable existed
-  (`_VERBOSE`, and it's dead — set but never read, in both the original script and this
-  port). So the "globals → instance attributes" work Mera's Phase 2 needed was already
-  done; this phase mainly wrapped `main()`'s ~600-line orchestration body into
-  `AlbaMock.run()`, with `mode`/`adapter_name`/`send_delay_sec`/`web_port` becoming
-  `self.*` at their ~11 actual touch points. Its nested closures needed no changes — they
-  already close over `main()`'s locals, which are just as valid as a method's locals.
-- **`_Ble20AppLayer._write()` already does real mutation** — nothing was stubbed, unlike
-  Mera's Phase 2 finding. So persistence wiring is included in this same phase, not split
-  into a Phase 3b.
-- **Every DpId row already carries a `behavior` field** (0=Info 1=Status 2=Command 3=Nvm
-  4=Protected) in `_DEFAULT_STORE`. Only `behavior==3` (Nvm) is a genuinely durable
-  setting — the persist decision falls straight out of data already in the table, no
-  separate namespace/persist classification needed (unlike Mera's multiple overlapping
-  index spaces). Six DpIds are Nvm today: 13 (ACCESS_CODE), 580–583 (STORED_ANAL_SPRAY_*),
-  795 (DEMO_MODE).
-- **`_Ble20AppLayer` is deliberately reconstructed fresh every BLE session** (unchanged
-  behavior — simulates a clean device state machine per connection). Each fresh
-  construction now reloads persisted Nvm values from `mock_persistence.py`, so this
-  "fresh per session" design ends up giving Alba's mock *better* restart fidelity than
-  Mera's for free: a setting survives not just a mock restart but every single new BLE
-  session, without needing a Mera-style "seed once at process start" step.
-- **Logging conversion is deferred to Phase 7, deliberately, unlike Mera.** Mera had one
-  hardcoded logger, trivially replaced. Alba uses a module-level timestamped `print()`
-  override across hundreds of call sites in `_Ble20AppLayer`, `_AriendiServerSide`, and
-  the session loop. Converting those is exactly Phase 7's scope ("Logging polish") —
-  doing it piecemeal here would leave a half-converted mix of `self.logger` and `print()`,
-  worse than deferring wholesale. `AlbaMock` has no `self.logger` in this phase.
-- **D-Bus GATT app paths tagged with the adapter**, same reasoning as Mera's Phase 2 —
-  the original hardcoded paths (`/org/bluez/example/geberit` etc.) would collide the
-  moment a second instance runs in the same process.
-- **Adapter selection** goes through the shared `mock_bluez_adapter.select_adapter`,
-  removing this script's own byte-identical inline copy (confirmed identical before
-  removing it — no behavior change).
+---
 
-### Phase 3 — verification (2026-07-16)
+## Retired sections
 
-Same VM, same techniques as Phase 2/2b:
+The previous "§10 Decisions log" and "§11 Implementation plan & phase status" tables are
+retired as of this refactor (2026-07-19) — every row in both mapped onto exactly one REQ
+above, and keeping a second copy of the same status risked drifting out of sync. Where each
+one moved:
 
-1. **Import-only smoke test** — clean.
-2. **Byte-for-byte protocol comparison.** Instantiated `_Ble20AppLayer` from both
-   `tools/mock-geberit-alba.py` (deployed to the VM matching the current repo hash,
-   confirmed via `sha256sum`) and the new `aquaclean_ble_relay/alba_mock.py` in the same
-   interpreter. `_inventory()` matched byte-for-byte (80 DpIds); `_read()` matched
-   byte-for-byte for **all 79 addressable DpIds** in `_DEFAULT_STORE`.
-3. **Persistence round-trip.** Writing DpId 580 (`STORED_ANAL_SPRAY_INTENSITY`, Nvm)
-   persists immediately (logged `— persisted`) and survives constructing a fresh
-   `_Ble20AppLayer` with the same `device_key` (simulated new session/restart). Writing
-   DpId 564 (`ANAL_SHOWER_STATUS`, Status not Nvm) does **not** log persisted and correctly
-   reverts to its default in a fresh instance. Raw DB after the sequence: exactly
-   `{'dpid:580': '02'}` — nothing else leaked in.
+**Former decisions log** → REQ-009 (single `--model` registry), REQ-007 (standalone wrappers
+kept), REQ-049 (webui bind-failure — was already "Open" in the decisions log too), REQ-037
+(fresh generic frontend module), REQ-032 (independent per-device routing).
 
-Not yet run: a live session against the real Geberit Home App or the bridge's
-`Ble20Client` completing the full Arendi handshake against this class (the scripted tests
-drive `_Ble20AppLayer`/`_dispatch_sync` directly, bypassing the handshake and D-Bus/GATT
-layers — same limitation noted for Mera's Phase 2b). Flagged as a follow-up, not blocking,
-since the underlying protocol logic and persistence are now verified directly and the
-D-Bus/GATT/advertisement wiring is a near-verbatim port of Mera's already-verified pattern.
+**Former phase table** → Phase 1 (shared modules) → REQ-004/REQ-046; Phase 2/2b (Mera class +
+persistence) → REQ-006; Phase 2c (Mera per-instance identity) → REQ-030; Phase 3 (Alba class)
+→ REQ-006; Phase 4 (single-device orchestrator) → REQ-002; Phase 5 (multi-device concurrency)
+→ REQ-003; Phase 6 (webui) → REQ-032 through REQ-038; Phase 7 (logging) → REQ-039 through
+REQ-044; Phase 8 (Sela mock) → not yet a REQ at all (no detailed requirement has been written
+for Sela beyond "plugs into the same class/registry pattern once built," per REQ-009's
+registry design already being open-ended enough to accept it — tracked as a pre-existing
+`docs/roadmap.md` item, not duplicated here); Phase 9/9a/9b/9c (firmware override/persistence/
+update-simulation/profile-selector) → REQ-011, REQ-031, REQ-053/REQ-054, REQ-035/REQ-036;
+Phase 10 (SetCommand) → REQ-050; Phase 11 (webui device-state) → REQ-051; Phase 12 (Remote
+Control) → REQ-052; Phase 13 (no hardcoded values) → REQ-012 through REQ-020; Phase 14 (User
+sitting toggle) → REQ-038.
 
-### Phase 4 — `mock_service.py`, single device (2026-07-16)
-
-**Motivation, ahead of schedule:** the plan had logging as Phase 7, after multi-device
-(Phase 5). Brought forward to Phase 4 because testing `alba_mock.py` directly hit the exact
-problem Phase 7 exists to solve — Alba has no log file at all (print()-only), so every test
-required manually retyping a `| tee <name>.log` filename. `mock_service.py` gives every run
-an auto-named log file now, without waiting for the full per-device-logger conversion.
-
-**What's implemented:**
-- `--device model=NAME,adapter=HCI[,...]` — the §3-decided single open-ended `--model`
-  lookup table. Each registry entry carries a class *and* that model's sensible defaults:
-  `_MODEL_REGISTRY = {"mera": {"cls": MeraMock, "defaults": {}}, "alba": {"cls": AlbaMock,
-  "defaults": {"mode": "ble20"}}}`. Every field besides `model` is passed straight through
-  as a constructor kwarg to whichever class `model` maps to (numeric-looking values coerced
-  to `int`/`float`), merged over the registry defaults — explicit `--device` fields always
-  win. This is what lets `mode=`/`send_delay_sec=` (Alba-only) and `web_port=`/`state_dir=`
-  (both) reach the right model without `mock_service.py` hardcoding either model's parameter
-  list.
-- **Model-specific defaults, not just the class.** `AlbaMock` itself still defaults to
-  `mode="unsupported"` — faithful to the original script, which deliberately uses that as
-  its own default to test the HACS unsupported-device screen. But nobody saying "mock an
-  Alba" through this orchestrator wants that by default; they want the functional protocol.
-  So the *registry* overrides it to `mode="ble20"`, leaving `AlbaMock`'s own default
-  untouched — `model=alba,adapter=hci0` alone now gives a fully functional Alba mock;
-  `model=alba,adapter=hci0,mode=unsupported` still reaches the original behavior explicitly.
-- `--state-dir` (global) — passed to the model as `state_dir`; also anchors the
-  auto-named log file at `<state_dir>/logs/mock-<model>-<adapter>_<timestamp>.log`.
-- `--list-models` — enumerates the registry *and* each model's defaults (§3's
-  discoverability requirement) — e.g. prints `alba (defaults: {'mode': 'ble20'})`.
-- Startup validation at parse time, not after connecting to D-Bus: unknown model, malformed
-  `--device` field, and more than one `--device` (Phase 4 is deliberately single-device
-  only — multi-device is Phase 5) all fail with a clear `argparse` error before anything
-  BLE-related happens. An unexpected kwarg for a given model (e.g. `mode=` for Mera, which
-  has no such parameter) fails the same way via a caught `TypeError`.
-- Logging: process-wide `sys.stdout`/`sys.stderr` tee to the auto-named file — deliberately
-  an interim, single-device-appropriate solution (module docstring flags this explicitly).
-  It cannot separate concurrent devices' output, so Phase 5 + Phase 7 need to replace it
-  with true per-device handlers. Running `MeraMock` through this means its output lands in
-  both the tee file and Mera's own independent per-adapter log file (Phase 2) — redundant
-  but harmless; also cleaned up in Phase 7, not this phase.
-
-**Verified on the mock VM** (`--list-models`, `--help`, and all four error paths — unknown
-model, malformed field, >1 `--device`, bad kwarg for a model — each produces the expected
-error and exit code 2, confirmed by hand).
-
-**Bug found on the first real run (2026-07-16), fixed same day:** `--mode ble20` starts a
-`uvicorn` web server (the NOTIFY control UI); `uvicorn.Config.__init__` configures its
-logging and calls `sys.stdout.isatty()`. `_Tee` only implemented `write()`/`flush()`, so
-this crashed with `AttributeError: '_Tee' object has no attribute 'isatty'`. Fixed by adding
-`isatty()` (delegated to the original console stream, not the log file) plus a generic
-`__getattr__` fallback delegating anything else (`fileno`, `encoding`, ...) to the same
-stream — so the next library that probes an unexpected file-like attribute on `sys.stdout`
-doesn't hit the same class of bug. This is exactly the kind of thing the "not yet run: a
-live session" caveats on Phases 2b/3/4 were flagging — verified logic only goes so far.
-
-**Live end-to-end run against the real Geberit Home App (2026-07-16), after the `isatty`
-fix:** `mock_service.py --device model=alba,adapter=hci0` (defaulting to `mode=ble20` per
-the registry-defaults fix above) — real device connected, full Arendi handshake completed
-three times across reconnects, 268 lines of Inventory/Read activity. This closes the "not
-yet run: a live session" gap noted in Phase 3's verification.
-
-Getting here also surfaced a real, non-code gotcha — **not specific to Alba** — now
-documented in `docs/developer/mock-geberit-alba.md` §"Known behaviour/gotchas" #5: the
-Geberit Home App would not discover the Alba mock at all while it still had a *different*
-mock model (Mera) registered as a known device at the same adapter's BLE MAC. The app's
-device list is keyed by MAC, not by GATT profile, so this bites in either direction — a
-Mera entry blocks a later Alba mock at the same MAC, and equally an Alba entry would block
-a later Mera mock, or any future model sharing that adapter (Sela, once it exists). Deleting
-the stale app-side entry fixed it immediately. A `btmon` capture during the failure
-initially pointed at BT5 Extended Advertising (the same issue Mera hit in June,
-`e905a33`/`e05fc99`) as a plausible cause; that turned out to be a red herring — the
-advertisement payload was confirmed byte-identical to the known-working original script.
-Worth remembering before assuming a code regression: check the app's own device list first
-when switching `--device model=` between test sessions on a shared `adapter=`.
-
-### Phase 5 — multi-device concurrency (2026-07-16)
-
-**Reframed the scope while implementing.** The original plan assumed devices need separate
-adapters. Wrong: BlueZ supports multiple GATT applications and multiple advertisement
-instances per adapter (confirmed — the mock VM's single adapter reports
-`SupportedInstances: 0x03`), so two devices *can* share one adapter. The real constraint is
-narrower: no two devices may register under the same D-Bus object paths or bind the same
-TCP port. Found and fixed three concrete bugs this exposed, none of which were visible with
-only one device running (Phases 2–4):
-
-1. **D-Bus GATT app path collision between different models on the same adapter.**
-   `mera_mock.py`/`alba_mock.py` tagged app paths by adapter only — `battery`/`dis` are
-   generic service names both models use, so a Mera and an Alba mock sharing an adapter
-   would collide on `/org/bluez/example/battery_hci0` etc. Fixed: paths now prefixed by
-   model name *and* adapter in both files.
-2. **`MeraMock`'s `_emit_interface_added` suppression patched the class, not the
-   instance.** Flagged as a known limitation back in Phase 2 ("revisit before Phase 5").
-   Fixed: patches `bus._emit_interface_added` as an instance attribute on that device's own
-   `bus` object (Python attribute lookup checks the instance `__dict__` before the class,
-   so this shadows the class method for one bus only) instead of
-   `dbus_next.message_bus.BaseMessageBus` at the class level. Two concurrent registrations
-   no longer race each other's patch/restore.
-3. **Web UI port collision.** `MeraMock` and `AlbaMock` both default `web_port=8765` and
-   each binds a real listener there (Mera always; Alba whenever `mode="ble20"`, the
-   registry default) — found by actually running two devices together, where it surfaced as
-   `OSError: address already in use` deep inside `uvicorn`'s startup, on the second
-   device's task, well after the first was already running. Fixed with the same fail-fast
-   pattern as the `(model, adapter)` duplicate check: 2+ `--device` entries now require an
-   explicit, distinct `web_port=` on every one, checked before any device starts.
-
-**`mock_service.py` changes:**
-- Removed the "exactly one `--device`" restriction; each spec becomes its own `asyncio`
-  task, launched together via `asyncio.gather` inside one `asyncio.run`.
-- Duplicate-`(model, adapter)` pairs are rejected at parse time (sharing an adapter across
-  *different* models is fine and now the tested path — see below).
-- All requested adapters are validated to exist via one throwaway D-Bus connection
-  *before* any device starts, so a typo'd `--adapter` fails the whole batch immediately
-  rather than only the affected device failing deep inside GATT registration.
-- Log filename now reflects the whole device batch (`mock-<model1>-<adapter1>+<model2>-
-  <adapter2>_<timestamp>.log`) for 2+ devices; unchanged single-device filename for one.
-  Still one combined `sys.stdout`/`sys.stderr` tee — cannot separate concurrent devices'
-  interleaved lines into distinct files; that's still Phase 7.
-
-**Verified on the mock VM (no sudo needed for these — pure validation/parsing logic):**
-missing `--device`, duplicate `(model, adapter)`, unknown adapter (fails the whole batch,
-confirmed via a real throwaway D-Bus connection listing `hci0` as the only available
-adapter), missing `web_port` with 2+ devices, and duplicate `web_port` — each produces the
-expected `argparse`-level error before touching any BLE/D-Bus registration.
-
-**Correction (2026-07-16, same day): sharing one adapter is not a good test of "the Geberit
-Home App discovers two devices independently."** The BlueZ-multiplexing argument above is
-correct at the D-Bus/GATT/advertising-*instance* level, but it doesn't mean two devices
-sharing an adapter are independently discoverable by the app. A BLE advertisement is
-transmitted from the adapter's own BD address (MAC); `bluez_peripheral`'s simple
-`Advertisement` object doesn't configure per-instance private/random addressing, and this
-adapter advertises with its real public MAC (confirmed, privacy off — see
-`memory/mock-ble-advertising-mac.md`). So two advertisement instances registered on the
-same adapter very likely transmit **two different payloads from the identical MAC,
-simultaneously** — which reproduces (arguably worsens) the exact MAC-keyed-device-list
-confusion documented in the Phase 4 gotcha (§"mock-geberit-alba.md" #5), just concurrent
-instead of sequential.
-
-**What sharing one adapter *is* still good for:** testing the mocks' own GATT/protocol/
-persistence correctness concurrently, via direct-connect tooling (bleak scripts,
-`gatttool`, a bridge-side automated test) that connects by MAC + specific service UUID
-rather than relying on the Home App's scan-and-match heuristics.
-
-**What it's *not* good for:** getting the real Geberit Home App to treat two mocks as
-independently discoverable at once. That specific test needs two physically separate
-adapters (two distinct MACs) — a hardware requirement for *that* test, not a code
-limitation. The mock VM turns out to have exactly that available:
-```
-hci0  A0:AD:9F:72:C4:0F  (Realtek, BT 5.1)  — used in all testing so far
-hci1  00:1A:7D:DA:71:13  (Cambridge Silicon Radio, BT 4.0) — previously unused
-```
-
-**Not yet verified: two devices actually registering and advertising concurrently on real
-hardware.** This needs `sudo` (not available to me directly over SSH) — first test, using
-the two separate adapters above to sidestep the MAC-sharing issue entirely:
-```bash
-sudo /home/jens/venv/bin/python3 -m aquaclean_ble_relay.mock_service \
-  --device model=mera,adapter=hci0,web_port=8765 \
-  --device model=alba,adapter=hci1,web_port=8766
-```
-Expect both to register GATT services and advertise independently, each under its own
-adapter's MAC. Worth checking `bluetoothctl show` mid-run for both adapters' state, and
-discovering/connecting to each independently from the Geberit Home App (remembering the
-Phase 4 gotcha: delete any stale device entry from a previous single-device test first — a
-fresh MAC per adapter should mean this is now a non-issue for this specific test, but the
-first `hci0` run reused the same MAC as every earlier test this session).
-
-A **second, separate test** — two devices sharing `hci0` (the original Phase 5 plan) —
-remains worth doing to confirm the D-Bus/GATT-level fixes (path prefixing, instance-scoped
-`_emit_interface_added`) work under real concurrent registration, but verify it via direct
-BLE connect tooling, not the Home App's scan, per the correction above.
-
-**First live run (2026-07-16), `hci0`=Mera + `hci1`=Alba:** Alba connected and saved
-cleanly. Mera hit an unrelated, pre-existing bug — not a Phase 5 issue, present in
-`tools/mock-geberit-mera.py` unmodified — an iOS system pairing dialog interrupted the
-connection. Root cause and fix: see `docs/developer/mock-geberit-mera.md` §"Battery plugin
-interaction", "Regression and re-fix (2026-07-16, v1.77.0b1)". Once past that, Mera reached
-the already-known-expected "firmware update required" state (real per-component firmware
-versions). Concurrent registration itself (the actual Phase 5 subject) was not the blocker.
-
-### Phase 9b — firmware-update process simulation, minimal version (2026-07-17)
-
-**Implemented (Mera only — no real Alba firmware-update capture exists yet, so this is not
-a parity violation, just nothing to base an Alba equivalent on).** `mera_mock.py` v1.83.0b1:
-- `_dispatch()` gained an early `ctx`-first branch — `ctx=0x40` (plus its `ctx=0x00/proc=0x01`
-  companion frame) routes to `_proc_fw_update()` before the existing proc-keyed chain, because
-  `proc=0x52`/`0x53` collide numerically with `SetStoredCommonSetting`/`GetStoredProfileSetting`
-  under the default ctx. See `.claude/rules/ble-protocol.md` § "Firmware update procedures
-  (ctx=0x40)" for the full decoded sequence this implements.
-- State machine `self._fw_update_state`: `idle -> started -> done -> rebooting -> idle`.
-  `0x40/0x52` (StartFirmwareUpdate) starts it; `0x40/0x53` polls it (`05`=busy/`06`=done);
-  `0x40/0x04` while `done` triggers finalize — applies the `"rs30"` firmware profile via the
-  existing `_apply_firmware_profile()`/`_set_fw_version()` write hook (Phase 9a, previously
-  unused), force-disconnects the current BLE link via `Device1.Disconnect()` (reusing the
-  `self._bus`/`self._current_device_path` pattern already used by `_request_short_ci()`), then
-  resets to `idle` after a delay so the app's natural reconnect sees updated firmware on the
-  next `GetFirmwareVersionList`.
-- `0x40/0x00` returns a fixed synthetic 12-byte keepalive payload; real captures show this
-  value fluctuating per call without gating app progression, so an exact match wasn't pursued.
-
-**Follow-up pass (2026-07-17) — implemented:**
-- **Progress-notify frames on A5** — `_build_progress_frame()` + `_fw_update_run()` now emit
-  10 spontaneous notifications during the busy window (message id=6, distinct from proc-
-  response id=5), incrementing by 84 each (reaching 840, matching the real capture's observed
-  final value, compressed into the shortened window). Byte layout verified against the real
-  capture: CRC16 matches exactly for progress=0 and progress=12 (reconstructed independently
-  via `CrcMessage.create(6, 0x00, body)` and compared byte-for-byte against
-  `firmware-update-vom-mac.md`) — only the real device's trailing buffer-reuse garbage bytes
-  (beyond the declared 8-byte body length, therefore outside what any correct parser reads)
-  differ, and this always zero-pads there instead of replicating that garbage.
-- **Byte-count observability logging** for the bulk firmware-binary transfer —
-  `MeraService._log_write()` now suppresses the per-frame hex dump on A1-A4 while
-  `_fw_update_state == "started"` (would otherwise be ~14,500 meaningless hex-dump lines for
-  the real ~290KB transfer) and logs a running total every 8192 bytes per channel instead.
-  Counters reset on every new `StartFirmwareUpdate`.
-- **Bulk-transfer crash-safety** — re-verified via code inspection (not yet exercised live,
-  see caveat below): `_handle_request` only acts on `ft == CONTROL` or `ft == SINGLE`; any
-  other frame type from `_FrameFactory.getFrameTypeFromHeaderByte()` (the expected outcome for
-  most random firmware bytes) falls through as a no-op. Worst case for bytes that do parse as
-  a plausible header is a spurious "unknown proc" response the app isn't waiting on — no
-  unguarded exception path exists.
-
-**Still deliberately not done:**
-- **Timers remain shortened**, not byte-exact: `_FW_UPDATE_BUSY_SECONDS=20` (real flash
-  window: ~164s) and `_FW_UPDATE_REBOOT_SECONDS=8` (real reboot silence: ~13.3s) — a
-  practicality choice for repeated test iterations, not a gap.
-- **No checksum/content validation** of the transferred firmware image — not needed, since
-  completion is signalled by the `0x40/0x53` poll, not by the transfer itself.
-
-**Important caveat (2026-07-17 live test):** none of the busy-window behavior above —
-progress-notify frames, bulk-byte logging, or the bulk-transfer tolerance — has actually been
-exercised live yet. The first live test against a freshly-installed Geberit Home App with the
-RS28.0 profile never got past the `0x40/0x00`/`0x00/0x01` background-poll loop: the app never
-sent `0x40/0x52` (StartFirmwareUpdate) at all, even after tapping "Update Now" and waiting ~9
-minutes through repeated BLE reconnects. The mock's `0x40/0x00` response is well-formed and
-cleanly ACKed every time (verified from the mock's own log), so this isn't a framing bug — the
-leading theory is that the app is waiting on some readiness signal (the real device's
-`0x40/0x00` payload varies call-to-call; the mock's `_FW_UPDATE_KEEPALIVE` is static) or on a
-GATT characteristic outside the proc-frame protocol entirely (e.g. an unidentified
-`READ_BLOB_REQ` on handle `0x0020` spotted in the real capture during this exact window).
-Root-causing this needs a fresh nRF52840 capture of the Geberit Home App talking to the mock
-itself (not just the existing real-device capture) — pending, needs the user's sniffing
-hardware. Until that's resolved, the busy-window code above is implemented and byte-verified
-in isolation, but unconfirmed end-to-end.
-
-**Requirement — completeness scope (2026-07-18):** the simulation above only changes
-*reported* component version strings at the end of a simulated update; it does not represent
-any other behavioral change the corresponding real firmware update may have introduced. When
-a real device firmware update is known to change anything BLE-observable for an affected
-component (a proc's response format, an SPL parameter's semantics, a newly supported
-command, a fixed protocol bug, etc.), the mock's code for that component should be updated to
-match — not just its reported version number. No such behavioral difference between RS28.0
-and RS30.0 (or RS07.0/RS08.0 for the motion-detection component) has been found or is
-currently suspected from any live capture; this is a completeness requirement for whenever
-one is found, not a known current gap. See `local-assets/firmware/mock-firmware-update-
-completeness-scope.md` for the analysis approach (not detailed here — see CLAUDE.md's rule on
-sensitive methodology terms in tracked files).
+**Implementation order** (the one thing the old phase table conveyed that a flat REQ list
+doesn't make explicit — dependency sequencing, not status):
+REQ-004/REQ-046 (shared modules) before REQ-006 (per-model class refactor, both models) before
+REQ-002 (single-device orchestrator) before REQ-003 (multi-device concurrency) before REQ-032
+onward (webui) and REQ-039 onward (logging), which were in practice built in parallel with/
+slightly ahead of REQ-003. REQ-031 (firmware persistence) before REQ-053 (update simulation,
+which depends on it) before REQ-035 (profile selector, which reuses REQ-053's write hook).
+REQ-029 (Alba per-instance identity) is the precedent REQ-030/REQ-012 (Mera's + the general
+case) still need to follow.
