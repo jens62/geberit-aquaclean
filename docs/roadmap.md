@@ -719,6 +719,33 @@ anneubuntu-studio; this would mainly help future setups on a new/rebuilt machine
 
 ---
 
+### `aquaclean_ble_relay` — eventual graduation to its own repo (deferred 2026-07-19)
+
+Raised by the user: they want to tag `aquaclean_ble_relay` independently from the bridge
+(`aquaclean_console_app`), motivated by a longer-term plan — the mock service is a first step
+toward a real, user-installable BLE relay application, shipped with its own `install.sh`/
+`update.sh` the way the bridge already is (`docs/roadmap.md`'s existing `--scan` CLI item and
+`.claude/rules/release-process.md` describe that pattern for the bridge today).
+
+**Answer given:** a plain git tag can't do this — it's just a pointer into the one shared
+commit timeline, not a filtered history. `git subtree split -P aquaclean_ble_relay -b
+mock-only` genuinely can produce a filtered, mock-only commit history to tag independently,
+but subtree's usual failure mode is having to keep re-splitting/re-syncing forever as both
+areas keep changing. The cleaner path, when this is actually picked up: use `subtree split`
+(or `git filter-repo`) **once** to extract `aquaclean_ble_relay` into its own standalone repo
+with history preserved, then version/tag it normally there — no ongoing subtree relationship
+to maintain. Also worth remembering: the bridge's actual `update.sh` mechanism curls a pinned
+commit SHA, not a tag (per `release-process.md`) — tags matter for human-readable
+versioning/changelog, not for the install/update mechanism itself, so this doesn't have to be
+solved before an `install.sh`/`update.sh` could exist for the mock.
+
+**Status:** deferred, explicitly — "leave as is for now." Revisit once the mock's feature set
+(§4a above, Phase 9b/13, etc.) is more settled; worth a dedicated planning conversation before
+acting, not a quick fix. Don't re-raise unprompted; re-read this note if the user brings up
+tagging/releasing/installing `aquaclean_ble_relay` again.
+
+---
+
 ### Mera mock: "real reference" identity/firmware values are hardcoded to our one test device
 
 `_IDENTITY_REAL_REFERENCE` in `mera_mock.py` (the "real: ..." hint shown next to each
