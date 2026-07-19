@@ -230,9 +230,34 @@ App connection attempt. Removed again in v1.77.0b1 (both `tools/mock-geberit-mer
 `aquaclean_ble_relay/mera_mock.py`) — the button press now only updates the advertisement
 byte, no `pairable` toggle. Trade-off: RC pairing via this button-press window no longer
 completes SMP; the RC pairing GATT service stub (0xC526) still exists and is still
-discoverable, just not pairable through this path anymore. If RC pairing testing is
-needed again, it needs a way to scope pairing to just the RC's connection, not a blanket
-adapter-wide `pairable=on` — don't reintroduce this a third time without solving that.
+discoverable, just not pairable through this path anymore.
+
+**The rule above may now be obsolete — needs re-verification, not a third revert on sight
+(2026-07-19).** `ee3171b` (2026-07-16 17:19) diagnosed the same root cause as the original
+`b374e24` fix: BlueZ's built-in **Battery plugin** acting as a GATT *client*, trying to read
+Battery Level from the connected iOS device on every connection; iOS refuses the
+unauthenticated read; BlueZ escalates by spontaneously issuing an SMP Security Request, which
+iOS surfaces as the system pairing dialog. This is entirely a Linux/BlueZ-host artifact —
+real Mera hardware has no Linux desktop-style "show battery icon for connected accessories"
+feature, so this mechanism has nothing to do with the actual Geberit protocol or real hardware
+behavior.
+
+**The very next day (2026-07-17)**, this same Battery-plugin mechanism was independently
+diagnosed and fixed at the systemd level on `anneubuntu-studio` — a `bluetooth.service.d`
+drop-in override forcing `bluetoothd --noplugin=battery` (see
+`memory/mera-mock-battery-plugin-fix.md`), verified across two fresh test sessions with zero
+recurrences of the SMP pairing-failure cycle. **Nobody has gone back to check whether
+`pairable=on` is now actually safe again with that systemd override in place** — `ee3171b`'s
+revert was correct for the environment it was tested against (battery plugin still active),
+but that environment no longer matches the current one on `anneubuntu-studio`. Before deciding
+between "scope pairing to just the RC" (this section's prior recommendation) and "leave
+`pairable on` permanently, matching real hardware's apparent always-on behavior," re-test:
+confirm the systemd override is active (`systemctl show bluetooth.service -p ExecStart` should
+show `--noplugin=battery`), re-enable `pairable=on` in the mock, and check whether the iOS
+pairing dialog still appears during a normal Home App connection. **The systemd override is
+not automated or scripted anywhere in this repo** — it's a manual host-level config applied
+once on one specific machine; if RC testing happens on a different host, or that host's
+systemd config is ever reset, the original bug reappears silently with no repo-level warning.
 
 ### Connection-interval request was always dead code — removed 2026-07-17
 

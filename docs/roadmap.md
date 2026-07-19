@@ -1100,41 +1100,46 @@ cannot be put back to RS28.0 after the update.
 
 ### Mock Mera: RC pairing follow-up — clear bond and test (from commit 2b565b0) ★ NEXT
 
-**Corrected 2026-07-19, twice** — the framing below overstated certainty both times; see
-`docs/developer/mock-service-requirements.md` REQ-052 for the full corrected analysis. Kept
-here for the concrete bond-clearing commands, but read the Open Question note first.
+**Corrected 2026-07-19, three times** — the framing below overstated certainty each time; see
+`docs/developer/mock-service-requirements.md` REQ-052 for the full corrected analysis, and
+`docs/developer/mock-geberit-mera.md` § "Battery plugin interaction" for the concrete trigger
+finally identified below. Kept here for the concrete bond-clearing commands.
 
 **Context:** commit 2b565b0 (2026-06-26, v1.73.0b1) added Device Information Service
 (0x180A), the RC pairing service stub (0xC526), and fixed the "Already Exists" GATT
 re-registration race (`_force_remove_and_reregister`). It also reintroduced
 `btmgmt pairable on/off` toggling in the button-press handler — **but that was reverted again
-on 2026-07-16** (adapter-wide `pairable=on` reportedly also makes the mock answer iOS's own
+on 2026-07-16** (`ee3171b`, adapter-wide `pairable=on` also makes the mock answer iOS's own
 system pairing dialog during normal Home App onboarding, breaking it). As of today the mock
 unconditionally sets `pairable off` at startup and never turns it back on.
 
-**Open question, not a confirmed blocker (downgraded again 2026-07-19):** it's unverified
-whether `pairable=on` breaking Home App onboarding is a real-hardware-matching constraint at
-all. `onboarding-real-mera.pcapng` (a full real Home App onboarding session) contains **zero**
-`LL_ENC_REQ` frames — the Home App never attempts BLE pairing on real hardware, matching the
-observation that it never shows as "paired" in iOS either way. The RC's captures, by contrast,
-show a real SMP sequence every time. Real Mera has one physical button/procedure for both RC
-and Home App pairing, so it can't be toggling "pairable" based on who's connecting — the
-simplest explanation is that real Mera is always willing to respond to SMP if asked, and the
-Home App just never asks. That means the mock's dialog-on-`pairable=on` symptom may be a
-mock-specific BlueZ/`bluez_peripheral` bug (e.g. a proactive Security Request from GATT
-permission flags or agent defaults), not something to design a scoped-pairing workaround
-around. Investigate the actual trigger before deciding between "fix the bug, leave `pairable
-on` permanently" and "build a time-boxed RC-only pairing mode."
+**The trigger is identified, and it may already be fixed as of the next day.** `ee3171b`
+diagnosed the same mechanism as the original 2026-06-22 fix (`b374e24`): BlueZ's built-in
+Battery plugin reads Battery Level from the connected iOS device on every connect; iOS refuses
+the unauthenticated read; BlueZ escalates with a spontaneous SMP Security Request, which iOS
+shows as its system pairing dialog. This is a Linux-BlueZ-host artifact with no real-hardware
+equivalent — confirmed separately: `onboarding-real-mera.pcapng` (a full real Home App session)
+contains zero `LL_ENC_REQ` frames, so the Home App never attempts BLE pairing on real hardware
+either, and real Mera has one physical button/procedure for both RC and Home App pairing, so it
+can't be toggling a pairable flag by client type. **One day after `ee3171b` (2026-07-17)**, this
+same Battery-plugin mechanism was independently diagnosed and fixed at the systemd level on
+`anneubuntu-studio` (`--noplugin=battery` drop-in override, `memory/mera-mock-battery-plugin-fix.md`,
+verified with zero recurrences across two test sessions) — but nobody has gone back to check
+whether `pairable=on` is now safe again in the mock's own code with that override in place.
+**Before building the scoped RC-only pairing mode this section previously assumed was needed**:
+confirm the override is still active (`systemctl show bluetooth.service -p ExecStart`), restore
+`pairable on` in the mock, and re-test a normal Home App connection. If the dialog is gone,
+drop the scoped-pairing-mode design — the constraint it was solving may no longer exist.
 
 **Bond mismatch — unconfirmed hypothesis, not a demonstrated root cause.** The RC
 (`B0:10:A0:68:5C:8B`) does hold a bond (LTK) with the real toilet (`38:AB:41:2A:0D:67`), and
 if it reconnects with a stale EDIV+Rand the mock would have no matching LTK. But the
 2026-06-25 test this was inferred from only showed the RC **never appearing in the mock's log
 at all** — no capture has ever shown the RC actually sending `LL_ENC_REQ` against the mock and
-failing. Don't treat this as verified; test it only after the pairable-scoping blocker above
-is fixed, with a sniffer running to see what actually happens.
+failing. Don't treat this as verified; test it only after pairing actually works end to end
+(per the re-test steps above), with a sniffer running to see what actually happens.
 
-**Bond-clearing commands, for use once pairable-scoping is fixed** (mock must be stopped first):
+**Bond-clearing commands, for use once pairing works** (mock must be stopped first):
 
 Bonds (LTKs) are stored persistently in `/var/lib/bluetooth/<adapter-MAC>/` and survive
 reboots until explicitly removed.

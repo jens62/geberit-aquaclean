@@ -1659,8 +1659,9 @@ Added 2026-07-17, revised 2026-07-19 after re-checking the actual current mock s
 against the claims in this REQ and in `docs/roadmap.md`.
 
 **Mera — infrastructure present, `pairable off` still in place, but "architectural blocker" is
-now downgraded to an open question — corrected 2026-07-19, third revision of this REQ the same
-week.** `mera_mock.py` has Device Information Service (`0x180A`, real Mera version string) and
+now downgraded to an identified, likely-already-fixed non-issue — corrected 2026-07-19,
+several revisions of this REQ the same day (see below for the concrete trigger).**
+`mera_mock.py` has Device Information Service (`0x180A`, real Mera version string) and
 `_RCPairingService` (GATT service UUID `0xC526`, so the RC's `FIND_BY_TYPE_VALUE` pre-pairing
 check succeeds) since commit `2b565b0`, plus a GATT re-registration race fix
 (`_force_remove_and_reregister`). The mock unconditionally sets the adapter to `pairable off`
@@ -1689,35 +1690,53 @@ Home App onboarding, which broke onboarding and was reverted twice (v1.31.0, the
   mechanism, `.claude/rules/ble-protocol.md` § "SensorState") — a separate concern from BLE
   pairability.
 - **This means the mock's `pairable=on` → iOS-dialog symptom was never verified to be a
-  real-hardware-matching constraint.** It's equally, perhaps more plausibly, a mock-specific
-  BlueZ/`bluez_peripheral` side effect (e.g. the adapter or a GATT characteristic's permission
-  flags proactively issuing a Security Request once pairable, something real hardware's
-  embedded stack apparently never does regardless of pairable state, since the Home App never
-  triggers one there either way). That hasn't been dug into yet — see the Open Question below.
-- **Practical consequence**: don't design the "scoped RC-only pairing mode" work item below as
-  settled architecture. If the mock's dialog trigger turns out to be a fixable BlueZ/GATT
-  permission bug, the correct fix is simpler — leave `pairable on` permanently (matching real
-  hardware's apparent always-on-but-never-asked behavior) and fix whatever proactively
-  triggers the Security Request, rather than building a time-boxed pairing-mode workaround for
-  a constraint that may not actually exist on real hardware.
+  real-hardware-matching constraint** — and it turns out not to be one. See below: the trigger
+  is identified, and it's purely a mock-host artifact.
 
-**Open question, not yet investigated**: what exactly in the mock's BlueZ configuration issues
-the Security Request when `pairable=on`. Candidates: `bluez_peripheral`'s default agent/IO
-capability behavior on connect; a GATT characteristic defined with an encrypted read/write
-permission flag (intentional or accidental); or BlueZ auto-pairing on connect when a specific
-adapter mode is set. Needs direct investigation of `mera_mock.py`'s GATT service/characteristic
-definitions and the `bluez_peripheral` library's connect-time behavior before this REQ's scope
-can be trusted.
+**Trigger identified, 2026-07-19: it's BlueZ's built-in Battery plugin, already independently
+fixed one day after the last revert.** Both `b374e24` (v1.31.0, the original 2026-06-22 fix)
+and `ee3171b` (v1.77.0b1, the 2026-07-16 re-revert) diagnosed the exact same mechanism: BlueZ's
+Battery plugin acts as its own GATT *client*, reading Battery Level from the connected iOS
+device immediately on connect. iOS refuses the unauthenticated read; BlueZ escalates by
+spontaneously sending an SMP Security Request to try to establish encryption, which iOS
+surfaces as its system pairing dialog ("Kopplungsanforderung ... „ro" möchte sich mit deinem
+iPad koppeln" — confirmed live, `docs/developer/mock-geberit-mera.md` § "Battery plugin
+interaction"). This is a Linux-desktop-BlueZ feature (show a battery icon for connected
+accessories) with **no equivalent on real Mera hardware** — an embedded device has no reason
+to read a connecting phone's battery level as a courtesy UI feature. It has nothing to do with
+the Geberit protocol.
+
+**The very next day (2026-07-17), this exact mechanism was independently diagnosed and fixed**
+at the systemd level on `anneubuntu-studio`: a `bluetooth.service.d` drop-in override forcing
+`bluetoothd --noplugin=battery` (`memory/mera-mock-battery-plugin-fix.md`), verified across two
+fresh test sessions with zero recurrences of the SMP pairing-failure cycle. **Nobody has gone
+back to check whether `pairable=on` is now safe again in the mock's own code with that
+override in place** — `ee3171b`'s revert was correct for the environment it was tested in, but
+that environment (battery plugin still active) no longer matches current `anneubuntu-studio`.
+
+**Practical consequence — re-test before designing anything:**
+1. Confirm the systemd override is still active on the test host:
+   `systemctl show bluetooth.service -p ExecStart` should show `--noplugin=battery`.
+2. Re-enable `pairable on` in the mock (revert the effect of `ee3171b`) and re-test a normal
+   Home App connection — if no iOS pairing dialog appears, the constraint this REQ's "scoped
+   RC-only pairing mode" design was built around doesn't exist anymore, and the correct fix is
+   simply **leave `pairable on` permanently**, matching real hardware's apparent
+   always-willing-but-never-asked behavior — not a time-boxed pairing-mode workaround.
+3. **Durability gap**: the systemd override is a manual, host-specific config not scripted or
+   automated anywhere in this repo. If RC testing ever happens on a different host, or
+   `anneubuntu-studio`'s systemd config is reset, the original bug reappears silently with no
+   repo-level warning. Worth its own tracked item regardless of how step 2 turns out — either
+   document it as a mandatory one-time mock setup step, or script it.
 
 **The "pre-existing bond" explanation is an unconfirmed hypothesis, not a demonstrated root
 cause** — corrected 2026-07-19 after the user pushed back on it being stated as settled.
 `docs/roadmap.md`'s 2026-06-25 test log shows only that the RC never appeared in the mock's
 log at all; no capture has ever shown the RC actually sending `LL_ENC_REQ` against the mock
-and failing. Given `pairable` is unconditionally off, a fresh test today would fail for the
-confirmed reason above regardless of whether the RC's stored LTK matches — the bond-mismatch
-theory has never actually been tested against the current mock and should not be treated as
-established until it is (clearing the RC's bond, per `docs/roadmap.md`, is worth trying but
-only after the pairable-scoping problem is solved, not before).
+and failing. Given `pairable` is unconditionally off today, a fresh test would still fail for
+that reason regardless of whether the RC's stored LTK matches — the bond-mismatch theory has
+never actually been tested against the current mock and should not be treated as established
+until it is (clearing the RC's bond, per `docs/roadmap.md`, is worth trying but only once
+pairing actually completes end to end — see the re-test steps further below).
 
 **Mock advertisement fidelity — retracted 2026-07-19, was wrong.** This REQ previously stated
 (same day, since corrected) that advertisement fidelity was unrelated because the RC connects
@@ -1756,15 +1775,16 @@ already in progress (not solutions to this REQ): `memory/mera-comfort-displaceme
 `memory/alba-remote-control-conflict.md` / `memory/alba-session-caching-fix.md` (Alba
 remote-displacement root cause still open).
 
-Scope, updated 2026-07-19 (twice): (1) **Mera** — first, investigate what specifically triggers
-the iOS pairing dialog when `pairable=on` (the Open Question above) — GATT characteristic
-permission flags, `bluez_peripheral` agent defaults, or BlueZ auto-pairing behavior. Only after
-that's identified should the pairing-mode design be decided: if the trigger is a fixable
-mock-specific bug, the right fix is likely "leave `pairable on` permanently and fix the actual
-trigger," not "build a time-boxed pairing mode scoped to the RC's address" — the latter was
-this REQ's prior assumption and may be solving a problem real hardware doesn't actually have.
-Once pairing works at all, the bond-mismatch hypothesis above can finally be tested; when
-testing, trigger the button-pressed state first, per the correlation finding above. (2) **Alba** —
+Scope, updated 2026-07-19 (three times): (1) **Mera** — re-test with `pairable on` restored
+and the `--noplugin=battery` systemd override confirmed active (see steps above) before
+building anything. If the dialog is genuinely gone, drop the "scoped RC-only pairing mode"
+design entirely — it was solving a problem that may no longer exist — and just leave
+`pairable on` permanently. Only build the scoped-pairing-mode workaround if re-testing shows
+the dialog still appears even with the override active (i.e. a second, still-undiagnosed
+trigger exists). Once pairing works at all, the bond-mismatch hypothesis above can finally be
+tested; when testing, trigger the button-pressed state first, per the correlation finding
+above. Separately, track the durability gap (systemd override not scripted anywhere) regardless
+of how re-testing goes. (2) **Alba** —
 discovery surface identified and stubbed the same way Mera's is, plus the same pairing-mode
 work Mera needs. (3) For both — enough of the post-pairing encrypted protocol
 decoded/implemented to respond meaningfully rather than just complete pairing and go silent.
