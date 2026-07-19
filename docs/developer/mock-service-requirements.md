@@ -86,6 +86,11 @@ otherwise implicit in a flat REQ list).
 | REQ-053 | Functional | In Progress | The mock simulates the real device's `ctx=0x40` firmware-update BLE procedure sequence |
 | REQ-054 | Functional | Open | The mock's post-update behavior reflects any BLE-observable delta a real update introduces, not just the version string |
 | REQ-055 | Functional | Done | Active settings (`0x0A`/`0x0B`) are session-scoped, re-derived from Stored NVM on every restart, and never persisted themselves |
+| REQ-056 | Functional | In Progress | Every BLE central connect/disconnect against a mocked device is visible live in that device's webui |
+| REQ-057 | Functional | Open | Every `SetCommand` (proc `0x09`) code received from a central is visible live in the Mera webui, not only the two currently simulated |
+| REQ-058 | Functional | Open | Every DpId write received from a central is visible live in the Alba webui, not only the six Nvm-persisted DpIds |
+| REQ-059 | Technical | Done | Mera and Alba mock requirements/implementation stay in sync; a postponed sync is tracked as its own REQ, never a silent gap |
+| REQ-060 | Technical | Open | Bridge and mock-service wiring stay in sync wherever applicable; a postponed sync is tracked as its own REQ or roadmap item, never a silent gap |
 
 ---
 
@@ -1811,6 +1816,210 @@ startup). Verified: writing `SetActiveCommonSetting` (id=0 → 6) is immediately
 `GetActiveCommonSetting` within the same instance, but after a simulated restart it returns
 the value re-seeded from the (persisted) Stored setting, not the prior session's transient
 override.
+
+### REQ-056 — Connection-lifecycle visibility in webui
+
+#### Type
+
+Functional
+
+#### Statement
+
+Every BLE central's connection setup and connection close against a mocked
+device — the Geberit Home App, a Remote Control, or any other client — is visible live in
+that device's webui, for both Mera and Alba, the same way a settings change already is
+(REQ-034). This holds regardless of whether the connecting central goes on to do anything
+else — the connect/disconnect event itself is what must be visible, not only its downstream
+effects.
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+Requested 2026-07-19, as part of the broader "every action on a
+central is visible in the webui" ask that also produced REQ-057/REQ-058. **Mera: already
+satisfied.** `_on_device_connected`/`_on_device_disconnected` (`mera_mock.py`, ~line
+2378–2399) each call `self._log("·", ...)` on every connect/disconnect; `_log()`
+unconditionally does two things (REQ-034/REQ-039/REQ-040's Implementation Details) — appends
+to the rendered session log shown in the webui (`_render_log()`) and calls
+`_broadcast_state_nowait()`, pushing a live SSE update to every connected webui client. So a
+connect/disconnect against the Mera mock is already both logged and live-pushed today; no
+further work needed on the Mera side. **Alba: not yet satisfied, two independent gaps.** (1)
+The equivalent connect/disconnect handlers (`AlbaMock.run()`, ~line 1551/1560, `"[Mock] BLE
+client connected: ..."`/`"[Mock] BLE client disconnected: ..."`) call only
+`self.logger.info(...)` — written to the log file/console (REQ-039) but never to
+`self._broadcast_fn()`, so no live SSE push happens for a connect/disconnect. (2) Alba's webui
+has no session-log panel at all, unlike Mera's `_render_log()` (confirmed: no
+`log_html`/`_render_log`/session-log markup anywhere in `alba_mock.py`) — so even calling
+`self._broadcast_fn()` would currently have nothing to visibly change in the browser, since
+there is no live-event feed to append to, only the static identity/settings/device-state
+tables (REQ-033/REQ-051). Closing this needs both: threading `self._broadcast_fn()` into the
+two handlers (mirroring how REQ-034 already threads it into `_Ble20AppLayer._write_dpid_setting()`/
+`_write()`), and adding a Mera-style rendered session-log section to Alba's webui page (the
+generic module from REQ-037 already provides the primitives; this would be new markup + a
+server-side log-line buffer analogous to Mera's, not a new module).
+
+### REQ-057 — Command/action visibility in webui — Mera
+
+#### Type
+
+Functional
+
+#### Statement
+
+Every `SetCommand` (proc `0x09`) code the Mera mock receives from a connected
+central is visible live in the webui — including `ToggleLidPosition`,
+`PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`, `TriggerFlushManually`,
+`ResetFilterCounter`, `Stop`, and every other code listed in `.claude/rules/ble-protocol.md`
+Layer 1 — not only the two codes (`ToggleAnalShower`, `ToggleLadyShower`) that currently have
+a simulated effect. A central sending an as-yet-unsimulated command must be visibly
+distinguishable, in the webui, from a central that sent nothing at all.
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+Requested 2026-07-19. This is a *visibility* gap, distinct from
+REQ-050's *simulation* gap — REQ-050 tracks giving each command a real device-state effect;
+this REQ only asks that receipt of the command be visible, which does not require having
+implemented that effect first. Precisely: `_proc_09` (`mera_mock.py`, line 1675) calls
+`self._log(...)` — the single call that both appends to the session log and broadcasts live
+state (REQ-034) — for `code == 0` and `code == 1` only; every other value of `code` falls
+through with no `elif` branch at all and the function returns `b""` silently. Sending e.g.
+`ToggleLidPosition` (code 10) against the mock today therefore produces zero webui-visible
+trace — identical, from the webui's point of view, to the command never having been sent.
+Minimal fix (does not require REQ-050): add a trailing `else` branch in `_proc_09` that logs
+the received command by name (via the existing `_PROC_NAMES`-style code→name mapping, or a
+small dedicated `Commands`-code→name table per `.claude/rules/ble-protocol.md`'s Layer 1
+table) before returning `b""`, e.g. `self._log("·", f"SetCommand code={code}
+({name}) — received, not yet simulated")`, so the log/webui shows every command reaching the
+mock while remaining honest that most have no simulated effect yet.
+
+### REQ-058 — Command/action visibility in webui — Alba
+
+#### Type
+
+Functional
+
+#### Statement
+
+Every DpId write the Alba mock receives from a connected central is visible
+live in the webui — including Command DpIds like 563 (`START_STOP_ANAL_SHOWER`) and every
+other Command/Status DpId a central can write — not only the six Nvm-persisted DpIds that
+currently trigger a live update.
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+Requested 2026-07-19. `_write()` (`alba_mock.py`, line 651) calls
+`self.logger.info(...)` for every write regardless of `behavior`, but only calls
+`self._broadcast_fn()` inside the `entry['behavior'] == 3` (Nvm) branch (line 660–664) — a
+Command DpId write (e.g. starting the anal shower via DpId 563) does update `self._store` in
+memory, so it is reflected the next time the webui's "Device State" section (added under
+REQ-051) is fetched, but no live SSE push happens the way a Nvm write already gets, and — since
+REQ-056 finds Alba's webui has no session-log panel at all — there is currently no live,
+event-level trace of the write happening either, only an eventual, passive value change on the
+next fetch. Fix: call `self._broadcast_fn()` unconditionally at the end of `_write()` (after
+the `if entry['behavior'] == 3: ...` block, not only inside it), mirroring how Mera's `_log()`
+already does logging and broadcasting together on every call regardless of which command
+triggered it (REQ-057's fix keeps that same shape for Mera). Depends on the same Alba-side
+webui prerequisites REQ-056 identifies (a session-log panel) to be fully visible as a discrete
+event, not just as a value that happens to have changed next time the state table is read.
+
+---
+
+## Cross-Component Consistency
+
+Enforced going forward by `.claude/rules/cross-component-parity.md` (MANDATORY) — both
+requirements below are that rule's two halves, restated here in this document's REQ structure
+so each has its own trackable status.
+
+### REQ-059 — Mera/Alba mock parity
+
+#### Type
+
+Technical
+
+#### Statement
+
+Every mock-service feature's requirements and implementation stay in sync
+between Mera and Alba, unless a concrete protocol-level reason blocks one side. Whenever
+synchronizing the other side is postponed, the postponed task exists as its own `REQ-NNN`
+entry in this document with `Status: Open` — not as an unrecorded gap discoverable only by
+reading both mocks' source side by side.
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Formalized 2026-07-19 as its own tracked requirement (previously
+only an implementation-detail note under REQ-031) and backed by a MANDATORY project rule,
+`.claude/rules/cross-component-parity.md` §1, so it applies to all future mock work by default,
+not only where a REQ happens to mention it. Marked Done because the discipline is already
+established and demonstrably followed, not because every Mera/Alba asymmetry is currently
+closed — the open asymmetries that exist are each already tracked exactly the way this REQ
+requires, which is the evidence the policy works: REQ-036 (Alba firmware-profile selector,
+blocked on a missing real capture — Mera has REQ-035); REQ-038 (Mera "User sitting" toggle —
+Alba already has it); REQ-030/REQ-012 (Mera per-instance identity — Alba has it via REQ-029).
+Original policy statement (verbatim, from REQ-031's Implementation Details): "any mock feature
+implemented for one protocol gets mirrored in the other at the same time unless there's a
+concrete protocol-level reason it can't — tracking two mocks that drift independently is more
+housekeeping than doing both up front." First applied instance: REQ-031 (firmware version
+persistence, implemented for both models in the same pass). If a future change introduces a
+new asymmetry without opening a tracking REQ for it, that is a violation of this requirement,
+not an acceptable oversight.
+
+### REQ-060 — Bridge/mock-service parity
+
+#### Type
+
+Technical
+
+#### Statement
+
+Whenever a functionality is wired into the mock-service, the same
+functionality is wired into the bridge (`aquaclean_console_app`/`aquaclean_core`) as well, and
+vice versa, wherever applicable — i.e. wherever the mock-service and the bridge are
+conceptually addressing the same protocol-level feature, not merely an implementation detail
+private to one side. Whenever wiring the other side is postponed, the postponed task exists as
+its own `REQ-NNN` entry in this document, or as an item in `docs/roadmap.md`, in either case
+tracked, not left as an unrecorded gap.
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+Requested 2026-07-19, backed by a MANDATORY project rule,
+`.claude/rules/cross-component-parity.md` §2. Unlike REQ-059, this is a newly stated policy,
+not a retroactive formalization of an already-demonstrated practice — no prior instance in
+this project was explicitly framed as "bridge/mock-service parity" before now, so Status is
+Open rather than Done until the policy has an audited, closed-the-loop instance the way
+REQ-031 gives REQ-059. The clearest existing example of exactly the asymmetry this requirement
+exists to prevent: REQ-050 — `.claude/rules/ble-protocol.md`'s Layer 1 table shows the bridge
+already wires most `SetCommand` codes (`ToggleLidPosition`, `PrepareDescaling`,
+`TriggerFlushManually`, `ResetFilterCounter`, etc. — marked "✅ all interfaces" there) end to
+end (REST/MQTT/webui/CLI), while the Mera mock still no-ops all but two of them — an asymmetry
+that predates this REQ and was tracked (correctly, per this policy's requirement) as REQ-050,
+just not under a "bridge/mock parity" framing until now. Scope note: not every mock feature
+needs a bridge counterpart or vice versa — a mock-only concern (BLE advertising/timing quirks,
+GATT-cache workarounds, the mock's own webui) or a bridge-only concern (ESPHome proxy
+reconnection, MQTT/REST/HA-discovery wiring) is exempt, since neither is a protocol-level
+device capability the other side would ever need to exercise. Not yet done: a systematic audit
+of existing bridge features vs. mock simulation coverage (and vice versa) beyond the REQ-050
+example already known — such an audit, if run, should convert any newly found asymmetry into
+its own `REQ-NNN` or roadmap item per this requirement, not just this document's own narrative
+text.
 
 ---
 

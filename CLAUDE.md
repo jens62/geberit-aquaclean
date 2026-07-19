@@ -56,6 +56,7 @@ wrap the entire response in a fenced code block — square brackets are interpre
 @.claude/rules/naming-conventions.md — MANDATORY: config, REST, MQTT, webui labels, Python identifiers, MQTT↔HA sync
 @.claude/rules/release-process.md — Release checklist, HACS release, update.sh curl, tools/ curl
 @.claude/rules/debugging-traps.md — Traps 1–15 + known open bugs (read first when debugging)
+@.claude/rules/cross-component-parity.md — MANDATORY: Mera↔Alba mock parity, bridge↔mock-service parity; postponed sync = tracked REQ, never a silent gap
 
 ## Rules — read on demand (do not auto-load; read before the relevant task)
 
