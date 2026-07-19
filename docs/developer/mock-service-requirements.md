@@ -1745,6 +1745,53 @@ and would have always logged a false "not verified" warning. Fixed before commit
 open**: RC pairing itself hasn't been tested yet — only the Home App side. That's the actual
 test of whether the fix solved the real problem.
 
+**RC pairing tested 2026-07-19, v1.102.0b1, no success.** `pairable=on` was confirmed genuinely
+active for this test (`"Adapter confirmed pairable=on (verified via btmgmt info)"` in the
+mock's own log). The RC still never appeared in either capture
+(`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/new_mock_1.102.0b1_and_later/`)
+— confirmed via `tools/find-geberit-remote.py` against both: the only `CONNECT_IND` targeting
+`38:AB:41:2A:0D:67` came from `63:79:44:38:6c:97`, a random/locally-administered address, not
+the RC's public `B0:10:A0:68:5C:8B`. Also confirmed, via `tools/nrf-ble-analyze.py --mac
+A0:AD:9F:72:C4:0F --adv`: the mock advertises under its own Bluetooth adapter's real hardware
+address (`A0:AD:9F:72:C4:0F`, the ASUS USB-BT500 dongle) — never as `38:AB:41:2A:0D:67`, the
+real toilet's identity. **Initially read as "the root cause" — corrected below, this framing
+was too confident.**
+
+**Corrected within the hour — "the mock needs to spoof the toilet's MAC" was an overreach.**
+The user pushed back with the obvious counter-example: a Remote Control bought new, out of the
+box, has no way to be pre-programmed with a specific toilet's BLE address — so it must have
+some signature-based discovery mechanism for first-time pairing (service UUID / manufacturer
+data, not a stored MAC). Every capture we have is of jens's own remote, which is *already
+bonded* to his real toilet — so it always directly targeting `38:AB:41:2A:0D:67` only proves
+it's doing normal "reconnect to my known device" behavior. It says nothing about whether the
+remote *could* discover a different device if put into a fresh-pairing/discovery mode. If a
+factory-fresh (or explicitly re-paired) remote does signature-based scanning, the mock's
+current advertisement — which already includes the matching service UUID and "Geberit AC PRO"
+SCAN_RSP name, just under `A0:AD:9F:72:C4:0F` instead of `38:AB:41:2A:0D:67` — might already be
+enough to be discovered, with **no MAC-spoofing needed at all**.
+
+**Open question, unresearched**: how does the Geberit Remote Control itself initiate pairing
+with a *new* toilet (as opposed to reconnecting to a known one)? Likely some physical action on
+the remote (a button sequence, a factory-reset-equivalent), not investigated yet — no existing
+capture of a Remote Control's *first-time* pairing exists in this repo, only reconnections to
+an already-bonded device. Until this is known, today's "no success" result doesn't distinguish
+between two different explanations: (a) the remote was simply in reconnect-only mode and never
+looked for anything else, regardless of what the mock advertised; or (b) the remote does
+attempt discovery-based scanning but for some other reason still didn't find/accept the mock.
+
+**MAC-spoofing capability doesn't exist in either mock** (confirmed: the only "MAC spoof via
+`btmgmt public-addr`" mention in this repo is `docs/roadmap.md`'s unrelated, not-yet-started
+"Alba-Hub" relay design) — but per the correction above, don't assume it's needed until the
+remote's fresh-pairing mechanism is understood. It may turn out relevant later (e.g. if the
+remote's discovery step also checks some device-identity field beyond the BLE MAC and
+advertising signature), but it is not confirmed to be the blocker the way the paragraph above
+originally claimed.
+
+**Next step**: figure out how to put jens's physical Remote Control into "pair with a new
+device" mode (check the Geberit user manual / support documentation, or experiment with the
+remote's own buttons) and re-test against the mock in that mode before concluding anything
+further about MAC identity requirements.
+
 **The "pre-existing bond" explanation is an unconfirmed hypothesis, not a demonstrated root
 cause** — corrected 2026-07-19 after the user pushed back on it being stated as settled.
 `docs/roadmap.md`'s 2026-06-25 test log shows only that the RC never appeared in the mock's
