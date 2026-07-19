@@ -60,6 +60,12 @@ except Exception:
 
 DEFAULT_MAC = "38:AB:41:2A:0D:67"   # Geberit AquaClean Mera Comfort
 
+# BLE advertising PDU types (btle.advertising_header.pdu_type) — used by --find-mac
+_PDU_TYPE_NAMES = {
+    0x00: "ADV_IND", 0x01: "ADV_DIRECT_IND", 0x02: "ADV_NONCONN_IND",
+    0x03: "SCAN_REQ", 0x04: "SCAN_RSP", 0x05: "CONNECT_IND", 0x06: "ADV_SCAN_IND",
+}
+
 # Arendi chip OUI — used by Alba toilet and physical remote.
 _ALBA_DEVICE_OUIS = {"e4:85:01"}
 
@@ -286,6 +292,51 @@ def _oui(mac: str) -> str:
 
 def _is_embedded_device(mac: str) -> bool:
     return _oui(mac) in _EMBEDDED_DEVICE_OUIS
+
+
+def _find_mac_occurrences(tshark: str, pcapng: Path, mac: str) -> list:
+    """
+    Find every BLE frame anywhere in the capture where `mac` appears as an
+    advertiser (any PDU type — ADV_IND, SCAN_RSP, ADV_DIRECT_IND, CONNECT_IND
+    target) or as a CONNECT_IND initiator (i.e. it connected to something).
+
+    Unlike _get_connection_events (which only looks for CONNECT_IND frames
+    targeting a specific *other* MAC), this answers "does this address show
+    up at all in this capture, in any role" — added 2026-07-19 after manually
+    re-deriving this with narrower tools (find-geberit-remote.py's
+    toilet-targeted CONNECT_IND filter, --adv's target-MAC-only advertising
+    filter) turned out insufficient to answer "is device X in this capture
+    anywhere at all".
+    """
+    mac_lower = mac.lower()
+    rows = _run_tshark(tshark, pcapng,
+                       f'btle.advertising_address == "{mac_lower}" '
+                       f'|| btle.initiator_address == "{mac_lower}"',
+                       ["frame.time_relative",
+                        "btle.advertising_header.pdu_type",
+                        "btle.advertising_address",
+                        "btle.initiator_address"])
+    hits = []
+    for row in rows:
+        if len(row) < 4:
+            continue
+        ts_s, pdu_raw, adv_addr, init_addr = (row + [""] * 4)[:4]
+        ts_s, adv_addr, init_addr = ts_s.strip(), adv_addr.strip(), init_addr.strip()
+        try:
+            ts_f = float(ts_s)
+        except ValueError:
+            continue
+        try:
+            pdu_type = int(pdu_raw, 16) if pdu_raw else None
+        except ValueError:
+            pdu_type = None
+        role = "advertiser" if adv_addr.lower() == mac_lower else "initiator"
+        hits.append({
+            "ts": ts_f, "pdu_type": pdu_type, "role": role,
+            "adv_addr": adv_addr, "init_addr": init_addr,
+        })
+    hits.sort(key=lambda h: h["ts"])
+    return hits
 
 
 def _get_connection_events(tshark: str, pcapng: Path,
@@ -1970,6 +2021,12 @@ Examples:
                     help="Extract and print GATT handle→UUID map from discovery frames, then exit")
     ap.add_argument("--adv", action="store_true",
                     help="Show advertising packets (ADV_IND + SCAN_RSP) for the target MAC, then exit")
+    ap.add_argument("--find-mac", metavar="MAC",
+                    help="Search the whole capture for this MAC in ANY role — advertiser "
+                         "(ADV_IND/SCAN_RSP/ADV_DIRECT_IND/CONNECT_IND target) or CONNECT_IND "
+                         "initiator — then exit. Unlike --adv/--mac (which only look at the "
+                         "MAC's own advertising or connections targeting it), use this to "
+                         "answer \"does device X show up anywhere in this capture at all\".")
     ap.add_argument("--include-adv", action="store_true",
                     help="With --markdown: prepend a pre-connection advertising section "
                          "(same data as --adv, deduplicated) before Phase 1. Opt-in — "
@@ -1989,6 +2046,26 @@ Examples:
         handle_map = _extract_gatt_handles(tshark, args.pcapng)
         print(f"GATT handle map ({args.pcapng.name}):")
         print(_format_gatt_map(handle_map))
+        sys.exit(0)
+
+    if args.find_mac:
+        target = args.find_mac.upper()
+        hits = _find_mac_occurrences(tshark, args.pcapng, target)
+        print(f"Searching {args.pcapng.name} for {target} …")
+        if not hits:
+            print(f"  NOT FOUND — {target} does not appear anywhere in this capture "
+                  f"(neither as an advertiser nor as a CONNECT_IND initiator).")
+        else:
+            print(f"  Found {len(hits)} occurrence(s):\n")
+            for h in hits:
+                pdu_name = _PDU_TYPE_NAMES.get(h["pdu_type"], f"pdu=0x{h['pdu_type']:02x}"
+                                                if h["pdu_type"] is not None else "pdu=?")
+                if h["role"] == "advertiser":
+                    print(f"  t={h['ts']:>8.1f}s  {pdu_name:<16}  {target} as ADVERTISER"
+                          + (f"  (initiator: {h['init_addr']})" if h["init_addr"] else ""))
+                else:
+                    print(f"  t={h['ts']:>8.1f}s  {pdu_name:<16}  {target} as INITIATOR"
+                          f"  → connecting to {h['adv_addr']}")
         sys.exit(0)
 
     mac, device_type = _detect_device(tshark, args.pcapng, addr_field)
