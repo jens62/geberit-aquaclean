@@ -350,7 +350,11 @@ is encoded in the advertised COMPANY ID itself, not a separate payload byte:
 
 Confirmed live (nRF Connect, 2026-07-18): idle = company `0x0100`, data `00 31 34 36 32 31`;
 button pressed = company `0x01AA`, data `01 31 34 36 32 31` — both flags flip together on a
-real button press.
+real button press. **Refined 2026-07-19 (see pcapng cross-check below): the two flags are not
+synchronized** — across multiple stored captures, the data-byte flip (`IsButtonPressed`)
+consistently appears several seconds *before* the company-ID flip to `0x01AA`
+(`IsEmergencyConnectPermitted`), not simultaneously. The live-scan sessions above likely just
+sampled a moment after both had already flipped.
 
 **Independent raw confirmation (nRF Connect for Android, real Mera Comfort `38:AB:41:2A:0D:67`,
 2026-07-19)** — a second scan, different platform/tool than the above, same result:
@@ -380,17 +384,32 @@ into one device view (same as noted below) — it's really the separate SCAN_RSP
 `0x3300` (bytes 0x00,0x33) with 1-byte data `0x30`; unaffected by the button press, as
 expected since it's firmware-version info, not button state.
 
-**Cross-checked against `onboarding-real-mera.pcapng` (2026-07-19)** via
-`tools/nrf-ble-analyze.py --adv` (the companion `.md` doesn't include advertising at all —
-that's `--markdown` mode, connected-session traffic only). Confirms the idle payload and the
-`IsButtonPressed` byte flip (both present, byte-for-byte). **Does not confirm the company-ID
-flip to `0x01AA`** — the one button-pressed line in that capture still shows `company=0x0100`;
-zero `01AA` hits in the whole file. Not a contradiction (the two bits are independent, and
-this capture may just never have exercised `IsEmergencyConnectPermitted`), but the flip
-mechanism itself is only confirmed by the two live scans above, not by this stored capture.
-That pcapng also has heavy RF-noise corruption in most of its *other* advertising lines
-(garbled UUIDs/names, nonsense company IDs) — not a clean general-purpose reference beyond
-these two facts. Full writeup: `docs/developer/ble-advertising-button-press-confirmation.md`.
+**Cross-checked against six stored `.pcapng` captures (2026-07-19)** via
+`tools/nrf-ble-analyze.py --adv` (each capture's companion `.md` doesn't include advertising —
+that's `--markdown` mode, connected-session traffic only; regenerated per-file with
+`--include-adv` into a separate `*-with-adv.md`, to keep each original intact):
+
+| Capture | `IsButtonPressed` (data byte `0x01`) | `company=0x01AA` |
+|---|---|---|
+| `onboarding-real-mera.pcapng` → `onboarding-real-mera-with-adv.md` | line 34, `t=51.7s` | not present |
+| `geberit-home-app/nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-0.pcapng` | not present | not present |
+| `geberit-home-app/nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1.pcapng` → `...-with-adv.md` | line 28, `t=49.5s` | line 37, `t=54.4s` (and line 38, `t=54.9s`) |
+| `geberit-home-app/on-board-geberit-Home-app-to-mera.pcapng` | `t=23.4s` | not present |
+| `firmware-update-mera-comfort/onboard-real-mera-probab-incomplete.pcapng` | `t=12.9s` | not present |
+| `firmware-update-mera-comfort/firmware-update-vom-mac.pcapng` → `...-with-adv.md` | line 22, `t=26.9s` | line 23, `t=31.9s` |
+
+Two of the six (`nRF-sniff-...-onboard-1` and `firmware-update-vom-mac`) **do confirm the
+company-ID flip to `0x01AA` from a stored capture**, byte-for-byte matching the live-scan
+payload (`company=0x01aa data=0x0131…`) — resolving the earlier "not confirmed by any stored
+capture" gap. Both also show the timing-lag finding above: the data-byte flip happens ~5s
+*before* the company-ID flip in the same capture (`onboard-1`: `t=49.5s` → `t=54.4s`;
+`firmware-update-vom-mac`: `t=26.9s` → `t=31.9s`), never simultaneously. The other four
+captures only ever show the data-byte flip, never the company-ID flip — consistent with
+`IsEmergencyConnectPermitted` requiring a longer button hold or a later stage than a plain
+button press, not with the two bits being tied together. All six captures have heavy
+RF-noise corruption in their *other* advertising lines (garbled UUIDs/names, nonsense company
+IDs) — not a clean general-purpose reference beyond the specific rows cited here.
+Full writeup: `docs/developer/ble-advertising-button-press-confirmation.md`.
 
 **SCAN_RSP** — separate `0x09` Complete Local Name (`"Geberit AC PRO"`) plus a second, distinct
 `0xFF` entry: 3 raw bytes `[0x00, rs_char1, rs_char2]` — the RS firmware major-version prefix

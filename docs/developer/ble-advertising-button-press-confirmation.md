@@ -78,12 +78,9 @@ t=  51.7s  ADV_IND  UUIDs=0x3EA0        AD type=0x01  company=0x0100  data=0x013
 - The company-ID flip to `0x01AA`. At that same `t=51.7s` line, `company` is still `0x0100`.
   A full-file grep for `01AA`/`01aa` returns zero hits anywhere in this pcapng.
 
-This is not a contradiction of Sources 1/2 — `IsButtonPressed` and
-`IsEmergencyConnectPermitted` are documented as independent bits, and this capture may
-simply never have exercised the emergency-connect condition during its one button press.
-But it means **the company-ID-flip mechanism specifically is only confirmed by the two live
-scans (Sources 1/2), not by this stored capture** — worth remembering if this pcapng is ever
-cited as the sole evidence for that part of the mechanism.
+At the time this note was first written, this looked like it might mean the company-ID flip
+was only reachable live, not capturable in a stored file. **Source 4 below overturns that —
+the flip does show up in stored captures, just not in this particular one.**
 
 **Data-quality caveat for this specific pcapng:** most of its *other* advertising lines are
 corrupted — garbled UUIDs (`0x7AE4`, `0xBEA0`, `0x32A0`, ...), mangled `Complete Local Name`
@@ -93,11 +90,47 @@ RF noise or overlapping-device interference during that capture session, not a d
 pcapng as a clean general-purpose advertising reference; it's fine for the two clean facts
 above (idle payload, one button-press payload) but not for anything beyond that.
 
+## Source 4 — five more stored captures checked (2026-07-19)
+
+Same method (`--adv`, then `--markdown --include-adv` into a separate `*-with-adv.md` per
+file, originals untouched) run against every other capture in the repo that plausibly covers
+onboarding against a **real** Mera (mock-only captures excluded):
+
+| Capture | `IsButtonPressed` (`data=0x01…`) | `company=0x01AA` |
+|---|---|---|
+| `geberit-home-app/nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-0.pcapng` | not present | not present |
+| `geberit-home-app/nRF-sniff-Geberit-Home-App-2.14.1-real-mera-onboard-1.pcapng` → `...-with-adv.md` | line 28, `t=49.5s` | line 37, `t=54.4s` (+ line 38, `t=54.9s`) |
+| `geberit-home-app/on-board-geberit-Home-app-to-mera.pcapng` | `t=23.4s` | not present |
+| `firmware-update-mera-comfort/onboard-real-mera-probab-incomplete.pcapng` | `t=12.9s` | not present |
+| `firmware-update-mera-comfort/firmware-update-vom-mac.pcapng` → `...-with-adv.md` | line 22, `t=26.9s` | line 23, `t=31.9s` |
+
+**This resolves the Source 3 gap**: two of these five (`nRF-sniff-...-onboard-1` and
+`firmware-update-vom-mac`) show `company=0x01aa data=0x0131…` byte-for-byte matching Sources
+1/2 — the company-ID flip mechanism *is* confirmed from a stored capture, twice over.
+
+**New finding — the two bits are not simultaneous.** In both captures that show the flip, the
+data-byte flip happens *first*, and the company-ID flip follows several seconds later, in the
+same capture:
+- `nRF-sniff-...-onboard-1`: data flips at `t=49.5s`, company flips at `t=54.4s` (≈5s later)
+- `firmware-update-vom-mac`: data flips at `t=26.9s`, company flips at `t=31.9s` (≈5s later)
+
+The other three captures (`onboard-0`, `on-board-geberit-Home-app-to-mera`,
+`onboard-real-mera-probab-incomplete`) never show the company-ID flip at all, even though two
+of them do show the data-byte flip — consistent with `IsEmergencyConnectPermitted` requiring
+a longer button hold (or a later onboarding stage) than a plain button press, rather than the
+two bits being tied together. The original claim in Sources 1/2 ("both flags flip together")
+was likely just sampling a moment after both had already flipped, not evidence they flip
+atomically.
+
+All five additional captures share the same RF-noise caveat as Source 3 — treat only the
+specific rows above as reliable, not the files as clean general-purpose references.
+
 ## Bottom line
 
 | Claim | Confirmed by |
 |-------|-------------|
-| Idle payload `00 31 34 36 32 31` | Sources 1, 2, 3 (all three) |
-| Button-pressed payload `01 31 34 36 32 31` | Sources 1, 2, 3 (all three) |
-| Company-ID flip `0x0100`→`0x01AA` on button press | Sources 1, 2 only — **not** seen in Source 3 |
-| SCAN_RSP RS-firmware-prefix entry, unaffected by button state | Source 2 (Source 3's `--adv` output doesn't decode SCAN_RSP manufacturer data content, only name) |
+| Idle payload `00 31 34 36 32 31` | Sources 1, 2, 3, 4 |
+| Button-pressed payload `01 31 34 36 32 31` | Sources 1, 2, 3, 4 |
+| Company-ID flip `0x0100`→`0x01AA` on button press | Sources 1, 2, and 2 of the 5 captures in Source 4 |
+| The two bits flip simultaneously | **Contradicted** by Source 4 — data-byte flip consistently precedes the company-ID flip by ~5s in both captures that show both |
+| SCAN_RSP RS-firmware-prefix entry, unaffected by button state | Source 2 (the `--adv` output doesn't decode SCAN_RSP manufacturer data content, only name) |
