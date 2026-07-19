@@ -1701,7 +1701,9 @@ a real RC connection has ever actually been captured.
 slot.** Three more captures in that same directory (`pair1.pcapng`, `pair2.pcapng`,
 `toogle-lid-with-remote.pcapng`) show only one connected central each — `94:A9:90:68:B0:E2`,
 one digit off the bridge's ESP32 proxy address `94:A9:90:68:B0:E0` (`docs/connection-test.md`
-Step 2) — and the RC never appears in any of the three. This is **not** displacement:
+Step 2) — and the RC never appears in any of the three. Whether the bridge was deliberately
+left running for these three or simply not stopped is unconfirmed either way — don't read this
+as a controlled "with bridge" experiment. Either way, this is **not** displacement:
 `memory/mera-comfort-displacement-baseline.md` already confirms real Mera Comfort supports
 simultaneous multi-client connections (app + remote polling in parallel). The better-supported
 explanation is the button-press finding above — none of these three captures show the

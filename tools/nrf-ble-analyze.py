@@ -1755,7 +1755,7 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
         md = (capture_header + adv_md + conn_events_md + "\n" + ctrl_md + "\n"
               + traffic_md + "\n"
               + _android_ble.render_markdown_android(
-                  calls, pcapng, mac, "nRF52840 pcapng", att_count,
+                  calls, pcapng, mac or DEFAULT_MAC, "nRF52840 pcapng", att_count,
                   ts_fmt=_ts_to_abs if tz else None))
         if args.output:
             Path(args.output).write_text(md, encoding="utf-8")
@@ -1763,7 +1763,7 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
         else:
             print(md)
     else:
-        _print_mera_table(calls, pcapng, mac, att_count,
+        _print_mera_table(calls, pcapng, mac or DEFAULT_MAC, att_count,
                           conn_events_plain + ctrl_plain + traffic_plain)
 
 

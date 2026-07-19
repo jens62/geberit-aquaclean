@@ -157,10 +157,18 @@ The better-supported explanation, given the finding below: **none of these three
 the button-press advertising flip at all** (checked via `grep -n "data=0x01\|company=0x01aa"` —
 zero hits in all three). Combined with the correlation below (RC connections are only ever
 observed shortly after that flip), the RC most likely never attempted a connection in these
-three captures because nothing triggered it — not because the bridge was blocking it. This also
-explains, after the fact, why a dedicated `toogle-lid-with-remote-**without-running-bridge**.pcapng`
-test exists — not because the bridge needed to be stopped for the RC to get a connection slot,
-but likely because that was also the test run where the button happened to get pressed.
+three captures because nothing triggered it — not because the bridge was blocking it.
+
+Caveat (raised by the user 2026-07-19): whether the bridge was *deliberately* left running in
+these three captures, versus simply not having been stopped (an easy thing to forget between
+test runs), isn't established either way — the file names don't confirm intent, only that a
+bridge/ESP32 connection happened to be present. Don't read `toogle-lid-with-remote-**without-
+running-bridge**.pcapng`'s name as proof the other three were a deliberate "with bridge"
+control condition; it may just be the one run where the bridge happened to already be stopped
+(for whatever reason) *and* the button happened to get pressed. This doesn't weaken the
+button-press correlation itself (that rests on the flip/connect timing, independent of bridge
+state), but it does mean "the bridge being connected" shouldn't be read as an intentional
+experimental variable in this data set.
 
 **New finding — RC connections are preceded by the button-press advertising flip.** In both
 captures where the RC's `CONNECT_IND` actually appears (`toogle-lid-with-remote-without-running-bridge.pcapng`
