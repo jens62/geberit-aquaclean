@@ -94,6 +94,66 @@ DRY still applies, but at the "each protocol owns its own parser" level). Input 
 validated against a format regex at CLI-parse time with a clear error on mismatch; omitting
 `--firmware` falls back to that model's existing hardcoded default.
 
+## 4a. No hardcoded values — configurable identity/firmware sourcing, named profiles (future)
+
+**Requirement added 2026-07-19.** Generalizes and supersedes the narrower precursors below:
+Phase 2c ("Per-device identity for Mera") and §4's `--firmware` single-flag idea. Also
+formalizes what was informally discussed and deferred 2026-07-18 (see `docs/roadmap.md`
+§"Mera mock: 'real reference' identity/firmware values are hardcoded to our one test
+device" and `memory/mera-mock-real-values-hardcoded-deferred.md`) — this section is now the
+authoritative requirement; those are historical context, not separate open items.
+
+Concretely, the values currently hardcoded as Python constants that this applies to:
+Mera's `_FACTORY_IDENTITY`, `_FW_COMPONENT_VERSIONS`/`_FW_COMPONENT_VERSIONS_RS28`,
+`_IDENTITY_REAL_REFERENCE` (`mera_mock.py`); Alba's `_DEFAULT_STORE` default values
+(`alba_mock.py`). Applies to both models — §"Mock feature parity" still holds unless a
+protocol-level reason blocks one side.
+
+1. **No hardcoded values in the code.** Every one of the constants above should have its
+   actual value live in `mock_persistence.py`'s database, not as a Python literal. A
+   hardcoded literal remains acceptable only as a documented fallback default for a
+   never-configured fresh install (see item 2c below) — not as the primary source of truth.
+
+2. **Multiple ways to feed "real" values in:**
+   - **a. Through the webui:**
+     - **a.1.** Typing into form fields — already exists for Mera identity/firmware
+       (§6 "Full webui write access"); needs the equivalent audit/completion for Alba, and
+       for whichever Mera fields still aren't covered.
+     - **a.2.** Import from a file — a new webui action: upload/select a file (format TBD —
+       likely the same JSON shape as item 2b) and apply all its values in one action,
+       instead of one form field at a time.
+   - **b. Headless, no webui**: a new CLI arg (e.g. `--identity-file <path>`) read at
+     startup, for scripted/automated setups where a person isn't clicking through the
+     webui at all.
+   - **c. Read from a real device, via the bridge**: a new script/mode that connects to an
+     actual Geberit device (reusing the standalone bridge's existing
+     `GetDeviceIdentification`/`GetFirmwareVersionList` client calls — no new protocol code)
+     and writes what it reads directly into the mock's persistence namespace. This is the
+     path that makes the mock's "real reference" values genuinely personal to whichever
+     device a given user owns, instead of hardcoded to one specific test unit.
+
+3. **Webui: button to save current (live) values as the new factory-settings baseline.**
+   Distinct from a normal field edit — this promotes whatever the mock is currently
+   reporting into the persisted "factory default" that a future factory-reset returns to,
+   rather than just changing the live value.
+
+4. **Webui: option to save and name a settings set.** Beyond a single factory baseline —
+   support multiple named, persisted snapshots (e.g. "my real Mera Comfort", "test unit B").
+
+5. **Webui: options to read (load/apply) a previously saved named settings set.**
+   Counterpart to item 4 — select a saved name, apply its values as the mock's current
+   live state.
+
+6. **Add `--version` to `aquaclean_ble_relay.mock_service`.** Prints the orchestrator's own
+   version and exits — currently there's no way to check this without reading source.
+   (Distinct from each model's own `_MOCK_VERSION`, e.g. `mera_mock.py`'s — this is the
+   `mock_service.py` CLI entry point's version, if it has one separate from the per-model
+   ones; clarify/establish that distinction as part of implementing this.)
+
+**Status:** not started — requirements only, recorded here per the user's explicit request.
+Do not begin implementing without a separate go-ahead; this section exists so the scope is
+written down precisely before any code changes.
+
 ## 5. Persistence
 
 **Corrected from an earlier draft of this doc, against what's actually implemented in
@@ -644,6 +704,7 @@ of it.
 | 9b | Firmware update-process simulation (Mera `0x40` proc sequence; Alba TBD) | Not started — depends on 9a |
 | 9c | Firmware profile selector — Mera done, Alba pending a real capture | **Mera done, VM-verified** (2026-07-16) — see §6 "Firmware profile selector"; Alba not started |
 | 10 | Wire remaining Mera `SetCommand` (proc 0x09) codes — action simulation, not persistence | Not started — see §9 |
+| 13 | No hardcoded values — configurable identity/firmware sourcing (webui typed/imported, headless file, real-device-via-bridge), named settings profiles, `mock_service.py --version` | Not started — see §4a |
 
 ### Phase 2 — scope decision (2026-07-16)
 
