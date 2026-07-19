@@ -85,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.100.0b1"
+_MOCK_VERSION = "1.101.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -2062,12 +2062,8 @@ class MeraMock:
         self._button_pressed_at = time.strftime("%H:%M:%S")
         self._button_released_at = None
         self._log("·", "Button pressed via web UI — advertisement byte[2]=0x01 (IsButtonPressed=True)")
-        # Do NOT set pairable=on here (v1.31.0 removed it once already, v1.31.0 changelog:
-        # "removes btmgmt pairable=on to fix iOS pairing dialog"; v2.14.x's RC-pairing-stub
-        # commit 2b565b0 reintroduced it, which brought the same dialog back — pairable=on is
-        # adapter-wide, so it also invites iOS's own system Bluetooth stack to offer pairing
-        # with "ro", not just the Remote Control accessory. Fixed again 2026-07-16 — do not
-        # reintroduce a third time without a way to scope pairing to just the RC.
+        # No pairable toggle here — pairable is now set once at startup in run(), not per
+        # button-press (v1.101.0b1). See run()'s comment for why.
         await self._update_advert(1)
         raise web.HTTPFound("/")
 
@@ -2113,11 +2109,27 @@ class MeraMock:
                         )
                         self.logger.info("Unpaired bond record: %s", e.name)
 
-        # Reset any lingering pairable=on state from older mock versions.
-        # pairable=on causes BlueZ to send an SMP Security Request to iOS -> iOS shows
-        # a pairing dialog, interrupting the Connection 1 flow.  Always force off.
-        subprocess.run(["btmgmt", "-i", self._hci_index(), "pairable", "off"], capture_output=True)
-        self.logger.info("Adapter set to pairable=off")
+        # Re-enabled 2026-07-19 (v1.101.0b1) — RE-TEST BEFORE RELYING ON THIS.
+        # pairable=on was reverted twice (v1.31.0, then again 2026-07-16 after commit
+        # 2b565b0) because it caused BlueZ to send an unsolicited SMP Security Request to
+        # iOS, surfaced as a system pairing dialog interrupting Home App onboarding. Both
+        # times the actual mechanism was BlueZ's built-in Battery plugin: it reads Battery
+        # Level from the connected iOS device on every connect; iOS refuses the
+        # unauthenticated read; BlueZ escalates with the Security Request. This is a
+        # Linux-BlueZ-host artifact, not a real-hardware behavior — confirmed separately:
+        # onboarding-real-mera.pcapng (a full real Home App session) has zero LL_ENC_REQ
+        # frames, so the Home App never attempts BLE pairing on real hardware either.
+        # One day after the second revert, this Battery-plugin mechanism was independently
+        # fixed at the systemd level on anneubuntu-studio (`--noplugin=battery` drop-in
+        # override, memory/mera-mock-battery-plugin-fix.md) — but pairable=on was never
+        # re-tried in the mock's own code against that fix until now. If the iOS pairing
+        # dialog reappears during Home App onboarding testing, the systemd override is
+        # probably missing on this host (check: `systemctl show bluetooth.service -p
+        # ExecStart` should include `--noplugin=battery`) — do not immediately re-revert to
+        # pairable=off without checking that first. See
+        # docs/developer/mock-service-requirements.md REQ-052 for the full history.
+        subprocess.run(["btmgmt", "-i", self._hci_index(), "pairable", "on"], capture_output=True)
+        self.logger.info("Adapter set to pairable=on (re-enabled 2026-07-19 — see run() comment)")
 
         from aiohttp import web
 
