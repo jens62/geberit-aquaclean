@@ -1213,6 +1213,62 @@ def _print_adv_packets(packets: list, mac: str, pcapng_name: str) -> None:
         print(f"  All 16-bit UUIDs seen: {', '.join(f'0x{u.upper()}' for u in all_uuids)}")
 
 
+def _format_adv_section(packets: list, mac: str) -> str:
+    """Markdown rendering of the same deduplicated advertising summary
+    _print_adv_packets prints as plain text — for --markdown --include-adv.
+    Deliberately a flat table, not phase-grouped like the rest of the
+    markdown: advertising is continuous pre-connection beacon traffic, not
+    request/response pairs, so it doesn't fit that structure. Deduplicated
+    to unique combinations (first occurrence's timestamp kept) rather than
+    every raw packet — a real capture can have hundreds of near-identical
+    advertisements before a connection completes."""
+    lines = ["## Advertising (pre-connection)",
+             "",
+             f"*Pre-connection ADV_IND/SCAN_RSP for `{mac}`, deduplicated to unique "
+             "combinations — not phase-grouped like the rest of this document, and not "
+             "validated the way connected-session traffic below is. Real captures often "
+             "have RF noise here (garbled UUIDs/names/company IDs on unrelated or "
+             "corrupted frames) — treat unexpected values with suspicion.*",
+             ""]
+    if not packets:
+        lines.append("No ADV_IND or SCAN_RSP found for this MAC.")
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
+    lines.append("| Time | PDU | UUIDs | Manufacturer data | Name |")
+    lines.append("|------|-----|-------|--------------------|------|")
+    seen: set = set()
+    for p in packets:
+        ad_companies = tuple(p.get("ad_companies") or ())
+        ad_datas = tuple(p.get("ad_datas") or ())
+        key = (p["pdu"], tuple(sorted(p["uuids16"])), ad_companies, ad_datas, p["name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        uuids_str = ", ".join(f"0x{u.upper()}" for u in p["uuids16"]) if p["uuids16"] else "(none)"
+        ad_types = p.get("ad_types") or ()
+        mfg_parts = []
+        for i, company in enumerate(ad_companies):
+            type_hex = ad_types[i] if i < len(ad_types) else "?"
+            data_hex = ad_datas[i] if i < len(ad_datas) else ""
+            mfg_parts.append(f"type={type_hex} company={company} data=0x{data_hex}")
+        mfg_str = "; ".join(mfg_parts) if mfg_parts else "(none)"
+        name_str = repr(p["name"]) if p["name"] else "(none)"
+        lines.append(f"| `t={p['ts']:.1f}s` | {p['pdu']} | {uuids_str} | {mfg_str} | {name_str} |")
+
+    lines.append("")
+    has_scan_rsp = any(p["pdu"] == "SCAN_RSP" for p in packets)
+    lines.append(f"**Total captured:** {len(packets)}  \n"
+                 f"**SCAN_RSP frames:** {'yes — active scan received by sniffer' if has_scan_rsp else 'no (passive capture, or device does not respond to SCAN_REQ)'}")
+    all_uuids = sorted({u for p in packets for u in p["uuids16"]})
+    if all_uuids:
+        lines.append(f"**All 16-bit UUIDs seen:** {', '.join(f'0x{u.upper()}' for u in all_uuids)}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Geberit bidirectional raw traffic log (every write + notify frame)
 # ---------------------------------------------------------------------------
@@ -1589,12 +1645,19 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
                   addr_field: str) -> None:
     events, att_count = _extract_mera_events(tshark, pcapng, mac, addr_field)
 
+    # Opt-in pre-connection advertising section (--markdown --include-adv only —
+    # see _format_adv_section's docstring for why this isn't on by default).
+    adv_md = ""
+    if args.markdown and getattr(args, "include_adv", False):
+        adv_md = _format_adv_section(
+            _get_adv_packets(tshark, pcapng, mac or DEFAULT_MAC), mac or DEFAULT_MAC)
+
     if not events:
         enc = _detect_ll_encryption(tshark, pcapng)
         connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
         if enc:
             if args.markdown:
-                md = _render_ll_encryption_markdown(
+                md = adv_md + _render_ll_encryption_markdown(
                     enc, pcapng, mac, connect_inds, directed_advs)
                 if args.output:
                     Path(args.output).write_text(md, encoding="utf-8")
@@ -1657,7 +1720,7 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
             return rel
 
         capture_header = f"**Capture start:** `{start_str}`\n\n" if start_str else ""
-        md = (capture_header + conn_events_md + "\n" + ctrl_md + "\n"
+        md = (capture_header + adv_md + conn_events_md + "\n" + ctrl_md + "\n"
               + traffic_md + "\n"
               + _android_ble.render_markdown_android(
                   calls, pcapng, mac, "nRF52840 pcapng", att_count,
@@ -1857,6 +1920,7 @@ Examples:
   python tools/nrf-ble-analyze.py capture.pcapng --mac 38:AB:41:2A:0D:67
   python tools/nrf-ble-analyze.py capture.pcapng --markdown
   python tools/nrf-ble-analyze.py capture.pcapng --markdown --output session.md
+  python tools/nrf-ble-analyze.py capture.pcapng --markdown --include-adv --output session.md
   python tools/nrf-ble-analyze.py capture.pcapng --raw
 """,
     )
@@ -1874,6 +1938,12 @@ Examples:
                     help="Extract and print GATT handle→UUID map from discovery frames, then exit")
     ap.add_argument("--adv", action="store_true",
                     help="Show advertising packets (ADV_IND + SCAN_RSP) for the target MAC, then exit")
+    ap.add_argument("--include-adv", action="store_true",
+                    help="With --markdown: prepend a pre-connection advertising section "
+                         "(same data as --adv, deduplicated) before Phase 1. Opt-in — "
+                         "advertising data is often noisy (RF interference, overlapping "
+                         "devices) and doesn't fit the phase-table format, so it's not "
+                         "included by default.")
     args = ap.parse_args()
 
     if not args.pcapng.exists():
