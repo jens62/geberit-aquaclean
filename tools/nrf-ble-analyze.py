@@ -1654,11 +1654,11 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
 
     if not events:
         enc = _detect_ll_encryption(tshark, pcapng)
-        connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
+        connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac or DEFAULT_MAC)
         if enc:
             if args.markdown:
                 md = adv_md + _render_ll_encryption_markdown(
-                    enc, pcapng, mac, connect_inds, directed_advs)
+                    enc, pcapng, mac or DEFAULT_MAC, connect_inds, directed_advs)
                 if args.output:
                     Path(args.output).write_text(md, encoding="utf-8")
                     print(f"[+] Markdown written to {args.output}", file=sys.stderr)
@@ -1667,21 +1667,53 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
             else:
                 if connect_inds or directed_advs:
                     print(_format_connection_events(
-                        connect_inds, directed_advs, mac, markdown=False))
-                _report_ll_encryption(enc, mac)
+                        connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=False))
+                _report_ll_encryption(enc, mac or DEFAULT_MAC)
         else:
-            print(f"No Geberit ATT frames found"
-                  + (f" for {mac}" if mac else "") + ".", file=sys.stderr)
+            has_conn = bool(connect_inds or directed_advs)
+            if args.markdown and (has_conn or adv_md):
+                conn_events_md = _format_connection_events(
+                    connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=True) if has_conn else ""
+                if has_conn:
+                    no_att_note = (
+                        "## No ATT Traffic\n\n"
+                        "Connection event(s) were found for this MAC, but no Geberit ATT\n"
+                        "frames and no LL_ENC_REQ were captured — the nRF52840 sniffer likely\n"
+                        "didn't lock onto this connection's data channel hops (a known sniffer\n"
+                        "limitation: ADV/CONNECT_IND are always captured, but following the\n"
+                        "hopping data channel requires the sniffer to \"catch\" it in time), or\n"
+                        "the connection closed before any GATT activity took place.\n"
+                    )
+                else:
+                    no_att_note = (
+                        "## No ATT Traffic\n\n"
+                        "No BLE connection to this MAC was captured at all — advertising only.\n"
+                    )
+                md = adv_md + conn_events_md + "\n" + no_att_note
+                if args.output:
+                    Path(args.output).write_text(md, encoding="utf-8")
+                    print(f"[+] Markdown written to {args.output}", file=sys.stderr)
+                else:
+                    print(md)
+            elif has_conn:
+                print(_format_connection_events(
+                    connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=False))
+                print(f"No Geberit ATT frames and no LL_ENC_REQ found"
+                      + (f" for {mac}" if mac else "") + " — sniffer likely didn't "
+                      "follow this connection's data channel.", file=sys.stderr)
+            else:
+                print(f"No Geberit ATT frames found"
+                      + (f" for {mac}" if mac else "") + ".", file=sys.stderr)
         return
 
     print(f"[+] {att_count:,} ATT frames, {len(events):,} matching events",
           file=sys.stderr)
 
-    connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac)
+    connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac or DEFAULT_MAC)
     conn_events_plain = _format_connection_events(
-        connect_inds, directed_advs, mac, markdown=False)
+        connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=False)
     conn_events_md = _format_connection_events(
-        connect_inds, directed_advs, mac, markdown=True)
+        connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=True)
 
     # Absolute timestamp base — used by both ctrl section and traffic log
     epoch_base, tz, start_str = _get_capture_start(tshark, pcapng)
