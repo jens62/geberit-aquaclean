@@ -7,6 +7,12 @@
 See `docs/roadmap.md` → "Mock service: Mera namespace/index enumeration" for the full
 per-index persistence table REQ-014's schema is built on — not duplicated here.
 
+See `docs/developer/ble-relay-rest-api-requirements.md` for the separate requirements
+definition covering a REST API between the bridge and this mock-service — the interface the
+bridge's device-client code would use to reach a simulated device over HTTP instead of BLE,
+in support of `docs/roadmap.md`'s "Geberit AquaClean application-layer BLE relay" ("Alba-Hub")
+design. That document is a first draft, not yet comprehensive.
+
 **Document structure, refactored 2026-07-19:** every detailed requirement below has a unique
 `REQ-NNN` ID (stable — never reused or renumbered once assigned), a `Type` (`Functional` |
 `Technical`), a declarative present-tense `Statement` of the actual/intended behavior, a
@@ -87,12 +93,23 @@ otherwise implicit in a flat REQ list).
 
 ### REQ-001 — A changed setting survives a mock restart, per device
 
-**Type:** Functional
-**Statement:** A setting changed via the Geberit Home App against a mocked device is still
+#### Type
+
+Functional
+
+#### Statement
+
+A setting changed via the Geberit Home App against a mocked device is still
 present after the app is closed and `mock_service.py` is stopped and restarted. This holds
 independently for every concurrently-running device.
-**Status:** Done
-**Implementation Details:** This is the acceptance test the rest of this document exists to
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+This is the acceptance test the rest of this document exists to
 satisfy. Proven directly (not just by argument) for Mera in the Phase 2b verification pass:
 `SetStoredCommonSetting` (WaterHardness id=0 → 2) and `SetStoredProfileSetting`
 (AnalShowerPressure id=2 → 4) both mutate immediately and are still present after destroying
@@ -115,12 +132,23 @@ persistence logic is verified directly.
 
 ### REQ-002 — One thin orchestrator, no embedded protocol logic
 
-**Type:** Technical
-**Statement:** `mock_service.py` is the only script a user runs to start any mock. It parses
+#### Type
+
+Technical
+
+#### Statement
+
+`mock_service.py` is the only script a user runs to start any mock. It parses
 arguments, instantiates one device object per `--device` entry, and orchestrates them. All
 BLE/protocol behavior lives in the per-model modules (REQ-006).
-**Status:** Done
-**Implementation Details:** Implemented as Phase 4 (single device) then Phase 5 (multiple
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Implemented as Phase 4 (single device) then Phase 5 (multiple
 devices, see REQ-003). `--device model=NAME,adapter=HCI[,...]` resolves through the
 `_MODEL_REGISTRY` (REQ-009); every field besides `model` passes straight through as a
 constructor kwarg to whichever class `model` maps to (numeric-looking values coerced to
@@ -156,13 +184,24 @@ behaviour/gotchas" #5. Worth checking the app's own device list first when switc
 
 ### REQ-003 — Concurrent devices, isolated lifecycle
 
-**Type:** Technical
-**Statement:** One process runs one asyncio event loop with one task per configured device.
+#### Type
+
+Technical
+
+#### Statement
+
+One process runs one asyncio event loop with one task per configured device.
 Each device task's shutdown (unsubscribe GATT notifications, write
 `TimestampAtLastPowerdown`, close its DB connection, flush its log handler) is independent —
 one device's slow or failed cleanup does not block or corrupt another's.
-**Status:** In Progress
-**Implementation Details:** The concurrency half is implemented and verified; the
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+The concurrency half is implemented and verified; the
 shutdown-isolation half has no explicit test evidence yet (see caveat below).
 Reframed while implementing Phase 5: the original plan assumed devices need separate
 adapters. Wrong — BlueZ supports multiple GATT applications and multiple advertisement
@@ -214,33 +253,63 @@ it hasn't been deliberately exercised (e.g. by forcing one device's cleanup to r
 
 ### REQ-004 — Shared adapter selection
 
-**Type:** Technical
-**Statement:** Each device task is bound to its own BlueZ adapter through one shared
+#### Type
+
+Technical
+
+#### Statement
+
+Each device task is bound to its own BlueZ adapter through one shared
 adapter-selection implementation (`mock_bluez_adapter.select_adapter`), not a per-model copy.
-**Status:** Done
-**Implementation Details:** Originally an Alba-only inline lookup (its own `--adapter`
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Originally an Alba-only inline lookup (its own `--adapter`
 feature); extracted to `mock_bluez_adapter.py` and reused by Mera and (once built) Sela — see
 also REQ-045, which states the general "reuse, don't reimplement" policy this satisfies for
 adapters specifically.
 
 ### REQ-005 — Composite `--device` CLI flag
 
-**Type:** Technical
-**Statement:** Each device is specified with one repeatable composite flag,
+#### Type
+
+Technical
+
+#### Statement
+
+Each device is specified with one repeatable composite flag,
 `--device model=NAME,adapter=HCI[,...]`, not zipped positional lists — avoiding
 index-mismatch bugs between separate `--model`/`--adapter` list flags.
-**Status:** Done
-**Implementation Details:** See REQ-002's Implementation Details for exactly how fields
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+See REQ-002's Implementation Details for exactly how fields
 route to constructor kwargs via `_MODEL_REGISTRY`.
 
 ### REQ-006 — Each mock is an instantiable class
 
-**Type:** Technical
-**Statement:** Each mock model is a class (or async-factory) taking
+#### Type
+
+Technical
+
+#### Statement
+
+Each mock model is a class (or async-factory) taking
 `(adapter, variant, firmware, state_dir, ...)`, so N instances coexist in one interpreter
 without clobbering each other's globals — not a script carrying module-level device dicts,
 notify-handler tables, or one hardcoded logger.
-**Status:** Done
+
+#### Status
+
+Done
 **Implementation Details — Mera (`MeraMock`, `aquaclean_ble_relay/mera_mock.py`):**
 `tools/mock-geberit-mera.py`'s `_dispatch()` was checked before wiring anything in, rather
 than assuming there was something to persist: *every write procedure the mock handled was a
@@ -322,12 +391,23 @@ port of Mera's already-verified pattern.
 
 ### REQ-007 — Standalone single-device scripts remain
 
-**Type:** Technical
-**Statement:** `tools/mock-geberit-mera.py` and `tools/mock-geberit-alba.py` keep working as
+#### Type
+
+Technical
+
+#### Statement
+
+`tools/mock-geberit-mera.py` and `tools/mock-geberit-alba.py` keep working as
 single-device scripts — each is a thin wrapper instantiating exactly one instance of the
 refactored class (REQ-006), not retired.
-**Status:** Done
-**Implementation Details:** Decided explicitly (this is what the old §10 decision-log entry
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Decided explicitly (this is what the old §10 decision-log entry
 #2 recorded) so the standalone scripts also serve as the regression baseline during the
 refactor: before `mock_service.py` orchestration existed at all, each wrapper had to behave
 identically to the pre-refactor script, and REQ-001's acceptance test was proven against each
@@ -336,14 +416,25 @@ built on top.
 
 ### REQ-008 — Fail-fast startup validation
 
-**Type:** Functional
-**Statement:** An unknown `--model` value, two `--device` entries pointing at the same
+#### Type
+
+Functional
+
+#### Statement
+
+An unknown `--model` value, two `--device` entries pointing at the same
 adapter, a named adapter that doesn't exist, an unexpected kwarg for a given model, a missing
 `web_port=` with 2+ devices, and a duplicate `web_port=` each produce a clear error and a
 non-zero exit code before the event loop starts or any D-Bus/BLE activity happens — never a
 cryptic D-Bus error surfacing mid-run.
-**Status:** Done
-**Implementation Details:** All requested adapters are validated to exist via one throwaway
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+All requested adapters are validated to exist via one throwaway
 D-Bus connection before any device starts, so a typo'd `--adapter` fails the whole batch
 immediately rather than only the affected device failing deep inside GATT registration.
 Verified on the mock VM: missing `--device`, duplicate `(model, adapter)`, unknown adapter
@@ -358,12 +449,23 @@ expected `argparse`-level error and exit code 2.
 
 ### REQ-009 — Single open-ended `--model` registry
 
-**Type:** Technical
-**Statement:** One registry maps a `--model` name to `(protocol_module, default_identity)`.
+#### Type
+
+Technical
+
+#### Statement
+
+One registry maps a `--model` name to `(protocol_module, default_identity)`.
 There is no separate `--protocol` flag — `--model` alone decides both which protocol module
 to load and which device identity/variant to present within that family.
-**Status:** Done
-**Implementation Details:** Background for why this shape, not a `--protocol`+`--model`
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Background for why this shape, not a `--protocol`+`--model`
 split: `mera` and `sela` both speak the same legacy proc/ctx protocol (Sela = different
 variant byte + different default identity strings + AcSela-only features like
 `ToggleOrientationLight`); `alba` speaks an entirely different protocol (Ble20/Arendi). The
@@ -380,12 +482,23 @@ to `mode="ble20"` while leaving the class's own default untouched —
 
 ### REQ-010 — Registry is discoverable
 
-**Type:** Functional
-**Statement:** Since the model registry is open-ended and otherwise undiscoverable without
+#### Type
+
+Functional
+
+#### Statement
+
+Since the model registry is open-ended and otherwise undiscoverable without
 reading source, `mock_service.py --help` or `--list-models` enumerates every registered
 model/variant value and its defaults.
-**Status:** Done
-**Implementation Details:** `--list-models` prints the registry and each model's defaults,
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+`--list-models` prints the registry and each model's defaults,
 e.g. `alba (defaults: {'mode': 'ble20'})`. Verified by hand on the mock VM.
 
 ---
@@ -394,11 +507,22 @@ e.g. `alba (defaults: {'mode': 'ble20'})`. Verified by hand on the mock VM.
 
 ### REQ-011 — `--firmware` CLI override *(superseded)*
 
-**Type:** Functional
-**Statement:** `--firmware "RS28.0 TS199"` overrides a model's default firmware string at
+#### Type
+
+Functional
+
+#### Statement
+
+`--firmware "RS28.0 TS199"` overrides a model's default firmware string at
 startup, parsed into whatever internal representation that protocol module already uses.
-**Status:** Superseded by REQ-012
-**Implementation Details:** Never implemented. Superseded 2026-07-19 by the broader REQ-012
+
+#### Status
+
+Superseded by REQ-012
+
+#### Implementation Details
+
+Never implemented. Superseded 2026-07-19 by the broader REQ-012
 through REQ-020 (configurable value sourcing generally, not just firmware, via more than one
 CLI flag). Original design note, kept for anyone implementing an eventual single-value
 CLI override anyway: parsing belongs inside each protocol module's own default-firmware
@@ -409,15 +533,26 @@ validation against a format regex at CLI-parse time.
 
 ### REQ-012 — No hardcoded identity/firmware values
 
-**Type:** Technical
-**Statement:** Every mock identity/firmware constant currently hardcoded as a Python literal
+#### Type
+
+Technical
+
+#### Statement
+
+Every mock identity/firmware constant currently hardcoded as a Python literal
 — Mera's `_FACTORY_IDENTITY`, `_FW_COMPONENT_VERSIONS`/`_FW_COMPONENT_VERSIONS_RS28`,
 `_IDENTITY_REAL_REFERENCE` (`mera_mock.py`); Alba's `_DEFAULT_STORE` default values
 (`alba_mock.py`) — has its actual value living in the persistence DB (REQ-021), not a Python
 literal. A hardcoded literal remains acceptable only as a documented fallback default for a
 never-configured fresh install, not as the primary source of truth.
-**Status:** Open
-**Implementation Details:** *(none — not started; recorded here per explicit request so the
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started; recorded here per explicit request so the
 scope is written down precisely before any code changes begin.)* Generalizes and supersedes
 REQ-011 and REQ-030 (Mera per-instance identity, a narrower precursor). Also formalizes what
 was informally discussed and deferred 2026-07-18 — see `docs/roadmap.md` §"Mera mock: 'real
@@ -429,77 +564,165 @@ reason blocks one side. Do not begin implementing without a separate go-ahead.
 
 ### REQ-013 — Webui form-field editing of identity/firmware
 
-**Type:** Functional
-**Statement:** A user can type a new identity or firmware value directly into a webui form
+#### Type
+
+Functional
+
+#### Statement
+
+A user can type a new identity or firmware value directly into a webui form
 field, for any identity/firmware field on any model.
-**Status:** In Progress
-**Implementation Details:** Already exists for Mera identity/firmware, as part of REQ-037's
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+Already exists for Mera identity/firmware, as part of REQ-037's
 generic settings-table module (`/settings/identity/{field}`, `/settings/fw-component/{id}`
 write routes). Needs the equivalent audit/completion for Alba, and confirmation that every
 Mera identity/firmware field is actually covered (not just the ones exercised so far).
 
 ### REQ-014 — Webui import-from-file
 
-**Type:** Functional
-**Statement:** A user can upload or select a file in the webui and apply every value in it in
+#### Type
+
+Functional
+
+#### Statement
+
+A user can upload or select a file in the webui and apply every value in it in
 one action, instead of editing one form field at a time.
-**Status:** Open
-**Implementation Details:** *(none — not started.)* File format not yet decided; likely the
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)* File format not yet decided; likely the
 same JSON shape as REQ-015's headless file input, so one format serves both paths.
 
 ### REQ-015 — Headless file-based value input
 
-**Type:** Functional
-**Statement:** A new CLI arg (e.g. `--identity-file <path>`) lets identity/firmware values be
+#### Type
+
+Functional
+
+#### Statement
+
+A new CLI arg (e.g. `--identity-file <path>`) lets identity/firmware values be
 read at startup with no webui interaction at all, for scripted/automated setups.
-**Status:** Open
-**Implementation Details:** *(none — not started.)*
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)*
 
 ### REQ-016 — Populate from a real device via the bridge
 
-**Type:** Functional
-**Statement:** A script/mode connects to an actual Geberit device — reusing the standalone
+#### Type
+
+Functional
+
+#### Statement
+
+A script/mode connects to an actual Geberit device — reusing the standalone
 bridge's existing `GetDeviceIdentification`/`GetFirmwareVersionList` client calls, no new
 protocol code — and writes what it reads directly into the mock's persistence namespace, so
 the mock's reference values are personal to whichever device a given user owns instead of
 hardcoded to one specific test unit.
-**Status:** Open
-**Implementation Details:** *(none — not started.)* This is the requirement that ultimately
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)* This is the requirement that ultimately
 makes REQ-012 viable without losing the "shows the real device's actual values" behavior the
 hardcoded constants currently provide.
 
 ### REQ-017 — Save current values as factory-settings baseline
 
-**Type:** Functional
-**Statement:** A webui button promotes whatever the mock is currently reporting into the
+#### Type
+
+Functional
+
+#### Statement
+
+A webui button promotes whatever the mock is currently reporting into the
 persisted "factory default" that a future factory-reset (REQ-028) returns to — distinct from
 a normal field edit, which only changes the live value.
-**Status:** Open
-**Implementation Details:** *(none — not started.)*
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)*
 
 ### REQ-018 — Save and name a settings profile
 
-**Type:** Functional
-**Statement:** A webui action saves the current settings as a new, persisted, named snapshot
+#### Type
+
+Functional
+
+#### Statement
+
+A webui action saves the current settings as a new, persisted, named snapshot
 (e.g. "my real Mera Comfort", "test unit B") — not limited to a single factory baseline.
-**Status:** Open
-**Implementation Details:** *(none — not started.)*
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)*
 
 ### REQ-019 — Load a named settings profile
 
-**Type:** Functional
-**Statement:** A webui action selects a previously saved named snapshot (REQ-018) and applies
+#### Type
+
+Functional
+
+#### Statement
+
+A webui action selects a previously saved named snapshot (REQ-018) and applies
 its values as the mock's current live state.
-**Status:** Open
-**Implementation Details:** *(none — not started.)*
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)*
 
 ### REQ-020 — `mock_service.py --version`
 
-**Type:** Functional
-**Statement:** `aquaclean_ble_relay.mock_service --version` prints the orchestrator's own
+#### Type
+
+Functional
+
+#### Statement
+
+`aquaclean_ble_relay.mock_service --version` prints the orchestrator's own
 version and exits.
-**Status:** Open
-**Implementation Details:** *(none — not started.)* Distinct from each model's own
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)* Distinct from each model's own
 `_MOCK_VERSION` (e.g. `mera_mock.py`'s) — this is the `mock_service.py` CLI entry point's own
 version, if it ends up having one separate from the per-model ones; clarify/establish that
 distinction during implementation.
@@ -510,16 +733,27 @@ distinction during implementation.
 
 ### REQ-021 — One shared DB file, composite-key isolation
 
-**Type:** Technical
-**Statement:** All devices share one SQLite file, `mock_state.db`, under a configurable
+#### Type
+
+Technical
+
+#### Statement
+
+All devices share one SQLite file, `mock_state.db`, under a configurable
 directory (`set_state_dir()`, driven by `mock_service.py --state-dir`). Per-device isolation
 comes from a composite primary key `(device_type, device_key, state_key) → value` —
 `device_type` is the model name (`"mera"`, `"alba"`), `device_key` is the adapter name
 (`"hci1"`) or advertised MAC, falling back to `"default"` for single-instance use. Mera on
 `hci1` and Sela on `hci2` cannot collide — they never share a primary key. Not one file per
 device instance.
-**Status:** Done
-**Implementation Details:** Corrected from an earlier draft of this document, which assumed
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Corrected from an earlier draft of this document, which assumed
 one SQLite file per device instance (`mock_state/<model>-<adapter>.sqlite3`) — that's not
 what `mock_persistence.py` actually implements (it was scaffolded before this section was
 written), and the existing design already satisfies every real requirement here, so the
@@ -527,21 +761,37 @@ document was fixed to match the code rather than the reverse.
 
 ### REQ-022 — `namespace:index` key encoding
 
-**Type:** Technical
-**Statement:** Mera's multiple index spaces that each restart at 0 (`profile_setting`,
+#### Type
+
+Technical
+
+#### Statement
+
+Mera's multiple index spaces that each restart at 0 (`profile_setting`,
 `common_setting`, `active_setting`, `spl`) are addressed by encoding `state_key` as
 `f"{namespace}:{index}"`, e.g. `"common_setting:0"`. Alba's flat DpId space fits the same
 shape (`f"dpid:{dp_id}"`). No schema change is needed for either — `state_key` was already a
 free-form string.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-023 — Static metadata lives in code, not the DB
 
-**Type:** Technical
-**Statement:** `datatype`/`behavior`/`min`/`max` are static per-model Python tables, never
+#### Type
+
+Technical
+
+#### Statement
+
+`datatype`/`behavior`/`min`/`max` are static per-model Python tables, never
 stored in the DB — they are not mutable state. The webui's full settings table (REQ-033)
 joins this static metadata with `load_all()`'s current values at render time.
-**Status:** Done
+
+#### Status
+
+Done
 **Implementation Details — provenance (why these are code, not DB or a live fetch):**
 Checked rather than assumed: does firmware or the Geberit cloud hand out setting min/max
 ranges at runtime? Investigated against a full-session Charles capture from a real Mera
@@ -567,23 +817,45 @@ same source the real app uses, nothing new to fetch.
 
 ### REQ-024 — Persist classification is code-side
 
-**Type:** Technical
-**Statement:** Whether a `(namespace, index)` pair is durable ("persist") or live-only is a
+#### Type
+
+Technical
+
+#### Statement
+
+Whether a `(namespace, index)` pair is durable ("persist") or live-only is a
 code-side decision, not a DB column. A protocol module only calls `save()` for pairs
 classified as durable; live-state indices are simply never written, so there is nothing to
 filter on read.
-**Status:** Done
-**Implementation Details:** The concrete Mera classification enumeration lives in
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+The concrete Mera classification enumeration lives in
 `docs/roadmap.md`, not duplicated here.
 
 ### REQ-025 — Full persist coverage
 
-**Type:** Functional
-**Statement:** Every `persist`-classified `(namespace, index)` pair actually round-trips
+#### Type
+
+Functional
+
+#### Statement
+
+Every `persist`-classified `(namespace, index)` pair actually round-trips
 through the store — the full real-device settings surface, not a convenience subset. If a
 setting exists on a real toilet and is writable, it survives a mock restart.
-**Status:** In Progress
-**Implementation Details:** True for every setting currently wired (Stored common/profile
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+True for every setting currently wired (Stored common/profile
 settings for Mera, Nvm DpIds for Alba, firmware versions for both — REQ-001, REQ-031). Not yet
 true for Mera's `SetCommand` (proc `0x09`) channel, where ~18 of ~20 command codes are still
 unsimulated no-ops rather than persisted or correctly-classified-as-live — tracked
@@ -592,37 +864,75 @@ persistence-classification gap (something happens but isn't saved).
 
 ### REQ-026 — Write-through, not write-on-shutdown
 
-**Type:** Functional
-**Statement:** `save()` commits synchronously on every call. Every setting change arriving
+#### Type
+
+Functional
+
+#### Statement
+
+`save()` commits synchronously on every call. Every setting change arriving
 over the protocol (`SetStoredProfileSetting`, `SetActiveCommonSetting`, a DpId write, etc.)
 persists immediately, not batched or flushed at shutdown.
-**Status:** Done
-**Implementation Details:** This is what makes REQ-001's acceptance test hold even under an
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+This is what makes REQ-001's acceptance test hold even under an
 abrupt SIGINT/SIGTERM.
 
 ### REQ-027 — Startup never overwrites existing state
 
-**Type:** Functional
-**Statement:** `load_all()` returns whatever is already on disk; a protocol module seeds
+#### Type
+
+Functional
+
+#### Statement
+
+`load_all()` returns whatever is already on disk; a protocol module seeds
 hardcoded defaults only for `(namespace, index)` pairs missing from that result. An existing
 persisted value always wins over a hardcoded default.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-028 — Factory-reset is single-device-scoped
 
-**Type:** Functional
-**Statement:** `reset(device_type, device_key)` deletes exactly one device's rows, never all
+#### Type
+
+Functional
+
+#### Statement
+
+`reset(device_type, device_key)` deletes exactly one device's rows, never all
 devices' — "Reset to Factory Settings" in the webui (REQ-033) acts on exactly one device's
 store.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-029 — Per-instance identity for Alba
 
-**Type:** Functional
-**Statement:** Each Alba mock instance has its own stable, unique, persisted serial number
+#### Type
+
+Functional
+
+#### Statement
+
+Each Alba mock instance has its own stable, unique, persisted serial number
 and pairing PIN — not one hardcoded value shared by every instance.
-**Status:** Done
-**Implementation Details:** Gap found 2026-07-16: REQ-025's coverage requirement ("store all
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Gap found 2026-07-16: REQ-025's coverage requirement ("store all
 data which is stored on a real device") had been interpreted as "settings a real device lets
 you change," but a real device also has a unique serial number and pairing PIN, set once at
 manufacturing and never changed. Every `_DEFAULT_STORE` row for these (DpId 12
@@ -657,12 +967,23 @@ it as an open task.
 
 ### REQ-030 — Per-instance identity for Mera *(superseded)*
 
-**Type:** Functional
-**Statement:** Each Mera mock instance has its own varied, per-adapter identity
+#### Type
+
+Functional
+
+#### Statement
+
+Each Mera mock instance has its own varied, per-adapter identity
 (`_SAP_NUMBER`/`_SERIAL`), the same way REQ-029 does for Alba, instead of fixed instance
 attributes set once in `__init__`.
-**Status:** Superseded by REQ-012
-**Implementation Details:** Never implemented (tracked historically as "Phase 2c"; the
+
+#### Status
+
+Superseded by REQ-012
+
+#### Implementation Details
+
+Never implemented (tracked historically as "Phase 2c"; the
 concrete ask and REQ-003's multi-instance test case were Alba-only, so it was never ported to
 Mera). Superseded 2026-07-19 by REQ-012's broader "no hardcoded values, configurable sourcing"
 requirement, which subsumes this. Worth remembering if REQ-012 is picked up: this is one of
@@ -670,12 +991,23 @@ the concrete gaps it needs to close for Mera specifically.
 
 ### REQ-031 — Firmware version persistence
 
-**Type:** Functional
-**Statement:** Reported firmware/component versions durably change after a simulated update
+#### Type
+
+Functional
+
+#### Statement
+
+Reported firmware/component versions durably change after a simulated update
 and survive a mock restart, for both Mera and Alba — matching a real device's flash-backed
 version storage, not read-only in-memory data.
-**Status:** Done
-**Implementation Details:** Gap found 2026-07-16: both mocks reported firmware/component
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Gap found 2026-07-16: both mocks reported firmware/component
 versions as read-only, in-memory-only data (Mera's `_FW_COMPONENT_VERSIONS` module-level
 dict; Alba's firmware DpIds 8/9/10/785/786/787) — fine for a static version, but blocked
 REQ-053's update simulation, which needs the reported version to durably change after the
@@ -706,31 +1038,61 @@ was the first instance of applying that policy.
 
 ### REQ-032 — Independent per-device webui
 
-**Type:** Technical
-**Statement:** Each device keeps its own already-independent web server/port (aiohttp for
+#### Type
+
+Technical
+
+#### Statement
+
+Each device keeps its own already-independent web server/port (aiohttp for
 Mera, FastAPI for Alba, each bound to its own `web_port`) — no landing page, no
 single-port/single-server merge.
-**Status:** Done
-**Implementation Details:** Decided 2026-07-16: a user running N mock devices already knows
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Decided 2026-07-16: a user running N mock devices already knows
 each one's port from its own `--device` spec, and unifying aiohttp+FastAPI into one
 process-wide server would add real complexity for no functional gain.
 
 ### REQ-033 — Full per-device settings table
 
-**Type:** Functional
-**Statement:** Each device's webui shows a full settings table (value, datatype, behavior,
+#### Type
+
+Functional
+
+#### Statement
+
+Each device's webui shows a full settings table (value, datatype, behavior,
 min/max) with inline per-row edit, and a "Reset to factory defaults" action scoped to exactly
 that device's store (REQ-028) — never all devices'.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-034 — Live SSE updates
 
-**Type:** Functional
-**Statement:** The webui reflects state changes live via Server-Sent Events, not
+#### Type
+
+Functional
+
+#### Statement
+
+The webui reflects state changes live via Server-Sent Events, not
 full-page-reload polling — mirroring the real bridge's own `new EventSource(apiBase +
 '/events')` pattern.
-**Status:** Done
-**Implementation Details:** Gap found 2026-07-16: both mocks' update mechanism was a
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Gap found 2026-07-16: both mocks' update mechanism was a
 full-page reload on a timer (`setTimeout(location.reload(), 3000)` for Mera;
 `<meta http-equiv="refresh" content="2">` for Alba) — not even AJAX polling of a JSON
 endpoint. Every reload wiped any in-progress interaction (a stepper mid-drag, a swatch's
@@ -764,11 +1126,22 @@ identity derived from its own tmp dir's unique suffix.
 
 ### REQ-035 — Mera firmware-profile selector
 
-**Type:** Functional
-**Statement:** A "Firmware Profile" selector in the Mera webui lets a user flip the mock
+#### Type
+
+Functional
+
+#### Statement
+
+A "Firmware Profile" selector in the Mera webui lets a user flip the mock
 between real captured snapshots (`rs30` current/default, `rs28` pre-update) with one action.
-**Status:** Done
-**Implementation Details:** `/settings/firmware-profile`, body `{"value": "rs28"|"rs30"}`.
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+`/settings/firmware-profile`, body `{"value": "rs28"|"rs30"}`.
 Only components 1 and 11 actually differ between the two snapshots — confirmed twice over
 (`memory/mera-firmware-update-ble-protocol.md` and `docs/developer/firmware-version.md`,
 matching real capture bytes); every other component is identical in both. Applying a profile
@@ -792,25 +1165,47 @@ update-request blocker anyway — see REQ-053).
 
 ### REQ-036 — Alba firmware-profile selector
 
-**Type:** Functional
-**Statement:** The Alba webui offers the same firmware-profile selection capability as Mera's
+#### Type
+
+Functional
+
+#### Statement
+
+The Alba webui offers the same firmware-profile selection capability as Mera's
 (REQ-035), for Alba's firmware DpIds (8/9/10/785/786/787).
-**Status:** Open
-**Implementation Details:** *(none — not started.)* Blocked on a precondition, not just
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started.)* Blocked on a precondition, not just
 unscheduled: no real pre/post-update firmware capture exists for Alba yet (unlike Mera's
 nRF52840 capture), so there is no confirmed byte-accurate "older" snapshot to offer. Pick up
 once such a capture exists.
 
 ### REQ-037 — Shared generic webui control module
 
-**Type:** Technical
-**Statement:** Webui controls (numeric stepper, toggle, enum/select, color swatch) are
+#### Type
+
+Technical
+
+#### Statement
+
+Webui controls (numeric stepper, toggle, enum/select, color swatch) are
 rendered by one shared, metadata-driven module — a metadata list per setting
 (`{id, name, kind, min, max, writeUrl}`) drives rendering, value updates, and writes
 generically — not per-feature bespoke markup duplicated across mocks or hardcoded per-ID
 branches.
-**Status:** Done
-**Implementation Details:** Current-state audit before deciding (2026-07-16): three fully
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Current-state audit before deciding (2026-07-16): three fully
 separate HTML/JS sources existed, zero sharing — the real bridge's
 `aquaclean_console_app/static/index.html` (2141 lines, one monolithic file); Mera's inline
 `_HTML` aiohttp template (~53 lines, identity table + button-press form + session log only);
@@ -851,13 +1246,24 @@ import groups it serves.
 
 ### REQ-038 — Mera "User sitting" toggle
 
-**Type:** Functional
-**Statement:** The Mera webui has a "User sitting" simulation toggle, the same capability
+#### Type
+
+Functional
+
+#### Statement
+
+The Mera webui has a "User sitting" simulation toggle, the same capability
 Alba's webui already has — the Geberit Home App's Remote Control area only enables
 shower/dryer buttons when the seat sensor reports a user sitting, so without this toggle that
 section of the app stays greyed out during mock testing.
-**Status:** Open
-**Implementation Details:** *(none — not started; formalized 2026-07-19, superseding an
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started; formalized 2026-07-19, superseding an
 earlier, slightly-off sketch in `docs/roadmap.md` §"Mock Mera: add 'User sitting' toggle
 button to web UI" that guessed at a route name/shape not quite matching Alba's real
 mechanism.)* **Alba's actual mechanism** (confirmed by reading the real implementation): a
@@ -884,11 +1290,22 @@ automatic per-session flip, or is the manual toggle alone sufficient?
 
 ### REQ-039 — Per-device logger identity
 
-**Type:** Technical
-**Statement:** Each device instance has its own logger, named by the same `(model, adapter)`
+#### Type
+
+Technical
+
+#### Statement
+
+Each device instance has its own logger, named by the same `(model, adapter)`
 key used for persistence (e.g. `mock.mera.hci1`) — not one shared hardcoded logger name.
-**Status:** Done
-**Implementation Details:** New shared module `aquaclean_ble_relay/mock_logging.py` —
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+New shared module `aquaclean_ble_relay/mock_logging.py` —
 `get_device_logger(model, adapter)` returns/configures the `mock.<model>.<adapter>` logger
 (idempotent), with three handlers: console, a per-device file, and one combined-file handler
 shared by every device logger created in the process (REQ-041). `MeraMock` swapped its inline
@@ -921,38 +1338,76 @@ in any environment including the primary dev venv, unlike the webui tests.
 
 ### REQ-040 — Fixed-position device tag
 
-**Type:** Functional
-**Statement:** The device tag sits at a fixed position in every log line, immediately after
+#### Type
+
+Functional
+
+#### Statement
+
+The device tag sits at a fixed position in every log line, immediately after
 the timestamp, so a script/CI consumer can reliably `grep`/`awk` on it regardless of message
 content.
-**Status:** Done
-**Implementation Details:** The device tag is the logger name itself in the format string
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+The device tag is the logger name itself in the format string
 (`[%(asctime)s] [%(name)s] %(message)s`) — no per-record `extra=` plumbing needed.
 
 ### REQ-041 — Combined and per-device log files
 
-**Type:** Functional
-**Statement:** Both a combined, chronological, cross-device-correlation log and a per-device
+#### Type
+
+Functional
+
+#### Statement
+
+Both a combined, chronological, cross-device-correlation log and a per-device
 log file exist simultaneously, via multiple handlers on the same per-device logger — not a
 choice between the two.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-042 — Log filename convention
 
-**Type:** Technical
-**Statement:** Log filenames follow the same `<model>-<adapter>` naming convention as the
+#### Type
+
+Technical
+
+#### Statement
+
+Log filenames follow the same `<model>-<adapter>` naming convention as the
 persistence DB's `device_type`/`device_key`.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-043 — `--btmon-capture`
 
-**Type:** Functional
-**Statement:** `mock_service.py --btmon-capture` starts `sudo btmon -w
+#### Type
+
+Functional
+
+#### Statement
+
+`mock_service.py --btmon-capture` starts `sudo btmon -w
 <state-dir>/logs/mock-btmon_<timestamp>.btsnoop` before any device starts and stops it
 cleanly on exit, automating a capture workflow that was previously a separate manual
 terminal command.
-**Status:** Done
-**Implementation Details:** Filenames follow the same `state_dir/logs/mock-*_<timestamp>`
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Filenames follow the same `state_dir/logs/mock-*_<timestamp>`
 convention as the per-device/combined logs. Cleanup backs `Popen.terminate()` with a `sudo
 pkill -f` fallback keyed on a distinguishing argument, since `sudo` doesn't always forward
 `SIGTERM` to its child reliably. Never exhibited either problem `--bluetoothd-debug`
@@ -960,13 +1415,24 @@ pkill -f` fallback keyed on a distinguishing argument, since `sudo` doesn't alwa
 
 ### REQ-044 — `--bluetoothd-debug`
 
-**Type:** Functional
-**Statement:** `mock_service.py --bluetoothd-debug` starts `sudo bluetoothd -n -d
+#### Type
+
+Functional
+
+#### Statement
+
+`mock_service.py --bluetoothd-debug` starts `sudo bluetoothd -n -d
 --noplugin=battery` (redirected to a log file) before any device starts and stops it cleanly
 on exit, producing a usable bluetoothd debug session — the same automation REQ-043 provides
 for btmon.
-**Status:** In Progress
-**Implementation Details:** Implemented, but currently unusable in either configuration
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+Implemented, but currently unusable in either configuration
 (found 2026-07-18) — root cause fully diagnosed, not yet fixed. Deliberately does **not**
 stop/restart the systemd `bluetooth` service (mirrors the manual two-terminal workflow it
 replaces exactly): if systemd's `bluetoothd` already holds the `org.bluez` D-Bus name — the
@@ -994,40 +1460,81 @@ favor of documenting the manual two-terminal workflow it was meant to replace. F
 
 ### REQ-045 — Shared adapter selection *(see REQ-004)*
 
-**Type:** Technical
-**Statement:** Adapter-selection logic exists once (`mock_bluez_adapter.py`) and is reused by
+#### Type
+
+Technical
+
+#### Statement
+
+Adapter-selection logic exists once (`mock_bluez_adapter.py`) and is reused by
 every model — never reimplemented per model.
-**Status:** Done
-**Implementation Details:** See REQ-004; listed again here as this document's general DRY
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+See REQ-004; listed again here as this document's general DRY
 policy statement.
 
 ### REQ-046 — Shared persistence schema
 
-**Type:** Technical
-**Statement:** Persistence is one schema/module (`mock_persistence.py`), reused by every
+#### Type
+
+Technical
+
+#### Statement
+
+Persistence is one schema/module (`mock_persistence.py`), reused by every
 model — not a per-model reimplementation.
-**Status:** Done
-**Implementation Details:** Scaffolded, together with `mock_bluez_adapter.py` (REQ-004), as
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+Scaffolded, together with `mock_bluez_adapter.py` (REQ-004), as
 the first implementation step before any per-model refactor — commits `152382c`, `dadde00`,
 `0a85636`.
 
 ### REQ-047 — Shared orchestration
 
-**Type:** Technical
-**Statement:** CLI parsing, task orchestration, and shutdown handling live once, in
+#### Type
+
+Technical
+
+#### Statement
+
+CLI parsing, task orchestration, and shutdown handling live once, in
 `mock_service.py` — not duplicated per model.
-**Status:** Done
+
+#### Status
+
+Done
 
 ### REQ-048 — Shared validation/classification pattern
 
-**Type:** Technical
-**Statement:** Firmware-string validation and namespace/persist classification follow one
+#### Type
+
+Technical
+
+#### Statement
+
+Firmware-string validation and namespace/persist classification follow one
 shared *pattern* (validate at parse time, classify persist-vs-live once per namespace) across
 models, even where each protocol module's concrete table/regex differs — each protocol module
 owns its own concrete implementation of the shared pattern, not a single shared parser that
 assumes identical internal representations.
-**Status:** Done
-**Implementation Details:** See REQ-011 for why a single shared parser doesn't fit here
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+See REQ-011 for why a single shared parser doesn't fit here
 (Mera's byte-tuples vs. Alba's DpId encoding aren't the same shape).
 
 ---
@@ -1036,25 +1543,47 @@ assumes identical internal representations.
 
 ### REQ-049 — Defined webui bind-failure behavior
 
-**Type:** Functional
-**Statement:** When one device's webui fails to bind (or any single device fails to start),
+#### Type
+
+Functional
+
+#### Statement
+
+When one device's webui fails to bind (or any single device fails to start),
 the rest of the service has a defined, deliberate response — either the whole
 `mock_service.py` run aborts, or that one device degrades to headless (BLE still served, no
 webui) while the others continue.
-**Status:** Open
-**Implementation Details:** *(none — decision not yet made.)* Originally raised as two
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — decision not yet made.)* Originally raised as two
 separate bullet points in this document ("Webui bind failure" and "Resource conflicts across
 devices") — merged here, since on inspection they were the same open question stated twice.
 
 ### REQ-050 — Full `SetCommand` simulation
 
-**Type:** Functional
-**Statement:** The Mera mock simulates the effect of every `SetCommand` (proc `0x09`) code
+#### Type
+
+Functional
+
+#### Statement
+
+The Mera mock simulates the effect of every `SetCommand` (proc `0x09`) code
 (`ToggleLidPosition`, `PrepareDescaling`/`ConfirmDescaling`/`CancelDescaling`,
 `TriggerFlushManually`, `ResetFilterCounter`, `ToggleOrientationLight`, `Stop`, etc. — see
 `.claude/rules/ble-protocol.md` Layer 1 table) — not just the two currently wired.
-**Status:** Open
-**Implementation Details:** Found 2026-07-16. This is a gap in *action simulation*, distinct
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+Found 2026-07-16. This is a gap in *action simulation*, distinct
 from persistence (REQ-025), which is correctly wired for the settings that actually need it.
 Precisely: `_write_stored_common_setting`/`_write_stored_profile_setting` (proc `0x52`/`0x54`)
 persist correctly (REQ-001) — confirmed working, reused by both the real BLE path and the
@@ -1071,11 +1600,22 @@ distinguishing "received but ignored" from "not received." All of these are othe
 
 ### REQ-051 — Complete webui state visibility
 
-**Type:** Functional
-**Statement:** The webui shows every piece of state the mock tracks, not a curated subset —
+#### Type
+
+Functional
+
+#### Statement
+
+The webui shows every piece of state the mock tracks, not a curated subset —
 for both Mera and Alba.
-**Status:** Open
-**Implementation Details:** Found 2026-07-17. **Alba:** `_Ble20AppLayer._DEFAULT_STORE` holds
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+Found 2026-07-17. **Alba:** `_Ble20AppLayer._DEFAULT_STORE` holds
 all 79 DpIds in `self._store`, but `_settings_table_data()` only renders
 `self._SETTINGS_DPIDS` (14 keys — Nvm settings + identity + firmware). The other ~65 DpIds
 (shower/descaling status, statistics, error flags, commands, etc.) are fully live in memory
@@ -1093,13 +1633,24 @@ section covering everything not already shown.
 
 ### REQ-052 — Remote Control interoperability
 
-**Type:** Functional
-**Statement:** A real Geberit hardware Remote Control can discover, pair with, and connect to
+#### Type
+
+Functional
+
+#### Statement
+
+A real Geberit hardware Remote Control can discover, pair with, and connect to
 both the Mera mock and the Alba mock, so remote-control behavior (button presses,
 displacement/handoff with a concurrently-connected phone app, etc.) can be exercised against
 the mocks instead of requiring real hardware every time.
-**Status:** In Progress
-**Implementation Details:** Added 2026-07-17. Neither mock has this as a working feature yet.
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+Added 2026-07-17. Neither mock has this as a working feature yet.
 **Mera:** `_RCPairingService` (`mera_mock.py`) is a discovery-only stub — it advertises GATT
 service UUID `0xC526` so the RC's `FIND_BY_TYPE_VALUE` pre-pairing check succeeds, but
 implements nothing else. The RC then attempts real BLE pairing (`LL_ENC_REQ`) — untested
@@ -1121,12 +1672,23 @@ rather than just complete pairing and go silent.
 
 ### REQ-053 — Firmware-update procedure simulation
 
-**Type:** Functional
-**Statement:** The mock simulates the real device's `ctx=0x40` firmware-update BLE procedure
+#### Type
+
+Functional
+
+#### Statement
+
+The mock simulates the real device's `ctx=0x40` firmware-update BLE procedure
 sequence (`StartFirmwareUpdate`/poll/keepalive/finalize) closely enough that the real Geberit
 Home App can drive a simulated firmware update against it end-to-end.
-**Status:** In Progress
-**Implementation Details:** Implemented for Mera only (`mera_mock.py`, from v1.83.0b1) — no
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+Implemented for Mera only (`mera_mock.py`, from v1.83.0b1) — no
 real Alba firmware-update capture exists yet, so this is not a parity violation, just nothing
 to base an Alba equivalent on. `_dispatch()` has an early `ctx`-first branch: `ctx=0x40` (plus
 its `ctx=0x00/proc=0x01` companion frame) routes to `_proc_fw_update()` before the existing
@@ -1192,12 +1754,23 @@ resolution to them specifically.
 
 ### REQ-054 — Post-update behavioral completeness
 
-**Type:** Functional
-**Statement:** The mock's behavior after a simulated firmware update reflects any
+#### Type
+
+Functional
+
+#### Statement
+
+The mock's behavior after a simulated firmware update reflects any
 BLE-observable change the corresponding real update introduced — not just the reported
 version string.
-**Status:** Open
-**Implementation Details:** *(none — not started; this is a completeness requirement for
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+*(none — not started; this is a completeness requirement for
 whenever a gap is found, not a currently-known gap.)* Added 2026-07-18. REQ-053's simulation
 only changes reported component version strings at the end of a simulated update; it does not
 represent any other behavioral change a real firmware update may have introduced. When a real
@@ -1215,13 +1788,24 @@ here.
 
 ### REQ-055 — Active settings never persist
 
-**Type:** Functional
-**Statement:** Active settings (`0x0A`/`0x0B`, `GetActiveCommonSetting`/
+#### Type
+
+Functional
+
+#### Statement
+
+Active settings (`0x0A`/`0x0B`, `GetActiveCommonSetting`/
 `SetActiveCommonSetting`) are session-scoped and re-derived from Stored NVM on every restart —
 they are never persisted themselves, matching how a real device always re-derives Active
 state from Stored NVM after a power-cycle.
-**Status:** Done
-**Implementation Details:** See REQ-006's Mera Implementation Details for how this is
+
+#### Status
+
+Done
+
+#### Implementation Details
+
+See REQ-006's Mera Implementation Details for how this is
 implemented (a session-scoped in-memory store seeded from `_STORED_COMMON_SETTINGS` at mock
 startup). Verified: writing `SetActiveCommonSetting` (id=0 → 6) is immediately visible via
 `GetActiveCommonSetting` within the same instance, but after a simulated restart it returns
