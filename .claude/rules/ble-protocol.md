@@ -352,6 +352,46 @@ Confirmed live (nRF Connect, 2026-07-18): idle = company `0x0100`, data `00 31 3
 button pressed = company `0x01AA`, data `01 31 34 36 32 31` — both flags flip together on a
 real button press.
 
+**Independent raw confirmation (nRF Connect for Android, real Mera Comfort `38:AB:41:2A:0D:67`,
+2026-07-19)** — a second scan, different platform/tool than the above, same result:
+
+*Idle* (before pressing the pairing button):
+```
+Advertising type: Legacy
+Manufacturer data: Company: TomTom International BV <0x0100>  0x003134363231
+Complete Local Name: Geberit AC PRO
+Manufacturer data: Company: Reserved ID <0x3300>  0x30
+```
+*Button pressed* (pairing button held for Geberit Home App / Remote Control onboarding):
+```
+Advertising type: Legacy
+Manufacturer data: Company: Geophysical Technology Inc. <0x01AA>  0x013134363231
+Complete Local Name: Geberit AC PRO
+Manufacturer data: Company: Reserved ID <0x3300>  0x30
+```
+`0x003134363231` = `00 31 34 36 32 31` (state=idle + `"14621"`); `0x013134363231` =
+`01 31 34 36 32 31` (state=pressed + `"14621"`) — byte-for-byte match to the table above.
+"TomTom International BV" and "Geophysical Technology Inc." are just the Bluetooth SIG's
+registered names for company IDs `0x0100`/`0x01AA` — Geberit repurposes those IDs as the
+state flag, it has no relation to either actual company. The second "Manufacturer data:
+Reserved ID <0x3300> 0x30" entry is nRF Connect on Android *also* merging ADV_IND+SCAN_RSP
+into one device view (same as noted below) — it's really the separate SCAN_RSP entry
+`00 33 30` (RS firmware prefix "30"), misread as a second manufacturer-data company ID
+`0x3300` (bytes 0x00,0x33) with 1-byte data `0x30`; unaffected by the button press, as
+expected since it's firmware-version info, not button state.
+
+**Cross-checked against `onboarding-real-mera.pcapng` (2026-07-19)** via
+`tools/nrf-ble-analyze.py --adv` (the companion `.md` doesn't include advertising at all —
+that's `--markdown` mode, connected-session traffic only). Confirms the idle payload and the
+`IsButtonPressed` byte flip (both present, byte-for-byte). **Does not confirm the company-ID
+flip to `0x01AA`** — the one button-pressed line in that capture still shows `company=0x0100`;
+zero `01AA` hits in the whole file. Not a contradiction (the two bits are independent, and
+this capture may just never have exercised `IsEmergencyConnectPermitted`), but the flip
+mechanism itself is only confirmed by the two live scans above, not by this stored capture.
+That pcapng also has heavy RF-noise corruption in most of its *other* advertising lines
+(garbled UUIDs/names, nonsense company IDs) — not a clean general-purpose reference beyond
+these two facts. Full writeup: `docs/developer/ble-advertising-button-press-confirmation.md`.
+
 **SCAN_RSP** — separate `0x09` Complete Local Name (`"Geberit AC PRO"`) plus a second, distinct
 `0xFF` entry: 3 raw bytes `[0x00, rs_char1, rs_char2]` — the RS firmware major-version prefix
 (e.g. `00 33 30` = "30" for RS30.0). A scanner that merges ADV_IND+SCAN_RSP into one device
