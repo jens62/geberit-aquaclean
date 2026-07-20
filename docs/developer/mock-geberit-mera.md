@@ -194,8 +194,32 @@ unknown... All post-pairing RC traffic is encrypted and not yet decoded") with n
 NOTIFY/INDICATE characteristic at all, so the RC has nothing to wait for and gives up; bond
 non-persistence is consistent with the mock's existing `btmgmt unpair` startup sweep and
 `_force_remove_and_reregister`'s `RemoveDevice` call (both pre-existing, unrelated to this
-fix). Decoding what the real RC actually expects after the CCCD write — the next concrete
-step toward RELAY-013 / a fully working RC pairing flow — is not yet started.
+fix). **CCCD write decoded, 2026-07-20 — a dead end, in a good way.** Handle `0x0009` is not part
+of the Geberit protocol at all: confirmed from the mock's own bluetoothd debug log
+(`Handle range: 0x0006-0x0009  UUID: Generic Attribute Profile (0x1801)`), it's the standard
+GATT "Service Changed" characteristic (`0x2A05`), auto-managed by BlueZ. Enabling indications
+on it is routine BLE-central bookkeeping every well-behaved central does; no indication is
+ever expected from it unless the GATT database structurally changes mid-connection, which it
+doesn't here. The mock's ack was the complete, correct response — `_RCPairingService` isn't
+implicated.
+
+That reframes the ~21-24s disconnect as possibly not a gap at all. Cross-checked against
+`pairing with RC and toggle lid.pcapng` (a real RC-to-real-toilet session): its own two
+`CONNECT_IND`s are **~15.5s apart** (`t=4335.1s` → `t=4350.6s`), the same order of magnitude
+as the mock's ~21-36s connect/disconnect/reconnect cadence — consistent with the RC simply
+reconnecting on its own rhythm regardless of what the peripheral does, rather than the mock
+failing to send something expected. That capture's own ATT decode goes dark after ~0.4s each
+time (nRF Sniffer lost the channel-hop sync, a known sniffer limitation — not evidence either
+way), so this can't be fully confirmed from evidence in hand. (Two other captures,
+`mock-geberit-mera_RC_2026-06-25/26_*.md`, looked promising by filename but are misnamed: the
+peer MAC `78:42:1C:38:DE:16` is iOS's stale-RPA artifact — see "Stale RPA between Connection 1
+and Connection 2" below — not the RC.)
+
+Next concrete step, not yet started: either a fresh real-device capture with the sniffer
+closer/better-synced (to see what, if anything, follows those reads on real hardware beyond
+what `pairing with RC and toggle lid.pcapng` captured), or a longer mock test letting the RC
+cycle through several reconnects to see whether it eventually reports "paired" on its own
+display.
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
