@@ -165,10 +165,37 @@ investigation, 45s after the flip. Two things to fix before calling this done:
    `device_confirm_passkey: Operation not permitted`, and the kernel floods
    `unexpected SMP command 0x03` (1,945 times in 2.5 minutes) until `bluetooth.service` is
    manually restarted. The mock has never registered a BlueZ pairing agent
-   (`org.bluez.Agent1`) — `bluez_peripheral.agent.NoIoAgent` is a ready-made candidate fix,
-   not yet implemented. (Distinct from the already-fixed battery-plugin SMP issue below — that
+   (`org.bluez.Agent1`) — `bluez_peripheral.agent.NoIoAgent` is a ready-made candidate fix.
+   (Distinct from the already-fixed battery-plugin SMP issue below — that
    was the mock spontaneously initiating pairing against itself; this is a real external device,
    the RC, initiating genuine pairing that the mock has no agent to answer.)
+
+**Fix confirmed, 2026-07-20, v1.104.0b1 — `NoIoAgent` resolves the flood/hang completely.**
+`MeraMock.run()` now registers `bluez_peripheral.agent.NoIoAgent(...).register(bus,
+default=True)` right after the advertisement registration. Re-tested against the RC
+(`Geberit-Remote-Control-Against-Mock-sniff-on-mock-01.pcapng`, cross-checked against the
+mock's own console log for the same window): full SMP handshake completes cleanly twice in a
+row — `Pairing Request` → `Pairing Response` → `Pairing Confirm` ×2 → `Pairing Random` ×2 →
+`Encryption Information`/`Central Identification`/`Signing Information`/`Identity
+Information`/`Identity Address Information` both directions → `LL_ENC_REQ`/`LL_ENC_RSP`/
+`LL_START_ENC_REQ`/`LL_START_ENC_RSP`. Zero `No agent available` lines in the mock log, zero
+`unexpected SMP command` lines in the kernel log for the same window (both greped to 0).
+Post-encryption, the RC (as GATT client) reads several of its own already-known
+characteristics from `_RCPairingService`/DIS (Device Name `"Geberit AC Remote"`, firmware
+`"3.60.101.860/0000"`, handle `0x000E` = 12×`0xFF`, `"RS04 TS11"` — matching
+`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/pairing with RC and
+toggle lid.md`'s real-device capture of the same handle 0x000C value), then writes `0x02`
+(Indications-enable) to a CCCD at handle `0x0009` — acked, but nothing is ever sent back on
+it. **Both sessions then end after ~21-24s with `LL_TERMINATE_IND reason=Remote User
+Terminated`**, and the second session repeats the full Pairing Request from scratch rather
+than resuming a stored bond. Neither is a new mystery: `_RCPairingService` is an
+intentionally-scoped stub (its own docstring: "Contents beyond the service declaration are
+unknown... All post-pairing RC traffic is encrypted and not yet decoded") with no
+NOTIFY/INDICATE characteristic at all, so the RC has nothing to wait for and gives up; bond
+non-persistence is consistent with the mock's existing `btmgmt unpair` startup sweep and
+`_force_remove_and_reregister`'s `RemoveDevice` call (both pre-existing, unrelated to this
+fix). Decoding what the real RC actually expects after the CCCD write — the next concrete
+step toward RELAY-013 / a fully working RC pairing flow — is not yet started.
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device

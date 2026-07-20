@@ -171,9 +171,12 @@ Read this file first when something is broken.
     → Check `journalctl -u bluetooth` for the same time window. `src/device.c:new_auth() No
     agent available for request type 2` / `device_confirm_passkey: Operation not permitted`
     confirms the cause: no BlueZ pairing agent registered.
-    **Recovery**: `sudo systemctl stop bluetooth` (only reliable way found so far to silence
-    the flood once it starts — the mock process itself doesn't recover on its own).
-    Full incident, root-cause reasoning, and fix candidate:
+    **Fixed, v1.104.0b1**: `mera_mock.py` registers `bluez_peripheral.agent.NoIoAgent` at
+    startup — confirmed via re-test that the flood and the missing-agent error are both gone
+    and full SMP bonding completes. If this recurs anyway (e.g. on `alba_mock.py`, which
+    hasn't had the same fix applied yet), `sudo systemctl stop bluetooth` is still the only
+    known way to silence an active flood.
+    Full incident, root-cause reasoning, and fix confirmation:
     `docs/developer/mock-geberit-mera.md` §"Button-press/release timing".
 
 ---

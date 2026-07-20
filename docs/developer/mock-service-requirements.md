@@ -96,6 +96,7 @@ otherwise implicit in a flat REQ list).
 | REQ-060 | Technical | Open | Bridge and mock-service wiring stay in sync wherever applicable; a postponed sync is tracked as its own REQ or roadmap item, never a silent gap |
 | REQ-069 | Technical | In Progress | Logging goes through Python's standard `logging` module — true for both package mocks, not yet for `tools/mock-geberit-alba.py` |
 | REQ-070 | Technical | Open | No mock-service Python module exceeds ~1,000 lines — 4 of 8 files already do, some by 2×+ |
+| REQ-071 | Technical | Open | A registered BlueZ pairing agent (`NoIoAgent`) exists on both mocks so a real device's genuine SMP pairing attempt succeeds — Mera has it, Alba doesn't |
 
 ---
 
@@ -1624,6 +1625,35 @@ move on.
 
 ---
 
+### REQ-071 — BlueZ pairing agent parity (Mera/Alba)
+
+#### Type
+
+Technical
+
+#### Statement
+
+Both mocks register a BlueZ pairing agent (`org.bluez.Agent1`) at startup, so a real device's
+genuine SMP pairing attempt against either mock succeeds instead of flooding the kernel log
+and hanging with "No agent available."
+
+#### Status
+
+Open
+
+#### Implementation Details
+
+`mera_mock.py` registers `bluez_peripheral.agent.NoIoAgent` as of v1.104.0b1 — confirmed
+working against the Remote Control's real SMP pairing attempt, full detail in
+`docs/developer/mock-geberit-mera.md` §"Button-press/release timing". `alba_mock.py` has no
+equivalent registration (`grep -n "NoIoAgent\|Agent1" aquaclean_ble_relay/alba_mock.py`
+returns nothing). Per `.claude/rules/cross-component-parity.md`, tracked here rather than left
+as a silent gap; no known real device currently attempts genuine SMP pairing against the Alba
+mock (Alba's own encryption is handled at the app layer via Arendi, not BLE SMP), so this is
+lower urgency than it was for Mera, but the asymmetry should be closed if/when that changes.
+
+---
+
 ## Outstanding Gaps
 
 ### REQ-049 — Defined webui bind-failure behavior
@@ -1948,13 +1978,13 @@ work Mera needs. (3) For both — enough of the post-pairing encrypted protocol
 decoded/implemented to respond meaningfully rather than just complete pairing and go silent.
 
 **Breakthrough, 2026-07-20, v1.103.0b1: the RC connected to the mock for the first time
-ever** — full narrative, evidence, the two side effects it exposed, and the SMP-pairing-agent
-root cause behind one of them: `docs/developer/mock-geberit-mera.md` §"Button-press/release
+ever**, and **the SMP-pairing-agent fix landed and is confirmed working, v1.104.0b1** — full
+narrative and evidence for both: `docs/developer/mock-geberit-mera.md` §"Button-press/release
 timing" (the isolated company-ID-flip re-implementation this REQ has been building toward,
 and the mock-geberit-mera.md is the canonical home for that mechanism's history — see that
-section's earlier entries for why). Candidate fix tracked there and in
-`.claude/rules/debugging-traps.md` trap 17: `bluez_peripheral.agent.NoIoAgent`, not yet
-implemented.
+section's earlier entries for why). Remaining gap before this REQ can move to Done: the RC
+still disconnects ~21-24s after full SMP bonding completes, because `_RCPairingService` is
+still an intentional stub with no post-pairing protocol implemented — same doc, same section.
 
 ### REQ-053 — Firmware-update procedure simulation
 
