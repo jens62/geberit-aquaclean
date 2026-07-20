@@ -4,7 +4,8 @@ This document defines the structure and phrasing rules that every requirements d
 document in this repository follows. It is a meta-document — it does not itself specify any
 system's behavior; it specifies how documents that do so must be written. Existing documents
 already following most of this convention: `docs/developer/mock-service-requirements.md`
-(`REQ-NNN`), `docs/developer/ble-relay-rest-api-requirements.md` (`RAPI-NNN`).
+(`REQ-NNN`), `docs/developer/ble-relay-rest-api-requirements.md` (`RAPI-NNN`),
+`docs/developer/application-layer-ble-relay-requirements.md` (`RELAY-NNN`).
 
 **Why this exists:** requirements scattered across prose, commit messages, and chat history
 can't be referenced unambiguously, can't be told apart from implementation-history narrative,
