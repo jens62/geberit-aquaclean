@@ -61,6 +61,7 @@ Referenced from `docs/developer/mock-service-requirements.md`.
 | RAPI-008 | Technical | Open | The REST API's error responses distinguish an unreachable simulated device, an invalid request, and an unsupported operation from one another |
 | RAPI-009 | Functional | Open | A bridge REST client and the existing webui browser client can act against the same simulated device at the same time |
 | RAPI-010 | Technical | Open | The REST API versions independently of the mock-service's webui settings-editing endpoints, so one can change without breaking the other |
+| RAPI-011 | Technical | Open | Implementation follows the baseline logging/no-hardcoded-values/module-size conventions |
 
 ---
 
@@ -232,6 +233,25 @@ Technical
 The REST API defined by this document has its own version/compatibility
 lifecycle, separate from the mock-service's existing `/settings/...` webui-editing endpoints —
 a breaking change to one does not require a breaking change to the other.
+
+#### Status
+
+Open
+
+### RAPI-011 — Implementation follows the baseline conventions
+
+#### Type
+
+Technical
+
+#### Statement
+
+This API's implementation logs through Python's standard `logging`
+module, sources configuration/identity values from a config file or database rather than
+hardcoded literals, and keeps every new module under ~1,000 lines — per
+`docs/developer/requirements-document-standard.md` Rule 7. No code exists yet to audit; this
+requirement exists so compliance is checked at implementation time rather than discovered
+later as a retrofit, the way REQ-069/REQ-070 in `mock-service-requirements.md` had to be.
 
 #### Status
 

@@ -143,6 +143,27 @@ Confirmed, not a defect
 ...
 ```
 
+## Rule 7 — Baseline technical conventions
+
+Three project-wide conventions apply to every Python component covered by any requirements
+document following this standard. State once here rather than repeated verbatim in every
+document; an individual document adds its *own* requirement only when it has something
+concrete to say about its own component's actual compliance status (a `Status` other than a
+blanket "assumed" — evidence, current measurements, a migration history, an open gap).
+
+- **Logging.** Every component logs exclusively through Python's standard `logging` module
+  (`import logging`) — never `print()`, never a custom ad-hoc logging wrapper.
+- **No hardcoded configuration/identity values.** Configuration and identity data — anything a
+  deployment or a user might reasonably need to change — lives in a config file or a database,
+  not a hardcoded Python literal. This does not extend to genuine design constants (protocol
+  opcodes, BLE UUIDs/GATT handles, timing values intrinsic to a spec) — those are code, not
+  configuration, and stay as literals.
+- **Module size.** A Python module is split into a package (directory + `__init__.py` +
+  focused submodules) once it crosses roughly 1,000 lines — 500 lines is the warning point to
+  start planning the split. See `memory/python-module-length-should-fix.md` for the full
+  rationale (Single Responsibility, Pylint's own `too-many-lines-in-module` default). Exempt:
+  auto-generated files (schema-derived models, protobuf, etc.).
+
 ---
 
 ## Applying this standard

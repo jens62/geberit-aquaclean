@@ -53,6 +53,7 @@ Every requirement below is currently `Open`.
 | RELAY-013 | Technical | Open | Mera Remote relay path relies on BlueZ SMP bonding, not an application-layer step |
 | RELAY-014 | Functional | Open | Peripheral-side round-trip latency is ~100–200 ms on the Hub's production host |
 | RELAY-015 | Functional | Open | HACS integration and standalone bridge consume the Hub over REST with no BLE code |
+| RELAY-016 | Technical | Open | Implementation follows the baseline logging/no-hardcoded-values/module-size conventions |
 
 ---
 
@@ -388,6 +389,35 @@ own BLE stack, independent of anything the Hub's BLE side does: GitHub issue #30
 adapter/proxy issues via Shelly proxy, `BleakError`), `habluetooth` version incompatibilities,
 and `bleak`/Python 3.14 compatibility — none of these can occur in REST mode because no BLE
 code runs on that host.
+
+### RELAY-016 — Implementation follows the baseline conventions
+
+#### Type
+
+Technical
+
+#### Statement
+
+The Hub's implementation logs through Python's standard `logging` module,
+sources every deployment-specific value from a config file or database rather than a
+hardcoded literal, and keeps every new module under ~1,000 lines — per
+`docs/developer/requirements-document-standard.md` Rule 7.
+
+#### Status
+
+Open
+
+Two specific, already-foreseeable applications, not general restatements:
+- **RELAY-002's real device MAC** (and, once RELAY-ISS-001 is resolved, the Remote's PSK) are
+  config/database values, not literals baked into the Hub's source — the same principle
+  `mock-service-requirements.md` REQ-012 already applies to the mock's own identity/firmware
+  values, for the same reason (a different real device or a different Remote means a different
+  value, not a code change).
+- **The new relay logic (RELAY-004, RELAY-011, ~300–500 lines) is its own module or package
+  from the start** — not appended onto `mera_mock.py` or `alba_mock.py`, both of which
+  `mock-service-requirements.md` REQ-070 already found well past the ~1,000-line threshold
+  (2,569 and 2,196 lines respectively). Bolting new relay code onto either would make an
+  already-tracked problem worse, not just fail to fix it.
 
 ---
 

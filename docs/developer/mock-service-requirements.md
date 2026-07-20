@@ -94,6 +94,8 @@ otherwise implicit in a flat REQ list).
 | REQ-058 | Functional | Open | Every DpId write received from a central is visible live in the Alba webui, not only the six Nvm-persisted DpIds |
 | REQ-059 | Technical | Done | Mera and Alba mock requirements/implementation stay in sync; a postponed sync is tracked as its own REQ, never a silent gap |
 | REQ-060 | Technical | Open | Bridge and mock-service wiring stay in sync wherever applicable; a postponed sync is tracked as its own REQ or roadmap item, never a silent gap |
+| REQ-069 | Technical | In Progress | Logging goes through Python's standard `logging` module — true for both package mocks, not yet for `tools/mock-geberit-alba.py` |
+| REQ-070 | Technical | Open | No mock-service Python module exceeds ~1,000 lines — 4 of 8 files already do, some by 2×+ |
 
 ---
 
@@ -561,7 +563,11 @@ Open
 #### Implementation Details
 
 *(none — not started; recorded here per explicit request so the
-scope is written down precisely before any code changes begin.)* Generalizes and supersedes
+scope is written down precisely before any code changes begin.)* This document's own instance
+of `docs/developer/requirements-document-standard.md` Rule 7's baseline
+no-hardcoded-configuration-values convention — narrower in scope (identity/firmware values
+specifically, not every literal in the codebase; genuine design constants like protocol
+opcodes and BLE UUIDs are exempt per Rule 7 and stay as literals). Generalizes and supersedes
 REQ-011 and REQ-030 (Mera per-instance identity, a narrower precursor). Also formalizes what
 was informally discussed and deferred 2026-07-18 — see `docs/roadmap.md` §"Mera mock: 'real
 reference' identity/firmware values are hardcoded to our one test device" and
@@ -1462,6 +1468,41 @@ start the debug instance, restoring `bluetooth.service` on exit) or dropping the
 favor of documenting the manual two-terminal workflow it was meant to replace. Full incident:
 `memory/mera-advertisement-two-entry-regression-confirmed.md` (local Claude memory).
 
+### REQ-069 — Logging goes through Python's standard `logging` module
+
+#### Type
+
+Technical
+
+#### Statement
+
+Every mock-service component logs exclusively through Python's standard
+`logging` module — never `print()`, never a custom ad-hoc logging wrapper. This document's
+own instance of `docs/developer/requirements-document-standard.md` Rule 7's baseline
+logging convention.
+
+#### Status
+
+In Progress
+
+#### Implementation Details
+
+True for `aquaclean_ble_relay/mera_mock.py` and `aquaclean_ble_relay/alba_mock.py` (zero
+`print()` call sites in either, confirmed by direct grep 2026-07-20) — the latter via
+REQ-039's own migration: `AlbaMock` originally had no `logging.Logger` at all, just a
+module-level timestamped `print()` override used at ~120 call sites across
+`_Ble20AppLayer`, `_AriendiServerSide`, the four GATT service classes, and `AlbaMock` itself.
+All ~120 sites became `self.logger.info(...)` (full mechanical conversion, not a
+`contextvars`-based shortcut — see REQ-039 for why). `MeraMock` already used `logging.Logger`
+directly, no migration needed.
+
+**Not true for `tools/mock-geberit-alba.py`** — the standalone wrapper script, still actively
+maintained (v2.19.0, latest commit `ab6776d`) but lagging the package version (`alba_mock.py`
+v2.26.0): confirmed 122 `print()` call sites, never received the migration its package
+counterpart did. `tools/mock-geberit-mera.py` has zero `print()` sites — only the Alba
+standalone script is affected. Needs the same mechanical conversion REQ-039 already did once
+for `alba_mock.py`, applied to this file too.
+
 ---
 
 ## Shared Modules (DRY)
@@ -1544,6 +1585,42 @@ Done
 
 See REQ-011 for why a single shared parser doesn't fit here
 (Mera's byte-tuples vs. Alba's DpId encoding aren't the same shape).
+
+### REQ-070 — No mock-service Python module exceeds ~1,000 lines
+
+#### Type
+
+Technical
+
+#### Statement
+
+Every mock-service Python module is under roughly 1,000 lines, split into
+a package (directory + `__init__.py` + focused submodules) once it would otherwise cross that
+threshold. This document's own instance of
+`docs/developer/requirements-document-standard.md` Rule 7's baseline module-size convention.
+
+#### Status
+
+Open
+
+Measured 2026-07-20 (`wc -l`) — four of the eight mock-service Python files already exceed
+the threshold, two of them by more than 2×:
+
+| File | Lines |
+|---|---|
+| `aquaclean_ble_relay/mera_mock.py` | 2,569 |
+| `aquaclean_ble_relay/alba_mock.py` | 2,196 |
+| `tools/mock-geberit-alba.py` | 1,814 |
+| `tools/mock-geberit-mera.py` | 1,636 |
+| `aquaclean_ble_relay/mock_service.py` | 348 |
+| `aquaclean_ble_relay/mock_persistence.py` | 83 |
+| `aquaclean_ble_relay/mock_logging.py` | 76 |
+| `aquaclean_ble_relay/mock_bluez_adapter.py` | 54 |
+
+No split has been attempted yet for any of the four oversized files — this requirement
+exists to make that an explicitly tracked gap rather than a passively-observed one, per
+`memory/python-module-length-should-fix.md`'s own instruction not to just note the size and
+move on.
 
 ---
 
