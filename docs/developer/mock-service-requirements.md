@@ -2148,6 +2148,14 @@ canonical narrative; this is its content restated as REQ-NNN entries per
 support building and testing this Hub's relay logic without requiring real BLE hardware for
 every iteration.
 
+**Related but distinct: REQ-052 (Remote Control interoperability, Mera).** Both concern the
+Remote Control's BLE coexistence with a simulated/relayed device, but they are different
+problems on different protocols — REQ-052 asks whether a *Mera* mock presenting a device
+identity the RC has never bonded to can still be discovered via some fresh-pairing mechanism
+(open, unresolved). This section's REQ-062 asks something narrower and already-answered for
+*Alba*: whether a Hub transparently proxying a device the RC is *already* bonded to must
+present that device's real identity (yes — see REQ-062's own note for why these don't overlap).
+
 **Problem this solves:** the real Alba (and Mera Comfort) accept only one BLE connection at a
 time. Today, when the bridge polls, the Geberit Home App gets disconnected; when the Remote
 Control is used, the bridge gets displaced. The Hub combines the bridge's existing central-role
