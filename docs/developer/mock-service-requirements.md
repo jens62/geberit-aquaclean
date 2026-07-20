@@ -94,6 +94,14 @@ otherwise implicit in a flat REQ list).
 | REQ-058 | Functional | Open | Every DpId write received from a central is visible live in the Alba webui, not only the six Nvm-persisted DpIds |
 | REQ-059 | Technical | Done | Mera and Alba mock requirements/implementation stay in sync; a postponed sync is tracked as its own REQ, never a silent gap |
 | REQ-060 | Technical | Open | Bridge and mock-service wiring stay in sync wherever applicable; a postponed sync is tracked as its own REQ or roadmap item, never a silent gap |
+| REQ-061 | Functional | Open | Alba-Hub: Home App, Remote Control, and standalone bridge coexist without displacement |
+| REQ-062 | Technical | Open | Alba-Hub peripheral advertises as the real device's own MAC (spoofed identity) |
+| REQ-063 | Technical | Open | Alba-Hub central side maintains one permanent connection to the real device |
+| REQ-064 | Technical | Open | Alba-Hub relay operates at the application (DpId) layer, not the BLE link layer |
+| REQ-065 | Functional | Open | Alba-Hub DataPointInventory fetched once, served from cache to every client |
+| REQ-066 | Functional | Open | Alba-Hub real-device notifications fan out to every connected client |
+| REQ-067 | Technical | Open | Alba-Hub concurrent client writes are serialized |
+| REQ-068 | Technical | Open | Alba-Hub is Alba-only; Mera parity not yet designed (cross-component-parity tracked gap) |
 
 ---
 
@@ -2130,6 +2138,172 @@ event, not just as a value that happens to have changed next time the state tabl
 
 ---
 
+## Application-Layer BLE Relay ("Alba-Hub")
+
+Formalized 2026-07-20 from `docs/roadmap.md` → "Geberit AquaClean application-layer BLE relay
+to overcome 'BLE Coexistence' issues" (design only, not yet started — that section is the
+canonical narrative; this is its content restated as REQ-NNN entries per
+`docs/developer/requirements-document-standard.md`). See also
+`docs/developer/ble-relay-rest-api-requirements.md`, whose REST API exists specifically to
+support building and testing this Hub's relay logic without requiring real BLE hardware for
+every iteration.
+
+**Problem this solves:** the real Alba (and Mera Comfort) accept only one BLE connection at a
+time. Today, when the bridge polls, the Geberit Home App gets disconnected; when the Remote
+Control is used, the bridge gets displaced. The Hub combines the bridge's existing central-role
+code and the mock's existing peripheral-role code into a relay: one permanent connection to the
+real device on one side, multiple simultaneous simulated-device connections (Home App, Remote
+Control, standalone bridge) on the other, with new relay logic in between forwarding DpId
+operations and notifications.
+
+**Existing code this reuses** (not new REQs — implementation guidance for whichever REQ below
+ends up building each piece):
+
+| Hub component | Existing code |
+|---|---|
+| Central (real device) | `AlbaClient` / `AquaCleanClient` + `BluetoothLeConnector` |
+| Peripheral GATT server | `mock-geberit-alba.py` `_BlePeripheral` |
+| Arendi key-exchange + crypto | `_AriendiServerSide` in the mock |
+| DpId relay + notification fan-out | new — ~300–500 lines, no existing equivalent |
+
+### REQ-061 — Multiple simultaneous clients coexist without displacement
+
+#### Type
+
+Functional
+
+#### Statement
+
+A Geberit Home App connection, a physical Remote Control connection, and a
+standalone bridge connection to the same Alba device coexist simultaneously, with none of them
+disconnecting or displacing another.
+
+#### Status
+
+Open
+
+### REQ-062 — Hub peripheral advertises as the real device's own MAC
+
+#### Type
+
+Technical
+
+#### Statement
+
+The Hub's peripheral side advertises under the real device's own BLE MAC
+address (via `btmgmt public-addr`), so every client's existing pairing/bond with the real
+device remains valid against the Hub without any client re-pairing.
+
+#### Status
+
+Open
+
+**Not the same question as REQ-052's MAC-identity discussion** — REQ-052 asks whether a mock
+presenting a *different* identity than a device a client is already bonded to can still be
+discovered/paired via some fresh-discovery mechanism (unresolved). This requirement has no
+such ambiguity: the Hub is a transparent proxy for clients already bonded to the *real* device,
+so it must present the real device's exact identity — spoofing is a hard requirement here, not
+an open question.
+
+### REQ-063 — Hub maintains one permanent connection to the real device
+
+#### Type
+
+Technical
+
+#### Statement
+
+The Hub's central side maintains one permanent BLE connection to the real
+Alba device and never disconnects it to service an individual client request.
+
+#### Status
+
+Open
+
+### REQ-064 — Relay operates at the application (DpId) layer
+
+#### Type
+
+Technical
+
+#### Statement
+
+The Hub decrypts each client's incoming DpId operation, re-encrypts it for
+the real device, forwards it, and reverses the process for the response — because Arendi's
+per-session ECDH key exchange (a fresh session key per client) makes a link-layer-transparent
+relay impossible; the Hub cannot simply pass bytes through unmodified.
+
+#### Status
+
+Open
+
+### REQ-065 — DataPointInventory is fetched once and served from cache
+
+#### Type
+
+Functional
+
+#### Statement
+
+Every client's DataPointInventory request after the first is served
+instantly from a cache populated by exactly one ~15-second fetch against the real device on
+first central connection — no client ever triggers a second full inventory fetch.
+
+#### Status
+
+Open
+
+### REQ-066 — Real-device notifications fan out to every connected client
+
+#### Type
+
+Functional
+
+#### Statement
+
+A notification received from the real device is forwarded to every
+currently connected client, not only the one whose action triggered it.
+
+#### Status
+
+Open
+
+### REQ-067 — Concurrent client writes are serialized
+
+#### Type
+
+Technical
+
+#### Statement
+
+Write operations from concurrent clients are queued and applied to the
+real device strictly one at a time, in the order received — never interleaved, never dropped.
+
+#### Status
+
+Open
+
+### REQ-068 — Alba-Hub is Alba-only; Mera parity not yet designed
+
+#### Type
+
+Technical
+
+#### Statement
+
+The Alba-Hub design (REQ-061 through REQ-067) covers the Alba protocol
+only. Mera Comfort has the identical single-connection limitation described in REQ-061's
+problem statement, but no corresponding Hub design exists for it yet.
+
+#### Status
+
+Open
+
+Tracked here per `.claude/rules/cross-component-parity.md` (MANDATORY) rather than left as a
+silent gap — this is that rule's own postponed-sync entry for the Alba-Hub design as a whole.
+
+---
+
 ## Cross-Component Consistency
 
 Enforced going forward by `.claude/rules/cross-component-parity.md` (MANDATORY) — both
@@ -2261,4 +2435,23 @@ two requirements, an external blocker. If an issue turns out to belong to exactl
 requirement after all, move it into that requirement's `Implementation Details` instead of
 leaving it here. IDs are `REQ-ISS-NNN`, stable, never reused or renumbered.
 
-*(none logged yet)*
+### REQ-ISS-001 — Remote Control PSK (keyset_id=1) is unknown
+
+#### Statement
+
+The Remote Control's pre-shared key (Arendi keyset_id=1) is not known, so the
+Alba-Hub (REQ-062 through REQ-067) cannot decrypt or re-encrypt Remote Control traffic — the
+Hub cannot relay the Remote Control side of REQ-061's "coexist without displacement" promise
+until this key is found.
+
+#### Status
+
+Open, blocking
+
+#### Details
+
+Tracked upstream as GitHub issue #21. Full background:
+`docs/developer/mock-geberit-alba.md#blocker-2--keyset_id1-psk-unknown`. Logged as a distinct
+issue rather than folded into REQ-061's `Implementation Details` because REQ-061 is itself
+still `Open` — no implementation exists yet for that field to describe, but this specific
+blocker is real and referenceable now.

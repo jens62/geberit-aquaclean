@@ -6,7 +6,11 @@
 Covers every DpId (Alba) and every proc (Mera) needed to eventually build the full-featured
 "Geberit AquaClean application-layer BLE relay" ("Alba-Hub") described in
 [`docs/roadmap.md` → "Geberit AquaClean application-layer BLE relay to overcome 'BLE
-Coexistence' issues"](https://github.com/jens62/geberit-aquaclean/blob/main/docs/roadmap.md#geberit-aquaclean-application-layer-ble-relay-to-overcome-ble-coexistence-issues).
+Coexistence' issues"](https://github.com/jens62/geberit-aquaclean/blob/main/docs/roadmap.md#geberit-aquaclean-application-layer-ble-relay-to-overcome-ble-coexistence-issues)
+— that content is formalized as `REQ-061` through `REQ-068` (plus `REQ-ISS-001`, the Remote
+Control PSK blocker) in `docs/developer/mock-service-requirements.md` § "Application-Layer BLE
+Relay ('Alba-Hub')". This document's REST API exists to support building and testing that
+Hub's relay logic without real BLE hardware for every iteration — it is not itself the Hub.
 
 **Not to be confused with:** the bridge's own existing outward-facing REST API
 (`aquaclean_console_app/RestApiService.py`), which serves the bridge's webui/HA/MQTT clients
