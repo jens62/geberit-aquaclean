@@ -493,3 +493,15 @@ sourced procedure), let BlueZ complete SMP bonding and store the LTK automatical
 capture with `btmon` — every subsequent ATT frame decodes in plaintext at the kernel level, no
 manual key extraction needed. This replaces the sniffer approach entirely for this specific
 protocol-discovery problem.
+
+**Progress, 2026-07-20**: step 1 of this unblocking path (get the RC to connect at all) has now
+happened for the first time, against `mera_mock.py` — see
+`docs/developer/mock-service-requirements.md` REQ-052's "Breakthrough" note. The mock's button
+stayed continuously "pressed" for ~45s before the RC connected (`18:29:27`→`18:30:12`),
+comfortably past the official procedure's ≈30s, and the RC then attempted real SMP pairing —
+but it stalled: **the mock has no registered BlueZ pairing agent**
+(`journalctl -u bluetooth`: `No agent available for request type 2`,
+`device_confirm_passkey: Operation not permitted`), so BlueZ never completes the handshake and
+never stores an LTK. Fixing that (`bluez_peripheral.agent.NoIoAgent`, per
+`.claude/rules/debugging-traps.md` trap 17) is now the concrete next blocker for this exact
+issue, not just for RELAY-013's implementation — the two are the same underlying gap.

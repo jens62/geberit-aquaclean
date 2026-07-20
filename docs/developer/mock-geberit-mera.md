@@ -146,7 +146,27 @@ button-release click or any timer tied to user action. Before 2026-07-18 this fl
 partially real: `_update_advert(0)` correctly reset `state_b`, but the advertisement's
 company ID was *always* `0x0100` regardless of `state_b` — the mock never actually sent
 `0x01AA` in the first place, so there was nothing genuine to "release" on the company-ID
-side. Fixed the same day alongside the ADV_IND/SCAN_RSP split (see `_MeraAdvertisement`).
+side. Fixed the same day alongside the ADV_IND/SCAN_RSP split — then both reverted together
+the same day when that combination broke onboarding (see above).
+
+**Re-implemented in isolation, 2026-07-20, v1.103.0b1 — and it worked, with two new side
+effects.** This time only the company-ID key changed (single-entry dict, exactly the
+pre-2026-07-18 structure — no ADV_IND/SCAN_RSP split attempted again). Result: the physical
+Remote Control (`B0:10:A0:68:5C:8B`) connected to the mock for the first time in this entire
+investigation, 45s after the flip. Two things to fix before calling this done:
+1. Geberit Home App's onboarding scan now shows **2 "unconfigured devices"** under "Mera
+   Comfort" instead of 1 — likely because the app's discovery list keys a "product" entry
+   partly off the raw advertisement bytes (company ID included), so the same physical mock
+   advertising under two different company IDs during one scan gets listed twice. Not yet
+   confirmed against the app's actual logic.
+2. The RC's connection never completed pairing — `bluetoothd` logs
+   `src/device.c:new_auth() No agent available for request type 2` /
+   `device_confirm_passkey: Operation not permitted`, and the kernel floods
+   `unexpected SMP command 0x03` (1,945 times in 2.5 minutes) until `bluetooth.service` is
+   manually restarted. The mock has never registered a BlueZ pairing agent
+   (`org.bluez.Agent1`) — `bluez_peripheral.agent.NoIoAgent` is a ready-made candidate fix,
+   not yet implemented. Full detail: `docs/developer/mock-service-requirements.md` REQ-052,
+   `.claude/rules/debugging-traps.md` trap 17.
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device

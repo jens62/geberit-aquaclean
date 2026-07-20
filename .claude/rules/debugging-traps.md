@@ -166,6 +166,26 @@ Read this file first when something is broken.
     when possible — `kill -9` skips advertisement/GATT unregistration and makes this kind of
     controller-state confusion more likely to accumulate over repeated cycles.
 
+17. **A real device attempting SMP pairing floods the kernel log with "unexpected SMP command
+    0x03" (hundreds/thousands per minute) and the mock never completes pairing — confirmed
+    2026-07-20, first real BLE-central pairing attempt against `mera_mock.py`**
+    → Check `journalctl -u bluetooth` for the same time window. If it shows
+    `src/device.c:new_auth() No agent available for request type 2` /
+    `device_confirm_passkey: Operation not permitted`, the mock has never registered a BlueZ
+    pairing agent (`org.bluez.Agent1`) — confirmed via `grep -n "Agent\|agent"` on the mock's
+    source returning nothing. Without a registered agent, `bluetoothd` has no way to respond to
+    the remote's SMP confirmation step; the request silently fails, and the remote retries the
+    same step (SMP command `0x03`, Pairing Confirm) indefinitely since it never gets a
+    response — that retry loop is what the kernel keeps logging as "unexpected".
+    **Fix candidate, not yet verified**: `bluez_peripheral.agent.NoIoAgent` — a ready-made
+    agent class the library already ships for exactly this ("all incoming pairing requests
+    accepted unconditionally," `NO_INPUT_NO_OUTPUT` capability, matching an embedded device
+    with no display/keypad). `NoIoAgent().register(bus, default=True)` once at mock startup
+    (superuser required for `default=True`) is the natural next thing to try.
+    **Recovery**: `sudo systemctl stop bluetooth` (only reliable way found so far to silence
+    the flood once it starts — the mock process itself doesn't recover on its own).
+    Full incident: `docs/developer/mock-service-requirements.md` REQ-052.
+
 ---
 
 ## Known open bugs (not yet fixed)

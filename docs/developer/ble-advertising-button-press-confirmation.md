@@ -203,13 +203,39 @@ isn't sufficient to produce a connection (matches their filenames). Whether an R
 was attempted-but-missed by the sniffer, or never attempted at all, can't be determined from
 these two captures.
 
+## Source 6 — the mock reproduces it: first-ever RC connection to `mera_mock.py` (2026-07-20)
+
+`mera_mock.py` v1.103.0b1 re-implemented the company-ID flip in isolation (single-entry
+manufacturer-data dict, key conditional on `state_b` — see that file's `_MeraAdvertisement`
+docstring for why previous attempts were reverted). Confirmed in
+`mock-mera-hci0_2026-07-20_18-21.log`:
+
+```
+[18:29:27]  Advertisement updated: byte[2]=0x01  IsButtonPressed=True  company=0x01AA  IsEmergencyConnectPermitted=True
+[18:30:12]  BLE client connected: B0:10:A0:68:5C:8B
+```
+
+This is a materially stronger data point than Sources 4/5: those were passive observations of
+*coincidental* timing in real-device captures the RC was already bonded to; this is a
+*controlled experiment* — a mock the RC has no prior relationship with, where the only thing
+that changed between "RC ignores this device" (every earlier session this whole investigation,
+`--find-mac` confirmed zero occurrences) and "RC connects" was this flip being implemented at
+all. The RC connected 45 seconds after the flip, then attempted real SMP pairing (see
+`docs/developer/mock-service-requirements.md` REQ-052 and `.claude/rules/debugging-traps.md`
+trap 17 for what happened next — the pairing itself stalled for an unrelated reason, no
+registered BlueZ agent, not a further indictment of the flip mechanism).
+
+Still not fully controlled (no A/B test — pairable had also been on for a while, and other
+session state could theoretically have contributed), but this is now the most direct evidence
+yet that the flip is causally relevant, not coincidental.
+
 ## Bottom line
 
 | Claim | Confirmed by |
 |-------|-------------|
-| Idle payload `00 31 34 36 32 31` | Sources 1, 2, 3, 4, 5 |
-| Button-pressed payload `01 31 34 36 32 31` | Sources 1, 2, 3, 4, 5 |
+| Idle payload `00 31 34 36 32 31` | Sources 1, 2, 3, 4, 5 (Source 6 is the mock, not a real-device observation) |
+| Button-pressed payload `01 31 34 36 32 31` | Sources 1, 2, 3, 4, 5 (Source 6 is the mock, not a real-device observation) |
 | Company-ID flip `0x0100`→`0x01AA` on button press | Sources 1, 2, and several captures in Sources 4/5 |
 | The two bits flip simultaneously | **Contradicted** — data-byte flip always precedes the company-ID flip, by anywhere from ~0.1s to ~5s across five observed instances (Sources 4, 5), never simultaneous, never reversed |
-| A fresh RC connection is preceded by the button-press flip | Source 5 — 2/2 available ground-truth RC-connect captures, no counter-examples, but too few instances to call it proven causation |
+| A fresh RC connection is preceded by the button-press flip | Sources 5, 6 — 2/2 real-device captures plus a controlled mock reproduction (first-ever RC connection to `mera_mock.py`, immediately after implementing the flip). Strongest evidence yet, still not a fully controlled A/B test |
 | SCAN_RSP RS-firmware-prefix entry, unaffected by button state | Source 2 (the `--adv` output doesn't decode SCAN_RSP manufacturer data content, only name) |
