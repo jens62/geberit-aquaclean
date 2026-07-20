@@ -85,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.102.0b1"
+_MOCK_VERSION = "1.103.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -931,10 +931,7 @@ class _MeraAdvertisement(Advertisement):
     ADV_IND, a packet shape neither the real device nor this mock had ever sent
     before, and onboarding failed completely (zero LE Connection Complete events)
     immediately after shipping it. Reverted to the single-entry structure below
-    rather than half-matching the real device in a new, untested way. Getting
-    onboarding to connect at all — let alone error-free — is still the open, unsolved
-    problem this mock is being used to chase; the single-entry structure below is NOT
-    "known working," only "known to at least reach a connection" in past sessions.
+    rather than half-matching the real device in a new, untested way.
 
     BlueZ exposes manufacturer data as (company_id, payload). The iOS app receives the
     full manufacturer-specific data INCLUDING the 2-byte company ID, so byte offsets
@@ -948,9 +945,17 @@ class _MeraAdvertisement(Advertisement):
       full_data[9-10]payload[7-8]    RS fw prefix "30"
 
     Total: 2 (company ID) + 9 (payload) = 11 bytes — the "11-byte variant" in ble-protocol.md.
-    IsEmergencyConnectPermitted (company ID low byte -> 0xAA) is NOT implemented here —
-    confirmed real via nRF Connect, but reverted along with the entry split pending a
-    properly isolated retest; see the reversion note above.
+
+    IsEmergencyConnectPermitted (company ID low byte -> 0xAA) — re-added 2026-07-20,
+    isolated from the entry-split this time: the STRUCTURE stays single-entry, exactly as
+    it's been since the 2026-07-18 revert; only the dict's KEY is now conditional on
+    state_b, the same way the payload already is. This is a deliberately minimal, isolated
+    change — nothing about _update_advert()'s unregister/re-register mechanism, the
+    single-entry shape, or the name/service-UUID fields changes. Confirmed from real
+    captures (docs/developer/ble-advertising-button-press-confirmation.md) that on real
+    hardware the company-ID flip lags the payload flip by ~0.1-5s rather than being
+    simultaneous; tying them 1:1 here is a first test of whether BlueZ/iOS even tolerates
+    the company-ID value changing at all, not a claim that this matches real timing yet.
 
     AquaCleanProduct.cs UpdateAdvertisingData():
       IsButtonPressed             = (full_data[2] == 1)    <- payload[0] = state_b
@@ -962,17 +967,18 @@ class _MeraAdvertisement(Advertisement):
     MeraMock instance can (eventually) advertise its own identity. `rs_prefix` mirrors
     whichever firmware profile is currently active (self._FW_COMPONENT_VERSIONS[1])
     instead of a hardcoded "30" — kept from the same-day change since it's orthogonal
-    to the entry-count/company-ID revert (doesn't change entry count or company ID).
+    to the entry-count revert (doesn't change entry count).
     """
 
     def __init__(self, article: str, state_b: int = 0, rs_prefix: str = "30"):
+        company_id = 0x01AA if state_b else 0x0100
         super().__init__(
             "Geberit AC PRO",                            # name -> SCAN_RSP (BlueZ splits automatically)
             ["00003ea0-0000-1000-8000-00805f9b34fb"],    # service_uuids -> ADV_IND
             appearance=0,
             timeout=0,
             manufacturerData={
-                0x0100: bytes([state_b]) + article.encode("ascii") + bytes([0x00]) + rs_prefix.encode("ascii")
+                company_id: bytes([state_b]) + article.encode("ascii") + bytes([0x00]) + rs_prefix.encode("ascii")
             },
         )
 
@@ -1314,7 +1320,9 @@ class MeraMock:
             self._advert = _MeraAdvertisement(self._ARTICLE, state_b, rs_prefix=self._rs_fw_prefix())
             try:
                 await self._advert.register(self._advert_bus, self._advert_adapter)
-                self._log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}")
+                company_id = 0x01AA if state_b else 0x0100
+                self._log("·", f"Advertisement updated: byte[2]=0x{state_b:02X}  IsButtonPressed={bool(state_b)}"
+                                f"  company=0x{company_id:04X}  IsEmergencyConnectPermitted={bool(state_b)}")
             except Exception as e:
                 self.logger.error("advert re-register failed: %s", e)
 
