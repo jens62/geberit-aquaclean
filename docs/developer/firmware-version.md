@@ -764,6 +764,18 @@ whether "two unconfigured devices" appears specifically correlated with inconsis
 data across repeated tests, independent of any stale-advertisement conditions (fresh mock
 restart, no prior leftover state) — not yet done.
 
+**Third candidate mechanism (2026-07-20)** — the symptom re-occurred the first time
+`mera_mock.py` v1.103.0b1 re-implemented the advertisement's company-ID flip
+(`0x0100` idle / `0x01AA` `IsEmergencyConnectPermitted`, isolated from the earlier reverted
+ADV_IND/SCAN_RSP split — see `docs/developer/mock-geberit-mera.md` §"Button-press/release
+timing"). Candidate mechanism: if the app's discovery list keys a "product" entry partly off
+the raw advertisement bytes (company ID included), the same physical mock advertising under
+two different company IDs during one scan session would get listed twice — mechanically
+similar to hypothesis A's "app saw two distinct BLE advertisers," but with a concrete,
+in-mock-control trigger (the flip itself) rather than stale leftover state from a prior run.
+Not yet confirmed against the app's actual logic, and not yet reconciled against hypotheses A
+and B above — same open, controlled-check gap applies here too.
+
 ---
 
 ## Open questions

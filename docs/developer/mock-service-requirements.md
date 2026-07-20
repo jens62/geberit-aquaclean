@@ -1948,69 +1948,13 @@ work Mera needs. (3) For both — enough of the post-pairing encrypted protocol
 decoded/implemented to respond meaningfully rather than just complete pairing and go silent.
 
 **Breakthrough, 2026-07-20, v1.103.0b1: the RC connected to the mock for the first time
-ever.** Mock re-enabled the company-ID flip (`0x0100`→`0x01AA`) in isolation from the
-two-entry advertisement split that broke it before (see `_MeraAdvertisement`'s docstring in
-`mera_mock.py`) — a single-entry manufacturer-data dict whose *key* is now conditional on
-`state_b`, exactly like the payload byte already was. Confirmed in
-`mock-mera-hci0_2026-07-20_18-21.log`:
-
-```
-[18:29:27]  Advertisement updated: byte[2]=0x01  IsButtonPressed=True  company=0x01AA  IsEmergencyConnectPermitted=True
-[18:30:12]  BLE client connected: B0:10:A0:68:5C:8B
-[18:30:20]  Attempt 4: GATT cache built — A5 CCCD not written within 8 s. Keep mock running, attempt again
-```
-
-`B0:10:A0:68:5C:8B` is the RC's confirmed public address (`memory/geberit-remote-control-ble.md`)
-— across the entire investigation this session (multiple long-hold attempts, `--find-mac`
-searches across several captures), this is the first and only time it has ever shown up
-connecting to the mock. This is strong, direct evidence for the hypothesis this REQ has been
-building toward: the company-ID flip is what the RC is actually waiting to see before it will
-attempt anything.
-
-**Two side effects observed in the same test session, both need their own fix:**
-
-1. **Home App now shows 2 "unconfigured devices" under "Mera Comfort" during onboarding scan,
-   where it previously showed exactly 1.** Onboarding itself still completed successfully.
-   Hypothesis, not yet confirmed by reading the app's own scan/list-key logic: the Home App's
-   discovery scan likely keys a discovered "product" entry partly off the raw advertisement
-   bytes (including the company ID that encodes `IsEmergencyConnectPermitted`), not purely off
-   the BLE MAC address. If so, the same physical mock advertising under two different company
-   IDs during one scan session (idle `0x0100`, then pressed `0x01AA`) gets listed as if it were
-   two separate physical units. Needs verification against the app's actual dedup logic before
-   this is treated as confirmed, not just plausible.
-
-2. **The RC's connection attempt never completed — SMP pairing stalls and floods the kernel
-   log**, forcing a `sudo systemctl stop bluetooth` to recover. Root cause fully diagnosed via
-   `journalctl -k` and `journalctl -u bluetooth` for the same window:
-   ```
-   # kernel, 1,945 occurrences between 18:30:12 and 18:32:41 (~13/s):
-   Bluetooth: hci0: unexpected SMP command 0x03 from b0:10:a0:68:5c:8b
-
-   # bluetoothd, same window:
-   src/device.c:new_auth() No agent available for request type 2
-   device_confirm_passkey: Operation not permitted
-   ```
-   **The mock has never registered a BlueZ pairing agent** (`org.bluez.Agent1`) — confirmed by
-   `grep -n "Agent\|agent" aquaclean_ble_relay/mera_mock.py` returning zero matches. Without a
-   registered agent, `bluetoothd` has no way to respond to the RC's SMP confirmation step
-   (`device_confirm_passkey`, "request type 2"); the request silently fails, and the RC retries
-   the same step indefinitely (SMP command `0x03`, Pairing Confirm) since it never gets a
-   response, which is what the kernel keeps logging as "unexpected" — the kernel's own SMP
-   state machine has nothing valid to advance to either.
-
-   **Candidate fix, not yet implemented**: `bluez_peripheral.agent.NoIoAgent` — a ready-made
-   agent class the library already ships ("An agent with no input or output capabilities. All
-   incoming pairing requests from all devices will be accepted unconditionally."), matching the
-   mock's actual IO capability (an embedded toilet has no display/keypad for a passkey).
-   `NoIoAgent().register(bus, default=True)` once at startup (superuser required — the mock
-   already runs as root) is the natural next thing to try. Untested: whether this actually
-   resolves "request type 2" (Just Works pairing with a `NO_INPUT_NO_OUTPUT` capability
-   normally shouldn't need a confirm step at all — registering *any* agent with the right
-   capability may be what's actually missing, not specifically `RequestConfirmation`'s
-   implementation, since `NoIoAgent` itself doesn't override that method either).
-
-See `.claude/rules/debugging-traps.md` trap 17 for this same finding in the standing
-debugging-traps reference.
+ever** — full narrative, evidence, the two side effects it exposed, and the SMP-pairing-agent
+root cause behind one of them: `docs/developer/mock-geberit-mera.md` §"Button-press/release
+timing" (the isolated company-ID-flip re-implementation this REQ has been building toward,
+and the mock-geberit-mera.md is the canonical home for that mechanism's history — see that
+section's earlier entries for why). Candidate fix tracked there and in
+`.claude/rules/debugging-traps.md` trap 17: `bluez_peripheral.agent.NoIoAgent`, not yet
+implemented.
 
 ### REQ-053 — Firmware-update procedure simulation
 

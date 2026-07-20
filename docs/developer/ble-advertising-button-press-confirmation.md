@@ -221,9 +221,9 @@ This is a materially stronger data point than Sources 4/5: those were passive ob
 that changed between "RC ignores this device" (every earlier session this whole investigation,
 `--find-mac` confirmed zero occurrences) and "RC connects" was this flip being implemented at
 all. The RC connected 45 seconds after the flip, then attempted real SMP pairing (see
-`docs/developer/mock-service-requirements.md` REQ-052 and `.claude/rules/debugging-traps.md`
-trap 17 for what happened next — the pairing itself stalled for an unrelated reason, no
-registered BlueZ agent, not a further indictment of the flip mechanism).
+`docs/developer/mock-geberit-mera.md` §"Button-press/release timing" for what happened next —
+the pairing itself stalled for an unrelated reason, no registered BlueZ agent, not a further
+indictment of the flip mechanism).
 
 Still not fully controlled (no A/B test — pairable had also been on for a while, and other
 session state could theoretically have contributed), but this is now the most direct evidence
