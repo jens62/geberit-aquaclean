@@ -71,3 +71,4 @@ wrap the entire response in a fenced code block — square brackets are interpre
 | `docs/roadmap.md` | Planning new features or checking open TODOs |
 | `.claude/rules/hacs-roadmap.md` | Planning HACS features, zeroconf, config flow |
 | `.claude/rules/historical-notes.md` | Background reference only |
+| `.claude/rules/requirements-documents.md` | Creating or editing any requirements definition document (`*-requirements.md` under `docs/developer/`) |
