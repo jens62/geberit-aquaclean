@@ -85,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.103.0b1"
+_MOCK_VERSION = "1.104.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -98,6 +98,7 @@ except Exception:
 from bluez_peripheral.gatt.service import Service
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.advert import Advertisement
+from bluez_peripheral.agent import NoIoAgent
 
 if "dbus_fast" in sys.modules:
     from dbus_fast.aio import MessageBus
@@ -2392,6 +2393,17 @@ class MeraMock:
             "Advertising: UUID=0x3EA0  company=0x0100  byte[2]=0x00 (IsButtonPressed=False)"
             "  article=%s  name='Geberit AC PRO'", self._ARTICLE
         )
+
+        # Register a no-IO pairing agent so BlueZ has something to answer SMP requests
+        # from real devices (the Remote Control) with. Without any registered
+        # org.bluez.Agent1, bluetoothd has no way to service a pairing request beyond
+        # "just works" and logs "No agent available for request type N" instead —
+        # see docs/developer/mock-geberit-mera.md §"Button-press/release timing".
+        # An embedded toilet has no display/keypad, so NO_INPUT_NO_OUTPUT matches the
+        # mock's actual capability; NoIoAgent accepts every pairing request unconditionally.
+        self._agent = NoIoAgent()
+        await self._agent.register(bus, default=True)
+        self.logger.info("BlueZ pairing agent registered: NoIoAgent (default)")
 
         # Track BLE connections via ObjectManager + PropertiesChanged bus listener.
         # InterfacesAdded fires only for new Device1 objects; PropertiesChanged fires for
