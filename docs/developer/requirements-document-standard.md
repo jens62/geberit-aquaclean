@@ -164,6 +164,39 @@ blanket "assumed" — evidence, current measurements, a migration history, an op
   rationale (Single Responsibility, Pylint's own `too-many-lines-in-module` default). Exempt:
   auto-generated files (schema-derived models, protobuf, etc.).
 
+## Rule 8 — DRY across requirements definitions
+
+DRY applies to requirements definitions the same way it applies to code. When one requirement
+or issue refers to a fact, finding, log excerpt, or fix candidate that's already recorded
+somewhere else — another requirement, another document's issue, a narrative reference doc — it
+references that source, it does not restate the content.
+
+**Changes are made only in the referenced (source-of-truth) document, never duplicated into
+the referencing one.** If a fact needs updating later, there must be exactly one place to
+update it — not several documents that each got a copy at the time they were written and will
+silently drift out of sync with each other after.
+
+**Picking which document is the source of truth**, when a fact could plausibly live in more
+than one:
+- A finding tied to one specific component's implementation (a root cause, a log excerpt, a
+  candidate fix) belongs in that component's narrative/reference doc if one already exists
+  for it (e.g. `docs/developer/mock-geberit-mera.md` for Mera-mock-specific protocol/
+  implementation history) — a requirements document then references it with a one- or
+  two-sentence summary plus a pointer, not a re-quote of logs or a restatement of the root
+  cause.
+- If no narrative doc exists yet, the requirement or issue that most directly owns the finding
+  becomes the source of truth, and every other place that needs to mention it links to that
+  requirement/issue ID instead of re-explaining it.
+- A reference-only mention (`.claude/rules/debugging-traps.md`'s style: symptom → one-line
+  cause → pointer) is not a violation — the violation is restating the *evidence* and
+  *reasoning* a second time, not naming where the full version lives.
+
+**How to apply:** before adding a finding to more than one document, decide which one is
+authoritative *first*, write the full version there, and write everywhere else as a pointer.
+If a finding already got duplicated (written in full in more than one place before this was
+caught), fix it the same way — collapse every copy except the authoritative one down to a
+pointer, don't just add Rule 8 going forward and leave the existing duplication in place.
+
 ---
 
 ## Applying this standard
