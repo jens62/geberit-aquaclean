@@ -776,6 +776,17 @@ in-mock-control trigger (the flip itself) rather than stale leftover state from 
 Not yet confirmed against the app's actual logic, and not yet reconciled against hypotheses A
 and B above — same open, controlled-check gap applies here too.
 
+**Timing clarified by user report, 2026-07-20 (same day)**: the "2 nicht konfigurierte Geräte"
+list appeared *after* the scan had already completed and the results screen ("Gefundene
+Produkte") was showing — the company-ID flip happened when the physical button was pressed,
+which was *after* that scan, not during a second/repeated scan pass. This sharpens hypothesis
+C: it isn't two separate scans each seeing a different company ID and merging inconsistently —
+the app's already-open results list itself appears to react live to the advertisement change
+(consistent with a BLE central's passive scan-result list updating as new advertisement
+reports arrive for a known address) and produces a second, distinct "unconfigured" entry for
+what is still the one physical mock, rather than updating the existing entry in place. Still
+not confirmed against the app's actual list/dedup logic.
+
 ---
 
 ## Open questions
