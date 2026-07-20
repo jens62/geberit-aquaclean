@@ -776,16 +776,26 @@ in-mock-control trigger (the flip itself) rather than stale leftover state from 
 Not yet confirmed against the app's actual logic, and not yet reconciled against hypotheses A
 and B above — same open, controlled-check gap applies here too.
 
-**Timing clarified by user report, 2026-07-20 (same day)**: the "2 nicht konfigurierte Geräte"
-list appeared *after* the scan had already completed and the results screen ("Gefundene
-Produkte") was showing — the company-ID flip happened when the physical button was pressed,
-which was *after* that scan, not during a second/repeated scan pass. This sharpens hypothesis
-C: it isn't two separate scans each seeing a different company ID and merging inconsistently —
-the app's already-open results list itself appears to react live to the advertisement change
-(consistent with a BLE central's passive scan-result list updating as new advertisement
-reports arrive for a known address) and produces a second, distinct "unconfigured" entry for
-what is still the one physical mock, rather than updating the existing entry in place. Still
-not confirmed against the app's actual list/dedup logic.
+**Timing corrected by user report, 2026-07-20 (same day) — supersedes the paragraph above.**
+Re-walking the Geberit Home App's onboarding phases (1: scan; 2: select; 3: press button on
+toilet; 4: connect; 5: store; 6: request additional data; 7: finished) pinned this down more
+precisely: the "2 nicht konfigurierte Geräte" list is the direct *result of Phase 1* — it's
+already showing before Phase 3 (the button press) is ever reached. This rules out the version
+of hypothesis C above (an already-open results list reacting live to *this attempt's* flip) —
+the flip that matters for *this* symptom can't be the one on this attempt's own button press,
+because that hasn't happened yet when the duplicate is already on screen.
+
+**Revised candidate mechanism**: the mock's button-press flip (company ID `0x0100`→`0x01AA`)
+is exposed via a webui action and, once released, back to `0x0100` — but across a single test
+*session* (not a single onboarding attempt), the mock is commonly pressed/released multiple
+times (webui testing, a previous onboarding attempt, RC testing). If Phase 1's scan window
+happens to straddle a moment where an *earlier* press/release cycle's flip is still active (or
+was toggled during the scan for an unrelated reason — e.g. leftover `state_b` from a prior
+attempt in the same run), the app would sample both company-ID variants for the one physical
+mock within this one scan, independent of anything happening later in *this* onboarding
+attempt's own Phase 3. Not yet confirmed against the mock's actual session log for this
+specific occurrence (`mock-mera-hci0_2026-07-20_18-21.log`) — checking for earlier
+press/release cycles in the same session, before this Phase 1 scan, is the next concrete step.
 
 ---
 
