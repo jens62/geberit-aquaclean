@@ -13,12 +13,15 @@ bridge's device-client code would use to reach a simulated device over HTTP inst
 in support of `docs/roadmap.md`'s "Geberit AquaClean application-layer BLE relay" ("Alba-Hub")
 design. That document is a first draft, not yet comprehensive.
 
-**Document structure, refactored 2026-07-19:** every detailed requirement below has a unique
-`REQ-NNN` ID (stable — never reused or renumbered once assigned), a `Type` (`Functional` |
-`Technical`), a declarative present-tense `Statement` of the actual/intended behavior, a
+**Document structure, refactored 2026-07-19, formalized 2026-07-20:** follows
+`docs/developer/requirements-document-standard.md` — every detailed requirement below has a
+unique `REQ-NNN` ID (stable — never reused or renumbered once assigned), a `Type` (`Functional`
+| `Technical`), a declarative present-tense `Statement` of the actual/intended behavior, a
 `Status` (`Open | In Progress | Done | Deferred | Superseded`), and — whenever `Status` is not
 `Open` — `Implementation Details` carrying the full history: root causes, decisions,
-verification evidence, bug postmortems, exact bytes/commits/dates. The previous "Decisions
+verification evidence, bug postmortems, exact bytes/commits/dates. Implementation-time issues
+that don't map to one specific requirement go in `## Issues` (`REQ-ISS-NNN`) near the end of
+this document, not here. The previous "Decisions
 log" (§10) and "Implementation plan & phase status" (§11) tables have been retired in favor of
 this — every decision and every phase's status now lives on the REQ(s) it was actually about;
 see "Retired sections" at the end for exactly where each one moved and a slim
@@ -2248,3 +2251,14 @@ slightly ahead of REQ-003. REQ-031 (firmware persistence) before REQ-053 (update
 which depends on it) before REQ-035 (profile selector, which reuses REQ-053's write hook).
 REQ-029 (Alba per-instance identity) is the precedent REQ-030/REQ-012 (Mera's + the general
 case) still need to follow.
+
+## Issues
+
+Added 2026-07-20, per `docs/developer/requirements-document-standard.md` Rule 4/5. Tracks
+implementation-time problems that don't map cleanly onto one specific requirement's
+`Implementation Details` — a bug found during work on something else, a design tension between
+two requirements, an external blocker. If an issue turns out to belong to exactly one
+requirement after all, move it into that requirement's `Implementation Details` instead of
+leaving it here. IDs are `REQ-ISS-NNN`, stable, never reused or renumbered.
+
+*(none logged yet)*

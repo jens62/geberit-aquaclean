@@ -22,12 +22,14 @@ REST transport lets the bridge reach the mock-service without any BLE stack invo
 faster, scriptable, CI-friendly, and immune to the exact BLE coexistence problems the Hub
 itself exists to solve.
 
-**Document structure:** same convention as `docs/developer/mock-service-requirements.md` —
-every requirement has a unique ID, a `Type` (`Functional` | `Technical`), a declarative
-present-tense `Statement` of the actual/intended behavior, a `Status` (`Open | In Progress |
-Done | Deferred | Superseded`), and `Implementation Details` wherever `Status` is not `Open`.
-IDs use the `RAPI-NNN` prefix — deliberately distinct from that document's `REQ-NNN` IDs, so a
-bare ID is never ambiguous about which document it belongs to even quoted out of context.
+**Document structure:** follows `docs/developer/requirements-document-standard.md`, same
+convention as `docs/developer/mock-service-requirements.md` — every requirement has a unique
+ID, a `Type` (`Functional` | `Technical`), a declarative present-tense `Statement` of the
+actual/intended behavior, a `Status` (`Open | In Progress | Done | Deferred | Superseded`), and
+`Implementation Details` wherever `Status` is not `Open`. IDs use the `RAPI-NNN` prefix —
+deliberately distinct from that document's `REQ-NNN` IDs, so a bare ID is never ambiguous about
+which document it belongs to even quoted out of context. Implementation-time issues that don't
+map to one specific requirement go in `## Issues` (`RAPI-ISS-NNN`) at the end of this document.
 
 **Status of this document (2026-07-19):** first draft, intentionally not comprehensive yet.
 Captures the overarching goal and the foundational technical/functional shape; the full
@@ -229,4 +231,12 @@ a breaking change to one does not require a breaking change to the other.
 #### Status
 
 Open
+
+## Issues
+
+Added 2026-07-20, per `docs/developer/requirements-document-standard.md` Rule 4/5. Tracks
+implementation-time problems that don't map cleanly onto one specific requirement's
+`Implementation Details`. IDs are `RAPI-ISS-NNN`, stable, never reused or renumbered.
+
+*(none logged yet)*
 
