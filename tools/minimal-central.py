@@ -36,7 +36,7 @@ from typing import Optional
 
 from bleak import BleakScanner, BleakClient
 
-_SCRIPT_VERSION = "1.2.0"
+_SCRIPT_VERSION = "1.3.0"
 
 BASE_ALIAS   = 0x1000
 DEFAULT_NAME = "MultiSvc-Test"
@@ -48,21 +48,23 @@ def _expected_uuid(i: int) -> str:
 
 
 async def discover_by_service(timeout: float, service_uuid: str, verbose: bool = False) -> Optional[object]:
-    """Scan filtered by service_uuid, then INDEPENDENTLY VERIFY the match against the
-    device's own advertised UUIDs (via return_adv=True) rather than trusting bleak's
-    built-in service_uuids filter blindly — confirmed 2026-07-21 that on at least one
-    macOS/CoreBluetooth + bleak combination, the filter silently fails to restrict
-    results (an unrelated real device with no matching UUID was returned as the sole
-    "match"), so treat the filter as a hint/speed-up only, not as proof of a real match."""
+    """Scan unfiltered, then verify each candidate's own advertised UUIDs manually —
+    NOT using bleak's built-in service_uuids scan filter at all. Confirmed 2026-07-21
+    on this macOS/CoreBluetooth + bleak combination that the built-in filter is
+    unreliable in two different ways depending on exact call signature: passed alone
+    it can return an unrelated device with no matching UUID as if it were a match;
+    combined with return_adv=True it can instead return zero results even though a
+    genuinely matching device is in range. Filtering purely in our own code, against
+    an always-unfiltered scan, avoids depending on either of those behaviors."""
     if verbose:
         print(f"[+] Scanning for device advertising service {service_uuid} (up to {timeout}s)…")
     try:
-        found = await BleakScanner.discover(timeout=timeout, service_uuids=[service_uuid], return_adv=True)
+        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
     except TypeError:
         if verbose:
-            print("[!] BleakScanner.discover does not accept service_uuids/return_adv on this Bleak "
-                  "version; doing an unfiltered discover and checking advertised UUIDs manually.")
-        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+            print("[!] BleakScanner.discover does not accept return_adv on this Bleak version; "
+                  "falling back to a plain discover (advertised UUIDs won't be verifiable).")
+        found = await BleakScanner.discover(timeout=timeout)
 
     # found is typically {address: (BLEDevice, AdvertisementData)} when return_adv=True.
     candidates = list(found.values()) if isinstance(found, dict) else [(d, None) for d in found]
