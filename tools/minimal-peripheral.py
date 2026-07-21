@@ -107,8 +107,12 @@ async def main():
     coll = ServiceCollection(services)
     await coll.register(bus)
 
-    adv_uuids = [_service_uuid(i) for i in indices]
-    adv = Advertisement("MultiSvc-Test", adv_uuids, timeout=0, appearance=0)
+    # Advertise with NO service UUIDs — with 128-bit UUIDs (16 bytes each), listing
+    # even 2+ of them exceeds the legacy ADV_IND payload limit (31 bytes total) and can
+    # make RegisterAdvertisement fail silently or never actually go out. Not needed for
+    # this test anyway: the central finds the device by name, then discovers services
+    # over GATT after connecting — the advertisement payload's UUID list is irrelevant.
+    adv = Advertisement("MultiSvc-Test", [], timeout=0, appearance=0)
     await adv.register(bus)
 
     print("--- Minimal Multi-Service Peripheral Active ---")
