@@ -385,6 +385,62 @@ state was indirectly through `_maybe_send_ack()`, which only ever runs after a W
 session that enabled a CCCD but never wrote anything left zero trace in the logs. Not yet tested
 against a real RC.
 
+**Tested against a real RC, 2026-07-21 (v1.108.0b1) — service-grouping fix confirmed deployed
+correctly, but the RC still never touches any RC-pairing characteristic.** Three separate test
+sessions, ~15 total connection attempts. `D-Bus exported paths` in the mock's own startup log
+confirms the corrected topology registered exactly as intended (`mera_rc_hci0/service0` = 2 chars
+[`_RCPairingService`], `service1` = 1 char [`_RCAncillaryService8A30`], `service2` = 5 chars
+[`_RCAncillaryServiceE0DB`]). Despite that, every single attempt: the RC does a generic
+`READ_BY_GROUP_TYPE_REQ` walk (not the targeted `FIND_BY_TYPE_VALUE_REQ` seen against the real
+toilet), finds all three RC groups at the expected handles (`0x0015`/`0x0018`/`0x0024`, matching
+the real device's own boundaries), writes only the standard Service-Changed CCCD (handle
+`0x0009`, boilerplate every BLE central does), and disconnects after ~15-20s. The new
+`_watch_rc_cccds` watcher (added the same commit as the service-grouping fix) never logged a
+single CCCD transition on `0x25dcdfd2` or `0x5a4d406b` across any attempt — confirming, directly
+rather than by absence-of-writes inference, that the RC never reaches even a CCCD-enable step on
+either RC-pairing characteristic.
+
+**Ruled out, same day: BlueZ's reciprocal `gap`/`deviceinfo` client-plugin probing of the RC.**
+Re-tested with `bluetoothd -n -d --noplugin=battery,gap,deviceinfo` (confirmed via
+`Excluding (cli) deviceinfo` in the debug log, and the total absence of `gap-profile`/`deviceinfo
+profile state changed` lines that appeared 2x/connection in the prior session's log). Zero
+change in RC behavior — identical generic-walk-then-give-up pattern. `src/device.c:load_gatt_db()
+Restoring ... gatt database from file` (a core mechanism, not a disableable plugin) still fires
+every connection — this is bluetoothd's own cache of the RC's *own* GATT server (see the
+misattribution finding above), unrelated to what we serve.
+
+**Ruled out, same day: firmware.** Re-checked `local-assets/firmware/mera_comfort_RS30_TS206_
+extracted{,-by-script}` specifically for RC-pairing hints, including node `0x00` (original
+filename `FW Appl bluetooth-Steuerung AqC GH RS10 TS18.bin` — the Bluetooth controller node).
+Zero hits for any RC-pairing UUID fragment or English/German pairing terminology; every function
+in every node is an unnamed, symbol-stripped `FUN_CODE_XXXX` with no recoverable strings. See
+`memory/firmware-smp-ltk-negative.md` (extended the same day to cover this, not just SMP/LTK).
+
+**Real root cause candidate found, 2026-07-21 (same day, fourth pass) — `_force_remove_and_
+reregister()` fires on every RC disconnect, tearing down and rebuilding all 4 GATT apps for a
+device that never needed it; fixed in v1.109.0b1.** This mechanism (`_on_device_disconnected`,
+gated on `self._button_pressed`) exists to solve iOS's *rotating RPA* problem: BlueZ's ~20s
+temporary-device cleanup timer racing Connection 2 with a fresh RPA. `IsButtonPressed` only ever
+resets back to `False` inside `_send_info_frame_burst` (iOS-only, gated on the A5 CCCD an RC
+session never touches) — so for an RC-only session `self._button_pressed` stays `True` for the
+whole test, and this mechanism fires after *every* RC disconnect, confirmed directly in a
+`bluetoothd -n -d` debug log spanning 8 consecutive RC attempts: `src/gatt-database.c:
+database_add_service()` re-registers `0xC526`/`0x8A30`/`0xE0DB` from scratch every time, at a
+new, larger internal handle each cycle (`0x0032`→`0x0064`→`0x0096`→`0x00c8`, +0x32 per cycle).
+The RC has a fixed public address (`B0:10:A0:68:5C:8B`) and never had the rotating-identity
+problem this mechanism targets.
+
+**Important nuance, not full confirmation:** a separate, later capture (`Remote-Control-
+mock-1.108.0b1-pairing-no-success-03.pcapng`, 4 connections in one capture) shows the *actual
+over-the-air* ATT handles served to the RC are stable across all 4 reconnects
+(`0x0015`/`0x0018`/`0x0024` every time) — BlueZ evidently reconstructs an equivalent wire-level
+layout each time regardless of the growing *internal* bookkeeping number in the debug log. So the
+specific "the RC sees a different handle layout every reconnect" mechanism is not directly
+evidenced at the wire level — the fix is still correct and worth keeping (this teardown/rebuild
+cycle is genuinely unnecessary for a fixed-address device, and `device_bonding_failed() status 14`
+[`MGMT_STATUS_DISCONNECTED`] fires every attempt regardless), but it should not yet be treated as
+a confirmed full explanation for the RC's behavior. Not yet re-tested against a real RC.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

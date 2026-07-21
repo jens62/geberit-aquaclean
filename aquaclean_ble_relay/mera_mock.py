@@ -86,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.108.0b1"
+_MOCK_VERSION = "1.109.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -2673,6 +2673,32 @@ class MeraMock:
                 # teardown fires immediately while no iOS client is connected, then
                 # re-register both GATT apps so they are intact for the next attempt.
                 mac = device_path.split("/")[-1][4:].replace("_", ":")
+
+                # This whole mechanism exists ONLY for iOS's rotating RPA — a fresh
+                # RPA each connection means BlueZ's cleanup timer racing Connection 2
+                # is a real risk. A device with a fixed PUBLIC address (e.g. the
+                # Remote Control) never rotates identity, so it never had this
+                # problem — but IsButtonPressed never resets for an RC-only session
+                # (that only happens inside _send_info_frame_burst, gated on the
+                # iOS-only A5 CCCD), so without this check every RC disconnect
+                # triggered a full GATT app teardown+rebuild it never needed
+                # (confirmed 2026-07-21: 8 consecutive RC attempts each re-registered
+                # all 4 GATT apps from scratch — see docs/developer/mock-geberit-
+                # mera.md §"RC-pairing investigation — force-remove/re-register").
+                try:
+                    dev_intro = await bus.introspect("org.bluez", device_path)
+                    dev_proxy = bus.get_proxy_object("org.bluez", device_path, dev_intro)
+                    dev_props = dev_proxy.get_interface("org.freedesktop.DBus.Properties")
+                    raw = await dev_props.call_get("org.bluez.Device1", "AddressType")
+                    address_type = getattr(raw, "value", raw)
+                except Exception as exc:
+                    self._log("·", f"Could not read AddressType for {mac}: {exc} — proceeding with teardown")
+                    address_type = None
+                if address_type == "public":
+                    self._log("·", f"{mac} has a public (non-rotating) address — "
+                                    f"skipping GATT teardown/rebuild, its identity never changes")
+                    return
+
                 self._log("·", f"Force-removing {mac} to prevent GATT teardown on next connection")
                 try:
                     ai = await bus.introspect("org.bluez", adapter_path)
