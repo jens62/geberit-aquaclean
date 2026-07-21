@@ -112,10 +112,11 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
             print("[+] Connected.")
         print()
 
-        expected_uuids = {_expected_uuid(i).lower() for i in range(1, expect + 1)}
+        expected_uuids = {_expected_uuid(i).lower() for i in range(1, (expect or 0) + 1)}
         found_expected = set()
         unexpected_vendor_uuids = []
 
+        print(f"Found {len(services)} total service(s):")
         for svc in services:
             handle = getattr(svc, "handle", None)
             m = _VENDOR_UUID_RE.match(svc.uuid.lower())
@@ -134,6 +135,12 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
                     found_expected.add(svc.uuid.lower())
                 else:
                     unexpected_vendor_uuids.append(svc.uuid)
+
+        if expect is None:
+            # No --expect given: just report what was found (e.g. pointing this at the
+            # real mock or any other peripheral to sanity-check that discovery itself
+            # works) — skip the pass/fail comparison, there's nothing to compare against.
+            return
 
         missing = expected_uuids - found_expected
         print("=" * 60)
@@ -157,15 +164,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Verify multi-service GATT discovery (BlueZ gatt-database.c bisection)")
     ap.add_argument("--expect", type=int, default=None,
                     help="number of services the peripheral was started with (--num-services on "
-                         "minimal-peripheral.py) — required unless --diagnostics is used")
+                         "minimal-peripheral.py) — optional; omit to just report whatever is found "
+                         "(e.g. when pointing this at a different peripheral, like the real mock, "
+                         "just to sanity-check that discovery works)")
     ap.add_argument("--timeout", type=float, default=10.0, help="BLE scan timeout in seconds (default: 10)")
     ap.add_argument("--mac", help="CoreBluetooth UUID (macOS) or MAC address (Linux/Android)")
-    ap.add_argument("--name", default=DEFAULT_NAME, help=f"Advertisement name to scan for (default: {DEFAULT_NAME!r})")
+    ap.add_argument("--name", default=DEFAULT_NAME,
+                    help=f"Advertisement name to scan for (default: {DEFAULT_NAME!r}; the real mock "
+                         f"advertises as 'Geberit AC PRO')")
     ap.add_argument("--verbose", action="store_true", help="Print extra debug messages")
     ap.add_argument("--diagnostics", action="store_true", help="Dump raw advertisements for the timeout and exit")
     args = ap.parse_args()
-    if not args.diagnostics and args.expect is None:
-        ap.error("--expect is required unless --diagnostics is used")
     asyncio.run(run(args.timeout, args.mac, args.name, args.expect, verbose=args.verbose, diagnostics=args.diagnostics))
 
 
