@@ -284,6 +284,17 @@ repeats the identical "Pairing ok" handshake rather than showing anything toggle
 lid-toggle bytes may be in a later reconnect this pass didn't reach, or use a session key not
 captured — not yet resolved.
 
+**Implemented, 2026-07-21, v1.105.0b1 — `_RCPairingService` expanded from a single stub
+characteristic to the five confirmed ones, plus the two newly-discovered ancillary services
+(`0x8A30`, `0xE0DB`).** `_maybe_send_ack()` sends the confirmed `03 02` notify on `0x5a4d406b`
+once the `0x25dcdfd2` CCCD is enabled, polling for it the same way `_send_info_frame_burst`
+already waits for the A6 CCCD — mirroring the real captures' observed order, not a confirmed
+trigger condition (the real device's actual reason for replying isn't known, only where the
+reply falls in the sequence). Untested against a real RC whether this makes it progress any
+further than the old stub did, or what the `0x0e069b0a` write's `0x7B` byte and the two
+never-observed characteristics (`0x7152f4a9`, `0x464ead99`) actually need — next step is a
+fresh RC test against this version.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

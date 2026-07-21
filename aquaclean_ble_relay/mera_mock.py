@@ -85,7 +85,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.104.0b1"
+_MOCK_VERSION = "1.105.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -901,19 +901,156 @@ class _DISService(Service):
 
 
 class _RCPairingService(Service):
-    """Remote Control pairing service stub (UUID 0xC526).
+    """Remote Control pairing service (UUID 0xC526).
 
     RC does FIND_BY_TYPE_VALUE UUID=0xC526 and verifies the service exists
-    before initiating BLE pairing (LL_ENC_REQ).  Contents beyond the service
-    declaration are unknown — stub characteristic returns empty bytes.
-    All post-pairing RC traffic is encrypted and not yet decoded.
+    before initiating BLE pairing (LL_ENC_REQ). `rc_stub` (0xC527) was this
+    service's only characteristic until 2026-07-21 — an unconfirmed guess, never
+    observed in any real capture. The five characteristics below ARE confirmed,
+    from a real RC<->real-toilet capture watching SMP pairing live (the sniffer
+    caught the LTK and decrypted everything after — see docs/developer/
+    mock-geberit-mera.md §"Button-press/release timing", "Major breakthrough,
+    2026-07-21" for the full capture analysis this implements):
+
+      0x25dcdfd2-...  NOTIFY  (CCCD enabled first, before either WRITE below)
+      0x867710fb-...  WRITE   real payload: UTF-16BE text "      Pairing ok      "
+      0x0e069b0a-...  WRITE   real payload: all zero bytes except one 0x7B at
+                               offset 2 — meaning not understood, mock accepts
+                               and no-ops it like the rest
+      0x7152f4a9-...  role never observed in either capture — read-only stub
+      0x464ead99-...  role never observed in either capture — read-only stub
+
+    then, in the real captures, a NOTIFY on 0x5a4d406b-... (CCCD enabled
+    earlier, before either WRITE) with payload `03 02` — sent here once the
+    0x25dcdfd2 CCCD is confirmed enabled, mirroring the real device's observed
+    order (see _maybe_send_ack below). Untested whether this makes the RC
+    progress any further than the stub did — the real device's actual trigger
+    condition for this reply is not confirmed, only its observed position in
+    the sequence.
     """
 
-    def __init__(self):
+    def __init__(self, mock: "MeraMock"):
         super().__init__("0000c526-0000-1000-8000-00805f9b34fb", True)
+        self._mock = mock
+        self._notify_1a_iface = None   # wired after register() — CCCD gate for the ack below
+        self._notify_26_iface = None
+        self._ack_sent = False
+
+    def wire_notify_1a(self, iface) -> None:
+        self._notify_1a_iface = iface
+
+    def wire_notify_26(self, iface) -> None:
+        self._notify_26_iface = iface
 
     @characteristic("0000c527-0000-1000-8000-00805f9b34fb", CharFlags.READ)
     def rc_stub(self, options):
+        return b""
+
+    @characteristic("25dcdfd2-8867-48da-b1d6-1b5985c4f259", CharFlags.NOTIFY)
+    def notify_1a(self, options):
+        return bytes(20)
+
+    @characteristic("5a4d406b-b210-47ba-b7e6-db6b9f2e9997", CharFlags.NOTIFY)
+    def notify_26(self, options):
+        return bytes(20)
+
+    @characteristic("867710fb-5e31-49ba-84e0-a10d5d832ad7", CharFlags.WRITE_WITHOUT_RESPONSE)
+    def write_pairing_status_text(self, options):
+        return bytes(20)
+
+    @write_pairing_status_text.setter
+    def write_pairing_status_text(self, value, options):
+        raw = bytes(value)
+        try:
+            text = raw.decode("utf-16-be", errors="replace")
+        except Exception:
+            text = raw.hex()
+        self._log_write_rc("0x867710fb (status text)", raw, text)
+
+    @characteristic("0e069b0a-967c-4002-91ac-1e51906a84b2", CharFlags.WRITE_WITHOUT_RESPONSE)
+    def write_pairing_status_code(self, options):
+        return bytes(20)
+
+    @write_pairing_status_code.setter
+    def write_pairing_status_code(self, value, options):
+        raw = bytes(value)
+        self._log_write_rc("0x0e069b0a (status code)", raw, None)
+
+    @characteristic("7152f4a9-6523-4517-80a2-96d8b9273538", CharFlags.READ)
+    def rc_stub_1f(self, options):
+        return b""
+
+    @characteristic("464ead99-ec2c-49d4-a186-af6ff8979a96", CharFlags.READ)
+    def rc_stub_21(self, options):
+        return b""
+
+    def _log_write_rc(self, label: str, raw: bytes, text) -> None:
+        if text:
+            self._mock._log("·", f"RC write {label}: {raw.hex()}  (decoded: {text!r})")
+        else:
+            self._mock._log("·", f"RC write {label}: {raw.hex()}")
+        asyncio.ensure_future(self._maybe_send_ack())
+
+    async def _maybe_send_ack(self) -> None:
+        """Send the confirmed real-device ack (NOTIF 03 02 on 0x5a4d406b) once
+        the 0x25dcdfd2 CCCD is enabled — matching the real captures' observed
+        order (CCCD-0x5a4d406b enabled first, then both WRITEs, then
+        CCCD-0x25dcdfd2 enabled, then this notify). Called from both write
+        setters, right after the SECOND write in the real sequence — but the
+        real 0x25dcdfd2 CCCD-enable comes from the client AFTER both writes,
+        not before, so this polls briefly for it (same pattern as the A6-CCCD
+        wait in _send_info_frame_burst) rather than checking once and giving
+        up. Fires at most once per connection; _mock clears _ack_sent on
+        disconnect."""
+        if self._ack_sent:
+            return
+        if self._notify_26_iface is None or not getattr(self._notify_26_iface, "_notify", False):
+            return   # real order: 0x5a4d406b CCCD is enabled before either write reaches here
+        for _ in range(30):          # max 3 s, matches the A6-CCCD wait
+            if self._ack_sent:
+                return               # a concurrent call already sent it
+            if self._notify_1a_iface is not None and getattr(self._notify_1a_iface, "_notify", False):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            self._mock._log("·", "RC pairing ack: 0x25dcdfd2 CCCD not enabled within 3s — not sending ack")
+            return
+        self._ack_sent = True
+        frame = bytes.fromhex("0302")
+        self._mock._log("→", f"RC pairing ack: NOTIFY 0x5a4d406b ({frame.hex()})")
+        try:
+            if hasattr(self._notify_26_iface, "changed"):
+                self._notify_26_iface.changed(frame)
+            else:
+                self._notify_26_iface.emit_properties_changed({"Value": Variant("ay", list(frame))})
+        except Exception as e:
+            self._mock._log("·", f"WARNING: RC pairing ack notify failed: {e}")
+
+
+class _RCAncillaryService8A30(Service):
+    """Service UUID 0x8A30 — RC does FIND_BY_TYPE_VALUE for this before 0xC526's
+    contents matter (confirmed real capture, 2026-07-21). No characteristic UUID
+    was ever observed under it in either capture — deliberately zero characteristics
+    (matches the real device's own apparent structure better than a fabricated
+    stub would; bluez_peripheral.gatt.service.Service tolerates an empty
+    _characteristics list). The FIND_BY_TYPE_VALUE existence check only needs the
+    service declaration itself, not any characteristic under it."""
+
+    def __init__(self):
+        super().__init__("00008a30-0000-1000-8000-00805f9b34fb", True)
+
+
+class _RCAncillaryServiceE0DB(Service):
+    """Service UUID 0xE0DB — RC does FIND_BY_TYPE_VALUE for this alongside 0x8A30
+    (confirmed real capture, 2026-07-21). One characteristic UUID falls within its
+    declared handle range (ends 0x0018): 0x1db512c1-..., role never observed in
+    either capture — read-only stub."""
+
+    def __init__(self):
+        super().__init__("0000e0db-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("1db512c1-2aa1-45d7-894e-1e9441bc8389", CharFlags.READ)
+    def stub(self, options):
         return b""
 
 
@@ -2269,6 +2406,8 @@ class MeraMock:
             "battery": f"/org/bluez/example/mera_battery_{self._adapter_tag}",
             "dis": f"/org/bluez/example/mera_dis_{self._adapter_tag}",
             "rc_pairing": f"/org/bluez/example/mera_rc_pairing_{self._adapter_tag}",
+            "rc_8a30": f"/org/bluez/example/mera_rc_8a30_{self._adapter_tag}",
+            "rc_e0db": f"/org/bluez/example/mera_rc_e0db_{self._adapter_tag}",
         }
         try:
             gatt_manager = adapter_wrapper._proxy.get_interface("org.bluez.GattManager1")
@@ -2296,13 +2435,17 @@ class MeraMock:
         service = MeraService(self)
         battery_service = BatteryService()
         dis_service = _DISService()
-        rc_pairing_service = _RCPairingService()
+        rc_pairing_service = _RCPairingService(self)
+        rc_8a30_service = _RCAncillaryService8A30()
+        rc_e0db_service = _RCAncillaryServiceE0DB()
         try:
             try:
                 await service.register(bus, app_paths["mera"], adapter_wrapper)
                 await battery_service.register(bus, app_paths["battery"], adapter_wrapper)
                 await dis_service.register(bus, app_paths["dis"], adapter_wrapper)
                 await rc_pairing_service.register(bus, app_paths["rc_pairing"], adapter_wrapper)
+                await rc_8a30_service.register(bus, app_paths["rc_8a30"], adapter_wrapper)
+                await rc_e0db_service.register(bus, app_paths["rc_e0db"], adapter_wrapper)
             finally:
                 del bus._emit_interface_added
             self.logger.info("GATT service registered (suppressed %d InterfacesAdded signals)", emit_count[0])
@@ -2380,6 +2523,29 @@ class MeraMock:
             else:
                 self.logger.warning("%s notify characteristic not found — multi-frame distribution degraded", label)
 
+        # Wire the two RC-pairing NOTIFY characteristics so _RCPairingService can
+        # gate its ack notify on both CCCDs being enabled (see its docstring).
+        for uuid_target, wire_fn, label in [
+            ("25dcdfd2-8867-48da-b1d6-1b5985c4f259", rc_pairing_service.wire_notify_1a, "RC 0x25dcdfd2"),
+            ("5a4d406b-b210-47ba-b7e6-db6b9f2e9997", rc_pairing_service.wire_notify_26, "RC 0x5a4d406b"),
+        ]:
+            found = None
+            for attr in ("_characteristics", "_chars"):
+                chars = getattr(rc_pairing_service, attr, None)
+                if chars:
+                    for c in chars:
+                        uuid = str(getattr(c, "uuid", getattr(c, "_uuid", ""))).lower()
+                        if uuid == uuid_target.lower():
+                            found = c
+                            break
+                if found:
+                    break
+            if found:
+                wire_fn(found)
+                self.logger.info("%s notify characteristic wired", label)
+            else:
+                self.logger.warning("%s notify characteristic not found — RC pairing ack disabled", label)
+
         # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
         # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
         # the local name is placed in SCAN_RSP automatically.
@@ -2447,6 +2613,8 @@ class MeraMock:
                     await gm.call_register_application(app_paths["battery"], {})
                     await gm.call_register_application(app_paths["dis"], {})
                     await gm.call_register_application(app_paths["rc_pairing"], {})
+                    await gm.call_register_application(app_paths["rc_8a30"], {})
+                    await gm.call_register_application(app_paths["rc_e0db"], {})
                     self._log("·", "GATT apps re-registered — ready for Connection 2")
                 except Exception as exc:
                     self._log("!", f"GATT re-registration failed: {exc}")
@@ -2467,6 +2635,7 @@ class MeraMock:
                 self._connected = False
                 self._current_device_path = None
                 self._log("·", f"BLE client disconnected: {device_path}")
+                rc_pairing_service._ack_sent = False   # allow the ack again next connection
                 # IsButtonPressed resets only after the A5 burst fires (in
                 # _send_info_frame_burst). While it is still True, pairing is
                 # incomplete and iOS may retry — force-remove this device now so

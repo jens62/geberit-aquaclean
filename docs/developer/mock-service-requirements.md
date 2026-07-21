@@ -2043,9 +2043,14 @@ post-pairing protocol are now known**, from a real RC↔real-toilet capture watc
 live. Concretely confirms what `_RCPairingService` is missing (several custom characteristics
 under/near `0xC526`, not the single stub it has now) and decodes one real exchange (a
 `"Pairing ok"` text write). Full detail, same canonical doc: `docs/developer/
-mock-geberit-mera.md` §"Button-press/release timing", "Major breakthrough, 2026-07-21". Not
-sufficient on its own to implement the full post-pairing protocol yet — the lid-toggle command
-bytes and several characteristics' roles are still unknown.
+mock-geberit-mera.md` §"Button-press/release timing", "Major breakthrough, 2026-07-21".
+
+**Implemented, 2026-07-21, v1.105.0b1**: `_RCPairingService` now has all five confirmed
+characteristics plus the two ancillary services (`0x8A30`, `0xE0DB`), and sends the confirmed
+ack notify back. Not yet tested against a real RC — same doc, "Implemented, 2026-07-21,
+v1.105.0b1". Remaining gap before this REQ can move to Done: the lid-toggle command bytes and
+several characteristics' roles are still unknown, and the new implementation's actual effect
+on RC behavior is unverified.
 
 ### REQ-053 — Firmware-update procedure simulation
 
