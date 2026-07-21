@@ -793,9 +793,20 @@ happens to straddle a moment where an *earlier* press/release cycle's flip is st
 was toggled during the scan for an unrelated reason — e.g. leftover `state_b` from a prior
 attempt in the same run), the app would sample both company-ID variants for the one physical
 mock within this one scan, independent of anything happening later in *this* onboarding
-attempt's own Phase 3. Not yet confirmed against the mock's actual session log for this
-specific occurrence (`mock-mera-hci0_2026-07-20_18-21.log`) — checking for earlier
-press/release cycles in the same session, before this Phase 1 scan, is the next concrete step.
+attempt's own Phase 3.
+
+**Resolved, 2026-07-21 — none of the above. "2 unconfigured devices" is correct, expected
+behavior, not a symptom at all.** User re-tested with `mera_mock.py` v1.104.0b1, no webui
+interaction whatsoever (mock's own log confirms zero `Button pressed`/`Advertisement updated`
+lines for the whole session), and still got "2 nicht konfigurierte Geräte" from Phase 1. Same
+result confirmed with v1.102.0b1 (pre-dating the company-ID flip entirely), ruling out every
+mock-side hypothesis above (A, B, and C). **Actual cause**: the user's real Mera Comfort
+happened to be within BLE range during this test (unlike their usual test setup, where it
+isn't) — the Home App's scan was correctly finding *two distinct physical devices*, the real
+Mera Comfort and the mocked one, both unconfigured. There is no app-side fingerprinting bug,
+no stale-advertisement leak, and no company-ID-flip side effect to fix. This closes the
+investigation — hypotheses A/B/C above are superseded by this finding, kept for the record
+per this document's convention of not deleting investigation history.
 
 ---
 

@@ -154,12 +154,13 @@ effects.** This time only the company-ID key changed (single-entry dict, exactly
 pre-2026-07-18 structure — no ADV_IND/SCAN_RSP split attempted again). Result: the physical
 Remote Control (`B0:10:A0:68:5C:8B`) connected to the mock for the first time in this entire
 investigation, 45s after the flip. Two things to fix before calling this done:
-1. Geberit Home App's onboarding scan now shows **2 "unconfigured devices"** under "Mera
-   Comfort" instead of 1. This is the same open symptom already tracked in
-   `docs/developer/firmware-version.md` ("Re-flagged (2026-07-17)..." under the firmware-version
-   investigation) — that doc is the canonical home for this symptom and now also records this
-   occurrence plus the company-ID flip as a third candidate mechanism, alongside the two
-   already on record there. Not yet confirmed which mechanism (or combination) is responsible.
+1. ~~Geberit Home App's onboarding scan now shows **2 "unconfigured devices"** under "Mera
+   Comfort" instead of 1.~~ **Resolved 2026-07-21, not a symptom at all**: the user's real
+   Mera Comfort happened to be in BLE range during that specific test — the app was correctly
+   showing two distinct physical devices, the real one and the mock. Confirmed unrelated to
+   this REQ's company-ID flip (same result reproduced with v1.102.0b1, before the flip
+   existed). Full history: `docs/developer/firmware-version.md`, "Resolved, 2026-07-21" under
+   the firmware-version investigation.
 2. The RC's connection never completed pairing — `bluetoothd` logs
    `src/device.c:new_auth() No agent available for request type 2` /
    `device_confirm_passkey: Operation not permitted`, and the kernel floods
