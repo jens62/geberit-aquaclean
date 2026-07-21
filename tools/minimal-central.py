@@ -147,32 +147,30 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
     print(f"[+] Found: {device.address}  name={device.name!r}")
     print("[+] Connecting…")
 
-    async with BleakClient(device) as client:
+    async def _poll_for_services(client: BleakClient, max_attempts: int) -> list:
         # BleakGATTServiceCollection has neither __bool__ nor __len__ on newer bleak,
         # so a bare `if services:` is always True once it exists at all (even empty) —
         # materialize to a list and check that instead, so this actually waits for
         # discovery to populate at least one service, not just for the attribute to
         # stop being None.
-        for attempt in range(50):
-            services = list(getattr(client, "services", None) or [])
-            if services:
+        found = []
+        for _ in range(max_attempts):
+            found = list(getattr(client, "services", None) or [])
+            if found:
                 break
             await asyncio.sleep(0.1)
+        return found
 
+    async with BleakClient(device) as client:
+        services = await _poll_for_services(client, 50)
         if not services:
             try:
                 await client.connect()
             except Exception:
                 pass
-            for _ in range(20):
-                services = list(getattr(client, "services", None) or [])
-                if services:
-                    break
-                await asyncio.sleep(0.1)
+            services = await _poll_for_services(client, 20)
 
-        # BleakGATTServiceCollection is iterable but not sized (no __len__) on newer
-        # bleak — materialize it to a plain list once so len()/indexing below work.
-        services = list(getattr(client, "services", None) or [])
+        # `services` is already a materialized list from the readiness-polling loops above.
         try:
             mtu = getattr(client, "mtu_size", None)
             print(f"[+] Connected. MTU={mtu}" if mtu else "[+] Connected.")
