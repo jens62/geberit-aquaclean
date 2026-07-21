@@ -26,6 +26,8 @@ from typing import Optional
 
 from bleak import BleakScanner, BleakClient
 
+_SCRIPT_VERSION = "1.1.0"
+
 BASE_ALIAS   = 0x1000
 DEFAULT_NAME = "MultiSvc-Test"
 _VENDOR_UUID_RE = re.compile(r"^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$", re.IGNORECASE)
@@ -61,6 +63,7 @@ async def dump_advertisements(timeout: float) -> None:
 
 async def run(timeout: float, mac: Optional[str], name: str, expect: int,
               verbose: bool = False, diagnostics: bool = False) -> None:
+    print(f"minimal-central.py v{_SCRIPT_VERSION}")
     if diagnostics:
         print("[*] Running advertisement dump for diagnostics...")
         await dump_advertisements(timeout)

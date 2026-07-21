@@ -36,6 +36,8 @@ import argparse
 import asyncio
 import subprocess
 
+_SCRIPT_VERSION = "1.1.0"
+
 from bluez_peripheral.advert import Advertisement
 from bluez_peripheral.gatt.service import Service, ServiceCollection
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
@@ -115,7 +117,7 @@ async def main():
     adv = Advertisement("MultiSvc-Test", [], timeout=0, appearance=0)
     await adv.register(bus)
 
-    print("--- Minimal Multi-Service Peripheral Active ---")
+    print(f"--- Minimal Multi-Service Peripheral Active (v{_SCRIPT_VERSION}) ---")
     print(f"num_services={args.num_services}  chars_per_service={num_chars}  reverse={args.reverse}")
     print("Registered services (in registration order):")
     for i in indices:
