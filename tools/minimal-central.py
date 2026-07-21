@@ -54,8 +54,9 @@ async def dump_advertisements(timeout: float) -> None:
         svc_uuids = getattr(adv, "service_uuids", None)
         print(f"ADV: {device.address} name={device.name!r} uuids={svc_uuids}")
 
-    scanner = BleakScanner()
-    scanner.register_detection_callback(cb)
+    # register_detection_callback() was removed in newer bleak — pass the callback
+    # to the constructor instead, which has worked across both old and new bleak.
+    scanner = BleakScanner(detection_callback=cb)
     await scanner.start()
     await asyncio.sleep(timeout)
     await scanner.stop()
