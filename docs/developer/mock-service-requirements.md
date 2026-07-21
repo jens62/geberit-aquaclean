@@ -97,6 +97,7 @@ otherwise implicit in a flat REQ list).
 | REQ-069 | Technical | In Progress | Logging goes through Python's standard `logging` module — true for both package mocks, not yet for `tools/mock-geberit-alba.py` |
 | REQ-070 | Technical | Open | No mock-service Python module exceeds ~1,000 lines — 4 of 8 files already do, some by 2×+ |
 | REQ-071 | Technical | Open | A registered BlueZ pairing agent (`NoIoAgent`) exists on both mocks so a real device's genuine SMP pairing attempt succeeds — Mera has it, Alba doesn't |
+| REQ-072 | Technical | Done (closed as impossible) | Whether the peripheral-facing mock/relay can run as a HACS integration via ESP32 — no, ESPHome/HA expose no remotely-driven peripheral/GATT-server role |
 
 ---
 
@@ -1651,6 +1652,57 @@ returns nothing). Per `.claude/rules/cross-component-parity.md`, tracked here ra
 as a silent gap; no known real device currently attempts genuine SMP pairing against the Alba
 mock (Alba's own encryption is handled at the app layer via Arendi, not BLE SMP), so this is
 lower urgency than it was for Mera, but the asymmetry should be closed if/when that changes.
+
+---
+
+### REQ-072 — HACS/ESP32 deployment of the peripheral-facing mock/relay
+
+#### Type
+
+Technical
+
+#### Statement
+
+The mock service — and, later, the application-layer BLE relay — runs as a HACS integration
+that uses an ESP32 proxy both to connect to the real device and to serve the Geberit Home App
+and the Remote Control.
+
+#### Status
+
+Done — **closed as impossible with the current architecture**, not implemented.
+
+#### Implementation Details
+
+Investigated 2026-07-21 in response to a direct question, not a design attempt. Conclusion:
+infeasible, for a structural reason that isn't specific to this codebase and won't be fixed by
+more engineering effort here.
+
+ESPHome's `bluetooth_proxy` (what the bridge and the HACS integration's Option A already use
+to reach the real device) only relays the BLE **central** role: the ESP32 scans/connects
+outward, and Home Assistant drives that over the native API. The peripheral-facing half of
+this question — advertising as a Mera/Alba and running a full custom GATT server that the
+Geberit Home App and Remote Control connect *to* — needs the opposite role. Stock ESPHome
+exposes no API for external software (Home Assistant, a HACS integration) to dynamically
+define GATT services/characteristics and have an ESP32 host them remotely on its behalf.
+
+The mock only works today because it talks to BlueZ directly (`org.bluez.GattManager1`,
+`LEAdvertisingManager1`, `Agent1`) on a real Linux host with a real Bluetooth controller — a
+WiFi-connected ESP32 cannot substitute for that dependency. Home Assistant's own `bluetooth`
+integration doesn't help either: it's built on the same central/passive-scanner model
+(`bleak`/`habluetooth`), not a general peripheral/GATT-server framework.
+
+The only path that would put a peripheral role on an ESP32 is a from-scratch custom ESPHome
+C++ component implementing the entire Mera/Alba protocol natively in firmware (the ESP32's own
+BLE stack does support peripheral mode with a custom GATT table). That is not "the existing
+relay running through an ESP32" — it is a different project, reimplementing the whole
+protocol at the firmware layer, and it would lose the Python-side flexibility (webui, live
+config, easy protocol iteration) the mock has today.
+
+**Conclusion**: the peripheral-facing side (serving the Home App and the Remote Control) needs
+to keep running as a standalone process on a Linux host with a real Bluetooth adapter, same as
+today — structurally different from the HACS+ESP32 deployment model used for the real-device
+connection side. No further action tracked; revisit only if ESPHome ever exposes a remotely
+programmable peripheral/GATT-server role, which is outside this project's control.
 
 ---
 

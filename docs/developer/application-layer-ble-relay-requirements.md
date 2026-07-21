@@ -499,3 +499,23 @@ now happened for the first time, against `mera_mock.py` — full narrative, evid
 SMP-pairing-agent blocker it ran into: `docs/developer/mock-geberit-mera.md` §"Button-press/
 release timing". Same underlying gap blocks RELAY-013's implementation too, not just this
 issue.
+
+### RELAY-ISS-003 — HACS/ESP32 cannot host the peripheral-facing side of this Hub
+
+#### Statement
+
+Whether the Hub's peripheral-facing role (serving the Geberit Home App and the Remote
+Control) can run as a HACS integration via an ESP32 proxy, instead of as a standalone process
+on a Linux BlueZ host, has been investigated and answered.
+
+#### Status
+
+Closed — impossible with the current architecture
+
+#### Details
+
+Full investigation, reasoning, and conclusion: `docs/developer/mock-service-requirements.md`
+REQ-072. Recorded here only as a pointer, per this document's Rule 8 (DRY) — not duplicated.
+Relevant to this document's own RELAY-010 (adapter/role architecture) and RELAY-015 (HACS
+consumes the Hub over REST, not BLE) — REQ-072's finding is consistent with and reinforces
+both of those design decisions rather than conflicting with them.
