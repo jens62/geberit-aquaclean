@@ -314,6 +314,30 @@ now `rm -rf`s each bonded device's whole `/var/lib/bluetooth/<adapter>/<device>/
 not just `btmgmt unpair`, forcing genuine fresh discovery next connection. Not yet re-tested
 against a real RC.
 
+**Tested, 2026-07-21 (later same day, fresh `bluetoothd -n -d --noplugin=battery` restart) —
+stale-cache theory disproven; real root cause found: too many separate GATT applications,
+fixed in v1.107.0b1.** Confirmed via direct Python check that `bluez_peripheral.Service`'s own
+UUID storage for `0000c526-...` is correct, and confirmed via a genuinely fresh `bluetoothd`
+process (ruling out any possible cache carryover) that SMP pairing completes cleanly with
+`Encryption: Enabled with AES-CCM` — yet the exact same "Vendor specific" garbled service
+UUIDs from the v1.106.0b1 test recur identically, confirmed via two independent capture paths
+(nRF sniffer *and* the host's own `btmon`) agreeing byte-for-byte — ruling out a display bug
+in either tool. The RC's generic discovery walk found only 4 service groups where 6 GATT
+applications were registered (mera/battery/dis + the 3 RC-related ones added in v1.105.0b1),
+with the last group's end handle open-ended (`0xffff`) — consistent with BlueZ/bluez_peripheral
+merging or miscounting service boundaries once too many separate applications are registered,
+not a UUID-string-parsing bug. `bluez_peripheral.gatt.service.Service.register()`'s own
+docstring hints at this: *"Register this service as a standalone service. Using this multiple
+times will cause path conflicts."* Fix (v1.107.0b1): `_RCPairingService`, `_RCAncillaryService8A30`,
+and `_RCAncillaryServiceE0DB` now register as one `ServiceCollection` under a single
+application path instead of three separate ones, returning the total app count to 4 (matching
+the mera/battery/dis/rc_pairing-stub baseline that was known to work before v1.105.0b1's two
+ancillary services were added). `BatteryService` was deliberately left untouched — it overrides
+a *different* BlueZ behavior (auto-exposed local `0x180F` requiring authentication) than the
+`--noplugin=battery` startup flag addresses (BlueZ's client-battery-reading plugin, the
+SMP-storm cause in trap 16) — folding it into this consolidation risked reintroducing that
+separate, already-solved bug for no tested benefit. Not yet re-tested against a real RC.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

@@ -86,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.106.0b1"
+_MOCK_VERSION = "1.107.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -96,7 +96,7 @@ except Exception:
     _BRIDGE_VERSION = "unknown"
 
 # ---- D-Bus / bluez_peripheral (mirror Alba mock import pattern) ----
-from bluez_peripheral.gatt.service import Service
+from bluez_peripheral.gatt.service import Service, ServiceCollection
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.advert import Advertisement
 from bluez_peripheral.agent import NoIoAgent
@@ -2428,9 +2428,24 @@ class MeraMock:
             "mera": f"/org/bluez/example/mera_gatt_{self._adapter_tag}",
             "battery": f"/org/bluez/example/mera_battery_{self._adapter_tag}",
             "dis": f"/org/bluez/example/mera_dis_{self._adapter_tag}",
-            "rc_pairing": f"/org/bluez/example/mera_rc_pairing_{self._adapter_tag}",
-            "rc_8a30": f"/org/bluez/example/mera_rc_8a30_{self._adapter_tag}",
-            "rc_e0db": f"/org/bluez/example/mera_rc_e0db_{self._adapter_tag}",
+            # rc_pairing/rc_8a30/rc_e0db used to be three separate GATT "applications"
+            # (three separate GattManager1.RegisterApplication calls, v1.105.0b1-1.106.0b1).
+            # Confirmed 2026-07-21 against a real RC: with 6 separate apps registered total
+            # (mera/battery/dis + these 3), the RC's generic service discovery found only 4
+            # groups instead of 6, with the missing/extra ones showing garbled "Vendor
+            # specific" UUIDs and one open-ended (0x0024-0xffff) boundary — confirmed via two
+            # independent capture paths (nRF sniffer + the host's own btmon) that this is a
+            # real wire-level defect, not a display bug in either tool, and confirmed via a
+            # direct Python check that bluez_peripheral's own UUID storage is correct — so the
+            # corruption happens between bluez_peripheral and the served ATT bytes, most
+            # plausibly a handle/boundary bookkeeping limit when too many separate
+            # applications are registered (mera/battery/dis alone, 3 apps, never showed this).
+            # bluez_peripheral.gatt.service.ServiceCollection exists specifically to bundle
+            # multiple Service objects under ONE application/path/RegisterApplication call —
+            # Service.register()'s own docstring warns "using this multiple times will cause
+            # path conflicts". Bundling these 3 back under one app returns the total app count
+            # to 4 (matching the known-working mera/battery/dis/rc_pairing-stub baseline).
+            "rc": f"/org/bluez/example/mera_rc_{self._adapter_tag}",
         }
         try:
             gatt_manager = adapter_wrapper._proxy.get_interface("org.bluez.GattManager1")
@@ -2461,14 +2476,13 @@ class MeraMock:
         rc_pairing_service = _RCPairingService(self)
         rc_8a30_service = _RCAncillaryService8A30()
         rc_e0db_service = _RCAncillaryServiceE0DB()
+        rc_collection = ServiceCollection([rc_pairing_service, rc_8a30_service, rc_e0db_service])
         try:
             try:
                 await service.register(bus, app_paths["mera"], adapter_wrapper)
                 await battery_service.register(bus, app_paths["battery"], adapter_wrapper)
                 await dis_service.register(bus, app_paths["dis"], adapter_wrapper)
-                await rc_pairing_service.register(bus, app_paths["rc_pairing"], adapter_wrapper)
-                await rc_8a30_service.register(bus, app_paths["rc_8a30"], adapter_wrapper)
-                await rc_e0db_service.register(bus, app_paths["rc_e0db"], adapter_wrapper)
+                await rc_collection.register(bus, app_paths["rc"], adapter_wrapper)
             finally:
                 del bus._emit_interface_added
             self.logger.info("GATT service registered (suppressed %d InterfacesAdded signals)", emit_count[0])
@@ -2635,9 +2649,7 @@ class MeraMock:
                     await gm.call_register_application(app_paths["mera"], {})
                     await gm.call_register_application(app_paths["battery"], {})
                     await gm.call_register_application(app_paths["dis"], {})
-                    await gm.call_register_application(app_paths["rc_pairing"], {})
-                    await gm.call_register_application(app_paths["rc_8a30"], {})
-                    await gm.call_register_application(app_paths["rc_e0db"], {})
+                    await gm.call_register_application(app_paths["rc"], {})
                     self._log("·", "GATT apps re-registered — ready for Connection 2")
                 except Exception as exc:
                     self._log("!", f"GATT re-registration failed: {exc}")
