@@ -441,6 +441,34 @@ cycle is genuinely unnecessary for a fixed-address device, and `device_bonding_f
 [`MGMT_STATUS_DISCONNECTED`] fires every attempt regardless), but it should not yet be treated as
 a confirmed full explanation for the RC's behavior. Not yet re-tested against a real RC.
 
+**v1.109.0b1 REVERTED the same evening, 2026-07-21 (fifth pass) — confirmed regression, and a
+second implementation bug; back to unconditional force-remove+reregister in v1.110.0b1.** Tested
+against a real RC: attempts 1 and 2 (both taking the new "public address, skip" path) were clean,
+but attempt 3 — the third consecutive connection to the same never-removed `Device1` object —
+triggered a ~40s, 500+-line kernel-log flood of `Bluetooth: hci0: unexpected SMP command 0x03`
+starting the instant that connection was established (confirmed via `journalctl -k`; not in
+`bluetoothd -n -d`'s own output, since this is a kernel-level message). This is the same symptom
+as debugging-traps.md trap 17, but not the same cause — that attempt's own agent request
+(`Requesting agent authentication` / `Calling Agent.RequestAuthorization`) succeeded fine, no "no
+agent available" error. Root cause: skipping `Adapter1.RemoveDevice` entirely let stale SMP/
+bonding state accumulate on the same lingering device object across repeated attempts.
+
+Tried a narrower fix next — keep calling `RemoveDevice` (to reset that bonding/SMP state) but
+skip only the GATT unregister+reregister cycle after it, on the assumption that part alone was
+the "waste" worth avoiding. Also wrong, confirmed via the same debug log:
+`gatt-database.c:proxy_removed_cb()` (tearing down all 6 of this mock's services) fires as an
+**unconditional side effect of `RemoveDevice` itself** — not just of BlueZ's ~20s cleanup-timer
+path this mechanism was originally built to preempt — appearing exactly twice, matching exactly
+the two disconnects that took the "skip reregister" path. Skipping the reregister after any
+`RemoveDevice` call, for any address type, leaves the mock's entire GATT database empty for every
+subsequent connection.
+
+Net conclusion: there is no discretionary work here to skip by address type at all —
+`RemoveDevice`'s teardown side effect is unconditional, so the reregister that follows it is
+mandatory, not optional. v1.110.0b1 reverts `_force_remove_and_reregister()` to its original
+unconditional behavior for all address types. The underlying handle-churn theory from the fourth
+pass is now also effectively moot — there was never a real optional cost to cut here.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

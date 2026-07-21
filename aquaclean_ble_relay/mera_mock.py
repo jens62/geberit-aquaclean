@@ -86,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.109.0b1"
+_MOCK_VERSION = "1.110.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -2674,31 +2674,36 @@ class MeraMock:
                 # re-register both GATT apps so they are intact for the next attempt.
                 mac = device_path.split("/")[-1][4:].replace("_", ":")
 
-                # This whole mechanism exists ONLY for iOS's rotating RPA — a fresh
-                # RPA each connection means BlueZ's cleanup timer racing Connection 2
-                # is a real risk. A device with a fixed PUBLIC address (e.g. the
-                # Remote Control) never rotates identity, so it never had this
-                # problem — but IsButtonPressed never resets for an RC-only session
-                # (that only happens inside _send_info_frame_burst, gated on the
-                # iOS-only A5 CCCD), so without this check every RC disconnect
-                # triggered a full GATT app teardown+rebuild it never needed
-                # (confirmed 2026-07-21: 8 consecutive RC attempts each re-registered
-                # all 4 GATT apps from scratch — see docs/developer/mock-geberit-
-                # mera.md §"RC-pairing investigation — force-remove/re-register").
-                try:
-                    dev_intro = await bus.introspect("org.bluez", device_path)
-                    dev_proxy = bus.get_proxy_object("org.bluez", device_path, dev_intro)
-                    dev_props = dev_proxy.get_interface("org.freedesktop.DBus.Properties")
-                    raw = await dev_props.call_get("org.bluez.Device1", "AddressType")
-                    address_type = getattr(raw, "value", raw)
-                except Exception as exc:
-                    self._log("·", f"Could not read AddressType for {mac}: {exc} — proceeding with teardown")
-                    address_type = None
-                if address_type == "public":
-                    self._log("·", f"{mac} has a public (non-rotating) address — "
-                                    f"skipping GATT teardown/rebuild, its identity never changes")
-                    return
-
+                # REVERTED 2026-07-21 (same day as introduced, v1.109.0b1): tried
+                # skipping this whole mechanism for devices with a fixed PUBLIC address
+                # (e.g. the Remote Control), on the theory that it exists only for
+                # iOS's rotating RPA and a non-rotating identity never needed it. Two
+                # problems, confirmed the same evening against a real RC:
+                #
+                # 1. Skipping RemoveDevice entirely let stale SMP/bonding state
+                #    accumulate on the SAME never-removed Device1 object across
+                #    repeated RC attempts: attempts 1 and 2 were clean, but attempt 3
+                #    (third consecutive connection to that same lingering device
+                #    object) triggered a ~40s, 500+-line kernel-log flood of
+                #    "Bluetooth: hci0: unexpected SMP command 0x03" starting the
+                #    instant that connection was established. Not trap 17's original
+                #    "no agent available" cause (the agent request that attempt
+                #    succeeded fine) — a different trigger, same kernel-level symptom.
+                #
+                # 2. Tried keeping RemoveDevice but skipping only the GATT unregister
+                #    +reregister after it, assuming that part alone was the "waste" to
+                #    avoid. Wrong: confirmed via the same debug log that
+                #    gatt-database.c:proxy_removed_cb() (tearing down all 6 of our
+                #    services) fires as an UNCONDITIONAL side effect of RemoveDevice
+                #    itself, not just of BlueZ's ~20s cleanup-timer path this
+                #    mechanism was built to preempt. Skipping the reregister after a
+                #    RemoveDevice call — for ANY address type — leaves the mock's
+                #    entire GATT database empty for every subsequent connection.
+                #
+                # Net result: there is no discretionary work here to skip by address
+                # type at all — RemoveDevice's teardown side effect is unconditional,
+                # so the reregister that follows it is mandatory, not optional. Back to
+                # the original unconditional behavior for all address types.
                 self._log("·", f"Force-removing {mac} to prevent GATT teardown on next connection")
                 try:
                     ai = await bus.introspect("org.bluez", adapter_path)
