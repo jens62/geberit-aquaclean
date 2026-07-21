@@ -36,11 +36,23 @@ from typing import Optional
 
 from bleak import BleakScanner, BleakClient
 
-_SCRIPT_VERSION = "1.3.0"
+_SCRIPT_VERSION = "1.4.0"
 
 BASE_ALIAS   = 0x1000
 DEFAULT_NAME = "MultiSvc-Test"
 _VENDOR_UUID_RE = re.compile(r"^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$", re.IGNORECASE)
+# Upper bound on how many services minimal-peripheral.py's --num-services would ever
+# reasonably be run with — used to distinguish "one of our test services" (in-range,
+# even if unexpectedly present/missing) from a real, unrelated, legitimately-registered
+# standard UUID like Device Information (0x180A) that just happens to also match the
+# generic Base-UUID 16-bit-alias pattern. The latter is not garbling, just an unrelated
+# service (e.g. a leftover from earlier testing on this same adapter).
+_MAX_TEST_ALIAS = BASE_ALIAS + 32
+
+
+def _is_test_range_uuid(uuid: str) -> bool:
+    m = _VENDOR_UUID_RE.match(uuid.lower())
+    return bool(m) and BASE_ALIAS < int(m.group(1), 16) <= _MAX_TEST_ALIAS
 
 
 def _expected_uuid(i: int) -> str:
@@ -187,8 +199,8 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
         print(f"Found {len(services)} total service(s):")
         for svc in services:
             handle = getattr(svc, "handle", None)
-            m = _VENDOR_UUID_RE.match(svc.uuid.lower())
-            tag = "►" if m else " "
+            in_test_range = _is_test_range_uuid(svc.uuid)
+            tag = "►" if in_test_range else " "
             handle_str = f"handle={handle}" if handle is not None else ""
             print(f"{tag} Service  {svc.uuid}  {handle_str}")
             chars = list(svc.characteristics)
@@ -198,7 +210,7 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
                 print(f"      {c.uuid}  [{props}]" + (f"  handle={c_handle}" if c_handle is not None else ""))
             print()
 
-            if m:
+            if in_test_range:
                 if svc.uuid.lower() in expected_uuids:
                     found_expected.add(svc.uuid.lower())
                 else:
