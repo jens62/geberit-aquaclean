@@ -48,21 +48,43 @@ def _expected_uuid(i: int) -> str:
 
 
 async def discover_by_service(timeout: float, service_uuid: str, verbose: bool = False) -> Optional[object]:
+    """Scan filtered by service_uuid, then INDEPENDENTLY VERIFY the match against the
+    device's own advertised UUIDs (via return_adv=True) rather than trusting bleak's
+    built-in service_uuids filter blindly — confirmed 2026-07-21 that on at least one
+    macOS/CoreBluetooth + bleak combination, the filter silently fails to restrict
+    results (an unrelated real device with no matching UUID was returned as the sole
+    "match"), so treat the filter as a hint/speed-up only, not as proof of a real match."""
     if verbose:
         print(f"[+] Scanning for device advertising service {service_uuid} (up to {timeout}s)…")
     try:
-        devices = await BleakScanner.discover(timeout=timeout, service_uuids=[service_uuid])
+        found = await BleakScanner.discover(timeout=timeout, service_uuids=[service_uuid], return_adv=True)
     except TypeError:
         if verbose:
-            print("[!] BleakScanner.discover does not accept service_uuids on this Bleak version; doing full discover.")
-        devices = await BleakScanner.discover(timeout=timeout)
-        devices = [d for d in devices
-                   if service_uuid.lower() in [u.lower() for u in (getattr(d, "metadata", {}).get("uuids")
-                                                                    or getattr(d, "service_uuids", None) or [])]]
-    if devices:
-        if verbose:
-            print(f"[+] Found {len(devices)} device(s) advertising the service; selecting first.")
-        return devices[0]
+            print("[!] BleakScanner.discover does not accept service_uuids/return_adv on this Bleak "
+                  "version; doing an unfiltered discover and checking advertised UUIDs manually.")
+        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+
+    # found is typically {address: (BLEDevice, AdvertisementData)} when return_adv=True.
+    candidates = list(found.values()) if isinstance(found, dict) else [(d, None) for d in found]
+
+    verified = []
+    unverified_hits = []
+    for device, adv in candidates:
+        adv_uuids = [u.lower() for u in (getattr(adv, "service_uuids", None) or [])]
+        if service_uuid.lower() in adv_uuids:
+            verified.append(device)
+        else:
+            unverified_hits.append((device, adv_uuids))
+
+    if verbose:
+        print(f"[+] Scan returned {len(candidates)} device(s) total; "
+              f"{len(verified)} independently confirmed advertising {service_uuid}.")
+        for device, adv_uuids in unverified_hits:
+            print(f"    (scan filter also returned {device.address} {device.name!r} "
+                  f"but it advertises {adv_uuids or '(no UUIDs)'} — NOT the target UUID, skipped)")
+
+    if verified:
+        return verified[0]
     return None
 
 
@@ -126,23 +148,31 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
     print("[+] Connecting…")
 
     async with BleakClient(device) as client:
+        # BleakGATTServiceCollection has neither __bool__ nor __len__ on newer bleak,
+        # so a bare `if services:` is always True once it exists at all (even empty) —
+        # materialize to a list and check that instead, so this actually waits for
+        # discovery to populate at least one service, not just for the attribute to
+        # stop being None.
         for attempt in range(50):
-            services = getattr(client, "services", None)
+            services = list(getattr(client, "services", None) or [])
             if services:
                 break
             await asyncio.sleep(0.1)
 
-        if not getattr(client, "services", None):
+        if not services:
             try:
                 await client.connect()
             except Exception:
                 pass
             for _ in range(20):
-                if getattr(client, "services", None):
+                services = list(getattr(client, "services", None) or [])
+                if services:
                     break
                 await asyncio.sleep(0.1)
 
-        services = getattr(client, "services", None) or []
+        # BleakGATTServiceCollection is iterable but not sized (no __len__) on newer
+        # bleak — materialize it to a plain list once so len()/indexing below work.
+        services = list(getattr(client, "services", None) or [])
         try:
             mtu = getattr(client, "mtu_size", None)
             print(f"[+] Connected. MTU={mtu}" if mtu else "[+] Connected.")
