@@ -601,6 +601,23 @@ def _detect_device(tshark: str, pcapng: Path, addr_field: str) -> tuple:
 # GATT handle → UUID mapping
 # ---------------------------------------------------------------------------
 
+def _run_tshark_pdml_packets(tshark: str, pcapng: Path, display_filter: str) -> list:
+    """Run tshark with -T pdml (XML) and return every matching frame's raw
+    <packet> element (all its <proto> children — "geninfo"/"frame"/"btatt"/etc.,
+    not just btatt) — use this over _run_tshark_pdml when a caller needs more
+    than one proto from the same packet (e.g. geninfo's frame number alongside
+    btatt's entries). See _run_tshark_pdml's docstring for why PDML specifically.
+    """
+    import xml.etree.ElementTree as ET
+    cmd = [tshark, "-r", str(pcapng), "-Y", display_filter, "-T", "pdml"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        root = ET.fromstring(result.stdout)
+    except ET.ParseError:
+        return []
+    return root.findall("packet")
+
+
 def _run_tshark_pdml(tshark: str, pcapng: Path, display_filter: str) -> list:
     """Run tshark with -T pdml (XML) and return every matching frame's
     <proto name="btatt"> element.
@@ -619,16 +636,9 @@ def _run_tshark_pdml(tshark: str, pcapng: Path, display_filter: str) -> list:
     XML tree lets us walk each entry's DIRECT children explicitly and avoid
     both traps.
     """
-    import xml.etree.ElementTree as ET
-    cmd = [tshark, "-r", str(pcapng), "-Y", display_filter, "-T", "pdml"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    try:
-        root = ET.fromstring(result.stdout)
-    except ET.ParseError:
-        return []
     return [
         proto
-        for packet in root.findall("packet")
+        for packet in _run_tshark_pdml_packets(tshark, pcapng, display_filter)
         for proto in packet.findall("proto")
         if proto.get("name") == "btatt"
     ]
@@ -1600,6 +1610,60 @@ def _format_traffic_log(frames: list, markdown: bool) -> str:
     return "\n".join(lines)
 
 
+def _get_read_by_type_entries_by_frame(tshark: str, pcapng: Path) -> dict:
+    """Per-frame handle/UUID entries for READ_BY_TYPE_RSP (opcode 0x09), keyed by
+    frame.number. Reuses _extract_gatt_handles' PDML tree-walk (the entry's own
+    direct-child btatt.handle/uuid16/uuid128 — not a same-named field nested at a
+    different tree depth, see _run_tshark_pdml's docstring) instead of a second,
+    independently-drifting -T fields extraction: _extract_mera_events used to do
+    exactly that, silently returning only the first (handle, UUID) pair of any
+    multi-entry response (confirmed 2026-07-21 via tools/audit-nrf-ble-analyze-
+    coverage.py — same bug class as the 2026-07-18 --gatt-map fix, reintroduced
+    here because the fix wasn't shared between the two call sites).
+    Returns dict[int frame_number -> str "0x000C=0x2A24, 0x000E=0x2A25, ..."].
+    """
+    by_frame: dict = {}
+    for packet in _run_tshark_pdml_packets(tshark, pcapng, "btatt.opcode == 0x09"):
+        frame_no = None
+        for frame_proto in packet.findall("proto"):
+            if frame_proto.get("name") == "geninfo":
+                for f in frame_proto.findall("field"):
+                    if f.get("name") == "num":
+                        try:
+                            frame_no = int(f.get("show"))
+                        except (TypeError, ValueError):
+                            pass
+        if frame_no is None:
+            continue
+        pairs = []
+        for proto in packet.findall("proto"):
+            if proto.get("name") != "btatt":
+                continue
+            for entry in proto.findall("field[@name='btatt.attribute_data']"):
+                handle = None
+                uuid = None
+                for child in entry:
+                    name = child.get("name")
+                    if name == "btatt.handle":
+                        try:
+                            handle = int(child.get("show"), 16)
+                        except (TypeError, ValueError):
+                            pass
+                    elif name == "btatt.uuid128":
+                        uuid = child.get("show")
+                    elif name == "btatt.uuid16":
+                        raw = child.get("show")
+                        try:
+                            uuid = f"0x{int(raw, 16):04X}"
+                        except (TypeError, ValueError):
+                            uuid = raw
+                if handle is not None and uuid is not None:
+                    pairs.append(f"0x{handle:04X}={uuid}")
+        if pairs:
+            by_frame[frame_no] = ", ".join(pairs)
+    return by_frame
+
+
 def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
                          addr_field: str) -> tuple:
     """
@@ -1616,9 +1680,11 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
         dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
 
     rows = _run_tshark(tshark, pcapng, dfilter,
-                       ["frame.time_relative", addr_field,
+                       ["frame.number", "frame.time_relative", addr_field,
                         "btatt.opcode", "btatt.handle", "btatt.value",
                         "btatt.uuid16", "btatt.error_code"])
+
+    read_by_type_entries = _get_read_by_type_entries_by_frame(tshark, pcapng)
 
     # Total ATT frame count for the header
     all_rows = _run_tshark(tshark, pcapng, "btatt", ["frame.number"])
@@ -1626,10 +1692,10 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
 
     events = []
     for row in rows:
-        if len(row) < 3:
+        if len(row) < 4:
             continue
-        padded = (row + [""] * 7)[:7]
-        ts_raw, slave, op_raw, handle_raw, value_raw, uuid16_raw, err_code_raw = padded
+        padded = (row + [""] * 8)[:8]
+        frame_no_raw, ts_raw, slave, op_raw, handle_raw, value_raw, uuid16_raw, err_code_raw = padded
 
         if not op_raw.strip():
             continue
@@ -1684,10 +1750,19 @@ def _extract_mera_events(tshark: str, pcapng: Path, mac: str,
             # is deliberately left at "f" — btatt.uuid16 for this opcode has a
             # tree-depth-conflation trap, see _run_tshark_pdml's docstring, so
             # simply switching to occurrence="a" would produce a WRONG single
-            # value here, not just an incomplete one). Flag it plainly instead
-            # of silently showing a partial decode as if it were the full
-            # response — --gatt-map has the correct, complete decode (-T pdml).
-            ev["value"] = "(multi-entry characteristic discovery — see --gatt-map for the full list)"
+            # value here, not just an incomplete one). Use the PDML-based
+            # per-frame lookup (same tree-walk _extract_gatt_handles already
+            # uses for --gatt-map — fixed 2026-07-21, this call site had drifted
+            # out of sync with that fix, see docs/developer/
+            # nrf-ble-analyze-completeness-audit.md) for the real entry list;
+            # fall back to the old placeholder only if that lookup somehow misses.
+            try:
+                frame_no = int(frame_no_raw.strip())
+            except ValueError:
+                frame_no = None
+            entries = read_by_type_entries.get(frame_no) if frame_no is not None else None
+            ev["value"] = (entries if entries else
+                           "(multi-entry characteristic discovery — see --gatt-map for the full list)")
         elif handle_raw.strip():
             try:
                 handle = _parse_int(handle_raw)

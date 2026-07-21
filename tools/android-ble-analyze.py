@@ -703,6 +703,9 @@ class _Call:
     resp_result:  bytes = b""
     resp_type:    str   = ""   # "single" | "multi" | ""
     req_raw:      bytes = b""  # raw ATT write frame bytes (for hex comparison)
+    resp_text:    str   = ""   # pre-formatted display text (e.g. multi-entry GATT
+                                # discovery) — used instead of resp_result.hex() when set,
+                                # since resp_result is only ever real Geberit-protocol bytes
 
 
 def _parse_req(v: bytes):
@@ -915,10 +918,15 @@ def _collect_calls(events: list) -> list:
                 pending.resp_ts     = e["ts"]
                 pending.resp_type   = "single"
                 pending.resp_status = 0
+                # Multi-entry discovery responses (see _extract_mera_events'
+                # frame_read_by_type lookup) are pre-formatted display text, not hex —
+                # bytes.fromhex() on that text would always fail and silently render
+                # "(empty)". Real single-entry READ_BY_TYPE_RSP values are still hex.
+                raw = e.get("value", "")
                 try:
-                    pending.resp_result = bytes.fromhex(e.get("value", ""))
+                    pending.resp_result = bytes.fromhex(raw)
                 except Exception:
-                    pending.resp_result = b""
+                    pending.resp_text   = raw
                 calls.append(pending)
                 pending = pend_args = None
                 pend_arglen = 0
@@ -1199,6 +1207,8 @@ def _annotate_resp(call: _Call) -> str:
         return f"ERR status=0x{call.resp_status:02X}"
     ctx, proc, result = call.ctx, call.proc, call.resp_result
     if proc == _PROC_READ_BY_TYPE:
+        if call.resp_text:
+            return f"→ {call.resp_text}"
         return f"→ {result.hex() or '(empty)'}"
     if proc == _PROC_READ:
         try:
