@@ -295,6 +295,25 @@ further than the old stub did, or what the `0x0e069b0a` write's `0x7B` byte and 
 never-observed characteristics (`0x7152f4a9`, `0x464ead99`) actually need — next step is a
 fresh RC test against this version.
 
+**Tested, 2026-07-21 — did not reach the new code at all, root cause found: stale BlueZ GATT
+cache, fixed in v1.106.0b1.** Three connection attempts, SMP pairing completed cleanly every
+time (no repeat of the earlier missing-agent issue), but the RC's own discovery walk never
+matched the current GATT structure at all: `btmon` showed the custom services as "Vendor
+specific" 128-bit UUIDs whose *last 2 bytes* matched the intended aliases (`...8a30`,
+`...e0db`, `...c526`) but whose rest didn't, and read responses for handles `0x000C/E/10`
+labeled "Model/Serial/Firmware Revision String" — characteristics `_DISService` doesn't even
+define (it has exactly one, Manufacturer Name `0x2A29`). The RC did a full generic
+`READ_BY_GROUP_TYPE` discovery walk (not the targeted `FIND_BY_TYPE_VALUE` searches seen
+against the real device), read only standard GAP/DIS characteristics (twice each), then
+disconnected after ~23s each attempt — never touching any of the new RC-pairing
+characteristics. Root cause: `btmgmt unpair` (already run at mock startup) clears bonding
+keys but not BlueZ's separate per-device GATT attribute cache, persisted on disk since
+whatever earlier mock structure this same bonded RC identity last discovered — days of
+version changes on the same adapter had left it stale. Fix (v1.106.0b1): the startup cleanup
+now `rm -rf`s each bonded device's whole `/var/lib/bluetooth/<adapter>/<device>/` directory,
+not just `btmgmt unpair`, forcing genuine fresh discovery next connection. Not yet re-tested
+against a real RC.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

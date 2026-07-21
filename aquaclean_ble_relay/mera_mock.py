@@ -36,6 +36,7 @@ check only. Needs a real run on the mock VM before being trusted.
 import sys
 import asyncio
 import subprocess
+import shutil
 import hashlib
 import struct
 import time
@@ -85,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.105.0b1"
+_MOCK_VERSION = "1.106.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -2287,6 +2288,21 @@ class MeraMock:
         # disk — iOS's RPA cannot resolve to a bonded identity, preventing auth
         # enforcement on CCCDs.  Skipping the daemon restart preserves the battery
         # plugin's per-session device cache (see test-infrastructure.md).
+        #
+        # btmgmt unpair alone is NOT enough to force a fresh GATT re-discovery: BlueZ
+        # persists a SEPARATE per-device GATT attribute cache (Robust Caching / "Service
+        # Changed" database hash) on disk, independent of the LTK/IRK/CSRK bonding keys
+        # unpair removes. Confirmed 2026-07-21: a real RC bonded across many mock-version
+        # changes on this same adapter kept getting served STALE cached service UUIDs and
+        # characteristic labels from an much earlier GATT structure — visible in btmon as
+        # "Vendor specific" UUIDs whose last 2 bytes matched the current intended aliases
+        # but whose rest didn't, and standard-characteristic labels (Model/Serial/Firmware
+        # Revision String) for handles this mock doesn't even define — while the RC itself,
+        # trusting that stale structure, never discovered any of the actually-current
+        # characteristics. rm -rf'ing the whole per-device directory (not just unpair)
+        # removes both the bonding keys and that cache, forcing a genuine fresh discovery
+        # on the next connection. See docs/developer/mock-geberit-mera.md §"Button-press/
+        # release timing" for the full capture analysis that found this.
         hci_addr_path = Path(f"/sys/class/bluetooth/hci{self._hci_index()}/address")
         if hci_addr_path.exists():
             adapter_mac = hci_addr_path.read_text().strip()
@@ -2298,7 +2314,14 @@ class MeraMock:
                             ["btmgmt", "-i", self._hci_index(), "unpair", e.name],
                             capture_output=True,
                         )
-                        self.logger.info("Unpaired bond record: %s", e.name)
+                        try:
+                            shutil.rmtree(e)
+                            self.logger.info(
+                                "Unpaired and removed cached GATT database for: %s", e.name)
+                        except OSError as exc:
+                            self.logger.warning(
+                                "Unpaired %s but could not remove cached GATT database: %s",
+                                e.name, exc)
 
         # Re-enabled 2026-07-19 (v1.101.0b1) — RE-TEST BEFORE RELYING ON THIS.
         # pairable=on was reverted twice (v1.31.0, then again 2026-07-16 after commit
