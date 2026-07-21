@@ -2,20 +2,30 @@
 """
 minimal-central.py — connect to minimal-peripheral.py and verify multi-service discovery.
 
-Scans for a peripheral advertising the "MultiSvc-Test" name, connects, enumerates
-ALL discovered services/characteristics, and reports whether the expected number of
-services were found, with correct UUIDs (matching the "0000{BASE_ALIAS+i:04x}-0000-
-1000-8000-00805f9b34fb" pattern minimal-peripheral.py registers) and no obviously
-wrong/garbled UUID. See minimal-peripheral.py's docstring and local-assets/bluez-
+Scans for a peripheral advertising the service UUID minimal-peripheral.py's first
+registered service uses (--advertised-uuid; falls back to name matching, --name,
+if that doesn't find anything), connects, enumerates ALL discovered services/
+characteristics, and reports whether the expected number of services were found,
+with correct UUIDs (matching the "0000{BASE_ALIAS+i:04x}-0000-1000-8000-
+00805f9b34fb" pattern minimal-peripheral.py registers) and no obviously wrong/
+garbled UUID. See minimal-peripheral.py's docstring and local-assets/bluez-
 multi-service-question.md for the investigation this supports — bisecting the exact
 service count where BlueZ's discovery response corrupts UUIDs/handle ranges and
 silently drops services registered after the corrupted one.
+
+NOTE (2026-07-21): on macOS/CoreBluetooth, bleak's plain name-based discovery is
+unreliable for a peripheral this host has never connected to before — confirmed
+directly: a peripheral visible in nRF Connect (Android) and in this script's own
+--diagnostics dump was still not found by --name from a Mac scanning for the first
+time. --advertised-uuid (service-UUID-filtered scanning) is the reliable path;
+--name is a fallback only, and --expect alone won't help if discovery itself fails.
 
 Usage:
   python3 minimal-central.py --expect 6            # bisect: try 1..6 against a peripheral
                                                     #   started with the matching --num-services
   python3 minimal-central.py --expect 4 --verbose
   python3 minimal-central.py --mac <addr_or_uuid> --expect 6
+  python3 minimal-central.py --name "Geberit AC PRO" --advertised-uuid ''   # sanity-check against the real mock
   python3 minimal-central.py --diagnostics          # dump all raw advertisements
 """
 
@@ -26,7 +36,7 @@ from typing import Optional
 
 from bleak import BleakScanner, BleakClient
 
-_SCRIPT_VERSION = "1.1.0"
+_SCRIPT_VERSION = "1.2.0"
 
 BASE_ALIAS   = 0x1000
 DEFAULT_NAME = "MultiSvc-Test"
@@ -35,6 +45,25 @@ _VENDOR_UUID_RE = re.compile(r"^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$",
 
 def _expected_uuid(i: int) -> str:
     return f"0000{BASE_ALIAS + i:04x}-0000-1000-8000-00805f9b34fb"
+
+
+async def discover_by_service(timeout: float, service_uuid: str, verbose: bool = False) -> Optional[object]:
+    if verbose:
+        print(f"[+] Scanning for device advertising service {service_uuid} (up to {timeout}s)…")
+    try:
+        devices = await BleakScanner.discover(timeout=timeout, service_uuids=[service_uuid])
+    except TypeError:
+        if verbose:
+            print("[!] BleakScanner.discover does not accept service_uuids on this Bleak version; doing full discover.")
+        devices = await BleakScanner.discover(timeout=timeout)
+        devices = [d for d in devices
+                   if service_uuid.lower() in [u.lower() for u in (getattr(d, "metadata", {}).get("uuids")
+                                                                    or getattr(d, "service_uuids", None) or [])]]
+    if devices:
+        if verbose:
+            print(f"[+] Found {len(devices)} device(s) advertising the service; selecting first.")
+        return devices[0]
+    return None
 
 
 async def discover_by_name(timeout: float, name: str, verbose: bool = False) -> Optional[object]:
@@ -63,6 +92,7 @@ async def dump_advertisements(timeout: float) -> None:
 
 
 async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[int],
+              advertised_uuid: Optional[str],
               verbose: bool = False, diagnostics: bool = False) -> None:
     print(f"minimal-central.py v{_SCRIPT_VERSION}")
     if diagnostics:
@@ -79,9 +109,17 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[in
             print(f"[!] Device {mac} not found within {timeout}s scan.")
             return
     else:
-        device = await discover_by_name(timeout, name, verbose=verbose)
+        # Service-UUID filtering first: on macOS/CoreBluetooth, bleak's plain name-based
+        # discover() is unreliable for a peripheral this host has never connected to
+        # before (confirmed 2026-07-21 — a peripheral visible in nRF Connect and general
+        # --diagnostics scanning was still not found by name). Name is only a fallback.
+        if advertised_uuid:
+            device = await discover_by_service(timeout, advertised_uuid, verbose=verbose)
         if device is None:
-            print(f"[!] No device found (name {name!r}). Is the peripheral advertising?")
+            device = await discover_by_name(timeout, name, verbose=verbose)
+        if device is None:
+            hint = f" or service {advertised_uuid}" if advertised_uuid else ""
+            print(f"[!] No device found (name {name!r}{hint}). Is the peripheral advertising?")
             return
 
     print(f"[+] Found: {device.address}  name={device.name!r}")
@@ -170,12 +208,18 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=10.0, help="BLE scan timeout in seconds (default: 10)")
     ap.add_argument("--mac", help="CoreBluetooth UUID (macOS) or MAC address (Linux/Android)")
     ap.add_argument("--name", default=DEFAULT_NAME,
-                    help=f"Advertisement name to scan for (default: {DEFAULT_NAME!r}; the real mock "
-                         f"advertises as 'Geberit AC PRO')")
+                    help=f"Advertisement name to scan for, used as fallback if --advertised-uuid doesn't "
+                         f"match (default: {DEFAULT_NAME!r}; the real mock advertises as 'Geberit AC PRO')")
+    ap.add_argument("--advertised-uuid", default=_expected_uuid(1),
+                    help="service UUID to filter the scan by — primary discovery method, more reliable "
+                         f"than --name on macOS/CoreBluetooth (default: {_expected_uuid(1)!r}, "
+                         "minimal-peripheral.py's first registered service; pass '' to disable and use "
+                         "--name only)")
     ap.add_argument("--verbose", action="store_true", help="Print extra debug messages")
     ap.add_argument("--diagnostics", action="store_true", help="Dump raw advertisements for the timeout and exit")
     args = ap.parse_args()
-    asyncio.run(run(args.timeout, args.mac, args.name, args.expect, verbose=args.verbose, diagnostics=args.diagnostics))
+    asyncio.run(run(args.timeout, args.mac, args.name, args.expect, args.advertised_uuid or None,
+                    verbose=args.verbose, diagnostics=args.diagnostics))
 
 
 if __name__ == "__main__":

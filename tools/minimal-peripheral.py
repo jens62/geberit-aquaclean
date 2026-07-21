@@ -26,6 +26,11 @@ Variables under test (see --help):
                       assignment-order bug) from "this specific service object
                       always gets corrupted" (object-identity bug)
 
+Advertises exactly ONE service UUID (the first registered service) alongside the
+name — see minimal-central.py's --advertised-uuid, the reliable discovery method
+on macOS/CoreBluetooth (plain name-based scanning there is unreliable for a
+peripheral the scanning host has never connected to before).
+
 Run on the BlueZ host (requires bluez-peripheral):
   sudo python3 minimal-peripheral.py --num-services 4
   sudo python3 minimal-peripheral.py --num-services 6 --empty
@@ -36,7 +41,7 @@ import argparse
 import asyncio
 import subprocess
 
-_SCRIPT_VERSION = "1.1.0"
+_SCRIPT_VERSION = "1.2.0"
 
 from bluez_peripheral.advert import Advertisement
 from bluez_peripheral.gatt.service import Service, ServiceCollection
@@ -109,16 +114,22 @@ async def main():
     coll = ServiceCollection(services)
     await coll.register(bus)
 
-    # Advertise with NO service UUIDs — with 128-bit UUIDs (16 bytes each), listing
-    # even 2+ of them exceeds the legacy ADV_IND payload limit (31 bytes total) and can
-    # make RegisterAdvertisement fail silently or never actually go out. Not needed for
-    # this test anyway: the central finds the device by name, then discovers services
-    # over GATT after connecting — the advertisement payload's UUID list is irrelevant.
-    adv = Advertisement("MultiSvc-Test", [], timeout=0, appearance=0)
+    # Advertise exactly ONE service UUID (the first registered service), not all N —
+    # listing all N 128-bit UUIDs (16 bytes each) blows past the legacy ADV_IND payload
+    # limit (31 bytes total). One UUID + the name fits: bluez_peripheral/BlueZ splits
+    # Name into SCAN_RSP automatically when ADV_IND is full (confirmed in mera_mock.py).
+    # A service UUID (not just the name) matters for discovery too: on macOS/CoreBluetooth,
+    # bleak's plain name-based BleakScanner.discover() is unreliable for a peripheral the
+    # host has never connected to before (Apple's privacy model reliably exposes advertised
+    # names mainly when scanning is filtered by service UUID) — confirmed 2026-07-21, a
+    # peripheral visible in nRF Connect (Android) and general --diagnostics scanning was
+    # still not found by name from a Mac that had never connected to it before.
+    adv = Advertisement("MultiSvc-Test", [_service_uuid(indices[0])], timeout=0, appearance=0)
     await adv.register(bus)
 
     print(f"--- Minimal Multi-Service Peripheral Active (v{_SCRIPT_VERSION}) ---")
     print(f"num_services={args.num_services}  chars_per_service={num_chars}  reverse={args.reverse}")
+    print(f"Advertised service UUID (for --advertised-uuid on minimal-central.py): {_service_uuid(indices[0])}")
     print("Registered services (in registration order):")
     for i in indices:
         print(f"  {_service_uuid(i)}  ({num_chars} characteristics)")
