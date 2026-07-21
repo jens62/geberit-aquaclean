@@ -86,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.107.0b1"
+_MOCK_VERSION = "1.108.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -905,13 +905,63 @@ class _RCPairingService(Service):
     """Remote Control pairing service (UUID 0xC526).
 
     RC does FIND_BY_TYPE_VALUE UUID=0xC526 and verifies the service exists
-    before initiating BLE pairing (LL_ENC_REQ). `rc_stub` (0xC527) was this
-    service's only characteristic until 2026-07-21 — an unconfirmed guess, never
-    observed in any real capture. The five characteristics below ARE confirmed,
-    from a real RC<->real-toilet capture watching SMP pairing live (the sniffer
-    caught the LTK and decrypted everything after — see docs/developer/
-    mock-geberit-mera.md §"Button-press/release timing", "Major breakthrough,
-    2026-07-21" for the full capture analysis this implements):
+    before initiating BLE pairing (LL_ENC_REQ). Confirmed from a real RC<->real-
+    toilet capture watching SMP pairing live (the sniffer caught the LTK and
+    decrypted everything after — see docs/developer/mock-geberit-mera.md
+    §"Button-press/release timing", "Major breakthrough, 2026-07-21"): this
+    service itself has exactly ONE characteristic besides the read-only stub —
+    0x5a4d406b-... (NOTIFY, the confirmed "03 02" pairing ack).
+
+    CORRECTED 2026-07-21 (second pass, re-reading the real capture's own handle
+    table against each service's own FIND_BY_TYPE_VALUE range): v1.105.0b1
+    bundled all seven confirmed RC-pairing characteristics under this service.
+    That's wrong — five of them (0x25dcdfd2, 0x867710fb, 0x0e069b0a, 0x7152f4a9,
+    0x464ead99) have handles that fall within the NEIGHBORING 0xE0DB service's
+    own range (0x0018-0x0023 in the real capture, well below 0xC526's own start
+    handle 0x0024) — see _RCAncillaryServiceE0DB. A client doing per-service
+    characteristic discovery scoped to 0xE0DB's own handle range would never
+    have found them under 0xC526.
+    """
+
+    def __init__(self, mock: "MeraMock"):
+        super().__init__("0000c526-0000-1000-8000-00805f9b34fb", True)
+        self._mock = mock
+
+    @characteristic("0000c527-0000-1000-8000-00805f9b34fb", CharFlags.READ)
+    def rc_stub(self, options):
+        return b""
+
+    @characteristic("5a4d406b-b210-47ba-b7e6-db6b9f2e9997", CharFlags.NOTIFY)
+    def notify_26(self, options):
+        return bytes(20)
+
+
+class _RCAncillaryService8A30(Service):
+    """Service UUID 0x8A30 — RC does FIND_BY_TYPE_VALUE for this before 0xC526's
+    contents matter (confirmed real capture, 2026-07-21). Exactly one confirmed
+    characteristic falls within its own handle range (0x0015-0x0017 in the real
+    capture): 0x1db512c1-..., role never observed in either capture — read-only
+    stub.
+
+    CORRECTED 2026-07-21 (second pass): v1.105.0b1 put this characteristic under
+    0xE0DB instead and left this service empty — wrong on both counts, per the
+    real capture's own handle table (see docs/developer/mock-geberit-mera.md
+    §"Major breakthrough, 2026-07-21")."""
+
+    def __init__(self):
+        super().__init__("00008a30-0000-1000-8000-00805f9b34fb", True)
+
+    @characteristic("1db512c1-2aa1-45d7-894e-1e9441bc8389", CharFlags.READ)
+    def stub(self, options):
+        return b""
+
+
+class _RCAncillaryServiceE0DB(Service):
+    """Service UUID 0xE0DB — RC does FIND_BY_TYPE_VALUE for this alongside 0x8A30
+    (confirmed real capture, 2026-07-21). Five characteristics fall within its own
+    handle range (0x0018-0x0023 in the real capture) — moved here 2026-07-21
+    (second pass) from v1.105.0b1's wrong placement under 0xC526's
+    _RCPairingService:
 
       0x25dcdfd2-...  NOTIFY  (CCCD enabled first, before either WRITE below)
       0x867710fb-...  WRITE   real payload: UTF-16BE text "      Pairing ok      "
@@ -921,20 +971,19 @@ class _RCPairingService(Service):
       0x7152f4a9-...  role never observed in either capture — read-only stub
       0x464ead99-...  role never observed in either capture — read-only stub
 
-    then, in the real captures, a NOTIFY on 0x5a4d406b-... (CCCD enabled
-    earlier, before either WRITE) with payload `03 02` — sent here once the
-    0x25dcdfd2 CCCD is confirmed enabled, mirroring the real device's observed
-    order (see _maybe_send_ack below). Untested whether this makes the RC
-    progress any further than the stub did — the real device's actual trigger
-    condition for this reply is not confirmed, only its observed position in
-    the sequence.
-    """
+    then, in the real captures, a NOTIFY on 0xC526's 0x5a4d406b-... (CCCD
+    enabled earlier, before either WRITE) with payload `03 02` — sent here once
+    the 0x25dcdfd2 CCCD is confirmed enabled, mirroring the real device's
+    observed order (see _maybe_send_ack below). Untested whether this makes the
+    RC progress any further than the stub did — the real device's actual
+    trigger condition for this reply is not confirmed, only its observed
+    position in the sequence."""
 
     def __init__(self, mock: "MeraMock"):
-        super().__init__("0000c526-0000-1000-8000-00805f9b34fb", True)
+        super().__init__("0000e0db-0000-1000-8000-00805f9b34fb", True)
         self._mock = mock
-        self._notify_1a_iface = None   # wired after register() — CCCD gate for the ack below
-        self._notify_26_iface = None
+        self._notify_1a_iface = None   # wired after register() — 0x25dcdfd2, defined below
+        self._notify_26_iface = None   # wired after register() — 0x5a4d406b, lives on _RCPairingService
         self._ack_sent = False
 
     def wire_notify_1a(self, iface) -> None:
@@ -943,16 +992,8 @@ class _RCPairingService(Service):
     def wire_notify_26(self, iface) -> None:
         self._notify_26_iface = iface
 
-    @characteristic("0000c527-0000-1000-8000-00805f9b34fb", CharFlags.READ)
-    def rc_stub(self, options):
-        return b""
-
     @characteristic("25dcdfd2-8867-48da-b1d6-1b5985c4f259", CharFlags.NOTIFY)
     def notify_1a(self, options):
-        return bytes(20)
-
-    @characteristic("5a4d406b-b210-47ba-b7e6-db6b9f2e9997", CharFlags.NOTIFY)
-    def notify_26(self, options):
         return bytes(20)
 
     @characteristic("867710fb-5e31-49ba-84e0-a10d5d832ad7", CharFlags.WRITE_WITHOUT_RESPONSE)
@@ -1026,33 +1067,6 @@ class _RCPairingService(Service):
                 self._notify_26_iface.emit_properties_changed({"Value": Variant("ay", list(frame))})
         except Exception as e:
             self._mock._log("·", f"WARNING: RC pairing ack notify failed: {e}")
-
-
-class _RCAncillaryService8A30(Service):
-    """Service UUID 0x8A30 — RC does FIND_BY_TYPE_VALUE for this before 0xC526's
-    contents matter (confirmed real capture, 2026-07-21). No characteristic UUID
-    was ever observed under it in either capture — deliberately zero characteristics
-    (matches the real device's own apparent structure better than a fabricated
-    stub would; bluez_peripheral.gatt.service.Service tolerates an empty
-    _characteristics list). The FIND_BY_TYPE_VALUE existence check only needs the
-    service declaration itself, not any characteristic under it."""
-
-    def __init__(self):
-        super().__init__("00008a30-0000-1000-8000-00805f9b34fb", True)
-
-
-class _RCAncillaryServiceE0DB(Service):
-    """Service UUID 0xE0DB — RC does FIND_BY_TYPE_VALUE for this alongside 0x8A30
-    (confirmed real capture, 2026-07-21). One characteristic UUID falls within its
-    declared handle range (ends 0x0018): 0x1db512c1-..., role never observed in
-    either capture — read-only stub."""
-
-    def __init__(self):
-        super().__init__("0000e0db-0000-1000-8000-00805f9b34fb", True)
-
-    @characteristic("1db512c1-2aa1-45d7-894e-1e9441bc8389", CharFlags.READ)
-    def stub(self, options):
-        return b""
 
 
 # ---- Advertisement ----
@@ -1979,6 +1993,28 @@ class MeraMock:
             await asyncio.sleep(0.05)
         service._a6_burst_done.set()
 
+    async def _watch_rc_cccds(self, e0db_service: "_RCAncillaryServiceE0DB") -> None:
+        """Standalone CCCD-enable watcher for the two RC-pairing NOTIFY
+        characteristics (0x25dcdfd2, 0x5a4d406b), independent of whether the RC
+        ever reaches a WRITE step — _maybe_send_ack() only checks these on a
+        write, so without this, a real RC session that enables a CCCD but never
+        writes anything left zero trace in the logs (confirmed gap, 2026-07-21:
+        the only RC-test log line that ever fired was the unrelated A5-CCCD one
+        from _send_info_frame_burst). Logs every enable/disable transition in
+        either direction. Runs for the mock's whole lifetime, not per-connection
+        — bluez_peripheral's Characteristic objects are created once at
+        registration and their _notify flag reflects StartNotify/StopNotify from
+        whichever central holds the connection."""
+        last = {"25dcdfd2": False, "5a4d406b": False}
+        while True:
+            for key, iface in (("25dcdfd2", e0db_service._notify_1a_iface),
+                                ("5a4d406b", e0db_service._notify_26_iface)):
+                cur = bool(getattr(iface, "_notify", False)) if iface is not None else False
+                if cur != last[key]:
+                    self._log("·", f"RC CCCD 0x{key}: {'enabled' if cur else 'disabled'}")
+                    last[key] = cur
+            await asyncio.sleep(0.1)
+
     # ---- Web UI ----
 
     def _render_log(self) -> str:
@@ -2475,7 +2511,7 @@ class MeraMock:
         dis_service = _DISService()
         rc_pairing_service = _RCPairingService(self)
         rc_8a30_service = _RCAncillaryService8A30()
-        rc_e0db_service = _RCAncillaryServiceE0DB()
+        rc_e0db_service = _RCAncillaryServiceE0DB(self)
         rc_collection = ServiceCollection([rc_pairing_service, rc_8a30_service, rc_e0db_service])
         try:
             try:
@@ -2560,15 +2596,18 @@ class MeraMock:
             else:
                 self.logger.warning("%s notify characteristic not found — multi-frame distribution degraded", label)
 
-        # Wire the two RC-pairing NOTIFY characteristics so _RCPairingService can
-        # gate its ack notify on both CCCDs being enabled (see its docstring).
-        for uuid_target, wire_fn, label in [
-            ("25dcdfd2-8867-48da-b1d6-1b5985c4f259", rc_pairing_service.wire_notify_1a, "RC 0x25dcdfd2"),
-            ("5a4d406b-b210-47ba-b7e6-db6b9f2e9997", rc_pairing_service.wire_notify_26, "RC 0x5a4d406b"),
+        # Wire the two RC-pairing NOTIFY characteristics so _RCAncillaryServiceE0DB
+        # can gate its ack notify on both CCCDs being enabled (see its docstring).
+        # 0x25dcdfd2 lives on rc_e0db_service itself; 0x5a4d406b lives on the
+        # neighboring rc_pairing_service (0xC526) — each looked up on its own
+        # host object, not both on one.
+        for host_service, uuid_target, wire_fn, label in [
+            (rc_e0db_service, "25dcdfd2-8867-48da-b1d6-1b5985c4f259", rc_e0db_service.wire_notify_1a, "RC 0x25dcdfd2"),
+            (rc_pairing_service, "5a4d406b-b210-47ba-b7e6-db6b9f2e9997", rc_e0db_service.wire_notify_26, "RC 0x5a4d406b"),
         ]:
             found = None
             for attr in ("_characteristics", "_chars"):
-                chars = getattr(rc_pairing_service, attr, None)
+                chars = getattr(host_service, attr, None)
                 if chars:
                     for c in chars:
                         uuid = str(getattr(c, "uuid", getattr(c, "_uuid", ""))).lower()
@@ -2582,6 +2621,12 @@ class MeraMock:
                 self.logger.info("%s notify characteristic wired", label)
             else:
                 self.logger.warning("%s notify characteristic not found — RC pairing ack disabled", label)
+
+        # Standalone CCCD-enable watcher, independent of whether the RC ever
+        # reaches either WRITE step _maybe_send_ack() otherwise gates on — logs
+        # every enable/disable transition so a real RC test capture always shows
+        # whether the RC got this far, even if it never writes anything.
+        asyncio.ensure_future(self._watch_rc_cccds(rc_e0db_service))
 
         # Advertise via D-Bus LEAdvertisingManager1 (same path as mock-geberit-alba).
         # BlueZ encodes UUID 0x3EA0 and manufacturer data into the ADV_IND payload;
@@ -2670,7 +2715,7 @@ class MeraMock:
                 self._connected = False
                 self._current_device_path = None
                 self._log("·", f"BLE client disconnected: {device_path}")
-                rc_pairing_service._ack_sent = False   # allow the ack again next connection
+                rc_e0db_service._ack_sent = False   # allow the ack again next connection
                 # IsButtonPressed resets only after the A5 burst fires (in
                 # _send_info_frame_burst). While it is still True, pairing is
                 # incomplete and iOS may retry — force-remove this device now so

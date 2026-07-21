@@ -338,6 +338,53 @@ a *different* BlueZ behavior (auto-exposed local `0x180F` requiring authenticati
 SMP-storm cause in trap 16) — folding it into this consolidation risked reintroducing that
 separate, already-solved bug for no tested benefit. Not yet re-tested against a real RC.
 
+**RESOLVED 2026-07-21 (later same day) — the "too many separate GATT applications" theory
+above was itself a misattributed log, not a real BlueZ bug.** `/var/lib/bluetooth/<adapter-mac>/
+cache/<remote-mac>` is BlueZ's cache of a *connecting remote device's own* GATT server,
+populated because `bluetoothd` automatically performs its own client-role discovery of any
+newly-connected device regardless of connection direction. When the real RC connects to this
+mock, our own `bluetoothd` reciprocally discovers the RC's *own* hardware GATT server and caches
+it there — confirmed byte-for-byte: every "garbled" UUID and the `0xffff` end-handle from the
+v1.107.0b1 test are sitting verbatim in `cache/B0:10:A0:68:5C:8B`, not in anything this mock
+serves. `bluetoothd -n -d`'s `gatt-client.c:discover_primary_cb()` (cited above as evidence) is
+explicitly client-role discovery code — never the code path serving this mock's own services
+outward. Two faithful minimal reproductions (`tools/minimal-peripheral.py` +
+`tools/minimal-central.py`, both at pure service-count 4/5/6 in one app, and at the real
+3-single-service-apps + 1-three-service-app split) came back completely clean, consistent with
+there having been no real server-side corruption to reproduce. Full writeup:
+`memory/bluez-multi-service-corruption-misattributed.md`. The v1.107.0b1 app-consolidation
+change itself is harmless and stays (matching the known-working baseline topology), but it was
+not fixing anything real, and RC pairing was not expected to (and did not) start working from it
+alone.
+
+**Real root cause found, 2026-07-21 (same day, third pass) — RC-pairing characteristics were
+grouped under the wrong service; fixed in v1.108.0b1.** Re-reading the "Major breakthrough"
+handle table above against each service's own `FIND_BY_TYPE_VALUE` range (0x8A30: 0x0015-0x0017,
+0xE0DB: 0x0018-0x0023, 0xC526: 0x0024-0xffff) — rather than just listing the handles — shows the
+v1.105.0b1 fix put every confirmed characteristic under `_RCPairingService` (0xC526) instead of
+splitting them across all three services as the real device does:
+
+| Service | Real device (confirmed handle ranges) | v1.105.0b1-1.107.0b1 mock (wrong) |
+|---|---|---|
+| `0x8A30` | 1 characteristic: `0x1db512c1-...` | 0 characteristics (empty) |
+| `0xE0DB` | 5 characteristics: `0x25dcdfd2`, `0x867710fb`, `0x0e069b0a`, `0x7152f4a9`, `0x464ead99` | 1 characteristic, and the wrong one (`0x1db512c1`, which belongs to `0x8A30`) |
+| `0xC526` | 1 characteristic: `0x5a4d406b` (+ the `0xc527` stub) | all 7 |
+
+A client that discovers a service's own characteristics scoped to that service's own handle
+range (the normal way) would find nothing useful under `0xE0DB` in the old mock and never learn
+that `0x25dcdfd2`/`0x867710fb`/etc. exist there — matching exactly what every real RC test this
+day observed: the RC finds all three services via `FIND_BY_TYPE_VALUE`, then never touches any
+of the pairing characteristics. Fix (v1.108.0b1): moved `0x1db512c1` to `_RCAncillaryService8A30`;
+moved `0x25dcdfd2`/`0x867710fb`/`0x0e069b0a`/`0x7152f4a9`/`0x464ead99` to
+`_RCAncillaryServiceE0DB` (which also now owns `_maybe_send_ack()`/`_log_write_rc()`, since
+that's where the write-triggering characteristics live); `_RCPairingService` keeps only
+`0xc527`(read stub) and `0x5a4d406b`(NOTIFY ack). Also added a standalone CCCD-enable watcher
+(`MeraMock._watch_rc_cccds`) that logs every enable/disable transition on `0x25dcdfd2` and
+`0x5a4d406b` independent of whether a WRITE ever follows — before this, the only way to see CCCD
+state was indirectly through `_maybe_send_ack()`, which only ever runs after a WRITE, so a
+session that enabled a CCCD but never wrote anything left zero trace in the logs. Not yet tested
+against a real RC.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails
