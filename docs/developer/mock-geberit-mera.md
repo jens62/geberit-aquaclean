@@ -222,6 +222,68 @@ what `pairing with RC and toggle lid.pcapng` captured), or a longer mock test le
 cycle through several reconnects to see whether it eventually reports "paired" on its own
 display.
 
+**Major breakthrough, 2026-07-21 — real RC↔real-toilet pairing captured live, fully decrypted,
+first genuine plaintext of the RC's own application protocol.** Two independent nRF52840
+captures (`local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/real-mera/
+pairing-ok-toggle-lid-Geberit-Remote-Control-real-mera-{mac,windows}.pcapng`, one per sniffer
+host/OS, byte-identical results) watching the RC's SMP pairing *as it happened* (not just an
+already-encrypted session) let the sniffer capture the LTK live and decrypt every subsequent
+ATT frame — the key methodological difference from every earlier RC capture attempt, all of
+which only ever saw ciphertext (see RELAY-ISS-002).
+
+**The real device exposes GATT services to the RC that this mock has never implemented.**
+`--gatt-map` on both captures gives an identical handle table:
+
+| Handle | UUID | Notes |
+|---|---|---|
+| 0x000C/E/10/12/14 | `0x2A24/25/26/27/29` | standard DIS strings (Model/Serial/FW-rev/HW-rev/Manufacturer) |
+| 0x0017 | `1db512c1-2aa1-45d7-894e-1e9441bc8389` | custom, role unconfirmed |
+| 0x001A | `25dcdfd2-8867-48da-b1d6-1b5985c4f259` | custom, NOTIFY (CCCD at 0x001B) |
+| 0x001D | `867710fb-5e31-49ba-84e0-a10d5d832ad7` | custom, WRITE |
+| 0x001F | `7152f4a9-6523-4517-80a2-96d8b9273538` | custom, role unconfirmed |
+| 0x0021 | `464ead99-ec2c-49d4-a186-af6ff8979a96` | custom, role unconfirmed |
+| 0x0023 | `0e069b0a-967c-4002-91ac-1e51906a84b2` | custom, WRITE |
+| 0x0026 | `5a4d406b-b210-47ba-b7e6-db6b9f2e9997` | custom, NOTIFY |
+
+`FIND_BY_TYPE_VALUE` searches also confirm two 16-bit-alias service UUIDs never seen before,
+`0x8A30` (group ends 0x0015) and `0xE0DB` (group ends 0x0018), alongside the already-known
+`0x180A` (DIS, ends 0x000A) and `0xC526` (RC-pairing, ends 0x0024 — same end handle our mock
+already returns). Handles 0x0026/0x0027 sit *beyond* 0xC526's own end handle, so they belong
+to a still-unidentified further service. Net finding: **the real 0xC526 service (or its
+neighbors) has at least 5–7 characteristics that the RC actually uses — this mock's
+`_RCPairingService` has exactly one, read-only, unused by any of this exchange.** That is the
+concrete, evidenced gap behind the mock's stalled RC sessions — not the CCCD-0x0009 dead end
+above, and not (necessarily) just cadence.
+
+**Decoded protocol sequence, byte-identical in both captures, repeated identically across two
+connection attempts within each:**
+1. `WRITE 0x0027 = 0x01` → acked
+2. Multi-frame `WRITE` to `0x001D` (three ATT_WRITE_CMDs) — raw payload bytes decode cleanly as
+   **UTF-16BE text**: `"      Pairing ok      "` (space-padded). Confirmed independently in
+   both captures, byte-for-byte.
+3. Multi-frame `WRITE` to `0x0023` — all zero bytes except a single `0x7B` at offset 2; not
+   text, semantics not yet understood (a status/icon code is one plausible guess, unconfirmed).
+4. `WRITE 0x001B = 0x01` (CCCD-enable on the NOTIFY characteristic at `0x001A`)
+5. `NOTIF` from the toilet on `0x0026`: payload `03 02`
+
+**Caveat on `nrf-ble-analyze.py`'s own decode**: the tool's generic multi-frame parser labels
+the `0x001D`/`0x0023` writes as `Proc(ctx=0x20, proc=0x00)` / `Proc(ctx=0x00, proc=0x00)` —
+this is almost certainly a **false positive**, not a genuine third protocol context alongside
+the documented `ctx=0x00` (default) and `ctx=0x40` (firmware-update) in `.claude/rules/
+ble-protocol.md`. The raw bytes are plain UTF-16BE text, not the standard Mera proc-call
+framing (`ctx`/`proc` bytes at fixed offsets) — the tool's parser is built for that framing and
+is misapplying it here to a differently-structured, RC-specific custom protocol. Do not treat
+`ctx=0x20` as confirmed; `--raw` (dumping the literal bytes) is what actually revealed the text.
+
+**Open gap, not resolved by this pass**: the user toggled the lid twice via the RC after
+pairing succeeded, but neither capture's decoded output shows lid-toggle command bytes —
+nothing decodes after the `03 02` notify in either file. Both captures show the RC doing a
+second, brief reconnect (a `LL_ENC_RSP` with no preceding `LL_ENC_REQ` visible, i.e. the
+session key for that specific reconnect may not be fully recoverable from what's on hand) that
+repeats the identical "Pairing ok" handshake rather than showing anything toggle-specific. The
+lid-toggle bytes may be in a later reconnect this pass didn't reach, or use a session key not
+captured — not yet resolved.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

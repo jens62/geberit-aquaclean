@@ -480,7 +480,7 @@ handle the encryption.
 
 #### Status
 
-Open, blocking (RELAY-013)
+Open, blocking (RELAY-013) — partially decoded 2026-07-21, see below
 
 #### Details
 
@@ -499,6 +499,20 @@ now happened for the first time, against `mera_mock.py` — full narrative, evid
 SMP-pairing-agent blocker it ran into: `docs/developer/mock-geberit-mera.md` §"Button-press/
 release timing". Same underlying gap blocks RELAY-013's implementation too, not just this
 issue.
+
+**Progress, 2026-07-21 — a different, more direct unblocking route than the one above: sniff
+the real RC pairing with the real toilet live.** Watching the real device's own SMP pairing
+happen (rather than only capturing an already-encrypted session) let the sniffer capture the
+LTK directly, decrypting every subsequent ATT frame with no BlueZ/Hub involvement at all. First
+genuine plaintext of the RC's application protocol: full evidence, the decoded GATT layout
+(services/characteristics this mock's `_RCPairingService` doesn't implement), the decoded
+byte sequence (a literal `"Pairing ok"` text write, among others), and the still-open gap (the
+actual lid-toggle command bytes were not captured/decoded) — `docs/developer/
+mock-geberit-mera.md` §"Button-press/release timing", "Major breakthrough, 2026-07-21".
+Confirms this issue is real and specific (concrete missing characteristics, not just "SMP
+wasn't possible") but is not yet fully resolved — RELAY-013 still cannot be implemented with
+full confidence until the lid-toggle bytes and the unconfirmed characteristics' roles are
+known.
 
 ### RELAY-ISS-003 — HACS/ESP32 cannot host the peripheral-facing side of this Hub
 

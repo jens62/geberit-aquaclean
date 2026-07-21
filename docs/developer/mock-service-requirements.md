@@ -2038,6 +2038,15 @@ section's earlier entries for why). Remaining gap before this REQ can move to Do
 still disconnects ~21-24s after full SMP bonding completes, because `_RCPairingService` is
 still an intentional stub with no post-pairing protocol implemented — same doc, same section.
 
+**Breakthrough, 2026-07-21: the real device's RC-facing GATT layout and part of its
+post-pairing protocol are now known**, from a real RC↔real-toilet capture watching pairing
+live. Concretely confirms what `_RCPairingService` is missing (several custom characteristics
+under/near `0xC526`, not the single stub it has now) and decodes one real exchange (a
+`"Pairing ok"` text write). Full detail, same canonical doc: `docs/developer/
+mock-geberit-mera.md` §"Button-press/release timing", "Major breakthrough, 2026-07-21". Not
+sufficient on its own to implement the full post-pairing protocol yet — the lid-toggle command
+bytes and several characteristics' roles are still unknown.
+
 ### REQ-053 — Firmware-update procedure simulation
 
 #### Type
