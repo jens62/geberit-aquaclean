@@ -1,22 +1,38 @@
 #!/usr/bin/env python3
 """
-minimal-peripheral.py — minimal BlueZ GATT peripheral for Read-By-Type testing.
+minimal-peripheral.py — minimal BlueZ GATT peripheral for multi-service discovery testing.
 
-Service layout:
-  - 1× READ  characteristic with 16-bit UUID 0xABCD  → char-decl item_len=7
-  - 4× NOTIFY characteristics with 128-bit UUIDs     → char-decl item_len=21
-  - 2× WRITE_WITHOUT_RESPONSE characteristics         → char-decl item_len=21
+Registers N separate primary services (default 6), each using the same
+Bluetooth-Base-UUID-pattern form ("0000XXXX-0000-1000-8000-00805F9B34FB") that
+aquaclean_ble_relay/mera_mock.py's RC-pairing services use — this is the exact
+pattern under investigation for a suspected BlueZ gatt-database.c bug where
+serving ~6 externally-registered custom services produces garbled UUIDs and an
+incorrect open-ended (0xffff) end handle on the last one, hiding services
+registered afterward from discovery. See local-assets/bluez-multi-service-
+question.md and local-assets/bluez-multi-service-question-chatGPT-answer.md
+for the full investigation and the experiment matrix this script runs.
 
-NOTE: this script does NOT demonstrate a behavioral difference between original
-and patched BlueZ. char_short sorts alphabetically first → gets the lowest handle
-→ first in queue → both versions pack it alone in the first response.
-Original BlueZ 5.77 is spec-correct (ATT §3.4.4.2). Clients that follow
-GATT §4.6.1 issue follow-up RBTs and find all 7 chars.
+Variables under test (see --help):
+  --num-services N   how many services to register (bisect 1..6 to find the
+                      exact threshold where discovery breaks)
+  --chars-per-service K   characteristics per service, held constant while N
+                      varies (isolates service-count from characteristic-count)
+  --empty             overrides --chars-per-service to 0 (services with no
+                      characteristics at all) — isolates whether corruption
+                      depends on characteristic/descriptor count vs pure
+                      service count
+  --reverse           registers services in reverse UUID order — distinguishes
+                      "whichever service ends up last gets corrupted" (handle-
+                      assignment-order bug) from "this specific service object
+                      always gets corrupted" (object-identity bug)
 
 Run on the BlueZ host (requires bluez-peripheral):
-  sudo python3 minimal-peripheral.py
+  sudo python3 minimal-peripheral.py --num-services 4
+  sudo python3 minimal-peripheral.py --num-services 6 --empty
+  sudo python3 minimal-peripheral.py --num-services 6 --reverse
 """
 
+import argparse
 import asyncio
 import subprocess
 
@@ -25,77 +41,85 @@ from bluez_peripheral.gatt.service import Service, ServiceCollection
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.util import get_message_bus
 
-# Generic test UUIDs — no vendor association.
-SERVICE_UUID  = "12345678-90ab-cdef-0000-000000000001"
-CHAR_SHORT    = "0000abcd-0000-1000-8000-00805f9b34fb"  # 16-bit UUID → item_len=7
-CHAR_NOTIFY_1 = "12345678-90ab-cdef-0000-000000000002"
-CHAR_NOTIFY_2 = "12345678-90ab-cdef-0000-000000000003"
-CHAR_NOTIFY_3 = "12345678-90ab-cdef-0000-000000000004"
-CHAR_NOTIFY_4 = "12345678-90ab-cdef-0000-000000000005"
-CHAR_WRITE_1  = "12345678-90ab-cdef-0000-000000000006"
-CHAR_WRITE_2  = "12345678-90ab-cdef-0000-000000000007"
+# Base alias range — service i uses UUID 0000{BASE_ALIAS + i:04x}-0000-1000-8000-00805f9b34fb.
+# Matches the real mock's pattern (e.g. 0x8A30, 0xE0DB, 0xC526) closely enough to exercise the
+# same BlueZ code path without colliding with any real SIG-registered 16-bit UUID.
+BASE_ALIAS = 0x1000
 
 
-class TestService(Service):
+def _service_uuid(i: int) -> str:
+    return f"0000{BASE_ALIAS + i:04x}-0000-1000-8000-00805f9b34fb"
+
+
+def _char_uuid(i: int, j: int) -> str:
+    # Distinct 128-bit UUID per characteristic, tagged with (service index, char index).
+    return f"12345678-90ab-cdef-{i:04x}-{j:012x}"
+
+
+def _make_service_class(index: int, num_chars: int) -> type:
+    """Build a Service subclass for service `index` with `num_chars` characteristics
+    (1 READ + up to (num_chars-1) NOTIFY, matching the real mock's read/notify mix)."""
+    uuid = _service_uuid(index)
+    attrs = {}
+
     def __init__(self):
-        super().__init__(SERVICE_UUID, True)
+        Service.__init__(self, uuid, True)
 
-    # "char_short" sorts before "notify_*" → assigned the lowest handle,
-    # so it is the first entry BlueZ encounters in the Read-By-Type packing loop.
-    @characteristic(CHAR_SHORT, CharFlags.READ)
-    def char_short(self, options):
-        return b"\x01"
+    attrs["__init__"] = __init__
 
-    @characteristic(CHAR_NOTIFY_1, CharFlags.NOTIFY)
-    def notify_1(self, options):
-        return b""
+    for j in range(num_chars):
+        char_uuid = _char_uuid(index, j)
+        flag = CharFlags.READ if j == 0 else CharFlags.NOTIFY
 
-    @characteristic(CHAR_NOTIFY_2, CharFlags.NOTIFY)
-    def notify_2(self, options):
-        return b""
+        def make_getter(flag=flag):
+            def getter(self, options):
+                return b"\x01" if flag == CharFlags.READ else b""
+            return getter
 
-    @characteristic(CHAR_NOTIFY_3, CharFlags.NOTIFY)
-    def notify_3(self, options):
-        return b""
+        attrs[f"char_{j}"] = characteristic(char_uuid, flag)(make_getter())
 
-    @characteristic(CHAR_NOTIFY_4, CharFlags.NOTIFY)
-    def notify_4(self, options):
-        return b""
-
-    @characteristic(CHAR_WRITE_1, CharFlags.WRITE_WITHOUT_RESPONSE)
-    def write_1(self, options):
-        pass
-
-    @write_1.setter
-    def write_1(self, value, options):
-        pass
-
-    @characteristic(CHAR_WRITE_2, CharFlags.WRITE_WITHOUT_RESPONSE)
-    def write_2(self, options):
-        pass
-
-    @write_2.setter
-    def write_2(self, value, options):
-        pass
+    return type(f"TestService{index}", (Service,), attrs)
 
 
 async def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--num-services", type=int, default=6, help="number of services to register (default: 6)")
+    ap.add_argument("--chars-per-service", type=int, default=2,
+                    help="characteristics per service, held constant while --num-services varies (default: 2)")
+    ap.add_argument("--empty", action="store_true", help="services have 0 characteristics (overrides --chars-per-service)")
+    ap.add_argument("--reverse", action="store_true", help="register services in reverse UUID order")
+    args = ap.parse_args()
+
+    num_chars = 0 if args.empty else args.chars_per_service
+    indices = list(range(1, args.num_services + 1))
+    if args.reverse:
+        indices = list(reversed(indices))
+
     subprocess.run(["btmgmt", "pairable", "off"], capture_output=True)
 
     bus = await get_message_bus()
 
-    svc = TestService()
-    coll = ServiceCollection()
-    coll.add_service(svc)
+    services = []
+    for i in indices:
+        cls = _make_service_class(i, num_chars)
+        services.append(cls())
+
+    coll = ServiceCollection(services)
     await coll.register(bus)
 
-    adv = Advertisement("RBT-Test", [SERVICE_UUID], timeout=0, appearance=0)
+    adv_uuids = [_service_uuid(i) for i in indices]
+    adv = Advertisement("MultiSvc-Test", adv_uuids, timeout=0, appearance=0)
     await adv.register(bus)
 
-    print("--- Minimal Peripheral Active ---")
-    print(f"Service: {SERVICE_UUID}")
-    print("7 chars: char_short(0xABCD/READ) + notify_1-4 + write_1/2")
-    print("Expected: central discovers all 7 characteristics via GATT §4.6.1 follow-up RBTs")
+    print("--- Minimal Multi-Service Peripheral Active ---")
+    print(f"num_services={args.num_services}  chars_per_service={num_chars}  reverse={args.reverse}")
+    print("Registered services (in registration order):")
+    for i in indices:
+        print(f"  {_service_uuid(i)}  ({num_chars} characteristics)")
+    print()
+    print(f"Expected on the central side: {args.num_services} services found, "
+          f"each with UUID 0000{{{BASE_ALIAS:04x}+i}}-...-00805f9b34fb and {num_chars} characteristics, "
+          f"none with a garbled UUID or an open-ended (0xffff) handle range.")
     try:
         while True:
             await asyncio.sleep(1)
