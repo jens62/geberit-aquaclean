@@ -61,7 +61,7 @@ async def dump_advertisements(timeout: float) -> None:
     await scanner.stop()
 
 
-async def run(timeout: float, mac: Optional[str], name: str, expect: int,
+async def run(timeout: float, mac: Optional[str], name: str, expect: Optional[int],
               verbose: bool = False, diagnostics: bool = False) -> None:
     print(f"minimal-central.py v{_SCRIPT_VERSION}")
     if diagnostics:
@@ -154,14 +154,17 @@ async def run(timeout: float, mac: Optional[str], name: str, expect: int,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Verify multi-service GATT discovery (BlueZ gatt-database.c bisection)")
-    ap.add_argument("--expect", type=int, required=True,
-                    help="number of services the peripheral was started with (--num-services on minimal-peripheral.py)")
+    ap.add_argument("--expect", type=int, default=None,
+                    help="number of services the peripheral was started with (--num-services on "
+                         "minimal-peripheral.py) — required unless --diagnostics is used")
     ap.add_argument("--timeout", type=float, default=10.0, help="BLE scan timeout in seconds (default: 10)")
     ap.add_argument("--mac", help="CoreBluetooth UUID (macOS) or MAC address (Linux/Android)")
     ap.add_argument("--name", default=DEFAULT_NAME, help=f"Advertisement name to scan for (default: {DEFAULT_NAME!r})")
     ap.add_argument("--verbose", action="store_true", help="Print extra debug messages")
     ap.add_argument("--diagnostics", action="store_true", help="Dump raw advertisements for the timeout and exit")
     args = ap.parse_args()
+    if not args.diagnostics and args.expect is None:
+        ap.error("--expect is required unless --diagnostics is used")
     asyncio.run(run(args.timeout, args.mac, args.name, args.expect, verbose=args.verbose, diagnostics=args.diagnostics))
 
 
