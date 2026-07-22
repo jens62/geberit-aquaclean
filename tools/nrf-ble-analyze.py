@@ -150,6 +150,45 @@ _BT_VERSIONS: dict = {
     9: "BT 5.0", 10: "BT 5.1", 11: "BT 5.2", 12: "BT 5.3",
 }
 
+# SMP (Security Manager Protocol) opcodes — Bluetooth Core Spec Vol 3 Part H §3.3.
+# Unlike LL control PDUs, several of these (Confirm/Random/Failed) can legitimately
+# be sent by EITHER side, so — unlike _LL_CTRL_NAMES — direction must come from a
+# per-frame field, not from the opcode alone.
+_SMP_OPCODE_NAMES: dict = {
+    0x01: "SMP_PAIRING_REQUEST",
+    0x02: "SMP_PAIRING_RESPONSE",
+    0x03: "SMP_PAIRING_CONFIRM",
+    0x04: "SMP_PAIRING_RANDOM",
+    0x05: "SMP_PAIRING_FAILED",
+    0x06: "SMP_ENCRYPTION_INFORMATION",
+    0x07: "SMP_MASTER_IDENTIFICATION",
+    0x08: "SMP_IDENTITY_INFORMATION",
+    0x09: "SMP_IDENTITY_ADDRESS_INFORMATION",
+    0x0A: "SMP_SIGNING_INFORMATION",
+    0x0B: "SMP_SECURITY_REQUEST",
+    0x0C: "SMP_PAIRING_PUBLIC_KEY",
+    0x0D: "SMP_PAIRING_DHKEY_CHECK",
+    0x0E: "SMP_PAIRING_KEYPRESS_NOTIFICATION",
+}
+
+_SMP_FAILED_REASONS: dict = {
+    0x01: "Passkey Entry Failed",
+    0x02: "OOB Not Available",
+    0x03: "Authentication Requirements",
+    0x04: "Confirm Value Failed",
+    0x05: "Pairing Not Supported",
+    0x06: "Encryption Key Size",
+    0x07: "Command Not Supported",
+    0x08: "Unspecified Reason",
+    0x09: "Repeated Attempts",
+    0x0A: "Invalid Parameters",
+    0x0B: "DHKey Check Failed",
+    0x0C: "Numeric Comparison Failed",
+    0x0D: "BR/EDR Pairing In Progress",
+    0x0E: "Cross-transport Key Derivation Not Allowed",
+    0x0F: "Key Rejected",
+}
+
 # GATT handles by device type
 _MERA_WRITE_HANDLE  = 0x0003   # Mera Comfort: outgoing procedure requests
 _ALBA_WRITE_HANDLE  = 0x001E   # Alba: Arendi Security channel (write)
@@ -987,6 +1026,108 @@ def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
     return events
 
 
+def _smp_direction_field(tshark: str, pcapng: Path) -> str | None:
+    """
+    Probe for whichever field name this Wireshark/tshark version populates with
+    per-frame SMP direction (Central→Peripheral vs Peripheral→Central). Unlike LL
+    control PDUs (where the opcode alone implies direction), several SMP opcodes —
+    Pairing Confirm, Pairing Random, Pairing Failed — are legitimately sent by
+    EITHER side, so direction must come from the capture, not be inferred.
+    Same probe-and-keep-whichever-populates idiom as _peripheral_addr_field().
+    Returns None if no candidate field is populated anywhere in the file — callers
+    must degrade gracefully (omit direction) rather than assume one exists.
+    """
+    for field in ("btle.direction", "nordic_ble.direction", "btle_rf.direction"):
+        rows = _run_tshark(tshark, pcapng, "btsmp", [field])
+        if rows and any(r[0].strip() for r in rows[:20]):
+            return field
+    return None
+
+
+def _get_smp_events(tshark: str, pcapng: Path) -> list:
+    """Extract all SMP (Security Manager Protocol) PDUs with decoded fields.
+
+    SMP pairing negotiation (Request/Response/Confirm/Random/Failed, etc.) is sent
+    IN THE CLEAR over L2CAP CID 0x0006 — it's the exchange that DERIVES the LTK, so
+    it can't itself be encrypted by it. This is genuinely decodable straight out of
+    a capture, unlike application-layer traffic after LL_START_ENC_RSP; there was no
+    "sniffer didn't lock onto the connection" issue for this layer specifically —
+    this extractor was simply missing until 2026-07-22 (confirmed via a real
+    Wireshark session showing "Sent Pairing Request" / "Rcvd Pairing Response" in a
+    capture this tool's own analysis had incorrectly reported as having no decodable
+    traffic at all)."""
+    direction_field = _smp_direction_field(tshark, pcapng)
+    fields = ["frame.time_relative", "btsmp.opcode", "btsmp.reason",
+              "btsmp.io_capability", "btsmp.authreq", "btsmp.max_enc_key_size"]
+    if direction_field:
+        fields.append(direction_field)
+    rows = _run_tshark(tshark, pcapng, "btsmp", fields)
+    events = []
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        padded = (row + [""] * len(fields))[:len(fields)]
+        ts_raw, op_raw, reason_raw, io_raw, auth_raw, keysize_raw = padded[:6]
+        ts_raw, op_raw = ts_raw.strip(), op_raw.strip()
+        if not op_raw:
+            continue
+        try:
+            opcode = _parse_int(op_raw)
+            ts_f   = float(ts_raw)
+        except ValueError:
+            continue
+        name = _SMP_OPCODE_NAMES.get(opcode, f"SMP_0x{opcode:02X}")
+        details = []
+        if direction_field:
+            dir_raw = padded[6].strip()
+            if dir_raw:
+                # nordic_ble.direction is FT_BOOLEAN ("True"/"False" as text, not
+                # "1"/"0") — confirmed 2026-07-22 against a real capture: opcode
+                # 0x01 (Pairing Request, always sent by the initiator/central) is
+                # consistently "True", opcode 0x02 (Pairing Response, always the
+                # responder/peripheral) is consistently "False". Handle both that
+                # and a possible numeric 0/1 from a different field/dissector
+                # version, defaulting unrecognized values to the raw string
+                # rather than guessing.
+                low = dir_raw.lower()
+                if low == "true":
+                    details.append("App→Dev")
+                elif low == "false":
+                    details.append("Dev→App")
+                else:
+                    try:
+                        details.append("App→Dev" if _parse_int(dir_raw) == 0 else "Dev→App")
+                    except ValueError:
+                        details.append(f"dir={dir_raw}")
+        if opcode == 0x05:  # Pairing Failed
+            reason_raw = reason_raw.strip()
+            if reason_raw:
+                try:
+                    reason = _parse_int(reason_raw)
+                    details.append(_SMP_FAILED_REASONS.get(reason, f"0x{reason:02X}"))
+                except ValueError:
+                    pass
+        elif opcode in (0x01, 0x02):  # Pairing Request/Response
+            io_raw, auth_raw, keysize_raw = io_raw.strip(), auth_raw.strip(), keysize_raw.strip()
+            if io_raw:
+                try:
+                    details.append(f"io_cap=0x{_parse_int(io_raw):02X}")
+                except ValueError:
+                    details.append(f"io_cap={io_raw}")
+            if auth_raw:
+                details.append(f"auth_req={auth_raw}")
+            if keysize_raw:
+                details.append(f"max_key_size={keysize_raw}")
+        events.append({
+            "ts_raw": ts_f,
+            "ts":     _ts_display(ts_raw),
+            "opcode": opcode,
+            "name":   name,
+            "details": "  ".join(details),
+        })
+    return events
+
+
 def _get_l2cap_events(tshark: str, pcapng: Path) -> list:
     """Extract L2CAP Connection Parameter Update requests/responses (iOS → CI negotiation)."""
     rows = _run_tshark(tshark, pcapng,
@@ -1094,8 +1235,9 @@ def _get_att_meta_events(tshark: str, pcapng: Path,
 
 def _format_ctrl_section(ll_events: list, l2cap_events: list,
                           att_meta: list, markdown: bool,
-                          epoch_base: float = 0.0, tz=None) -> str:
-    """Render LL Control + L2CAP + ATT meta as a markdown or plain-text section."""
+                          epoch_base: float = 0.0, tz=None,
+                          smp_events: list | None = None) -> str:
+    """Render LL Control + L2CAP + SMP + ATT meta as a markdown or plain-text section."""
     lines: list[str] = []
     if markdown:
         lines.append("## BLE Control Layer\n")
@@ -1107,12 +1249,13 @@ def _format_ctrl_section(ll_events: list, l2cap_events: list,
     all_ctrl = (
         [(e["ts_raw"], "LL",    e["ts"], e["name"], e["details"]) for e in ll_events]
       + [(e["ts_raw"], "L2CAP", e["ts"], e["name"], e["details"]) for e in l2cap_events]
+      + [(e["ts_raw"], "SMP",   e["ts"], e["name"], e["details"]) for e in (smp_events or [])]
       + [(e["ts_raw"], "ATT",   e["ts"], e["name"], e["details"]) for e in att_meta]
     )
     all_ctrl.sort()
 
     if not all_ctrl:
-        msg = "No LL Control, L2CAP, or ATT setup frames found."
+        msg = "No LL Control, L2CAP, SMP, or ATT setup frames found."
         lines.append(f"_{msg}_" if markdown else f"  {msg}")
     elif markdown:
         lines.append("| Time | Layer | PDU | Details |")
@@ -1793,6 +1936,31 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     if not events:
         enc = _detect_ll_encryption(tshark, pcapng)
         connect_inds, directed_advs = _get_connection_events(tshark, pcapng, mac or DEFAULT_MAC)
+        # SMP pairing negotiation is sent IN THE CLEAR (it's what derives the LTK) —
+        # decodable even when the sniffer never locked onto the data channel well
+        # enough to catch GATT/ATT traffic or even LL_ENC_REQ. Show it whenever
+        # present so a "no traffic" verdict doesn't wrongly imply nothing at all was
+        # captured (confirmed gap, 2026-07-22 — see _get_smp_events docstring).
+        smp_events = _get_smp_events(tshark, pcapng)
+        if smp_events:
+            smp_only = _format_ctrl_section([], [], [], markdown=args.markdown,
+                                             smp_events=smp_events)
+            if args.markdown:
+                has_conn = bool(connect_inds or directed_advs)
+                conn_md = _format_connection_events(
+                    connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=True) if has_conn else ""
+                md = adv_md + conn_md + "\n" + smp_only
+                if args.output:
+                    Path(args.output).write_text(md, encoding="utf-8")
+                    print(f"[+] Markdown written to {args.output}", file=sys.stderr)
+                else:
+                    print(md)
+            else:
+                if connect_inds or directed_advs:
+                    print(_format_connection_events(
+                        connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=False))
+                print(smp_only)
+            return
         if enc:
             if args.markdown:
                 md = adv_md + _render_ll_encryption_markdown(
@@ -1856,14 +2024,15 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
     # Absolute timestamp base — used by both ctrl section and traffic log
     epoch_base, tz, start_str = _get_capture_start(tshark, pcapng)
 
-    # BLE control layer (LL PDUs, L2CAP signaling, ATT MTU/write-RSP)
+    # BLE control layer (LL PDUs, L2CAP signaling, SMP pairing, ATT MTU/write-RSP)
     ll_events   = _get_ll_control_events(tshark, pcapng)
     l2cap_events = _get_l2cap_events(tshark, pcapng)
+    smp_events  = _get_smp_events(tshark, pcapng)
     att_meta    = _get_att_meta_events(tshark, pcapng, mac, addr_field)
     ctrl_plain  = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=False,
-                                        epoch_base=epoch_base, tz=tz)
+                                        epoch_base=epoch_base, tz=tz, smp_events=smp_events)
     ctrl_md     = _format_ctrl_section(ll_events, l2cap_events, att_meta, markdown=True,
-                                        epoch_base=epoch_base, tz=tz)
+                                        epoch_base=epoch_base, tz=tz, smp_events=smp_events)
 
     # Bidirectional raw traffic log (every write + notify, decoded)
     traffic      = _get_geberit_traffic(tshark, pcapng, mac, addr_field, epoch_base, tz)
