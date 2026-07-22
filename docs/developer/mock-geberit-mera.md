@@ -610,13 +610,49 @@ observable effect. This is now a fully, cleanly disproven hypothesis, not just a
 kept the code change anyway (`_force_remove_and_reregister` still skips the whole cycle for
 public-address peers) since it's a harmless simplification with no downside, just not the fix.
 
-**Status as of 2026-07-22, end of day**: every BLE-observable variable has now been checked and
-either fixed or ruled out — GATT service/characteristic structure (fixed), SMP bonding/
-`JustWorksRepairing` (fixed, confirmed clean every time), bond persistence across reconnects
-(ruled out), advertising payload content (checked, no real anomaly), MAC/OUI (ruled out),
-firmware (checked, nothing there), gap/deviceinfo reciprocal probing (ruled out). No further local
-hypothesis identified. Next step is external — waiting on Geberit's own answer about a
-device-side "forget paired device" reset on the RC, still the most promising remaining lever.
+**New finding, 2026-07-22 (eighth pass) — the real toilet resets its advertising state (both the
+`IsButtonPressed` state byte and the company-ID `IsEmergencyConnectPermitted` flag) almost
+immediately after ANY disconnect, unconditionally — confirmed directly against
+`real-mera/pairing-ok-toggle-lid-Geberit-Remote-Control-real-mera-mac.pcapng`.** Checked the raw
+advertising frames around the RC's `LL_TERMINATE_IND` (t=39.81s): the toilet is back to
+`company=0x0100`, state byte `0x00` (clean idle) by t=41.80s — under 2 seconds later — and stays
+idle continuously afterward (verified through t=56.5s+, with only isolated single-frame RF-noise
+corruption, same class already documented elsewhere in this file). Notably, the RC's *second*
+connection (t≈56.6s) happens while the toilet is already advertising idle, not "pressed" — the RC
+does not wait for or depend on seeing the pressed-state flag to reconnect.
+
+This mock's advertising, by contrast, currently never resets for an RC-only session: the reset
+(`_update_advert(0)`, which atomically flips both the state byte and the company ID together —
+confirmed by reading the function directly, no separate logic needed for either half) only fires
+inside `_send_info_frame_burst` after the iOS-specific A5-CCCD-gated info-frame burst completes,
+a condition an RC session never satisfies. Real-hardware evidence now directly confirms this is a
+genuine behavioral difference, not just a theoretical gap — though it's very unlikely to explain
+the generic-discovery mystery itself, since the real RC's own reconnect behavior clearly doesn't
+depend on the advertised button-state flag either way.
+
+**Fixing this safely requires NOT touching the iOS path.** The current gating exists for a
+real, documented reason (`_on_device_disconnected`'s own comment): "IsButtonPressed resets only
+after the A5 burst fires... While it is still True, pairing is incomplete and iOS may retry" — if
+iOS's first connection attempt drops before it manages to subscribe to A5 within the 8s window,
+resetting the flag immediately would stop iOS's own scan loop from reselecting the device for a
+retry (it only picks up devices still advertising `IsButtonPressed=True`). The safe fix mirrors
+the address-type gate already used for `_force_remove_and_reregister`: reset immediately on
+disconnect only for a **public** address (the RC, matching the real device's confirmed behavior);
+leave the existing, already-working "reset only after burst success" behavior completely
+untouched for anything else (iOS's rotating RPA, or unknown). Not yet implemented — proposed,
+pending go-ahead.
+
+**Status as of 2026-07-22, end of day**: every BLE-observable variable affecting the *discovery
+mode* mystery specifically has now been checked and either fixed or ruled out — GATT service/
+characteristic structure (fixed), SMP bonding/`JustWorksRepairing` (fixed, confirmed clean every
+time), bond persistence across reconnects (ruled out), advertising payload content (checked, no
+real anomaly beyond the known `nrf-ble-analyze.py` display bug above), MAC/OUI (ruled out),
+firmware (checked, nothing there), gap/deviceinfo reciprocal probing (ruled out). The
+advertising-reset gap (this section) is a real, separate correctness issue, confirmed but not
+expected to explain the mystery and not yet fixed. No further local hypothesis identified for the
+discovery-mode question itself. Next step there is external — waiting on Geberit's own answer
+about a device-side "forget paired device" reset on the RC, still the most promising remaining
+lever.
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
