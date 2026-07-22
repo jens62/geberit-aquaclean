@@ -380,6 +380,72 @@ def _find_mac_occurrences(tshark: str, pcapng: Path, mac: str) -> list:
     return hits
 
 
+def _get_all_connect_inds(tshark: str, pcapng: Path) -> list:
+    """Return every CONNECT_IND in the capture, regardless of which device it
+    targets — unlike _get_connection_events (which only keeps CONNECT_INDs
+    whose advertiser matches a known toilet MAC), this is for exploring a file
+    when you don't yet know (or want to double-check) who's connecting to whom.
+    Added 2026-07-22: needed to confirm a suspected RC reconnect wasn't missed
+    by hand-picking frame ranges around a known connection's timestamp."""
+    rows = _run_tshark(tshark, pcapng,
+                       "btle.advertising_header.pdu_type == 0x05",
+                       ["frame.time_relative",
+                        "btle.initiator_address",
+                        "btle.advertising_address",
+                        "btle.link_layer_data.interval",
+                        "btle.link_layer_data.latency",
+                        "btle.link_layer_data.timeout"])
+    conns = []
+    for row in rows:
+        if len(row) < 3:
+            continue
+        padded = (row + [""] * 6)[:6]
+        ts_s, initiator, advertiser, ci_raw, lat_raw, to_raw = padded
+        ts_s, initiator, advertiser = ts_s.strip(), initiator.strip(), advertiser.strip()
+        if not initiator or not advertiser:
+            continue
+        try:
+            ts_f = float(ts_s)
+        except ValueError:
+            continue
+        entry: dict = {"ts": ts_f, "initiator": initiator.upper(), "advertiser": advertiser.upper()}
+        try:
+            entry["ci_ms"] = _parse_int(ci_raw) * 1.25
+        except (ValueError, TypeError):
+            pass
+        try:
+            entry["latency"] = _parse_int(lat_raw)
+        except (ValueError, TypeError):
+            pass
+        try:
+            entry["timeout_ms"] = _parse_int(to_raw) * 10
+        except (ValueError, TypeError):
+            pass
+        conns.append(entry)
+    conns.sort(key=lambda c: c["ts"])
+    return conns
+
+
+def _print_all_connections(conns: list, pcapng_name: str) -> None:
+    """Plain-text listing for --connections."""
+    print(f"\nAll CONNECT_IND events ({pcapng_name})")
+    print("-" * 90)
+    if not conns:
+        print("  No CONNECT_IND frames found.")
+        return
+    for c in conns:
+        tag = "  ← embedded-device OUI (physical remote/toilet)" if _is_embedded_device(c["initiator"]) else ""
+        params = ""
+        if "ci_ms" in c:
+            params += f"  CI={c['ci_ms']:.2f}ms"
+        if "latency" in c:
+            params += f"  latency={c['latency']}"
+        if "timeout_ms" in c:
+            params += f"  supv={c['timeout_ms']}ms"
+        print(f"  t={c['ts']:>8.1f}s  {c['initiator']} → {c['advertiser']}{params}{tag}")
+    print(f"\n  Total: {len(conns)} connection(s)")
+
+
 def _get_connection_events(tshark: str, pcapng: Path,
                            toilet_mac: str) -> tuple:
     """
@@ -898,9 +964,28 @@ def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
 # ---------------------------------------------------------------------------
 
 def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
-    """Extract all LL Control PDUs with decoded fields."""
+    """Extract all LL Control PDUs with decoded fields.
+
+    Also catches data-channel frames the sniffer captured as encrypted but could
+    NOT validate (bad MIC) — genuine ciphertext the LTK for this specific session
+    isn't available to decrypt (e.g. an LTK-resumed reconnect whose original key
+    exchange wasn't in this capture), not a tool bug. Confirmed 2026-07-22:
+    tshark's dissector still tries to interpret the wrong-key-decrypted garbage
+    bytes as a plaintext LL control opcode, so WITHOUT this check these frames
+    were previously either silently dropped (no btle.control_opcode happened to
+    decode at all) or shown under a misleading `LL_CTRL_0xXX` name (garbage
+    bytes happened to look like a valid opcode) — both wrong.
+
+    Deliberately does NOT flag bad-CRC-only frames: CRC failure is ordinary
+    physical-layer RF corruption (confirmed 2026-07-22 — 1552 bad-CRC frames in
+    one real capture, the overwhelming majority on UNencrypted frames where no
+    key is even involved) and has nothing to do with missing key material;
+    surfacing it here would bury the rare, meaningful bad-MIC signal in routine
+    sniffer noise. nordic_ble.micok is FT_BOOLEAN ("True"/"False" text, not
+    0/1) for encrypted frames; plaintext frames leave it blank."""
     rows = _run_tshark(tshark, pcapng,
-                       "btle.control_opcode",
+                       "btle.control_opcode || (nordic_ble.encrypted == 1 && "
+                       "nordic_ble.micok == 0)",
                        ["frame.time_relative",
                         "btle.control_opcode",
                         "btle.control.error_code",           # LL_TERMINATE_IND reason
@@ -918,19 +1003,35 @@ def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
                         "btle.control.rx_phys",
                         "btle.control.m_to_s_phy",           # LL_PHY_UPDATE_IND
                         "btle.control.s_to_m_phy",
-                        "btle.control.instant"])
+                        "btle.control.instant",
+                        "nordic_ble.micok"])                 # decrypt-failure detection
     _PHY_MAP = {"1": "1M", "2": "2M", "3": "Coded", "4": "Coded"}
     events = []
     for row in rows:
         if not row or not row[0].strip():
             continue
-        padded = (row + [""] * 18)[:18]
+        padded = (row + [""] * 19)[:19]
         ts_raw, op_raw = padded[0].strip(), padded[1].strip()
+        mic_raw = padded[18].strip().lower()
+        if not ts_raw:
+            continue
+        try:
+            ts_f = float(ts_raw)
+        except ValueError:
+            continue
+        if mic_raw == "false":
+            events.append({
+                "ts_raw": ts_f,
+                "ts":     _ts_display(ts_raw),
+                "opcode": None,
+                "name":   "ENCRYPTED (undecodable)",
+                "details": "bad MIC — LTK for this session not in capture",
+            })
+            continue
         if not op_raw:
             continue
         try:
             opcode = _parse_int(op_raw)
-            ts_f   = float(ts_raw)
         except ValueError:
             continue
         name    = _LL_CTRL_NAMES.get(opcode, f"LL_CTRL_0x{opcode:02X}")
@@ -2261,6 +2362,7 @@ Examples:
   python tools/nrf-ble-analyze.py capture.pcapng --markdown --output session.md
   python tools/nrf-ble-analyze.py capture.pcapng --markdown --include-adv --output session.md
   python tools/nrf-ble-analyze.py capture.pcapng --raw
+  python tools/nrf-ble-analyze.py capture.pcapng --connections
 """,
     )
     ap.add_argument("pcapng", type=Path,
@@ -2283,6 +2385,11 @@ Examples:
                          "initiator — then exit. Unlike --adv/--mac (which only look at the "
                          "MAC's own advertising or connections targeting it), use this to "
                          "answer \"does device X show up anywhere in this capture at all\".")
+    ap.add_argument("--connections", action="store_true",
+                    help="List every CONNECT_IND in the capture (initiator, advertiser, "
+                         "time, connection params), for ANY device — not just a known "
+                         "toilet MAC — then exit. Use to check for reconnects you might "
+                         "otherwise miss by only looking near a known connection's timestamp.")
     ap.add_argument("--include-adv", action="store_true",
                     help="With --markdown: prepend a pre-connection advertising section "
                          "(same data as --adv, deduplicated) before Phase 1. Opt-in — "
@@ -2302,6 +2409,11 @@ Examples:
         handle_map = _extract_gatt_handles(tshark, args.pcapng)
         print(f"GATT handle map ({args.pcapng.name}):")
         print(_format_gatt_map(handle_map))
+        sys.exit(0)
+
+    if args.connections:
+        conns = _get_all_connect_inds(tshark, args.pcapng)
+        _print_all_connections(conns, args.pcapng.name)
         sys.exit(0)
 
     if args.find_mac:
