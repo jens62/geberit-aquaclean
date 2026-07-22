@@ -86,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.110.0b1"
+_MOCK_VERSION = "1.111.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -2674,36 +2674,43 @@ class MeraMock:
                 # re-register both GATT apps so they are intact for the next attempt.
                 mac = device_path.split("/")[-1][4:].replace("_", ":")
 
-                # REVERTED 2026-07-21 (same day as introduced, v1.109.0b1): tried
-                # skipping this whole mechanism for devices with a fixed PUBLIC address
-                # (e.g. the Remote Control), on the theory that it exists only for
-                # iOS's rotating RPA and a non-rotating identity never needed it. Two
-                # problems, confirmed the same evening against a real RC:
+                # RE-TRIED 2026-07-22 (third pass on this address-type skip; see the
+                # 2026-07-21 REVERTED note this replaces for the first two attempts).
+                # This time gated on a real, independent fix that removes the specific
+                # failure mode that made attempt #1 unsafe: `JustWorksRepairing = always`
+                # (docs/developer/mock-geberit-mera.md §"Real root cause of the SMP
+                # flood found and fixed, 2026-07-22") means BlueZ no longer auto-rejects
+                # a second Just-Works pairing on an already-`paired` device object —
+                # so leaving that device object (and its bond) alive across a
+                # disconnect, for a fixed PUBLIC address (e.g. the Remote Control), no
+                # longer risks the confirm-reply-rejection loop that caused the
+                # "unexpected SMP command 0x03" flood before. Attempt #2 (keep
+                # RemoveDevice, skip only the GATT reregister) is still wrong regardless
+                # — RemoveDevice's GATT teardown is unconditional — so this skips the
+                # whole call again, not just half of it.
                 #
-                # 1. Skipping RemoveDevice entirely let stale SMP/bonding state
-                #    accumulate on the SAME never-removed Device1 object across
-                #    repeated RC attempts: attempts 1 and 2 were clean, but attempt 3
-                #    (third consecutive connection to that same lingering device
-                #    object) triggered a ~40s, 500+-line kernel-log flood of
-                #    "Bluetooth: hci0: unexpected SMP command 0x03" starting the
-                #    instant that connection was established. Not trap 17's original
-                #    "no agent available" cause (the agent request that attempt
-                #    succeeded fine) — a different trigger, same kernel-level symptom.
-                #
-                # 2. Tried keeping RemoveDevice but skipping only the GATT unregister
-                #    +reregister after it, assuming that part alone was the "waste" to
-                #    avoid. Wrong: confirmed via the same debug log that
-                #    gatt-database.c:proxy_removed_cb() (tearing down all 6 of our
-                #    services) fires as an UNCONDITIONAL side effect of RemoveDevice
-                #    itself, not just of BlueZ's ~20s cleanup-timer path this
-                #    mechanism was built to preempt. Skipping the reregister after a
-                #    RemoveDevice call — for ANY address type — leaves the mock's
-                #    entire GATT database empty for every subsequent connection.
-                #
-                # Net result: there is no discretionary work here to skip by address
-                # type at all — RemoveDevice's teardown side effect is unconditional,
-                # so the reregister that follows it is mandatory, not optional. Back to
-                # the original unconditional behavior for all address types.
+                # Rationale for testing this at all, given a 2026-07-22 real-device
+                # capture showed a genuinely FRESH SMP bond still leading straight to
+                # targeted FIND_BY_TYPE_VALUE discovery (disproving "must already be
+                # bonded" as required for that): weak — expect a null result. Testing
+                # anyway because it's cheap and rules out, once and for all, whether the
+                # GATT-teardown+rebuild churn itself (not the bond specifically) is
+                # incidentally affecting the RC, something a real toilet never does
+                # between connections at all.
+                try:
+                    dev_intro = await bus.introspect("org.bluez", device_path)
+                    dev_proxy = bus.get_proxy_object("org.bluez", device_path, dev_intro)
+                    dev_props = dev_proxy.get_interface("org.freedesktop.DBus.Properties")
+                    raw = await dev_props.call_get("org.bluez.Device1", "AddressType")
+                    address_type = getattr(raw, "value", raw)
+                except Exception as exc:
+                    self._log("·", f"Could not read AddressType for {mac}: {exc} — proceeding with teardown")
+                    address_type = None
+                if address_type == "public":
+                    self._log("·", f"{mac} has a public (non-rotating) address — "
+                                    f"leaving its bond/GATT registration intact across disconnects")
+                    return
+
                 self._log("·", f"Force-removing {mac} to prevent GATT teardown on next connection")
                 try:
                     ai = await bus.introspect("org.bluez", adapter_path)
