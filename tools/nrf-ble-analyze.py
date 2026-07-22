@@ -869,7 +869,57 @@ def _detect_ll_encryption(tshark: str, pcapng: Path) -> dict | None:
     return None
 
 
-def _report_ll_encryption(enc: dict, mac: str) -> None:
+def _get_encrypted_traffic_summary(tshark: str, pcapng: Path) -> dict:
+    """Scan every encrypted data-channel frame in the capture and classify it.
+
+    Once a connection is known to be LL-encrypted (see _detect_ll_encryption),
+    the generic advice used to be "tshark cannot decode the payload, full stop" —
+    but that's imprecise. Empty LL PDUs (keepalives/acks, btle.length == 0) carry
+    no payload at all, so their MIC trivially "validates" and they say nothing
+    about whether real traffic is decryptable. Genuine application data only
+    exists in the non-empty frames, and only THOSE can actually confirm a
+    missing-key situation via a bad MIC.
+
+    Added 2026-07-22 after a real capture (`toogle-lid-with-remote-without-
+    running-bridge.pcapng`) turned out to be 231/242 encrypted frames of pure
+    empty-PDU silence and only 11 genuine (all bad-MIC) data frames spread over
+    a few seconds — a distinction the previous boilerplate obscured entirely.
+
+    Returns {
+      "total_encrypted": int,       # all encrypted data-channel frames
+      "empty_pdu": int,             # of those, empty LL PDUs (btle.length == 0)
+      "bad_mic_frames": [{"ts_raw": float, "ts": str}, ...],  # non-empty, bad MIC
+    }
+    """
+    rows = _run_tshark(tshark, pcapng, "nordic_ble.encrypted == 1",
+                       ["frame.time_relative", "nordic_ble.micok", "btle.length"])
+    total = 0
+    empty = 0
+    bad_mic_frames = []
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        padded = (row + [""] * 3)[:3]
+        ts_raw, mic_raw, len_raw = padded
+        ts_raw, mic_raw, len_raw = ts_raw.strip(), mic_raw.strip().lower(), len_raw.strip()
+        total += 1
+        try:
+            is_empty = _parse_int(len_raw) == 0 if len_raw else False
+        except ValueError:
+            is_empty = False
+        if is_empty:
+            empty += 1
+            continue
+        if mic_raw == "false":
+            try:
+                ts_f = float(ts_raw)
+            except ValueError:
+                continue
+            bad_mic_frames.append({"ts_raw": ts_f, "ts": _ts_display(ts_raw)})
+    return {"total_encrypted": total, "empty_pdu": empty, "bad_mic_frames": bad_mic_frames}
+
+
+def _report_ll_encryption(enc: dict, mac: str, traffic: dict | None = None) -> None:
     """Print a diagnostic when LL_ENC_REQ is detected instead of ATT frames."""
     ediv_str = f"0x{enc['ediv']:04x}" if enc["ediv"] is not None else "unknown"
     rand_str  = (
@@ -877,9 +927,22 @@ def _report_ll_encryption(enc: dict, mac: str) -> None:
         if enc["rand_hex"] else "unknown"
     )
     target = f" for {mac}" if mac else ""
+    traffic_lines = ""
+    if traffic:
+        bad = traffic["bad_mic_frames"]
+        traffic_lines = (
+            f"\n    {traffic['total_encrypted']} encrypted data-channel frame(s): "
+            f"{traffic['empty_pdu']} empty PDU (no payload, harmless), "
+            f"{len(bad)} carrying real data — all bad MIC (undecodable).\n"
+        )
+        if bad:
+            traffic_lines += (
+                f"    Real data seen from {bad[0]['ts']} to {bad[-1]['ts']}.\n"
+            )
     print(
         f"\n[!] BLE LL encryption detected{target} — ATT frames are AES-CCM encrypted.\n"
-        f"    LL_ENC_REQ at {enc['ts']}  EDIV={ediv_str}  Rand={rand_str}\n\n"
+        f"    LL_ENC_REQ at {enc['ts']}  EDIV={ediv_str}  Rand={rand_str}\n"
+        f"{traffic_lines}\n"
         f"    The remote uses BLE SMP bonding; tshark cannot decode the payload\n"
         f"    without the Long Term Key (LTK) stored on the peripheral.\n\n"
         f"    Alternative: pair the remote with a Linux BlueZ peripheral hub and\n"
@@ -891,7 +954,8 @@ def _report_ll_encryption(enc: dict, mac: str) -> None:
 
 def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
                                     connect_inds: list,
-                                    directed_advs: list) -> str:
+                                    directed_advs: list,
+                                    traffic: dict | None = None) -> str:
     """Build a markdown analysis document for a capture with LL encryption."""
     ediv_str = f"0x{enc['ediv']:04x}" if enc["ediv"] is not None else "unknown"
     rand_str  = (
@@ -900,6 +964,27 @@ def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
     )
     conn_events_md = _format_connection_events(
         connect_inds, directed_advs, mac, markdown=True)
+
+    traffic_section: list[str] = []
+    if traffic:
+        bad = traffic["bad_mic_frames"]
+        traffic_section = [
+            "### Actual encrypted traffic in this capture",
+            "",
+            f"- **{traffic['total_encrypted']}** encrypted data-channel frames total",
+            f"- **{traffic['empty_pdu']}** are empty LL PDUs (no payload — link-layer "
+            "keepalives/acks; their MIC trivially validates since there's nothing to "
+            "decrypt, so this says nothing about key availability)",
+            f"- **{len(bad)}** carry real data — **all bad MIC**, i.e. genuinely "
+            "undecodable with the key material in this capture" if bad else
+            "- **0** carry real data — this connection was link-layer encrypted but "
+            "otherwise silent for its entire duration",
+        ]
+        if bad:
+            traffic_section.append(
+                f"- real data frames span `{bad[0]['ts']}` to `{bad[-1]['ts']}`"
+            )
+        traffic_section.append("")
 
     lines = [
         f"# BLE Capture Analysis — {pcapng.name}",
@@ -915,6 +1000,7 @@ def _render_ll_encryption_markdown(enc: dict, pcapng: Path, mac: str,
         "ATT application frames are **AES-CCM encrypted** — tshark cannot decode",
         "the payload without the Long Term Key (LTK) stored on the peripheral.",
         "",
+        *traffic_section,
         "### LL_ENC_REQ parameters",
         "",
         "| Field | Value |",
@@ -2063,9 +2149,11 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
                 print(smp_only)
             return
         if enc:
+            traffic = _get_encrypted_traffic_summary(tshark, pcapng)
             if args.markdown:
                 md = adv_md + _render_ll_encryption_markdown(
-                    enc, pcapng, mac or DEFAULT_MAC, connect_inds, directed_advs)
+                    enc, pcapng, mac or DEFAULT_MAC, connect_inds, directed_advs,
+                    traffic=traffic)
                 if args.output:
                     Path(args.output).write_text(md, encoding="utf-8")
                     print(f"[+] Markdown written to {args.output}", file=sys.stderr)
@@ -2075,7 +2163,7 @@ def _analyze_mera(tshark: str, pcapng: Path, mac: str, args,
                 if connect_inds or directed_advs:
                     print(_format_connection_events(
                         connect_inds, directed_advs, mac or DEFAULT_MAC, markdown=False))
-                _report_ll_encryption(enc, mac or DEFAULT_MAC)
+                _report_ll_encryption(enc, mac or DEFAULT_MAC, traffic=traffic)
         else:
             has_conn = bool(connect_inds or directed_advs)
             if args.markdown and (has_conn or adv_md):
