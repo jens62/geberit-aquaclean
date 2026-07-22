@@ -559,6 +559,65 @@ likely what happened during one untracked mock run this same morning (zero conne
 output at all, never fully explained). Safe for the Geberit Home App too — all three plugins only
 affect bluetoothd's own client-role probing of whatever connects, never what this mock serves.
 
+**Real-device comparison, 2026-07-22 (seventh pass) — re-ran the now-SMP-capable
+`nrf-ble-analyze.py` against the two `real-mera/pairing-ok-toggle-lid-Geberit-Remote-Control-
+real-mera-{mac,windows}.pcapng` captures.** Two findings:
+
+1. The RC retries `SMP_PAIRING_REQUEST` **7-8 times** against the real toilet too, each getting
+   `SMP_PAIRING_FAILED — "Pairing Not Supported"` (a different reason than our mock's earlier
+   `Passkey Entry Failed`), before finally succeeding. Retried/rejected pairing attempts are
+   normal RC behavior, not unique to this mock — consistent in both independently-captured files.
+2. **The successful bond in this real, working session is a genuinely fresh one** — full SMP
+   negotiation (Request → Response → Confirm ×2 → Random ×2 → key distribution), not an
+   LTK-resume reconnect — and it still leads straight to `FIND_BY_TYPE_VALUE` and real writes to
+   the custom characteristics (first write: handle `0x0027`, the `0x5a4d406b` ack CCCD) right
+   after. This **disproves** the "RC only does fast targeted discovery once already bonded from
+   a prior connection" theory from the fifth pass above — a fresh bond alone is clearly not what
+   blocks it on real hardware. One incidental artifact also confirmed: a garbled second `Pairing
+   Response` in the `-mac` capture (`io_cap=0xC6`, invalid) is genuine RF/capture noise, verified
+   directly against Wireshark's own raw dissector fields — not a bug in the new SMP decoder.
+
+Also floated and **retracted** two further hypotheses this same pass:
+- *MAC/OUI-based trust gating* (the RC might only do fast discovery for a peripheral whose BLE
+  address falls in a recognized Geberit-like OUI range) — disproven: the Geberit Home App
+  connects successfully to this same mock adapter MAC (`A0:AD:9F:72:C4:0F`, an ASUS OUI) with no
+  issue, so this ecosystem's devices clearly don't gate trust on MAC vendor prefix.
+- *Advertising payload structural difference* (`type=0x03` with a longer 9-byte manufacturer-data
+  field observed in some mock captures, vs. the documented `type=0x01`/6-byte norm) — investigated
+  and found to be a **display bug in `nrf-ble-analyze.py`'s `_get_adv_packets`**, not a real
+  difference: `ad_types` is built from `btcommon.eir_ad.entry.type` across *all* AD structures in
+  a packet (Flags, UUIDs, Manufacturer Data, etc.), but zipped positionally against
+  `ad_companies`/`ad_datas`, which only exist for Manufacturer-Specific-Data entries — when a
+  packet has a non-manufacturer AD entry alongside one or two manufacturer-data ones, these lists
+  are different lengths and the printed `type=` gets paired with the wrong entry. Not yet fixed
+  (same class of bug as the 2026-07-18 completeness audit, just not caught by it since it's a
+  cross-list-length mismatch rather than a single truncated field) — if advertising analysis
+  matters again, treat any printed `type=` value with suspicion and don't trust it without
+  checking the underlying `-T pdml` tree.
+
+**v1.111.0b1's bond-persistence experiment: tested, clean null result, hypothesis fully closed.**
+Retested with `-d` now baked into the persistent systemd override (see above), so the full
+`bluetoothd` trace came from `journalctl -u bluetooth` rather than a manual `-n -d` session — 4
+consecutive RC connections, confirmed via both the mock's own log (`... has a public
+(non-rotating) address — leaving its bond/GATT registration intact across disconnects`, logged
+every time) and the debug journal (`manager_register_app()` for all 4 GATT apps appears exactly
+**once**, at mock startup — never again, confirmed zero re-registration churn across all 4
+attempts) that the bond and GATT registration genuinely persisted, unbroken, across every
+reconnect. Zero SMP-command flood (`journalctl -k`, confirmed). And yet: the RC's behavior was
+**byte-for-byte identical** to every previous test — generic `READ_BY_GROUP_TYPE` walk, write only
+`0x0009`, silence, `LL_TERMINATE_IND reason=Remote User Terminated`. Bond persistence has zero
+observable effect. This is now a fully, cleanly disproven hypothesis, not just a weakened one —
+kept the code change anyway (`_force_remove_and_reregister` still skips the whole cycle for
+public-address peers) since it's a harmless simplification with no downside, just not the fix.
+
+**Status as of 2026-07-22, end of day**: every BLE-observable variable has now been checked and
+either fixed or ruled out — GATT service/characteristic structure (fixed), SMP bonding/
+`JustWorksRepairing` (fixed, confirmed clean every time), bond persistence across reconnects
+(ruled out), advertising payload content (checked, no real anomaly), MAC/OUI (ruled out),
+firmware (checked, nothing there), gap/deviceinfo reciprocal probing (ruled out). No further local
+hypothesis identified. Next step is external — waiting on Geberit's own answer about a
+device-side "forget paired device" reset on the RC, still the most promising remaining lever.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails
