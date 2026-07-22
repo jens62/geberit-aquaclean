@@ -86,7 +86,7 @@ from aquaclean_ble_relay import mock_logging  # noqa: E402
 _BLEMSG_ID_CRC_RSP = 5   # matches Message.BLEMSG_ID_CRC_RSP
 
 # ---- version ----
-_MOCK_VERSION = "1.111.0b1"
+_MOCK_VERSION = "1.112.0b1"
 _SCRIPT_HASH = hashlib.md5(Path(__file__).read_bytes()).hexdigest()[:8]
 
 try:
@@ -2707,8 +2707,24 @@ class MeraMock:
                     self._log("·", f"Could not read AddressType for {mac}: {exc} — proceeding with teardown")
                     address_type = None
                 if address_type == "public":
-                    self._log("·", f"{mac} has a public (non-rotating) address — "
-                                    f"leaving its bond/GATT registration intact across disconnects")
+                    # Real-device evidence, 2026-07-22 (docs/developer/mock-geberit-mera.md
+                    # §"New finding... the real toilet resets its advertising state..."):
+                    # the real toilet flips IsButtonPressed/company-ID back to idle within
+                    # ~2s of ANY disconnect, unconditionally — not gated on any ceremony
+                    # completing. This branch only ever runs for a public (non-rotating)
+                    # address (the RC), so resetting immediately here is safe and matches
+                    # real hardware: it can NEVER fire for iOS's rotating RPA, so iOS's own
+                    # retry-resilience gate in _send_info_frame_burst (reset only after the
+                    # A5 burst succeeds, so a premature disconnect before iOS subscribes to
+                    # A5 doesn't drop it out of iOS's own "still pressed" scan filter) is
+                    # completely untouched by this.
+                    if self._button_pressed:
+                        self._button_pressed = False
+                        self._button_released_at = time.strftime("%H:%M:%S")
+                        await self._update_advert(0)
+                    self._log("·", f"{mac} has a public (non-rotating) address — reset "
+                                    f"IsButtonPressed immediately and leaving its bond/GATT "
+                                    f"registration intact across disconnects")
                     return
 
                 self._log("·", f"Force-removing {mac} to prevent GATT teardown on next connection")
