@@ -745,9 +745,21 @@ a hit wouldn't help regardless: the LTK is a per-pairing runtime secret in the c
 present in static firmware or app binaries. **This closes the decryption-via-static-analysis
 question definitively** — full detail in `docs/developer/firmware-package-structure.md` §"BLE
 SMP / LTK and remote-control encryption — negative finding" and
-`memory/firmware-smp-ltk-negative.md`. The only remaining path to decrypted RC traffic is either
-live BlueZ pairing (`aquaclean-application-layer-relay.md` §8.5) or an unbroken sniffer capture
-spanning fresh SMP pairing through a button press (previous paragraph).
+`memory/firmware-smp-ltk-negative.md`.
+
+**Two distinct blockers remain, not one — don't conflate them.** Against the **real toilet**,
+passive sniffing can never recover the LTK: only JTAG-dumping the TI chip's NVM, or an unbroken
+sniffer capture spanning fresh SMP pairing straight through a button press (so the sniffer's own
+auto-decrypt has the just-exchanged key live), would work — we cannot insert ourselves as the
+real toilet's live BlueZ peer without literally being it. Against **`mera_mock.py`**, this
+blocker already doesn't apply: the mock *is* the BlueZ peer the RC pairs with, so it gets the
+LTK live every time and `btmon`/the mock's own decode already show everything in the clear
+(exactly how the "Pairing ok" write, the generic GATT walk, and the single `0x0009` write were
+seen earlier in this investigation). Decryption against the mock is a solved problem — what
+remains open there is the **behavioral** discovery-mode mystery above (RC never sends anything
+past pairing-confirmation housekeeping), not a cryptographic one. `aquaclean-application-layer-
+relay.md` §8.5's BlueZ/`btmon` mechanics are only relevant to the real-toilet case; the mock
+already implements the equivalent.
 
 ---
 

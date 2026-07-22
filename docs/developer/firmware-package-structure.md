@@ -473,14 +473,25 @@ The size differences (~30 bytes per node) are from annotation differences only �
 the new directory has raw Ghidra output; the existing directory has human-renamed
 functions added during prior analysis.  There is no new information in the new directory.
 
-### Path forward for remote protocol analysis
+### Path forward for remote protocol analysis — two distinct blockers, not one
 
-The only practical route to decrypted ATT frames from the Mera remote is:
-pair the remote with a Linux BlueZ peripheral acting as the toilet.
-BlueZ negotiates SMP automatically, stores the LTK in `/var/lib/bluetooth/`,
-and `btmon` shows decrypted ATT frames at the kernel level.
+**Against the real toilet**: passively sniffing can never recover the LTK — only JTAG-dumping
+the TI chip's NVM, or an unbroken sniffer capture spanning a fresh SMP pairing straight through
+a button press (so the sniffer's own auto-decrypt has the just-exchanged key live), would work.
+We cannot insert ourselves as the real toilet's live BlueZ peer without literally being it.
 
-See `docs/developer/aquaclean-application-layer-relay.md` § 8.5.
+**Against `mera_mock.py`**: this blocker **already doesn't apply** — the mock *is* the BlueZ
+peer the RC pairs with, so it gets the LTK live during every pairing exchange, and `btmon`/the
+mock's own decode already show everything in the clear (confirmed: this is exactly how the
+"Pairing ok" text write, the generic GATT walk, and the single `0x0009` write were seen in
+earlier passes of this investigation). Decryption is a solved problem there. What remains open
+against the mock is a **behavioral**, not cryptographic, question: the RC has never sent
+anything past that pairing-confirmation housekeeping in any captured session — see
+`docs/developer/mock-geberit-mera.md`'s standing "generic discovery instead of targeted
+discovery" mystery.
+
+See `docs/developer/aquaclean-application-layer-relay.md` § 8.5 for the BlueZ/`btmon` mechanics
+(relevant to the real-toilet case only, since the mock already implements this).
 
 ---
 
