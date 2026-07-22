@@ -761,6 +761,21 @@ past pairing-confirmation housekeeping), not a cryptographic one. `aquaclean-app
 relay.md` §8.5's BlueZ/`btmon` mechanics are only relevant to the real-toilet case; the mock
 already implements the equivalent.
 
+**Hypothesis raised and retracted same day — "RC is waiting for a Service Changed indication
+before trusting/using discovered services."** Prompted by noticing the RC's only action against
+the mock, every time, is enabling notifications on handle `0x0009`. Checked directly and
+disproven — see the graded breakdown below; do not re-propose without new evidence.
+
+| # | Claim | Status | Evidence |
+|---|---|---|---|
+| 1 | Real toilet never sends a Service Changed **indication** (`0x1D`) or its confirmation (`0x1E`), on any handle | **Proven** | `tshark -Y "btatt.opcode==0x1d \|\| btatt.opcode==0x1e"` — zero hits in `real-mera/pairing-ok-toggle-lid-Geberit-Remote-Control-real-mera-mac.pcapng`, `real-mera/...-windows.pcapng`, and `toogle-lid-with-remote-without-running-bridge.pcapng` |
+| 2 | RC's `FIND_BY_TYPE_VALUE_REQ` targets against the real toilet are `0x180A`, `0xC526`, `0x8A30`, `0xE0DB`, in that order — never `0x1801`/`0x2A05` (GATT/Service-Changed) | **Proven** for `...-mac.pcapng` (direct tshark); consistent with `...-windows.pcapng` via its previously-generated markdown, not re-queried fresh this round | same three files |
+| 3 | Handle `0x0027` (first write, real toilet) is the CCCD for the `notify_26` characteristic (`5a4d406b-...`), not Service-Changed | **Strongly inferred, not independently proven** — a `READ_BY_TYPE_RSP` confirms decl=`0x0025`/value=`0x0026`=`5a4d406b...`, and the immediately-following write targets `0x0027` with CCCD-enable value `0x0100`, but no `FIND_INFO_RSP` explicitly labels `0x0027` as descriptor UUID `0x2902` — the RC appears to write directly to value+1 without discovering the descriptor first | `...-mac.pcapng` |
+| 4 | RC never sends a single `FIND_BY_TYPE_VALUE_REQ` against the mock | **Proven** for the one file re-checked this round; the broader "RC always does generic discovery against the mock" claim is separately well-established across many prior captures elsewhere in this document | `Remote-Control-mock-1.112.0b1-pairing-no-success-02.pcapng` |
+| 5 | Handle `0x0009` in the mock's layout is the standard GATT Service-Changed CCCD, not Geberit protocol | **Not re-verified this round** — citing the existing "CCCD write decoded, 2026-07-20" entry above, confirmed there via the mock's own `bluetoothd` debug log (not a pcapng); that entry already concluded this needs no indication, which should have been checked before this hypothesis was raised | n/a (debug log, not a capture) |
+| 6 | "RC is waiting for a Service-Changed indication" | **Retracted — disproven** by #1 and #2 (and would have been avoided by checking #5 first) | — |
+| 7 | The `0x0009` subscribe against the mock is incidental — the RC settling for whatever standard notify-capable characteristic its generic walk reaches before giving up, not a deliberate wait | **Hypothesis, untested** | — |
+
 ---
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
