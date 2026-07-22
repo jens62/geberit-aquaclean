@@ -411,6 +411,60 @@ the TI CC254x integrates the full BLE stack (including SMP) in on-chip ROM.
 The application layer in node 0x00 calls ROM APIs — it does not implement
 security primitives itself and none appear in the application binary.
 
+**Re-verified live, 2026-07-22**, directly against
+`local-assets/firmware/mera_comfort_RS30_TS206_extracted-by-script/` (the exact
+directory referenced by the node-0x00 filename check below), with an expanded
+term list also covering the RC-pairing GATT UUID fragments (`c526`, `8a30`,
+`e0db`, `25dc`, `5a4d`, `8677`, `0e06`) discovered since the original 2026-06-19
+pass:
+
+```
+grep -rniE "ltk|bond|smp|irk|ediv|pairing|encrypt|remote|advert|gatt|discover|
+characteristic|notify|cccd|service_changed|fernbedienung|c526|8a30|e0db|25dc|
+5a4d|8677|0e06" mera_comfort_RS30_TS206_extracted-by-script/*.c
+```
+
+One match: `*DAT_0800e758 = 0x800e062;` in `0x0D_FirmwareWithSap_decompiled.c` —
+the digits `0e06` appear coincidentally inside a hardware memory address literal,
+unrelated to the `0x0E06` characteristic UUID fragment. Node `0x00`
+("bluetooth-Steuerung", 5529 lines / 188 functions) is confirmed pure
+symbol-stripped Ghidra 8051 output — every function an unnamed `FUN_CODE_XXXX`,
+zero strings or identifiers of any kind, consistent with a thin shim handing
+BLE off to a separate radio chip entirely.
+
+### Decompiled Geberit Home App also checked — negative (2026-07-22)
+
+Same question, different corpus: could the **app's** decompiled source (rather
+than firmware) reveal RC-pairing GATT structure or SMP/LTK material — by
+analogy with Alba's Arendi encryption, which *is* recoverable from the
+decompiled app? Checked all four available decompiled app variants (iOS
+2.14.1/2.14.2, Android armeabi-v7a/arm64) for the same RC-pairing UUID
+fragments. Hits exist but are all false positives: `BouncyCastle.Cryptography`
+constants (EC parameters, hash tables, PQC parameter sets — third-party
+library, not Geberit code), Google Tink/Material-Design-color constants
+(Android), and one .NET-decompiler auto-generated field name (`_E0DB`, part of
+a `_E000`/`_E003`/`_E0DB`… sequence) in Geberit's own AcSela
+orientation-light view-model — unrelated to BLE. Zero genuine RC-pairing
+references on either platform.
+
+**Why the Alba analogy doesn't transfer:** Alba's Arendi encryption is
+Geberit's own custom application-layer crypto, implemented in software they
+wrote on the phone side — hence decompilable. RC pairing is standard
+Bluetooth Security Manager Protocol, executed entirely by the BLE radio
+chip's own on-chip stack; Geberit never wrote SMP/LTK code on either the
+toilet firmware or the phone app, and the phone isn't even a party to the
+RC↔toilet pairing relationship. There is no Geberit-authored crypto
+implementation for RC pairing to find in any codebase — not because it's
+hidden well, but because it doesn't exist as application-layer code
+anywhere. Even a genuine hit wouldn't have helped regardless: the LTK is a
+per-pairing runtime secret generated during the SMP handshake and stored in
+the TI chip's NVM, never present in any static firmware image or app binary
+by construction.
+
+**This closes the firmware/app angle definitively** — no further corpus is
+expected to help. The only remaining path to decrypted RC traffic is live
+BlueZ pairing (below).
+
 ### Second firmware directory
 
 `FwPkg_F801-02-03_V30.0.206.250722_c8ec36cd_Mera_F8_01_RS_30_00_TS_206_extracted/`

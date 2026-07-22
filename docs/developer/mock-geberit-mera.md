@@ -716,6 +716,39 @@ second RC connection's true nature in earlier passes). Bad-CRC-only frames are d
 flagged this way — confirmed ordinary RF noise (1552 such frames in one file, mostly on
 unencrypted traffic), unrelated to missing key material.
 
+**Also tested and now regenerated with the fixed tool: `toogle-lid-with-remote-without-running-
+bridge.pcapng`** — a clean, RC-only connection (no bridge competing for the connection slot).
+Same outcome: `LL_ENC_REQ` fires immediately at connect (LTK-resume, no fresh SMP in this file),
+242 encrypted data-channel frames total, 231 of them empty LL PDUs (harmless keepalives — their
+MIC trivially validates since there's no payload), and exactly 11 carrying real data, spanning
+t=18.1s–22.6s, **all bad MIC**. No `LL_TERMINATE_IND` captured — the sniffer likely lost hop-sync
+or stopped recording mid-connection rather than the RC cleanly disconnecting. Same missing-key
+blocker as every other real-mera capture, just in the cleanest setting tried so far. Prompted a
+second tool fix: `_report_ll_encryption`/`_render_ll_encryption_markdown` (the "connection is
+LL-encrypted, zero ATT events decoded" path) now show this empty-PDU-vs-bad-MIC breakdown instead
+of one-size-fits-all "tshark cannot decode" boilerplate.
+
+**Firmware/decompiled-app decryption angle — checked again and closed, 2026-07-22.** Asked
+directly: can the Mera firmware, or (by analogy with Alba's Arendi encryption) the decompiled
+Geberit Home App, help decrypt the RC's BLE traffic? Re-verified live against
+`local-assets/firmware/mera_comfort_RS30_TS206_extracted-by-script/` with an expanded search
+(the original 2026-06-19/07-21 term list plus the RC-pairing GATT UUID fragments) — one hit,
+a coincidental digit match inside a hardware memory-address constant, not a real reference.
+Also checked all four decompiled Geberit Home App variants (iOS 2.14.1/2.14.2, Android
+armeabi-v7a/arm64) for the same UUID fragments — hits exist but are all false positives
+(BouncyCastle crypto-library constants, Google Tink/Material-color constants, one .NET-decompiler
+auto-generated field name). The Alba analogy doesn't transfer structurally: Arendi is Geberit's
+own app-layer crypto (decompilable by construction); RC pairing is standard BLE Security Manager
+Protocol executed entirely by the TI radio chip's on-chip stack — Geberit never wrote SMP/LTK
+code on either side, and the phone isn't even a party to the RC↔toilet pairing relationship. Even
+a hit wouldn't help regardless: the LTK is a per-pairing runtime secret in the chip's NVM, never
+present in static firmware or app binaries. **This closes the decryption-via-static-analysis
+question definitively** — full detail in `docs/developer/firmware-package-structure.md` §"BLE
+SMP / LTK and remote-control encryption — negative finding" and
+`memory/firmware-smp-ltk-negative.md`. The only remaining path to decrypted RC traffic is either
+live BlueZ pairing (`aquaclean-application-layer-relay.md` §8.5) or an unbroken sniffer capture
+spanning fresh SMP pairing through a button press (previous paragraph).
+
 ---
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
