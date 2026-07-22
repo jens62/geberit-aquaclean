@@ -641,7 +641,15 @@ disconnect only for a **public** address (the RC, matching the real device's con
 leave the existing, already-working "reset only after burst success" behavior completely
 untouched for anything else (iOS's rotating RPA, or unknown). **Implemented, v1.112.0b1** —
 folded into the existing public-address branch of `_force_remove_and_reregister`, so it can only
-ever fire for the RC; iOS's path is untouched. Not yet retested against a real RC.
+ever fire for the RC; iOS's path is untouched. **Retested against a real RC, same day —
+confirmed working as designed and confirmed no effect on the discovery-mode mystery, both as
+expected.** The mock's log shows the immediate reset (`Advertisement updated: byte[2]=0x00
+IsButtonPressed=False company=0x0100` + the public-address log line) after every single
+disconnect now, with no lingering "pressed" state between attempts. All three full-bonding
+attempts in the retest capture still show byte-for-byte the same pattern as every previous
+test — clean bonding, generic `READ_BY_GROUP_TYPE` walk, write only `0x0009`, disconnect. This
+closes out the advertising-reset fix as done and confirmed; it was worth having for correctness,
+not because it was expected to move the mystery.
 
 **Status as of 2026-07-22, end of day**: every BLE-observable variable affecting the *discovery
 mode* mystery specifically has now been checked and either fixed or ruled out — GATT service/
