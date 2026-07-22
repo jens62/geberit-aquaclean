@@ -663,6 +663,61 @@ discovery-mode question itself. Next step there is external — waiting on Geber
 about a device-side "forget paired device" reset on the RC, still the most promising remaining
 lever.
 
+**Toggle-lid command bytes not recoverable from the real-mera captures — genuine missing-key
+limitation, 2026-07-22 (ninth pass).** Tried to extract the actual lid-toggle command the RC
+sends against a real toilet, from
+`real-mera/pairing-ok-toggle-lid-Geberit-Remote-Control-real-mera-{mac,windows}.pcapng` (both
+sniffers watching the same real session; user pressed toggle-lid twice on the RC after pairing
+succeeded). Exhaustively enumerated every `CONNECT_IND` in both files (not just near the already-
+known timestamps) — 2 RC connections in the mac capture, 1 in windows.
+
+Both files fully decode only the **pairing-confirmation ceremony**: RC connects, bonds (fresh SMP
+or resumed), then writes a UTF-16 string spelling **"Pairing ok"** across three `ATT_WRITE_CMD`s
+to `0x001D` (`write_pairing_status_text`), a numeric status code to `0x0023`
+(`write_pairing_status_code`), enables the CCCD on `0x001B`, and gets one `InfoFrame 03 02`
+notify back on `0x0026` — then disconnects (`LL_TERMINATE_IND reason=Remote User Terminated`).
+No lid command anywhere in this connection; it's purely the RC telling the toilet "pairing
+succeeded."
+
+The mac capture has exactly one more RC connection right after (t=56.6–58.9s, ~2.3s) that never
+appears in the windows capture at all. This is the only remaining candidate window for the
+button presses — but every single data-channel frame in it is flagged by Wireshark/tshark's own
+BTLE dissector as `nordic_ble.micok = False` ("Encrypted packet decrypted incorrectly (bad
+MIC)"). That means the connection resumed encryption with an LTK from an **earlier, uncaptured**
+bonding session, not the one just exchanged a few seconds prior in the same file — genuinely
+undecryptable from this capture, not a tool gap. Neither file shows any further RC connections;
+both sniffers show a handful of bad-MIC/bad-CRC frames right before falling back to plain
+advertising, consistent with losing hop-sync on that second connection. **Conclusion: the actual
+toggle-lid command bytes are not recoverable from either of these two files** — they're either
+inside that one 2.3-second cryptographically opaque window, or happened later once both sniffers
+had already lost sync entirely.
+
+**Possible connection back to the standing discovery-mode mystery.** The real RC's
+pairing-confirmation connection *always* disconnects and reconnects before doing anything
+else — and that "anything else" (an LTK-resumed session) is opaque to us here too. That's the
+same shape as the mock's quick LTK-resume reconnects (`LL_ENC_REQ`→`LL_ENC_RSP`→
+`LL_START_ENC_REQ` with no decodable ATT afterward) that earlier passes in this investigation
+treated as failed/dead-end reconnects. It's possible those aren't failures at all — real commands
+may travel exactly there, and we have no way to see inside them against either the real toilet or
+the mock without a capture that never drops between bonding and the button press. Not confirmed
+either way; flagging as a lead, not a finding.
+
+**Path forward, if this is retested:** the sniffer needs to follow one **unbroken** connection
+from a fresh SMP pairing straight through a button press — no intervening disconnect/reconnect —
+so the just-exchanged LTK is still the active key when the command goes out. That's the only way
+to get a capture where the lid-toggle bytes are structurally decryptable at all.
+
+**Tooling added as a result** (`tools/nrf-ble-analyze.py`, commit `c529e4c`): `--connections`
+lists every `CONNECT_IND` in a file regardless of target, so a reconnect isn't missed by only
+checking near a known timestamp; the BLE Control Layer table now correctly labels bad-MIC frames
+as `ENCRYPTED (undecodable) — bad MIC` instead of silently dropping them or mislabeling
+garbage-decoded bytes as a real `LL_CTRL_0xXX` opcode (this mislabeling is what had obscured the
+second RC connection's true nature in earlier passes). Bad-CRC-only frames are deliberately not
+flagged this way — confirmed ordinary RF noise (1552 such frames in one file, mostly on
+unencrypted traffic), unrelated to missing key material.
+
+---
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails
