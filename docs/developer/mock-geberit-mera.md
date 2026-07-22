@@ -639,8 +639,9 @@ retry (it only picks up devices still advertising `IsButtonPressed=True`). The s
 the address-type gate already used for `_force_remove_and_reregister`: reset immediately on
 disconnect only for a **public** address (the RC, matching the real device's confirmed behavior);
 leave the existing, already-working "reset only after burst success" behavior completely
-untouched for anything else (iOS's rotating RPA, or unknown). Not yet implemented — proposed,
-pending go-ahead.
+untouched for anything else (iOS's rotating RPA, or unknown). **Implemented, v1.112.0b1** —
+folded into the existing public-address branch of `_force_remove_and_reregister`, so it can only
+ever fire for the RC; iOS's path is untouched. Not yet retested against a real RC.
 
 **Status as of 2026-07-22, end of day**: every BLE-observable variable affecting the *discovery
 mode* mystery specifically has now been checked and either fixed or ruled out — GATT service/
@@ -648,8 +649,8 @@ characteristic structure (fixed), SMP bonding/`JustWorksRepairing` (fixed, confi
 time), bond persistence across reconnects (ruled out), advertising payload content (checked, no
 real anomaly beyond the known `nrf-ble-analyze.py` display bug above), MAC/OUI (ruled out),
 firmware (checked, nothing there), gap/deviceinfo reciprocal probing (ruled out). The
-advertising-reset gap (this section) is a real, separate correctness issue, confirmed but not
-expected to explain the mystery and not yet fixed. No further local hypothesis identified for the
+advertising-reset gap (this section) is a real, separate correctness issue, now fixed (v1.112.0b1)
+but not expected to explain the mystery. No further local hypothesis identified for the
 discovery-mode question itself. Next step there is external — waiting on Geberit's own answer
 about a device-side "forget paired device" reset on the RC, still the most promising remaining
 lever.
