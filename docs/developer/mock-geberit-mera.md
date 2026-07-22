@@ -469,6 +469,96 @@ mandatory, not optional. v1.110.0b1 reverts `_force_remove_and_reregister()` to 
 unconditional behavior for all address types. The underlying handle-churn theory from the fourth
 pass is now also effectively moot — there was never a real optional cost to cut here.
 
+**Real root cause of the SMP flood found and fixed, 2026-07-22 (sixth pass) — confirmed
+directly against the actual BlueZ 5.77 source (a full source tree happens to be checked out
+under `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-home-app/bluez-5.77/`, matching the
+exact `bluetoothd -v` version running on anneubuntu — invaluable here, worth remembering for any
+future BlueZ-internals question).**
+
+First, `tools/nrf-ble-analyze.py` got a real capability gap fixed: it had no SMP (Security
+Manager Protocol) decoding at all, so any capture where the sniffer caught SMP-layer traffic but
+never reached ATT/GATT was wrongly reported as "sniffer likely didn't lock onto this connection".
+SMP pairing negotiation is sent in the clear (it's what derives the LTK) and is fully decodable.
+Added `_get_smp_events()`/`_smp_direction_field()` — see that commit for detail, including a
+tshark field-name bug (`btsmp.auth_req` doesn't exist; the real field is `btsmp.authreq`) that
+initially made the fix silently do nothing.
+
+With that working, a fresh capture showed the real SMP sequence for the first time:
+`SMP_PAIRING_REQUEST` → `SMP_PAIRING_RESPONSE` (both sides reporting `io_cap=0x03`
+NoInputNoOutput, `auth_req=0x01` — bonding only, MITM bit clear) → **`SMP_PAIRING_FAILED`,
+reason "Passkey Entry Failed"** → the RC's `SMP_PAIRING_CONFIRM` arrives after that, which is
+exactly the "unexpected SMP command 0x03" the kernel logs (nothing wrong with the RC's PDU
+itself — our side had already aborted the session before it arrived). The genuinely strange
+part: NoInputNoOutput + no-MITM on both sides should *always* select Just Works, never Passkey
+Entry, per the SMP method-selection table.
+
+Reading the actual end of the `bluetoothd -n -d` debug log (not just the start — a real trap,
+see below) showed the *sustained* mechanism: a tight, zero-gap loop of
+`user_confirm_request_callback() confirm_hint 1` → `btd_adapter_confirm_reply() ... success 0` →
+`bonding_attempt_complete() status 0x5` (Authentication Failure) → `device_bonding_failed()` →
+`resume_discovery()` → repeat, hundreds of times. Tracing this in the actual source
+(`src/adapter.c`/`src/device.c`) found the real cause in `device_confirm_passkey()`
+(`device.c:6801`):
+
+```c
+/* Just-Works repairing policy */
+if (confirm_hint && device_is_paired(device, type)) {
+    if (btd_opts.jw_repairing == JW_REPAIRING_NEVER) {
+        btd_adapter_confirm_reply(device->adapter, &device->bdaddr, type, FALSE);
+        return 0;
+    } ...
+```
+
+Not a bug — a deliberate BlueZ anti-impersonation policy (`JustWorksRepairing`, default `never`,
+`main.c:889`/`src/main.conf:100-103`): if BlueZ already considers a device paired (`state->paired`
+— set permanently for the life of the `btd_device` object by `device_set_paired()` after any
+*first* successful bond, `device.c:6334`/`6446`) and a *second* Just-Works pairing is attempted
+on the same connection, it's auto-rejected without ever consulting the agent, specifically to
+block blind re-approval of a spoofed already-bonded identity. The RC does exactly this: bonds
+successfully once on a connection, then immediately re-initiates SMP on the same still-open link
+— and every retry after the first hits this policy, forever, since nothing clears `paired` until
+the device object itself is destroyed (which never happens mid-connection).
+
+**Fix**: `JustWorksRepairing = always` in `/etc/bluetooth/main.conf` (uncommented from its default
+`never`). Safe specifically in this context — `NoIoAgent` already accepts every pairing request
+unconditionally regardless, so this policy was never providing real protection here; this is
+*not* a general-purpose-host recommendation. **Confirmed working** via a full retest: 7
+consecutive RC connections, all showing `btd_adapter_confirm_reply() ... success 1` and
+`device_bonding_complete() ... status 0x00` (clean success) — zero SMP-command-flood messages in
+`journalctl -k` for the entire test window. This is the first real, load-bearing fix of the day.
+
+**What's still open even with bonding now clean, every time**: the RC still performs a generic
+`READ_BY_GROUP_TYPE` discovery walk (not the targeted `FIND_BY_TYPE_VALUE` seen against the real
+toilet), still writes only the boilerplate Service-Changed CCCD (`0x0009`), and now visibly
+*waits* ~21 seconds in silence before disconnecting (`LL_TERMINATE_IND reason=Remote User
+Terminated`) — never touching any RC-pairing characteristic. This rules out "stale/failed
+bonding" as the explanation for the wrong-discovery-mode symptom entirely: bonding is now
+provably clean, and the symptom is completely unchanged.
+
+**New hypothesis, not yet tested**: the real-device capture that *did* show fast, targeted
+`FIND_BY_TYPE_VALUE` discovery (`real-mera/pairing-ok-toggle-lid-*`) was an **already-bonded
+reconnection** — plain `LL_ENC_REQ`/`RSP` reusing a cached LTK, no fresh SMP at all. This mock has
+never actually captured what the RC does on a genuine *first-ever* bond, because
+`_force_remove_and_reregister()` wipes the bond on literally every disconnect — the RC may never
+reach whatever code path handles "reconnecting to a peer I already trust," which might be exactly
+the one that does fast, targeted discovery. The 21-second silent wait right after enabling the
+Service-Changed CCCD is suggestive of the RC expecting some cue (a Service Changed indication?)
+that never arrives. Worth testing: let the bond persist across at least one reconnect (skip the
+wipe for one cycle) and see if a second connection to a genuinely-still-bonded peer behaves
+differently.
+
+**Infrastructure fix, same day**: `--noplugin=battery,gap,deviceinfo` (confirmed harmless —
+neither breaks nor fixes RC behavior, just removes bluetoothd's own reciprocal GAP/DeviceInfo
+client-probing noise from the debug log) promoted from a manual `bluetoothd -n -d` flag to the
+persistent systemd override, `/etc/systemd/system/bluetooth.service.d/override.conf`
+(`ExecStart=/usr/libexec/bluetooth/bluetoothd --noplugin=battery,gap,deviceinfo`, extending the
+pre-existing `--noplugin=battery` override from the earlier battery-plugin fix). This closes a
+real race: if `systemctl start bluetooth` (or `Restart=on-failure`) ever won against a manually
+launched debug `bluetoothd`, the resulting plain instance had none of the exclusions — very
+likely what happened during one untracked mock run this same morning (zero connection-tracking
+output at all, never fully explained). Safe for the Geberit Home App too — all three plugins only
+affect bluetoothd's own client-role probing of whatever connects, never what this mock serves.
+
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
 After the SC flush, iOS sometimes reconnects briefly with an old RPA (a leftover device
 object from a previous session, e.g. `78:42:1C:38:DE:16`). This connection fails

@@ -179,6 +179,32 @@ Read this file first when something is broken.
     Full incident, root-cause reasoning, and fix confirmation:
     `docs/developer/mock-geberit-mera.md` §"Button-press/release timing".
 
+18. **"unexpected SMP command 0x03" flood recurs even with `NoIoAgent` registered and working
+    (agent authorization requests succeed fine) — a DIFFERENT cause than trap 17**
+    → Read the *end* of the `bluetoothd -n -d` debug log, not just the start/connect region —
+    the actual sustained loop can be hundreds of lines further down than the initial connection
+    event, and grepping a narrow timestamp window around the connect event can show nothing at
+    all while the real loop runs later in the same file.
+    → Look for a tight, zero-gap repeating block: `user_confirm_request_callback() confirm_hint
+    1` → `btd_adapter_confirm_reply() ... success 0` → `bonding_attempt_complete() status 0x5`
+    (Authentication Failure) → `device_bonding_failed()` → `resume_discovery()` → repeat. This is
+    BlueZ's **Just-Works repairing policy** (`device_confirm_passkey()` in `src/device.c`,
+    confirmed against the actual bluez-5.77 source under `local-assets/Bluetooth-Logs/nRF52840/
+    jens62/geberit-home-app/bluez-5.77/`): once a device has bonded successfully *once* on a
+    connection (`device_set_paired()` sets `state->paired = true` for the life of that device
+    object), any *second* Just-Works pairing attempt on the same still-open connection is
+    auto-rejected without ever asking the agent — deliberately, to block blind re-approval of a
+    spoofed already-bonded identity. `JustWorksRepairing` defaults to `never`. A remote that
+    re-initiates SMP pairing on an already-bonded connection (confirmed: the Geberit Remote
+    Control does this) hits this rejection on every retry, forever, since nothing clears `paired`
+    mid-connection.
+    **Fixed, 2026-07-22**: `JustWorksRepairing = always` in `/etc/bluetooth/main.conf` (default
+    is `never`, commented out). Safe specifically because `NoIoAgent` already accepts every
+    pairing request unconditionally regardless — this policy provided no real protection in this
+    context. **Not** a general-purpose-host recommendation.
+    Full incident and source-code trace: `docs/developer/mock-geberit-mera.md` §"Real root cause
+    of the SMP flood found and fixed, 2026-07-22".
+
 ---
 
 ## Known open bugs (not yet fixed)
