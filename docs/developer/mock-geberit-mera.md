@@ -776,6 +776,64 @@ disproven — see the graded breakdown below; do not re-propose without new evid
 | 6 | "RC is waiting for a Service-Changed indication" | **Retracted — disproven** by #1 and #2 (and would have been avoided by checking #5 first) | — |
 | 7 | The `0x0009` subscribe against the mock is incidental — the RC settling for whatever standard notify-capable characteristic its generic walk reaches before giving up, not a deliberate wait | **Hypothesis, untested** | — |
 
+**Full step-by-step protocol comparison, real toilet vs mock — same day (tenth pass).** Traced the
+entire connection sequence on both sides, frame by frame, from `CONNECT_IND` through disconnect,
+explicitly labeling which side (central/RC vs peripheral/toilet-or-mock) sends each PDU — this
+surfaced two corrections to earlier framing and one new, independently confirmed finding.
+
+*Files used for this comparison*:
+`real-mera/pairing-ok-toggle-lid-Geberit-Remote-Control-real-mera-mac.pcapng` (real toilet, first
+RC connection) and `new_mock_1.102.0b1_and_later/Remote-Control-mock-1.112.0b1-pairing-no-success-02.pcapng`
+(mock, first RC connection) as the primary pair; cross-checked the advertising finding (below)
+against 8 additional mock captures spanning `1.104.0b1`–`1.112.0b1`.
+
+| # | Phase | Central (RC) sends | Real Mera answers | Mock answers | Status |
+|---|---|---|---|---|---|
+| 0a | Active scanning | `SCAN_REQ` (confirmed via direction, sent repeatedly before each connect, against both) | `SCAN_RSP`: `"Geberit AC PRO"` + TX power + Mfg-data `company=0x3300 data=0x30` | `SCAN_RSP`: `"Geberit AC PRO"` only, no TX-power/RS-version entries in the one instance checked | Minor, not cross-checked further |
+| 0b | Advertising payload at connect time | *(RC doesn't advertise)* | `ADV_IND` Mfg-data: `09 ff aa01 01 313436 3231` — **9-byte AD structure, 6-byte payload**: state + article `"14621"` | `ADV_IND` Mfg-data: `0c ff aa01 01 3134363231 003238` — **12-byte AD structure, 9-byte payload**: same 6 bytes + **3 extra trailing bytes `00 32 38`** | **Confirmed via raw hex (`tshark -x`), stable across `1.104.0b1`–`1.112.0b1` (8 versions checked, byte-identical every time)** |
+| 0c | UUID AD structure | — | `03 02 a03e` — type `0x02` (Incomplete List), positioned *after* Mfg-data | `03 03 a03e` — type `0x03` (Complete List), positioned *before* Mfg-data | **Confirmed, same 8-version cross-check** — likely resolves the older "`type=0x03` anomaly, suspected `nrf-ble-analyze.py` display bug" note elsewhere in this investigation as a *real* difference, not (only) a tool bug |
+| 1 | SMP pairing | `SMP_PAIRING_REQUEST` (real: 7–8× retried after `Pairing Not Supported`; mock: succeeds first try) | `SMP_PAIRING_RESPONSE` → `CONFIRM`/`RANDOM`, key distribution | Same shape, no retries | Match — retry count already established as normal |
+| 2 | Encryption start | `LL_ENC_REQ`, `LL_START_ENC_REQ` | `LL_ENC_RSP`, `LL_START_ENC_RSP` ×2 | Same | Match |
+| 3 | LL feature exchange | *(RC does not initiate — corrected)* | Never sent | **Peripheral-initiated** `LL_PERIPHERAL_FEATURE_REQ` (direction-confirmed) | Divergent but NOT RC-attributable — likely BlueZ/kernel default behavior on the mock's host, unrelated to the mystery |
+| 4 | LL data-length negotiation | *(RC does not initiate — corrected)* | Never sent | **Peripheral-initiated** `LL_LENGTH_REQ` | Same caveat as #3 |
+| 5 | ATT MTU exchange | *(RC does not initiate — corrected)* | Never sent | **Peripheral-initiated** `ATT_MTU_REQ` (direction-confirmed peripheral→central) | Same caveat as #3 |
+| 6 | **First GATT discovery action** | Real: `FIND_BY_TYPE_VALUE_REQ UUID=0x180A` (targeted) / Mock: `READ_BY_GROUP_TYPE_REQ` (generic) | `FIND_BY_TYPE_VALUE_RSP found=0x000A` | `READ_BY_GROUP_TYPE_RSP services=0x0001,0x0006,0x000A` | **Earliest RC-driven fork** |
+| 7 | Capability probe | Mock only: `READ_BY_TYPE_REQ UUID=0x2B3A` (Server Supported Features) — never sent against real toilet | *(never asked)* | `ATT_ERROR_RSP` (Attribute Not Found) | **Checked and retracted as a lead** — BlueZ's `gatt-database.c` (`server_feat_read_cb`) only ever signals EATT support via this characteristic, never Robust Caching |
+| 8 | RC-pairing service discovery | Real: `FIND_BY_TYPE_VALUE_REQ` for `0xC526`/`0x8A30`/`0xE0DB` / Mock: continues the generic `READ_BY_GROUP_TYPE_REQ` walk | `found=0x0024`/`0x0015`/`0x0018` | `services=0x0015`/`0x0018`/`0x0024` (**same handle numbers**) | Confirms identical GATT layout — divergence is discovery *method*, not structure |
+| 9 | Characteristic discovery inside RC-pairing services | Real: **10×** `READ_BY_TYPE_REQ UUID=0x2803` / Mock: **zero**, any attempt | Reveals `notify_26` at `0x0026`, etc. | *(never asked)* | **Direct cause of everything downstream** |
+| 10 | Robust Caching machinery (`0x2B2A` Database Hash, `0x2B29` Client Supported Features) | **Never touched, either device** | — | — | **Checked, ruled out** — identical (absent) both sides |
+| 11 | Writes | Real: `0x0027` (CCCD), `0x001D`×3 ("Pairing ok" text), `0x0023`×3 (status code), `0x001B` (CCCD) / Mock: `0x0009` (CCCD) only | `WRITE_RSP` ack each | `WRITE_RSP` ack | Direct consequence of #9 |
+| 12 | Notify | *(via #11's CCCD writes)* | One notif on `0x0026` (`byte0=0x03`) | None | Consequence |
+| 13 | Disconnect | — | `LL_TERMINATE_IND Remote User Terminated` | Same | Match |
+
+**Two corrections to earlier reasoning in this investigation, both confirmed via the `nordic_ble.direction`
+field (not assumed):**
+1. Rows 3–5 (LL feature/length/MTU negotiation) are **peripheral-initiated**, not RC-initiated —
+   an earlier pass in this section mis-attributed these to the RC's own decision-making. Since the
+   GATT client (RC) is unambiguously the one driving rows 6–9, those remain the real leads; rows
+   3–5 most likely reflect a Linux/BlueZ-vs-TI-chip host-stack difference and are dropped from the
+   mystery-relevant list.
+2. The "RC waits for a Service Changed indication" hypothesis (see the retraction entry above) and
+   the subsequent "Robust Caching via Server Supported Features" hypothesis (row 7/10 above) are
+   both now closed, checked directly against BlueZ's own source (`local-assets/Bluetooth-Logs/
+   nRF52840/jens62/geberit-home-app/bluez-5.77/src/gatt-database.c`) and against the captures —
+   neither the mock nor the real toilet ever engages the standard BLE 5.1+ caching-negotiation
+   characteristics at all. Drop this line of investigation.
+
+**What survives as the live, unexplained core of the mystery**: rows 6 and 9 — the RC's choice of
+GATT discovery *method* (targeted vs. generic) and whether it ever asks for characteristics inside
+the RC-pairing services at all. Everything downstream (row 11's writes, or their absence) follows
+directly from that choice. Rows 0b/0c (advertising payload/AD-type differences) are new, confirmed,
+*not yet tested* candidates that could plausibly influence this choice — unlike the retracted rows 3–5/7/10,
+these are structural facts about what the mock actually broadcasts, stable across 8 mock versions, and
+have never been changed or investigated before. **Next step, if pursued**: fix the mock's advertisement
+to match the real device's byte-exact structure (drop the 3 extra `00 32 38` bytes; change the UUID
+AD type from `0x03`/Complete to `0x02`/Incomplete and its ordering) and see if the RC's discovery method
+changes on a subsequent connection. Not yet attempted — this touches the same advertisement code that
+previously caused a real onboarding regression when changed carelessly (see the two-entry-advertisement
+regression note elsewhere in this document), so any change here should be made cautiously and retested
+against the Geberit Home App too, not just the RC.
+
 ---
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
