@@ -692,15 +692,29 @@ toggle-lid command bytes are not recoverable from either of these two files** �
 inside that one 2.3-second cryptographically opaque window, or happened later once both sniffers
 had already lost sync entirely.
 
-**Possible connection back to the standing discovery-mode mystery.** The real RC's
-pairing-confirmation connection *always* disconnects and reconnects before doing anything
-else — and that "anything else" (an LTK-resumed session) is opaque to us here too. That's the
-same shape as the mock's quick LTK-resume reconnects (`LL_ENC_REQ`→`LL_ENC_RSP`→
-`LL_START_ENC_REQ` with no decodable ATT afterward) that earlier passes in this investigation
-treated as failed/dead-end reconnects. It's possible those aren't failures at all — real commands
-may travel exactly there, and we have no way to see inside them against either the real toilet or
-the mock without a capture that never drops between bonding and the button press. Not confirmed
-either way; flagging as a lead, not a finding.
+**Possible connection back to the standing discovery-mode mystery — RESOLVED against the mock,
+2026-07-23.** The real RC's pairing-confirmation connection *always* disconnects and reconnects
+before doing anything else — and that "anything else" (an LTK-resumed session) is opaque to us
+here too. That's the same shape as the mock's quick LTK-resume reconnects (`LL_ENC_REQ`→
+`LL_ENC_RSP`→`LL_START_ENC_REQ` with no decodable ATT afterward) that earlier passes in this
+investigation treated as failed/dead-end reconnects. The lead was: maybe those aren't failures at
+all — real commands might travel exactly there, invisible to the over-the-air sniffer.
+
+**Checked directly against `mock-btmon_2026-07-22_13-02.btsnoop`** (host-side `btmon` HCI
+capture, fetched from `anneubuntu-studio:/home/jens/aquaclean_ble_relay/mock_state/logs/`,
+covering the exact same session as the `1.112.0b1` pcapng already analyzed above — confirmed via
+matching timestamps) via `tools/analyze-btmon-mock.py --att-only`. `btmon` sees ATT traffic
+**already decrypted by BlueZ at the host boundary** — it has no bad-MIC blind spot at all,
+so this closes the LTK-resume question with certainty rather than inference. Result: **all
+12 RC connections in this session** — fresh-SMP and LTK-resume alike — show the byte-for-byte
+identical pattern: generic `ATT Read By Group Type` discovery (80 instances total across the
+session), one `Read By Type` probe for UUID `0x2B3A`, and exactly one `ATT Write Req` to handle
+`0x0009`. Zero `Find By Type Value` (targeted discovery) requests anywhere. Zero writes to any
+other handle anywhere. **The lead is closed against the mock**: the opaque LTK-resume reconnects
+were not hiding anything — they behave identically to the fully-visible connections in every
+respect. This does not resolve the equivalent question against the **real toilet** (no
+equivalent host-side capture exists there, since we don't control the real device's Bluetooth
+stack) — that half of the lead remains open, per the path-forward note below.
 
 **Path forward, if this is retested:** the sniffer needs to follow one **unbroken** connection
 from a fresh SMP pairing straight through a button press — no intervening disconnect/reconnect —
