@@ -828,6 +828,21 @@ without re-checking other versions first.
 | 12 | Notify | *(via #11's CCCD writes)* | One notif on `0x0026` (`byte0=0x03`) | None | Consequence |
 | 13 | Disconnect | — | `LL_TERMINATE_IND Remote User Terminated` | Same | Match |
 
+**Rows 6/9/11 (and the direction column implied throughout this table) were originally derived by
+bypassing `nrf-ble-analyze.py` with manual raw `tshark` queries — the tool itself couldn't show
+any of it.** Fixed properly, same investigation, commit `d8e69ed`: `_GATT_OPCODES` was missing
+`0x08`/`0x09` (`READ_BY_TYPE_REQ`/`RSP`) entirely, so row 9's central finding (10 requests vs. 0)
+was invisible in the tool's own output; `_get_ll_control_events`/`_get_att_meta_events` had no
+direction field at all, which is what let the row-3–5 mis-attribution (below) happen in the first
+place; and `_get_adv_packets`'s AD-type/company zip bug (rows 0b/0c) is now fixed at the root
+(manufacturer-data entries are unconditionally AD type `0xFF` by spec — no separate, misalignable
+type query needed). **Validated, same day**: regenerated all local `.md` artifacts in this
+investigation's capture directories with the fixed tool (23 files, `local-assets/Bluetooth-Logs/
+nRF52840/jens62/geberit-remote-control/` and subdirectories) — the native tool output now
+reproduces every manually-verified number in this table exactly (10 `READ_BY_TYPE_REQ` in the
+real-mera capture, `Dev→App` direction on the mock's LL/MTU negotiation, `AD type=ff` instead of
+the misaligned `0x03`), with zero crashes and no new discrepancies against the audit script.
+
 **Two corrections to earlier reasoning in this investigation, both confirmed via the `nordic_ble.direction`
 field (not assumed):**
 1. Rows 3–5 (LL feature/length/MTU negotiation) are **peripheral-initiated**, not RC-initiated —
