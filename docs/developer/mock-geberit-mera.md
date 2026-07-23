@@ -895,6 +895,71 @@ the pcapng's last disconnect almost to the second).
    pushes handle numbers higher. Mundane, fully explained, not mystery-relevant — the RC always
    sees a consistent, low-handle view for whatever session it's actually connecting to.
 
+**Next steps, 2026-07-23 — a brand-new, never-paired RC changes what's worth testing next.**
+A second physical remote is now available: a **Wandbedienpanel, EAN `4025416816218`**
+(wall-mounted control panel — a different model from the handheld unit used for every capture
+in this document so far, EAN `4025416432326`), and critically, **it has never been paired to
+any device at all**. Every capture analyzed above used the handheld RC, which has had an
+established pairing relationship with the real toilet for a long time (original setup, months
+ago) — we've never been able to observe a genuinely *first-ever* pairing to the real toilet.
+This unlocks an experiment that wasn't previously possible and reframes the priority order
+below.
+
+**Why this matters for the core mystery.** The standing, unresolved question is why an
+*experienced* RC does targeted `FIND_BY_TYPE_VALUE` discovery against the real toilet but
+generic `READ_BY_GROUP_TYPE` discovery against the mock — and whether that's because the RC has
+built up trust/history with the real toilet over many past sessions that the mock has never
+gotten to accumulate. A never-paired RC's first-ever connection to the real toilet directly
+tests this, cheaply and with no code changes:
+- **If the new RC does targeted discovery on its very first-ever connection to the real
+  toilet** — this rules out "accumulated history" as the explanation entirely (a fresh device
+  behaves like an experienced one immediately), and refocuses the mystery on something
+  structural the real toilet does that the mock doesn't yet replicate — strengthening the case
+  for the advertisement fix below as the next thing to try.
+- **If the new RC does generic discovery on its first-ever connection to the real toilet too**
+  — this would be the biggest finding of the whole investigation: it would mean *even the real
+  toilet* requires an established history before an RC trusts it enough for targeted lookups,
+  and the mock may simply need many more successful ceremony completions (once one can be
+  achieved at all) rather than a single structural fix. Also worth deliberately trying **toggle
+  lid** during this same fresh-pairing session — this is the same real toilet whose LTK-resume
+  reconnects were never decryptable in earlier captures (see "Toggle-lid command bytes not
+  recoverable..." above); a fresh pairing followed immediately by a button press, sniffed with
+  an unbroken connection, is exactly the capture that section identified as the only way to ever
+  see that command's bytes.
+
+**Recommended order** (cheapest and highest-information first; each step's outcome should be
+read before deciding whether the next one is still worth doing):
+
+1. **Sniff the new Wandbedienpanel's first-ever pairing to the real toilet.** No code changes,
+   no risk — use the two-nRF52840 dual-sniffer setup (redundancy against RF sync loss, discussed
+   earlier this investigation) positioned at two different spots relative to the RC↔toilet link,
+   both targeting the toilet as the sniff subject (the RC never advertises, so it can't be
+   selected directly — this is unrelated to which RC model is used). Try pressing toggle-lid
+   during the same unbroken connection, without letting it disconnect first, per the paragraph
+   above. This is the single highest-value, zero-cost test available right now.
+2. **Sniff the new Wandbedienpanel's first-ever pairing to the (currently unmodified) mock.**
+   Establishes whether the mock's generic-discovery-only behavior is RC-history-independent —
+   i.e. whether a genuinely fresh device behaves the same way the long-experienced handheld RC
+   always has against the mock. Expected to match (generic discovery, `0x0009` write only,
+   nothing else) based on everything observed so far, but worth confirming with a clean data
+   point rather than assuming.
+3. **Only after 1 and 2**, apply the mock's advertisement fix (drop the 3 extra trailing bytes
+   `00 32 38` from the Manufacturer-Specific-Data payload; change the UUID AD-type from `0x03`
+   Complete back to `0x02` Incomplete and its ordering — see rows 0b/0c above for the byte-exact
+   target) and retest. Order matters here: steps 1–2 establish a clean, model-independent
+   baseline *before* any mock code changes, so if the advertisement fix does change the RC's
+   behavior, there's a clear "before" to compare against. This still touches the same
+   advertisement code that caused a real onboarding regression when last changed carelessly
+   (see the two-entry-advertisement regression note elsewhere in this document) — retest the
+   Geberit Home App too, not just either RC, before considering this fix validated.
+4. **If step 1 shows targeted discovery** (fresh RC trusts the real toilet immediately), a
+   further experiment worth considering: immediately after that real-toilet pairing succeeds,
+   connect the *same, now real-toilet-experienced* Wandbedienpanel to the mock. This tests
+   whether the RC's "trust a peer enough for targeted lookups" state is keyed to the specific
+   bonded identity (IRK) or more broadly to "any device that behaves like a genuine Mera
+   Comfort" — a distinction none of the captures so far have been able to test, since the only
+   RC available always had prior real-toilet history baked in before every mock test.
+
 ---
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
