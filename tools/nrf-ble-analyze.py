@@ -1068,37 +1068,50 @@ def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
     key is even involved) and has nothing to do with missing key material;
     surfacing it here would bury the rare, meaningful bad-MIC signal in routine
     sniffer noise. nordic_ble.micok is FT_BOOLEAN ("True"/"False" text, not
-    0/1) for encrypted frames; plaintext frames leave it blank."""
+    0/1) for encrypted frames; plaintext frames leave it blank.
+
+    Direction (App→Dev / Dev→App) added 2026-07-23 — LL Control PDUs are NOT
+    always central-initiated (LL_PERIPHERAL_FEATURE_REQ is peripheral-only by
+    definition; ATT MTU exchange and LL data-length negotiation can legally be
+    initiated by either side). Omitting direction here previously caused a real
+    mis-attribution in the RC-vs-mock investigation (peripheral-initiated LL
+    negotiation wrongly written up as an RC/central decision) that had to be
+    caught and corrected via a manual raw-tshark direction query."""
+    direction_field = _direction_field(tshark, pcapng, "btle.control_opcode")
+    fields = ["frame.time_relative",
+              "btle.control_opcode",
+              "btle.control.error_code",           # LL_TERMINATE_IND reason
+              "btle.control.feature_set",          # LL_FEATURE_*
+              "btle.control.version_number",       # LL_VERSION_IND
+              "btle.control.company_id",           # LL_VERSION_IND
+              "btle.control.interval",             # LL_CONNECTION_UPDATE_IND / PARAM_*
+              "btle.control.latency",
+              "btle.control.timeout",
+              "btle.control.max_rx_octets",        # LL_LENGTH_REQ/RSP
+              "btle.control.max_tx_octets",
+              "btle.control.max_rx_time",
+              "btle.control.max_tx_time",
+              "btle.control.tx_phys",              # LL_PHY_REQ/RSP
+              "btle.control.rx_phys",
+              "btle.control.m_to_s_phy",           # LL_PHY_UPDATE_IND
+              "btle.control.s_to_m_phy",
+              "btle.control.instant",
+              "nordic_ble.micok"]                  # decrypt-failure detection
+    if direction_field:
+        fields.append(direction_field)
     rows = _run_tshark(tshark, pcapng,
                        "btle.control_opcode || (nordic_ble.encrypted == 1 && "
                        "nordic_ble.micok == 0)",
-                       ["frame.time_relative",
-                        "btle.control_opcode",
-                        "btle.control.error_code",           # LL_TERMINATE_IND reason
-                        "btle.control.feature_set",          # LL_FEATURE_*
-                        "btle.control.version_number",       # LL_VERSION_IND
-                        "btle.control.company_id",           # LL_VERSION_IND
-                        "btle.control.interval",             # LL_CONNECTION_UPDATE_IND / PARAM_*
-                        "btle.control.latency",
-                        "btle.control.timeout",
-                        "btle.control.max_rx_octets",        # LL_LENGTH_REQ/RSP
-                        "btle.control.max_tx_octets",
-                        "btle.control.max_rx_time",
-                        "btle.control.max_tx_time",
-                        "btle.control.tx_phys",              # LL_PHY_REQ/RSP
-                        "btle.control.rx_phys",
-                        "btle.control.m_to_s_phy",           # LL_PHY_UPDATE_IND
-                        "btle.control.s_to_m_phy",
-                        "btle.control.instant",
-                        "nordic_ble.micok"])                 # decrypt-failure detection
+                       fields)
     _PHY_MAP = {"1": "1M", "2": "2M", "3": "Coded", "4": "Coded"}
     events = []
     for row in rows:
         if not row or not row[0].strip():
             continue
-        padded = (row + [""] * 19)[:19]
+        padded = (row + [""] * len(fields))[:len(fields)]
         ts_raw, op_raw = padded[0].strip(), padded[1].strip()
         mic_raw = padded[18].strip().lower()
+        dir_str = _direction_str(padded[19]) if direction_field else None
         if not ts_raw:
             continue
         try:
@@ -1106,12 +1119,15 @@ def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
         except ValueError:
             continue
         if mic_raw == "false":
+            details = "bad MIC — LTK for this session not in capture"
+            if dir_str:
+                details = f"{dir_str}  {details}"
             events.append({
                 "ts_raw": ts_f,
                 "ts":     _ts_display(ts_raw),
                 "opcode": None,
                 "name":   "ENCRYPTED (undecodable)",
-                "details": "bad MIC — LTK for this session not in capture",
+                "details": details,
             })
             continue
         if not op_raw:
@@ -1121,7 +1137,7 @@ def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
         except ValueError:
             continue
         name    = _LL_CTRL_NAMES.get(opcode, f"LL_CTRL_0x{opcode:02X}")
-        details = []
+        details = [dir_str] if dir_str else []
         if opcode == 0x02:  # LL_TERMINATE_IND
             err_raw = padded[2].strip()
             try:
@@ -1213,22 +1229,59 @@ def _get_ll_control_events(tshark: str, pcapng: Path) -> list:
     return events
 
 
-def _smp_direction_field(tshark: str, pcapng: Path) -> str | None:
+def _direction_field(tshark: str, pcapng: Path, base_filter: str) -> str | None:
     """
     Probe for whichever field name this Wireshark/tshark version populates with
-    per-frame SMP direction (Central→Peripheral vs Peripheral→Central). Unlike LL
-    control PDUs (where the opcode alone implies direction), several SMP opcodes —
-    Pairing Confirm, Pairing Random, Pairing Failed — are legitimately sent by
-    EITHER side, so direction must come from the capture, not be inferred.
-    Same probe-and-keep-whichever-populates idiom as _peripheral_addr_field().
-    Returns None if no candidate field is populated anywhere in the file — callers
-    must degrade gracefully (omit direction) rather than assume one exists.
+    per-frame direction (Central→Peripheral vs Peripheral→Central), scoped to
+    frames matching base_filter. Same probe-and-keep-whichever-populates idiom as
+    _peripheral_addr_field(). Returns None if no candidate field is populated
+    anywhere in the file — callers must degrade gracefully (omit direction)
+    rather than assume one exists.
+
+    Generalized 2026-07-23 from the SMP-only _smp_direction_field (kept below as
+    a thin wrapper) — LL Control PDUs (LL_PERIPHERAL_FEATURE_REQ, LL_LENGTH_REQ,
+    ATT_MTU_REQ) can be sent by either the central OR the peripheral depending on
+    the host stack, so assuming a fixed direction from opcode alone is wrong; this
+    was confirmed the hard way when an earlier pass in the RC-vs-mock investigation
+    wrongly attributed peripheral-initiated LL negotiation to the RC (central)
+    because _get_ll_control_events/_get_att_meta_events had no direction field at
+    all and the mistake had to be caught via a manual raw-tshark direction query.
     """
     for field in ("btle.direction", "nordic_ble.direction", "btle_rf.direction"):
-        rows = _run_tshark(tshark, pcapng, "btsmp", [field])
+        rows = _run_tshark(tshark, pcapng, base_filter, [field])
         if rows and any(r[0].strip() for r in rows[:20]):
             return field
     return None
+
+
+def _smp_direction_field(tshark: str, pcapng: Path) -> str | None:
+    """Thin wrapper over _direction_field, kept for backward-compat call sites."""
+    return _direction_field(tshark, pcapng, "btsmp")
+
+
+def _direction_str(dir_raw: str) -> str | None:
+    """
+    Interpret a direction field's raw value as 'App→Dev' (Central→Peripheral) or
+    'Dev→App' (Peripheral→Central). nordic_ble.direction is FT_BOOLEAN ("True"/
+    "False" text, not "1"/"0") — confirmed 2026-07-22 against a real capture:
+    SMP opcode 0x01 (Pairing Request, always sent by the initiator/central) is
+    consistently "True", opcode 0x02 (Pairing Response, always the responder/
+    peripheral) is consistently "False". Also handles a possible numeric 0/1 from
+    a different field/dissector version. Returns None (not a guess) when the
+    value can't be interpreted, so callers can omit direction rather than assume.
+    """
+    dir_raw = dir_raw.strip()
+    if not dir_raw:
+        return None
+    low = dir_raw.lower()
+    if low == "true":
+        return "App→Dev"
+    if low == "false":
+        return "Dev→App"
+    try:
+        return "App→Dev" if _parse_int(dir_raw) == 0 else "Dev→App"
+    except ValueError:
+        return None
 
 
 def _get_smp_events(tshark: str, pcapng: Path) -> list:
@@ -1266,26 +1319,11 @@ def _get_smp_events(tshark: str, pcapng: Path) -> list:
         name = _SMP_OPCODE_NAMES.get(opcode, f"SMP_0x{opcode:02X}")
         details = []
         if direction_field:
-            dir_raw = padded[6].strip()
-            if dir_raw:
-                # nordic_ble.direction is FT_BOOLEAN ("True"/"False" as text, not
-                # "1"/"0") — confirmed 2026-07-22 against a real capture: opcode
-                # 0x01 (Pairing Request, always sent by the initiator/central) is
-                # consistently "True", opcode 0x02 (Pairing Response, always the
-                # responder/peripheral) is consistently "False". Handle both that
-                # and a possible numeric 0/1 from a different field/dissector
-                # version, defaulting unrecognized values to the raw string
-                # rather than guessing.
-                low = dir_raw.lower()
-                if low == "true":
-                    details.append("App→Dev")
-                elif low == "false":
-                    details.append("Dev→App")
-                else:
-                    try:
-                        details.append("App→Dev" if _parse_int(dir_raw) == 0 else "Dev→App")
-                    except ValueError:
-                        details.append(f"dir={dir_raw}")
+            dir_str = _direction_str(padded[6])
+            if dir_str:
+                details.append(dir_str)
+            elif padded[6].strip():
+                details.append(f"dir={padded[6].strip()}")
         if opcode == 0x05:  # Pairing Failed
             reason_raw = reason_raw.strip()
             if reason_raw:
@@ -1370,13 +1408,22 @@ def _get_l2cap_events(tshark: str, pcapng: Path) -> list:
 
 def _get_att_meta_events(tshark: str, pcapng: Path,
                          mac: str, addr_field: str) -> list:
-    """Extract ATT setup frames: MTU exchange and Write RSP confirmations."""
+    """Extract ATT setup frames: MTU exchange and Write RSP confirmations.
+
+    Direction added 2026-07-23 — ATT MTU exchange (unlike WRITE_RSP) can legally
+    be initiated by either side; confirmed in the RC-vs-mock investigation that
+    the mock's peripheral side initiates it, not the central, which the previous
+    direction-less version of this table couldn't show at all.
+    """
     dfilter = "btatt.opcode == 0x02 || btatt.opcode == 0x03 || btatt.opcode == 0x13"
     if mac:
         dfilter = f"({dfilter}) && {addr_field} == {mac.lower()}"
-    rows = _run_tshark(tshark, pcapng, dfilter,
-                       ["frame.time_relative", "btatt.opcode",
-                        "btatt.client_rx_mtu", "btatt.server_rx_mtu", "btatt.handle"])
+    direction_field = _direction_field(tshark, pcapng, dfilter)
+    fields = ["frame.time_relative", "btatt.opcode",
+              "btatt.client_rx_mtu", "btatt.server_rx_mtu", "btatt.handle"]
+    if direction_field:
+        fields.append(direction_field)
+    rows = _run_tshark(tshark, pcapng, dfilter, fields)
     _ATT_META_NAMES = {
         0x02: "ATT_MTU_REQ",
         0x03: "ATT_MTU_RSP",
@@ -1386,15 +1433,16 @@ def _get_att_meta_events(tshark: str, pcapng: Path,
     for row in rows:
         if not row or not row[0].strip():
             continue
-        padded = (row + [""] * 5)[:5]
-        ts_raw, op_raw, client_mtu_raw, server_mtu_raw, handle_raw = padded
+        padded = (row + [""] * len(fields))[:len(fields)]
+        ts_raw, op_raw, client_mtu_raw, server_mtu_raw, handle_raw = padded[:5]
         try:
             opcode = _parse_int(op_raw)
             ts_f   = float(ts_raw.strip())
         except ValueError:
             continue
         name    = _ATT_META_NAMES.get(opcode, f"ATT_0x{opcode:02X}")
-        details = []
+        dir_str = _direction_str(padded[5]) if direction_field else None
+        details = [dir_str] if dir_str else []
         if opcode == 0x02 and client_mtu_raw.strip():
             try:
                 details.append(f"clientMTU={_parse_int(client_mtu_raw)}")
@@ -1482,23 +1530,37 @@ def _get_adv_packets(tshark: str, pcapng: Path, mac: str) -> list:
         return a == mac_lower or a == ""
 
     # ADV_IND (pdu_type=0): primary advertisement — contains UUID16, manufacturer data.
-    # occurrence="a" on type/company_id/data (not the tool's usual "f"/first-only) —
+    # occurrence="a" on company_id/data (not the tool's usual "f"/first-only) —
     # a single ADV_IND can carry more than one Manufacturer Specific Data (0xFF) AD
     # structure, e.g. Mera's real advertisement: company=0x0100 (state+article) is a
     # SEPARATE, shorter AD entry from a second one under a bogus/reserved company ID
     # (2026-07-18 finding — see docs/developer/mera-home-app-onboarding.md). "f" would
     # silently report only the first and hide the second.
+    #
+    # Deliberately NOT fetching btcommon.eir_ad.entry.type here (fixed 2026-07-23 —
+    # long-known bug, finally root-caused and fixed). That field returns ALL AD
+    # structure types in the packet via occurrence="a" (Flags, UUID16 list, Mfg
+    # Data, ...), not just the ones with a company_id/data value, so zipping
+    # ad_types[i] against ad_companies[i]/ad_datas[i] positionally was WRONG
+    # whenever a packet mixed non-Mfg-Data AD entries with Mfg-Data ones — e.g. a
+    # UUID16-list entry's own type (0x02/0x03) got misattributed to the Mfg-Data
+    # entry next to it, exactly the "type=0x03 anomaly" that caused real confusion
+    # in the 2026-07-22/23 RC-vs-mock advertising comparison before being resolved
+    # via raw `tshark -x` hex dumps instead of this tool. Fix: company_id/data are
+    # BLE-spec-exclusive to Manufacturer Specific Data (AD type 0xFF) — no other
+    # standard AD type has a company ID sub-field — so every entry that has a
+    # company_id/data value is unconditionally type 0xFF; no separate type field
+    # or positional zip is needed at all.
     for row in _run_tshark(tshark, pcapng,
                            "btle.advertising_header.pdu_type == 0x00",
                            ["frame.time_relative", "btle.advertising_address",
                             "btcommon.eir_ad.entry.uuid_16",
-                            "btcommon.eir_ad.entry.type",
                             "btcommon.eir_ad.entry.company_id",
                             "btcommon.eir_ad.entry.data"],
                            occurrence="a"):
-        if len(row) < 6:
+        if len(row) < 5:
             continue
-        ts_s, addr, uuid_raw, type_raw, company_raw, data_raw = row[:6]
+        ts_s, addr, uuid_raw, company_raw, data_raw = row[:5]
         if addr.strip().lower() != mac_lower:
             continue
         try:
@@ -1506,9 +1568,9 @@ def _get_adv_packets(tshark: str, pcapng: Path, mac: str) -> list:
         except ValueError:
             continue
         uuids = [_norm_uuid(u) for u in uuid_raw.split(",") if u.strip()]
-        ad_types = [t.strip() for t in type_raw.split(",") if t.strip()]
         ad_companies = [c.strip() for c in company_raw.split(",") if c.strip()]
         ad_datas = [d.strip() for d in data_raw.split(",") if d.strip()]
+        ad_types = ["ff"] * len(ad_companies)   # always Manufacturer Specific Data, by definition
         packets.append({
             "ts": ts, "pdu": "ADV_IND",
             "uuids16": uuids,
@@ -1740,14 +1802,25 @@ def _decode_notif_payload(v: bytes) -> str:
 
 
 # GATT discovery + READ_BLOB opcodes — included in the Raw ATT Traffic table
-_GATT_OPCODES = {0x04, 0x05, 0x06, 0x07, 0x0c, 0x0d, 0x10, 0x11}
+_GATT_OPCODES = {0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0c, 0x0d, 0x10, 0x11}
 
 
 def _decode_gatt_frame(opcode: int, handle_raw: str,
-                       raw_bytes: bytes, offset_val: int) -> tuple:
+                       raw_bytes: bytes, offset_val: int,
+                       start_handle_raw: str = "", end_handle_raw: str = "",
+                       uuid_raw: str = "",
+                       read_by_type_entry: str | None = None) -> tuple:
     """Decode a GATT service-discovery or READ_BLOB frame.
     Returns (direction, decoded_str).
     handle_raw may be a comma-separated list (tshark multi-value for RSP frames).
+    start_handle_raw/end_handle_raw/uuid_raw are only used for opcode 0x08
+    (READ_BY_TYPE_REQ — characteristic discovery within a handle range).
+    read_by_type_entry is a pre-decoded "0xHHHH=UUID, ..." string for opcode 0x09
+    (READ_BY_TYPE_RSP), built by the caller via _get_read_by_type_entries_by_frame —
+    a naive occurrence="a" comma-split on this opcode's own fields would misalign
+    multi-entry responses (same trap as 0x05/0x11, see that function's docstring),
+    so decoding it correctly requires the PDML-based per-frame lookup, not fields
+    fetched directly by this function's caller's flat -T fields query.
     """
     def _ph(s):
         try:
@@ -1769,6 +1842,16 @@ def _decode_gatt_frame(opcode: int, handle_raw: str,
     if opcode == 0x07:   # FIND_BY_TYPE_VALUE_RSP — handle field = found handle(s)
         hdls = "  ".join(f"0x{_ph(p):04X}" for p in parts)
         return "Dev→App", f"GATT  FIND_BY_TYPE_VALUE_RSP  found={hdls}"
+    if opcode == 0x08:   # READ_BY_TYPE_REQ — characteristic discovery within a handle range
+        start_h = _ph(start_handle_raw.split(",")[0]) if start_handle_raw.strip() else 0
+        end_h   = _ph(end_handle_raw.split(",")[0]) if end_handle_raw.strip() else 0
+        uuid_first = uuid_raw.split(",")[0].strip() if uuid_raw.strip() else ""
+        uuid_str = f"0x{_ph(uuid_first):04X}" if uuid_first else "?"
+        return "App→Dev", f"GATT  READ_BY_TYPE_REQ  range=0x{start_h:04X}-0x{end_h:04X}  UUID={uuid_str}"
+    if opcode == 0x09:   # READ_BY_TYPE_RSP — one or more (handle, value) pairs
+        if read_by_type_entry:
+            return "Dev→App", f"GATT  READ_BY_TYPE_RSP  {read_by_type_entry}"
+        return "Dev→App", "GATT  READ_BY_TYPE_RSP  (entries unavailable — see --gatt-map)"
     if opcode == 0x0c:   # READ_BLOB_REQ
         return "App→Dev", f"READ_BLOB_REQ  handle=0x{first_h:04X}  offset={offset_val}"
     if opcode == 0x0d:   # READ_BLOB_RSP
@@ -1803,6 +1886,7 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
 
     dfilter = ("btatt.opcode == 0x04 || btatt.opcode == 0x05"
                " || btatt.opcode == 0x06 || btatt.opcode == 0x07"
+               " || btatt.opcode == 0x08 || btatt.opcode == 0x09"
                " || btatt.opcode == 0x0c || btatt.opcode == 0x0d"
                " || btatt.opcode == 0x10 || btatt.opcode == 0x11"
                " || btatt.opcode == 0x12 || btatt.opcode == 0x52"
@@ -1818,15 +1902,30 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
     # uuid16/uuid128 — those fields have a tree-depth-conflation trap for these
     # same opcodes (see _extract_gatt_handles / _run_tshark_pdml's docstring)
     # that btatt.handle itself does not have.
+    #
+    # 0x08/0x09 added 2026-07-23 (previously silently invisible in this table —
+    # confirmed the hard way: a real-vs-mock RC comparison needed "10 characteristic-
+    # discovery requests vs 0" as its central piece of evidence, and this table showed
+    # neither, because 0x08/0x09 weren't in _GATT_OPCODES at all). btatt.starting_handle/
+    # ending_handle/uuid16 are 0x08-only (REQ) fields — one value per frame (the search
+    # criteria itself), not per-entry, so they don't have the response-side tree-depth
+    # trap. 0x09 (RSP) still needs the PDML-based per-frame lookup (see
+    # _decode_gatt_frame's docstring) — built once below via
+    # _get_read_by_type_entries_by_frame, so btatt.value/handle for 0x09 rows are
+    # decoded from that lookup instead of this flat query.
     rows = _run_tshark(tshark, pcapng, dfilter,
-                       ["frame.time_relative", "btatt.opcode",
-                        "btatt.handle", "btatt.value", "btatt.offset"],
+                       ["frame.number", "frame.time_relative", "btatt.opcode",
+                        "btatt.handle", "btatt.value", "btatt.offset",
+                        "btatt.starting_handle", "btatt.ending_handle", "btatt.uuid16"],
                        occurrence="a")
+
+    read_by_type_entries = _get_read_by_type_entries_by_frame(tshark, pcapng)
 
     frames = []
     for row in rows:
-        padded = (row + [""] * 5)[:5]
-        ts_raw, op_raw, handle_raw, value_raw, offset_raw = padded
+        padded = (row + [""] * 9)[:9]
+        (frame_no_raw, ts_raw, op_raw, handle_raw, value_raw, offset_raw,
+         start_h_raw, end_h_raw, uuid_raw) = padded
         try:
             opcode = _parse_int(op_raw)
             _ts    = float(ts_raw.strip())
@@ -1844,9 +1943,22 @@ def _get_geberit_traffic(tshark: str, pcapng: Path,
                 offset_val = int(offset_raw.strip()) if offset_raw.strip() else 0
             except ValueError:
                 offset_val = 0
-            direction, decoded = _decode_gatt_frame(opcode, handle_raw, raw_bytes, offset_val)
-            # first handle for the Handle column; may be 0 when tshark returns nothing
-            parts = [p for p in handle_raw.split(",") if p.strip()]
+            read_by_type_entry = None
+            if opcode == 0x09:
+                try:
+                    read_by_type_entry = read_by_type_entries.get(int(frame_no_raw.strip()))
+                except (ValueError, TypeError):
+                    pass
+            direction, decoded = _decode_gatt_frame(
+                opcode, handle_raw, raw_bytes, offset_val,
+                start_handle_raw=start_h_raw, end_handle_raw=end_h_raw,
+                uuid_raw=uuid_raw, read_by_type_entry=read_by_type_entry)
+            # first handle for the Handle column; may be 0 when tshark returns nothing.
+            # 0x08 (REQ) has no btatt.handle at all — use starting_handle instead.
+            if opcode == 0x08:
+                parts = [p for p in start_h_raw.split(",") if p.strip()]
+            else:
+                parts = [p for p in handle_raw.split(",") if p.strip()]
             try:
                 handle = _parse_int(parts[0]) if parts else 0
             except (ValueError, TypeError):
