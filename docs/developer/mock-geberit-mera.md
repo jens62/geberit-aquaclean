@@ -787,11 +787,19 @@ RC connection) and `new_mock_1.102.0b1_and_later/Remote-Control-mock-1.112.0b1-p
 (mock, first RC connection) as the primary pair; cross-checked the advertising finding (below)
 against 8 additional mock captures spanning `1.104.0b1`–`1.112.0b1`.
 
+**Mock version provenance — rows 1–13 and 0d/0e (SMP/GATT-discovery-method rows, and the
+timing rows) are checked against `1.112.0b1`'s capture only.** Only rows 0b/0c (the advertising
+payload/AD-type structure) are confirmed stable across all 9 mock versions tested
+(`1.104.0b1`–`1.112.0b1`). Don't generalize the SMP/GATT/timing rows to "the mock" as a whole
+without re-checking other versions first.
+
 | # | Phase | Central (RC) sends | Real Mera answers | Mock answers | Status |
 |---|---|---|---|---|---|
 | 0a | Active scanning | `SCAN_REQ` (confirmed via direction, sent repeatedly before each connect, against both) | `SCAN_RSP`: `"Geberit AC PRO"` + TX power + Mfg-data `company=0x3300 data=0x30` | `SCAN_RSP`: `"Geberit AC PRO"` only, no TX-power/RS-version entries in the one instance checked | Minor, not cross-checked further |
 | 0b | Advertising payload at connect time | *(RC doesn't advertise)* | `ADV_IND` Mfg-data: `09 ff aa01 01 313436 3231` — **9-byte AD structure, 6-byte payload**: state + article `"14621"` | `ADV_IND` Mfg-data: `0c ff aa01 01 3134363231 003238` — **12-byte AD structure, 9-byte payload**: same 6 bytes + **3 extra trailing bytes `00 32 38`** | **Confirmed via raw hex (`tshark -x`), stable across `1.104.0b1`–`1.112.0b1` (8 versions checked, byte-identical every time)** |
 | 0c | UUID AD structure | — | `03 02 a03e` — type `0x02` (Incomplete List), positioned *after* Mfg-data | `03 03 a03e` — type `0x03` (Complete List), positioned *before* Mfg-data | **Confirmed, same 8-version cross-check** — likely resolves the older "`type=0x03` anomaly, suspected `nrf-ble-analyze.py` display bug" note elsewhere in this investigation as a *real* difference, not (only) a tool bug |
+| 0d | Company-ID flip timing (relative to data-byte flip) | — | Data-byte flip (`IsButtonPressed`→`0x01`) at t=27.60s; company-ID flip (`0x0100`→`0x01AA`) separately at **t=32.59s — ~5.0s later**, matching the existing documented finding (§"Button-press/release timing" above) | **Zero intermediate state observed** anywhere in the capture — only idle (`0x0100`+unset) and pressed (`0x01AA`+set) ever appear, confirming `_update_advert()` flips both atomically in one call | Real, structural difference — real device stages the two flags ~5s apart; mock flips them simultaneously, always |
+| 0e | "Pressed" duration before RC connects | — | ~6.4s total pressed (t=27.6s→34.0s CONNECT_IND); only ~1.4s of that with company-ID already flipped | ~33s pressed (t=23.4s→56.8s CONNECT_IND) — no disconnect occurred in between to trigger a reset | Real difference, but **caveat: may be a test-methodology artifact** (how long the human tester left the web-UI button active vs. physical press timing) rather than an RC-meaningful signal. No release-then-repress cycle observed pre-connection on either side — release timing itself isn't independently observable pre-connect in either capture, only via the already-documented post-disconnect reset (§"Button-press/release timing" above, and the 2026-07-22 advertising-reset fix) |
 | 1 | SMP pairing | `SMP_PAIRING_REQUEST` (real: 7–8× retried after `Pairing Not Supported`; mock: succeeds first try) | `SMP_PAIRING_RESPONSE` → `CONFIRM`/`RANDOM`, key distribution | Same shape, no retries | Match — retry count already established as normal |
 | 2 | Encryption start | `LL_ENC_REQ`, `LL_START_ENC_REQ` | `LL_ENC_RSP`, `LL_START_ENC_RSP` ×2 | Same | Match |
 | 3 | LL feature exchange | *(RC does not initiate — corrected)* | Never sent | **Peripheral-initiated** `LL_PERIPHERAL_FEATURE_REQ` (direction-confirmed) | Divergent but NOT RC-attributable — likely BlueZ/kernel default behavior on the mock's host, unrelated to the mystery |
