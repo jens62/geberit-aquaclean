@@ -842,6 +842,30 @@ previously caused a real onboarding regression when changed carelessly (see the 
 regression note elsewhere in this document), so any change here should be made cautiously and retested
 against the Geberit Home App too, not just the RC.
 
+**Cross-checked against bluetoothd's own debug log, same day — one refinement, one closed
+puzzle.** `local-assets/Bluetooth-Logs/nRF52840/jens62/geberit-remote-control/
+new_mock_1.102.0b1_and_later/bluetooth_debug.log` turned out to cover the *exact* same test
+session as the `1.112.0b1` capture above (bluetoothd's last logged line at `13:08:50` matches
+the pcapng's last disconnect almost to the second).
+
+1. **Refinement, not a contradiction**: `db_hash_read_cb() Database Hash read` fires after every
+   one of the mock's 4 GATT app registrations (`mera_gatt`, `mera_battery`, `mera_dis`,
+   `mera_rc`) — confirming BlueZ's internal Database Hash mechanism is active on this build
+   (crypto support compiled in). This doesn't change the retraction above — the RC still never
+   reads `0x2B2A`/`0x2B29`/`0x2B3A` in any capture, against either device — but it resolves what
+   had been left as an open "maybe crypto isn't compiled in" hedge.
+2. **Closed puzzle**: the debug log shows the mock's services registering at much higher
+   internal handles (e.g. the `0xC526` RC-pairing service at `0x00C8`) than what the RC actually
+   discovered over the air (`0x0024`). This is **not** evidence of a long-uptime bluetoothd
+   (initially guessed and wrong) — the log shows this specific bluetoothd process (PID `9760`)
+   started fresh at `10:26:28` that same day. Within that one process lifetime, the mock's GATT
+   app registered **4 separate times** (`10:27:42`, `11:58:38`, `12:14:43`, then `13:02:58` —
+   our analyzed session) under different D-Bus connection names, meaning the mock itself was
+   restarted 3 times earlier that session without bluetoothd being restarted in between. BlueZ's
+   handle allocator doesn't cleanly reclaim a previous registration's range, so each mock restart
+   pushes handle numbers higher. Mundane, fully explained, not mystery-relevant — the RC always
+   sees a consistent, low-handle view for whatever session it's actually connecting to.
+
 ---
 
 **Stale RPA between Connection 1 and Connection 2 (v1.37.0+):**
