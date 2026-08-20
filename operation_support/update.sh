@@ -57,7 +57,7 @@ fi
 
 echo "==> Upgrading aquaclean-bridge to ${VERSION}..."
 "${VENV}/bin/pip" install --quiet --force-reinstall \
-    "git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
+    "geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
 
 echo "==> Restoring config.ini..."
 cp "$BACKUP" "$CONFIG"

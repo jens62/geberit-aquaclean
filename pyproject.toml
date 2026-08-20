@@ -11,7 +11,6 @@ dependencies = [
     "bleak>=2.0.0",       # note: 2.1.x may slow BLE connect on RPi5 BCM4345C0 + BlueZ 5.84
                           # (2.0.0 = ~1.8 s, 2.1.1 = ~25 s); ESP32 proxy is unaffected.
                           # HA ships bleak 2.1.1 — upper bound removed to allow HACS installation.
-    "aioesphomeapi",
     "aiorun",
     "fastapi",
     "uvicorn",
@@ -29,6 +28,7 @@ include = ["aquaclean_console_app*"]
 "aquaclean_console_app" = ["static/*", "config.ini"]
 
 [project.optional-dependencies]
+esphome = ["aioesphomeapi"]
 test = ["pytest", "pytest-asyncio"]
 
 [tool.pytest.ini_options]
