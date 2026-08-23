@@ -56,8 +56,10 @@ if systemctl is-active --quiet aquaclean-bridge 2>/dev/null; then
 fi
 
 echo "==> Upgrading aquaclean-bridge to ${VERSION}..."
+# [esphome] extra: keep aioesphomeapi for the standalone ESP32-Bluetooth-Proxy transport
+# (HA installs without the extra via manifest.json). See pyproject.toml / issue #38.
 "${VENV}/bin/pip" install --quiet --force-reinstall \
-    "git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
+    "geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
 
 echo "==> Restoring config.ini..."
 cp "$BACKUP" "$CONFIG"

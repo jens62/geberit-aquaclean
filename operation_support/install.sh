@@ -43,7 +43,7 @@ if [ "$_OS" != "Linux" ]; then
     echo "       Detected OS: ${_OS}"
     echo ""
     echo "       To install manually on any platform:"
-    echo "         pip install \"git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}\""
+    echo "         pip install \"geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}\""
     echo ""
     exit 1
 fi
@@ -61,7 +61,7 @@ if [ "$_HAS_APT" = "0" ] && [ ! -d "$VENV" ]; then
     echo "       re-run this script — the apt step is skipped once the venv exists."
     echo ""
     echo "       Or install manually:"
-    echo "         pip install \"git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}\""
+    echo "         pip install \"geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}\""
     echo ""
     exit 1
 fi
@@ -85,8 +85,11 @@ echo "==> Upgrading pip, setuptools, wheel..."
 "${VENV}/bin/pip" install --upgrade pip setuptools wheel
 
 echo "==> Installing aquaclean-bridge @ ${VERSION}..."
+# [esphome] extra pulls aioesphomeapi for the ESP32-Bluetooth-Proxy transport,
+# which the standalone bridge uses. HA installs without the extra (via manifest.json)
+# so it keeps its own Core-pinned aioesphomeapi — see pyproject.toml / issue #38.
 "${VENV}/bin/pip" install --force-reinstall \
-    "git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
+    "geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@${VERSION}"
 
 echo ""
 echo "==> Installed version:"
