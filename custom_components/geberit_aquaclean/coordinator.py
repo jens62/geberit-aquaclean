@@ -75,13 +75,14 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
       If an ESPHome host is configured, an ESP32 restart is attempted immediately.
     """
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, zeroconf_instance=None) -> None:
         # options (from options flow) take precedence over data (from initial config flow)
         conf = {**entry.data, **entry.options}
         self._device_id: str = conf[CONF_DEVICE_ID]
         self._esphome_host: str | None = conf.get(CONF_ESPHOME_HOST) or None
         self._esphome_port: int = conf.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT)
         self._noise_psk: str | None = conf.get(CONF_NOISE_PSK) or None
+        self._zeroconf_instance = zeroconf_instance
         self._use_ha_bluetooth: bool = conf.get(CONF_USE_HA_BLUETOOTH, False)
         poll_interval: int = conf.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self._esphome_name_cache: str | None = None
@@ -177,16 +178,23 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
         """
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
         if self._use_ha_bluetooth:
-            return BluetoothLeConnector(None, self._esphome_port, self._noise_psk, hass=self.hass)
+            return BluetoothLeConnector(
+                None, self._esphome_port, self._noise_psk,
+                hass=self.hass, zeroconf_instance=self._zeroconf_instance,
+            )
         ha = self.hass if not self._esphome_host else None
-        return BluetoothLeConnector(self._esphome_host, self._esphome_port, self._noise_psk, hass=ha)
+        return BluetoothLeConnector(
+            self._esphome_host, self._esphome_port, self._noise_psk,
+            hass=ha, zeroconf_instance=self._zeroconf_instance,
+        )
 
     def _get_esphome_connector(self):
         """Return the persistent ESPHome connector, creating it if needed."""
         from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
         if self._esphome_connector is None:
             self._esphome_connector = BluetoothLeConnector(
-                self._esphome_host, self._esphome_port, self._noise_psk, hass=None
+                self._esphome_host, self._esphome_port, self._noise_psk,
+                hass=None, zeroconf_instance=self._zeroconf_instance,
             )
             _LOGGER.debug("Created persistent ESPHome connector")
         return self._esphome_connector

@@ -496,6 +496,7 @@ async def async_scan_ble_via_esphome(
     port: int,
     noise_psk: Optional[str] = None,
     timeout: float = 10.0,
+    zeroconf_instance=None,
 ) -> list[dict]:
     """Scan for BLE devices via an ESPHome Bluetooth proxy.
 
@@ -509,7 +510,9 @@ async def async_scan_ble_via_esphome(
         _LOGGER.debug("aioesphomeapi not available")
         return []
 
-    client = APIClient(address=host, port=port, password="", noise_psk=noise_psk)
+    client = APIClient(
+        address=host, port=port, password="", noise_psk=noise_psk, zeroconf_instance=zeroconf_instance
+    )
     try:
         await asyncio.wait_for(client.connect(login=True), timeout=10.0)
     except Exception as exc:

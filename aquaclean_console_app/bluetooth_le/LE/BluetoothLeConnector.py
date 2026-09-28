@@ -66,7 +66,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
     # AriendiSecurity state corruption).
     _active_generation: dict = {}
 
-    def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None):
+    def __init__(self, esphome_host=None, esphome_port=6053, esphome_noise_psk=None, hass=None, zeroconf_instance=None):
         self.client = None
         self.read_characteristics = {}
         self.data_received_handlers = myEvent.EventHandler()
@@ -77,6 +77,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         self.esphome_host      = esphome_host
         self.esphome_port      = esphome_port
         self.esphome_noise_psk = esphome_noise_psk
+        self._zeroconf_instance = zeroconf_instance
         self.esphome_proxy_name = None  # ESP32 device name from device_info
         self.esphome_proxy_connected = False  # True when ESP32 API is connected
         self.last_esphome_api_ms: int | None = None  # Time to connect/verify ESP32 API (None = local BLE, 0 = reused)
@@ -311,7 +312,8 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             address=self.esphome_host,
             port=self.esphome_port,
             password="",
-            noise_psk=self.esphome_noise_psk
+            noise_psk=self.esphome_noise_psk,
+            zeroconf_instance=self._zeroconf_instance,
         )
         try:
             await asyncio.wait_for(api.connect(login=True), timeout=10.0)
@@ -838,6 +840,7 @@ class BluetoothLeConnector(IBluetoothLeConnector):
             port=self.esphome_port,
             password="",
             noise_psk=self.esphome_noise_psk,
+            zeroconf_instance=self._zeroconf_instance,
         )
         try:
             await asyncio.wait_for(api.connect(login=True), timeout=10.0)
