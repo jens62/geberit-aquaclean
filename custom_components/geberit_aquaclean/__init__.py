@@ -6,6 +6,7 @@ import json
 import logging
 import pathlib
 
+from homeassistant.components import zeroconf
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -75,7 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Closing stale coordinator from a prior failed setup attempt")
         await old_coordinator.async_close()
 
-    coordinator = AquaCleanCoordinator(hass, entry)
+    coordinator = AquaCleanCoordinator(hass, entry, await zeroconf.async_get_async_instance(hass))
     # Store before first_refresh so the NEXT retry (above) can find and close this
     # coordinator if first_refresh raises ConfigEntryNotReady.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
