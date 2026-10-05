@@ -6,6 +6,43 @@ Planned features, improvements, and known bugs to fix.
 
 ## Bug fixes
 
+### Fix the on-demand toggle-lid handler (MQTT `toggleLidPosition` crashes in `--mode api` + `ble_connection = on-demand`)
+
+**Symptom** (reported 2026-10-04, bridge 3.0.9, standalone `--mode api`, `ble_connection = on-demand`):
+publishing to `<topic>/peripheralDevice/control/toggleLidPosition` does nothing. Subscribing
+works — the broker delivers the message and `MqttService.on_message` receives it — but the
+handler then raises:
+
+```
+Caught exception in on_message: 'NoneType' object has no attribute 'toggle_lid_position'
+  main.py, ServiceMode.on_toggle_lid_message:  await self.client.toggle_lid_position()
+```
+
+**Root cause**: `ServiceMode.run()` wires `on_toggle_lid_message` (and `on_reset_filter_counter_message`,
+and `Connect`) to the MQTT events. Those handlers use `self.client`, which only exists in
+persistent BLE mode. In on-demand mode `ServiceMode` never connects, so `self.client` is `None`.
+`ApiMode.run()` wires on-demand-safe handlers (via `run_command(...)`) for every other control
+topic (`toggleAnal`, `toggleDryer`, …) but has none for `ToggleLidPosition` or `ResetFilterCounter`,
+so those two fall through to the broken `ServiceMode` handlers.
+
+**Fix steps**:
+1. Add `ApiMode._on_mqtt_toggle_lid` → `run_command("toggle-lid")` and
+   `ApiMode._on_mqtt_reset_filter_counter` → `run_command("reset-filter-counter")`, same
+   try/except-and-warn shape as `_on_mqtt_toggle_anal`. Both commands already exist in `run_command`.
+2. Wire them in `ApiMode.run()` next to the other `mqtt_service.* +=` lines.
+3. Stop `ServiceMode` from also handling these events in on-demand mode (guard on
+   `self.client is None` / `ble_connection`), so the crashing handler no longer fires alongside the new one.
+4. Check `centralDevice/control/connect` (`ServiceMode.request_reconnect`) for the same
+   on-demand problem — not verified.
+5. Grep for any other `ServiceMode` MQTT handler that touches `self.client`.
+
+**Workaround until fixed**: `ble_connection = persistent` in `[SERVICE]` (trade-off: the bridge holds the
+BLE link, so the Geberit phone app / remote can't connect meanwhile).
+
+Branch required (touches `aquaclean_console_app`); update the MQTT section of `docs/` if behavior notes change.
+
+---
+
 ### Fix: SPL parameter mislabeling (LidOffset / ShowerArmOffset)
 
 **Prerequisite resolved (2026-06-26, nRF52840 capture)**: The iOS app sends SPL
