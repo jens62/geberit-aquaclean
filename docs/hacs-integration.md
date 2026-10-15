@@ -70,6 +70,13 @@ connection to the ESP32. The HA host needs no BLE adapter.
 
 The ESP32 ESPHome proxy (€5–15) is the recommended path. Local BLE is supported as an alternative.
 
+### ESPHome client dependency
+
+The HACS integration uses the `aioesphomeapi` version provided by Home Assistant Core.
+It intentionally does not install another build because the package contains compiled
+extensions that must remain compatible with the running Core version. Standalone bridge
+installations use the `geberit-aquaclean[esphome]` extra instead.
+
 ---
 
 ## Prerequisites

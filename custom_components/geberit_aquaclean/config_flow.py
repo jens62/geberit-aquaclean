@@ -10,6 +10,7 @@ import voluptuous as vol
 _LOGGER = logging.getLogger(__name__)
 
 from homeassistant import config_entries
+from homeassistant.components import zeroconf
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers import selector
@@ -82,6 +83,7 @@ async def _test_connection(
     esphome_port: int,
     noise_psk: str | None,
     hass=None,
+    zeroconf_instance=None,
 ):
     """Attempt a BLE connect, probe GATT profile, and return the result.
 
@@ -96,7 +98,9 @@ async def _test_connection(
     from aquaclean_console_app.bluetooth_le.LE.BluetoothLeConnector import BluetoothLeConnector
     from aquaclean_console_app.aquaclean_core.AquaCleanClientFactory import AquaCleanClientFactory
 
-    connector = BluetoothLeConnector(esphome_host, esphome_port, noise_psk, hass=hass)
+    connector = BluetoothLeConnector(
+        esphome_host, esphome_port, noise_psk, hass=hass, zeroconf_instance=zeroconf_instance,
+    )
     client = AquaCleanClientFactory(connector).create_client()
     try:
         await client.connect_ble_only(device_id)
@@ -272,8 +276,6 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _default_proxy = f"{self._found_proxies[0]['ip']}:{self._found_proxies[0]['port']}"
             options = [
                 selector.SelectOptionDict(
-                    # Use IP as value — aioesphomeapi would create a competing Zeroconf
-                    # instance to resolve .local hostnames; passing an IP avoids that.
                     value=f"{p['ip']}:{p['port']}",
                     label=f"{p['name']} ({p['host'] or p['ip']}:{p['port']})",
                 )
@@ -344,7 +346,8 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if self._esphome_host:
                     from aquaclean_console_app.setup.discovery import async_scan_ble_via_esphome
                     self._found_devices = await async_scan_ble_via_esphome(
-                        self._esphome_host, self._esphome_port, self._noise_psk, timeout=10.0
+                        self._esphome_host, self._esphome_port, self._noise_psk, timeout=10.0,
+                        zeroconf_instance=await zeroconf.async_get_async_instance(self.hass),
                     )
                 elif self._transport == "local_ble_ha":
                     self._found_devices = []
@@ -464,6 +467,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._esphome_port,
                     self._noise_psk,
                     hass=hass,
+                    zeroconf_instance=await zeroconf.async_get_async_instance(self.hass),
                 )
             except Exception:
                 _LOGGER.exception("[AquaClean] Config flow wizard: connection test failed")
@@ -484,6 +488,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             profile = await _test_connection(
                                 self._mac, test_esphome_host, self._esphome_port,
                                 self._noise_psk, hass=hass,
+                                zeroconf_instance=await zeroconf.async_get_async_instance(self.hass),
                             )
                         except Exception:
                             _LOGGER.warning(
@@ -633,6 +638,7 @@ class AquaCleanOptionsFlow(config_entries.OptionsFlow):
                         data.get(CONF_ESPHOME_PORT, DEFAULT_ESPHOME_PORT),
                         data[CONF_NOISE_PSK],
                         hass=hass,
+                        zeroconf_instance=await zeroconf.async_get_async_instance(self.hass),
                     )
                 except Exception:
                     _LOGGER.exception("[AquaClean] Options flow: connection test failed")

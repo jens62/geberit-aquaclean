@@ -285,11 +285,14 @@ When the ESPHome proxy is enabled:
 **Why aioesphomeapi instead of bleak-esphome?**
 The `bleak-esphome` library v3.x requires Home Assistant's `habluetooth` infrastructure, which is not available in standalone applications.  Using `aioesphomeapi` directly removes this dependency and keeps the bridge fully standalone.
 
-Install the extra dependency:
+Standalone bridge installations include the ESPHome client through the package extra:
 
 ```bash
-pip install aioesphomeapi
+pip install "geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@<version>"
 ```
+
+The HACS integration instead uses the compatible `aioesphomeapi` build provided by
+Home Assistant Core.
 
 ---
 

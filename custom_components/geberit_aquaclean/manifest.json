@@ -7,7 +7,7 @@
   "requirements": [
     "geberit-aquaclean @ git+https://github.com/jens62/geberit-aquaclean@v3.1.3b1"
   ],
-  "dependencies": [],
+  "dependencies": ["zeroconf"],
   "codeowners": ["@jens62"],
   "config_flow": true,
   "iot_class": "local_polling",
