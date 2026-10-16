@@ -11,7 +11,7 @@ dependencies = [
     "bleak>=2.0.0",       # note: 2.1.x may slow BLE connect on RPi5 BCM4345C0 + BlueZ 5.84
                           # (2.0.0 = ~1.8 s, 2.1.1 = ~25 s); ESP32 proxy is unaffected.
                           # HA ships bleak 2.1.1 — upper bound removed to allow HACS installation.
-    "aioesphomeapi",
+    # aioesphomeapi is intentionally NOT a hard dependency: see [project.optional-dependencies].esphome.
     "aiorun",
     "fastapi",
     "uvicorn",
@@ -29,6 +29,18 @@ include = ["aquaclean_console_app*"]
 "aquaclean_console_app" = ["static/*", "config.ini"]
 
 [project.optional-dependencies]
+# aioesphomeapi is provided by Home Assistant Core (the `esphome` / `bleak_esphome`
+# integrations pin it, e.g. ==45.6.1). Declaring it as a hard runtime dependency lets
+# pip override that pin with the newest PyPI release, and on Python builds without
+# prebuilt wheels (e.g. cp314) forces a source rebuild that produces ABI-incompatible
+# Cython artifacts — breaking ALL Noise-encrypted ESPHome devices on the HA instance.
+# See issue #38. Inside HA the ESP32-Bluetooth-Proxy transport is not used (HA has its
+# own habluetooth stack), so the dependency is unnecessary there. Standalone / non-HA
+# users who want the ESPHome-proxy transport install it explicitly:
+#     pip install "geberit-aquaclean[esphome]"
+# All aioesphomeapi imports in the codebase are lazy (function-level), so the package
+# imports and runs fine without this extra when the ESPHome transport is not used.
+esphome = ["aioesphomeapi"]
 test = ["pytest", "pytest-asyncio"]
 
 [tool.pytest.ini_options]

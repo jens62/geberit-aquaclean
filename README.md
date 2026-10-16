@@ -89,7 +89,7 @@ curl -fsSL https://api.github.com/repos/jens62/geberit-aquaclean/releases | grep
 ```bash
 python3 -m venv ~/venv
 ~/venv/bin/pip install --upgrade pip setuptools wheel
-~/venv/bin/pip install git+https://github.com/jens62/geberit-aquaclean.git@<version>
+~/venv/bin/pip install "geberit-aquaclean[esphome] @ git+https://github.com/jens62/geberit-aquaclean.git@<version>"
 ```
 
 **Upgrading an existing install** (preserves your `config.ini`, stops/restarts the service automatically):
