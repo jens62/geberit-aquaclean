@@ -18,7 +18,7 @@ from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
-    ADV_DEVICE_TYPE_TO_MODEL,
+    resolve_device_model,
     CONF_DEVICE_ID,
     CONF_DEVICE_TYPE,
     CONF_ESPHOME_HOST,
@@ -543,7 +543,7 @@ class AquaCleanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await asyncio.sleep(3.0)  # let BLE teardown propagate before coordinator first poll
                     data = {
                         CONF_DEVICE_ID: self._mac,
-                        CONF_DEVICE_TYPE: ADV_DEVICE_TYPE_TO_MODEL.get(self._adv_device_type_str),
+                        CONF_DEVICE_TYPE: resolve_device_model(self._adv_device_type_str),
                         CONF_ESPHOME_HOST: self._esphome_host,
                         CONF_ESPHOME_PORT: self._esphome_port,
                         CONF_NOISE_PSK: self._noise_psk,

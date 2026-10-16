@@ -76,6 +76,55 @@ PROC82_DESCRIPTION_TO_MODEL: dict = {
     "AcCamaTestset":       "cama_testset",
 }
 
+# ── Model-name resolution ─────────────────────────────────────────────────
+# Devices do not agree on how to spell their own model. Observed so far:
+#
+#   proc 0x82 description  "AcMeraClassic"           (short form)
+#   proc 0x82 description  "AquaClean Mera Classic"  (long form, RS30.0 TS206)
+#   BLE advertisement      "Geberit Mera Classic"
+#
+# The two tables above only cover the exact spellings seen when they were
+# written, and a miss is silent: the model stays unknown and get_feature_sets()
+# falls back to _FS_FULL, so every model's entities are created.
+#
+# normalize_model_name() reduces any of these to a comparable key by
+# lower-casing, dropping non-alphanumerics and stripping the vendor/product
+# prefixes — all three examples above collapse to "meraclassic", which is the
+# model key "mera_classic" without its underscore.
+_MODEL_NAME_PREFIXES = ("geberit", "aquaclean", "ac")
+
+
+def normalize_model_name(raw: str | None) -> str:
+    """Reduce a device-reported model string to a comparable key."""
+    key = "".join(ch for ch in (raw or "").lower() if ch.isalnum())
+    for prefix in _MODEL_NAME_PREFIXES:
+        if key.startswith(prefix) and len(key) > len(prefix):
+            key = key[len(prefix):]
+    return key
+
+
+# Normalized spelling → model key, derived from the model table itself so a new
+# model only has to be added in one place.
+MODEL_BY_NORMALIZED_NAME: dict = {
+    normalize_model_name(model_key): model_key
+    for model_key in DEVICE_MODEL_FEATURE_SETS
+}
+
+
+def resolve_device_model(raw: str | None) -> str | None:
+    """Map a device-reported model string to a model key, or None if unknown.
+
+    Tries the exact tables first so existing behaviour is unchanged, then falls
+    back to the normalized lookup for spellings the tables do not list.
+    """
+    if not raw:
+        return None
+    return (
+        PROC82_DESCRIPTION_TO_MODEL.get(raw)
+        or ADV_DEVICE_TYPE_TO_MODEL.get(raw)
+        or MODEL_BY_NORMALIZED_NAME.get(normalize_model_name(raw))
+    )
+
 
 # ── Alba DpId coverage ────────────────────────────────────────────────────────
 # DpIds that have at least one wired HA entity (sensor, binary_sensor, number,

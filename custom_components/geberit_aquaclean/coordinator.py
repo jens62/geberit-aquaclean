@@ -25,7 +25,7 @@ from .const import (
     CONF_USE_HA_BLUETOOTH,
     DEFAULT_ESPHOME_PORT,
     DEFAULT_POLL_INTERVAL,
-    PROC82_DESCRIPTION_TO_MODEL,
+    resolve_device_model,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -578,10 +578,17 @@ class AquaCleanCoordinator(DataUpdateCoordinator):
                 if self._device_type == "alba":
                     self._device_model = "alba"
                 elif desc:
-                    self._device_model = PROC82_DESCRIPTION_TO_MODEL.get(desc)
+                    self._device_model = resolve_device_model(desc)
                     if self._device_model:
                         _LOGGER.info(
                             "Device model identified via proc 0x82: %s → %s", desc, self._device_model
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Unknown device model description %r — falling back to creating "
+                            "the entities of every model. Please report this string at "
+                            "https://github.com/jens62/geberit-aquaclean/issues so it can be mapped.",
+                            desc,
                         )
                 # Persist discovered model back to config entry so entity sets are correct
                 # on the next HA restart (avoids the full-entity fallback for manual-MAC installs).
