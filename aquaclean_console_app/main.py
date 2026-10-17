@@ -1681,6 +1681,7 @@ class ApiMode:
         self._on_demand_lock        = asyncio.Lock()
         self._poll_wakeup           = asyncio.Event()
         self._esphome_watchdog_online: bool | None = None  # independent API status
+        self._esphome_api_ready     = asyncio.Event()  # gate for background polling
         self._firmware_version_ready = asyncio.Event()  # set once firmware_versions is populated
         self._esphome_connector: "BluetoothLeConnector | None" = None  # Persistent connector (esphome_api_connection=persistent)
         self._esphome_client = None  # Paired client — created once so data_received_handlers don't accumulate
@@ -2569,39 +2570,50 @@ class ApiMode:
                 if not shared:
                     await connector.disconnect()
 
-    async def _esphome_watchdog_loop(self):
-        """Continuously monitor the ESPHome API, publishing only transitions.
+    async def _set_esphome_api_health(self, online: bool, error_code=None, message: str = ""):
+        """Gate background polls and publish a network-state transition.
 
-        A healthy API never overwrites the last BLE E0002 error. BLE errors
-        remain reported even when the watchdog has no active outage.
+        Called by the watchdog and by a failed BLE operation *while holding*
+        _on_demand_lock. State and wake event change before any awaited MQTT
+        publication, so a blocked poll cannot slip through during that delay.
         """
+        previous = self._esphome_watchdog_online
+        self._esphome_watchdog_online = online
+        topic = self.service.mqttConfig['topic']
+        if online:
+            self._esphome_api_ready.set()
+            if previous is not True:
+                logger.info("ESPHome API watchdog: online")
+                await self.service._update_esphome_proxy_state(
+                    connected=True, error="No error", error_code="E0000"
+                )
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/esphomeProxy/watchdog", "online"
+                )
+        else:
+            self._esphome_api_ready.clear()
+            if previous is not False:
+                logger.warning("ESPHome API watchdog: offline: %s", message)
+                await self.service.mqtt_service.send_data_async(
+                    f"{topic}/esphomeProxy/watchdog", "offline"
+                )
+            if error_code is not None:
+                await self.service._update_esphome_proxy_state(
+                    connected=False, error=message,
+                    error_code=error_code.code, error_hint=error_code.hint
+                )
+
+    async def _esphome_watchdog_loop(self):
+        """Monitor ESPHome API independently and gate background BLE polling."""
         if not esphome_host:
             return
-        topic = self.service.mqttConfig['topic']
         while not self._shutdown_event.is_set():
             try:
                 await self._probe_esphome_proxy()
-                if self._esphome_watchdog_online is not True:
-                    logger.info("ESPHome API watchdog: online")
-                    await self.service._update_esphome_proxy_state(
-                        connected=True, error="No error", error_code="E0000"
-                    )
-                    await self.service.mqtt_service.send_data_async(
-                        f"{topic}/esphomeProxy/watchdog", "online"
-                    )
-                self._esphome_watchdog_online = True
+                await self._set_esphome_api_health(True)
             except ESPHomeConnectionError as exc:
-                if self._esphome_watchdog_online is not False:
-                    ec = E1001 if exc.timeout else E1002
-                    logger.warning("ESPHome API watchdog: offline: %s", exc)
-                    await self.service.mqtt_service.send_data_async(
-                        f"{topic}/esphomeProxy/watchdog", "offline"
-                    )
-                    await self.service._update_esphome_proxy_state(
-                        connected=False, error=str(exc),
-                        error_code=ec.code, error_hint=ec.hint
-                    )
-                self._esphome_watchdog_online = False
+                ec = E1001 if exc.timeout else E1002
+                await self._set_esphome_api_health(False, ec, str(exc))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -2611,11 +2623,15 @@ class ApiMode:
             except asyncio.TimeoutError:
                 pass
 
-    async def _on_demand(self, action):
-        """Connect, execute action, disconnect — for on-demand connection mode.
-        Publishes connecting/connected/disconnected to MQTT and SSE, mirroring
-        the persistent-mode behaviour."""
+    async def _on_demand(self, action, *, background_poll: bool = False):
+        """Serialize BLE actions and block background polls during API outages.
+
+        Explicit REST/MQTT commands may still attempt a connection while offline.
+        Recheck under the same lock as the watchdog to close the check/use race.
+        """
         async with self._on_demand_lock:
+            if background_poll and esphome_host and self._esphome_watchdog_online is False:
+                return None
             return await self._on_demand_inner(action)
 
     async def _on_demand_inner(self, action):
@@ -2731,6 +2747,10 @@ class ApiMode:
                     _ec = E7002
                 _hint = _exc.hint() if isinstance(_exc, UnsupportedDeviceError) else _ec.hint.replace("<BT-ADDRESS>", device_id)
                 await self.service._set_ble_status("error", error_msg=str(_exc) or _ec.message, error_code=_ec.code, error_hint=_hint)
+                if esphome_host and _ec.code in ("E1001", "E1002"):
+                    # Set the gate while _on_demand_lock is still held, before
+                    # the exception reaches the background poll loop.
+                    await self._set_esphome_api_health(False, _ec, str(_exc))
             else:
                 await self.service._set_ble_status("disconnected")
                 if esphome_host:
@@ -2854,6 +2874,20 @@ class ApiMode:
         _first_poll = True  # poll immediately on startup; then sleep between cycles
 
         while True:
+            # Once the watchdog confirms an API outage, do not attempt another
+            # background BLE poll. Only the watchdog probes the ESPHome API.
+            if esphome_host and self._esphome_watchdog_online is False:
+                logger.info("BLE polling paused while ESPHome API is offline")
+                await self._esphome_api_ready.wait()
+                # On recovery poll without waiting a whole interval again,
+                # unless polling was explicitly disabled with interval=0.
+                _first_poll = True
+                _consecutive_poll_failures = 0
+                _consecutive_ble_failures = 0
+                _identification_fetched = False
+                self._poll_wakeup.clear()
+                logger.info("BLE polling resumed after ESPHome API recovery")
+
             # Sleep for the current interval; _poll_wakeup interrupts early on change.
             # Skipped on the very first iteration (when polling is enabled) so data
             # appears in the webapp immediately at startup without waiting one full interval.
@@ -2876,6 +2910,8 @@ class ApiMode:
                 return
             if self.ble_connection != "on-demand":
                 continue  # persistent mode handles its own polling
+            if esphome_host and self._esphome_watchdog_online is False:
+                continue  # API went offline during the polling interval
 
             # Circuit breaker: after threshold failures, probe at a longer interval.
             if _consecutive_poll_failures >= _CIRCUIT_OPEN_THRESHOLD:
@@ -2899,7 +2935,9 @@ class ApiMode:
             await self.service._publish_poll_timing(epoch=self.service.device_state["poll_epoch"])
             try:
                 if not _identification_fetched:
-                    result = await self._on_demand(self._fetch_state_and_info)
+                    result = await self._on_demand(self._fetch_state_and_info, background_poll=True)
+                    if result is None:
+                        continue  # watchdog went offline while waiting for the BLE lock
                     _identification_fetched = True
                     # Cache identification in device_state for SSE and /info endpoint.
                     for k in ("sap_number", "serial_number", "production_date",
@@ -2912,7 +2950,9 @@ class ApiMode:
                         self._firmware_version_ready.set()
                     await self._publish_identification_to_mqtt(result)
                 else:
-                    result = await self._on_demand(self._fetch_state)
+                    result = await self._on_demand(self._fetch_state, background_poll=True)
+                    if result is None:
+                        continue  # watchdog went offline while waiting for the BLE lock
                 # Success — close circuit.
                 if _consecutive_poll_failures > 0:
                     logger.info(f"Poll recovered after {_consecutive_poll_failures} consecutive failure(s)")
@@ -2965,10 +3005,7 @@ class ApiMode:
                 _consecutive_poll_failures += 1
                 _consecutive_ble_failures = 0
                 logger.warning(f"On-demand poll: ESP32 TCP error (failure #{_consecutive_poll_failures}): {e}")
-                await self.service._update_esphome_proxy_state(
-                    connected=False, error=str(e), error_code=error_code_obj.code,
-                    error_hint=error_code_obj.hint
-                )
+                await self._set_esphome_api_health(False, error_code_obj, str(e))
                 if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
                     logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
             except ESPHomeDeviceNotFoundError as e:
@@ -3011,12 +3048,9 @@ class ApiMode:
                     _consecutive_ble_failures = 0
                 logger.warning(f"On-demand poll failed (failure #{_consecutive_poll_failures}): {ec_code} — {ec_msg}")
                 if ec_code in ("E1001", "E1002") and esphome_host:
-                    # The ESPHome proxy owns network errors. Do not also send
-                    # them on centralDevice/error (one incident, two topics).
-                    await self.service._update_esphome_proxy_state(
-                        connected=False, error=ec_msg, error_code=ec_code,
-                        error_hint=ec_hint
-                    )
+                    # Already reported and gated by _on_demand_inner under the
+                    # BLE lock. Do not duplicate on centralDevice/error.
+                    pass
                 else:
                     temp_ec = ErrorCode(ec_code, ec_msg, "BLE", "ERROR", ec_hint)
                     await self.service.mqtt_service.send_data_async(
