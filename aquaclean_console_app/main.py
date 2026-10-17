@@ -594,8 +594,10 @@ _COMMON_SETTING_RANGES = {
 
 class ServiceMode:
     def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None,
-                 firmware_version_ready_event: asyncio.Event | None = None):
+                 firmware_version_ready_event: asyncio.Event | None = None,
+                 register_direct_mqtt_handlers: bool = True):
         self.client = None
+        self._register_direct_mqtt_handlers = register_direct_mqtt_handlers
         self.mqtt_initialized_wait_queue = Queue()
         self.device_state = {
             "is_user_sitting": None,
@@ -686,11 +688,13 @@ class ServiceMode:
             interval = 2.5
         self.device_state["poll_interval"] = interval
 
-        # Subscribe MQTT handlers once — handlers reference self.client
-        # which is updated each iteration of the recovery loop below
-        self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
-        self.mqtt_service.ResetFilterCounter += self.on_reset_filter_counter_message
-        self.mqtt_service.Connect += self.request_reconnect
+        # Standalone ServiceMode owns the legacy direct handlers. When embedded
+        # in ApiMode, ApiMode owns MQTT routing so the configured BLE connection
+        # mode is respected for every command and connect request.
+        if self._register_direct_mqtt_handlers:
+            self.mqtt_service.ToggleLidPosition += self.on_toggle_lid_message
+            self.mqtt_service.ResetFilterCounter += self.on_reset_filter_counter_message
+            self.mqtt_service.Connect += self.request_reconnect
 
         # Clear stale retained messages and publish initial status
         await self._clear_stale_retained_topics()
@@ -1684,8 +1688,12 @@ class ApiMode:
         self._poll_stats = _PollStats()
 
         # Always create ServiceMode so ble_connection can be toggled at runtime.
-        self.service = ServiceMode(mqtt_enabled=mqtt_enabled, shutdown_event=self._shutdown_event,
-                                   firmware_version_ready_event=self._firmware_version_ready)
+        self.service = ServiceMode(
+            mqtt_enabled=mqtt_enabled,
+            shutdown_event=self._shutdown_event,
+            firmware_version_ready_event=self._firmware_version_ready,
+            register_direct_mqtt_handlers=False,
+        )
         self.service.device_state["ble_connection"] = self.ble_connection
         self.service.device_state["esphome_api_connection"] = self.esphome_api_connection
         self.service.device_state["poll_interval"]  = self._poll_interval
@@ -1731,6 +1739,7 @@ class ApiMode:
         # Wire MQTT inbound control topics → ApiMode handlers
         self.service.mqtt_service.SetProfileSetting      += self._on_mqtt_set_profile_setting
         self.service.mqtt_service.SetCommonSetting       += self._on_mqtt_set_common_setting
+        self.service.mqtt_service.ToggleLidPosition          += self._on_mqtt_toggle_lid
         self.service.mqtt_service.ToggleAnal                  += self._on_mqtt_toggle_anal
         self.service.mqtt_service.ToggleLadyShower            += self._on_mqtt_toggle_lady
         self.service.mqtt_service.ToggleDryer                 += self._on_mqtt_toggle_dryer
@@ -1752,6 +1761,8 @@ class ApiMode:
         self.service.mqtt_service.LidPositionOffsetSave       += self._on_mqtt_lid_offset_save
         self.service.mqtt_service.LidPositionOffsetIncrement  += self._on_mqtt_lid_offset_increment
         self.service.mqtt_service.LidPositionOffsetDecrement  += self._on_mqtt_lid_offset_decrement
+        self.service.mqtt_service.ResetFilterCounter          += self._on_mqtt_reset_filter_counter
+        self.service.mqtt_service.Connect                     += self._on_mqtt_connect
         self.service.mqtt_service.SetBleConnection       += self._on_mqtt_set_ble_connection
         self.service.mqtt_service.SetEsphomeApiConnection += self._on_mqtt_set_esphome_api_connection
         self.service.mqtt_service.SetPollInterval         += self._on_mqtt_set_poll_interval
@@ -1900,6 +1911,12 @@ class ApiMode:
         except Exception as e:
             logger.warning(f"MQTT set_common_setting({setting_id}, {value}) failed: {e}")
 
+    async def _on_mqtt_toggle_lid(self):
+        try:
+            await self.run_command("toggle-lid")
+        except Exception as e:
+            logger.warning(f"MQTT toggle-lid failed: {e}")
+
     async def _on_mqtt_toggle_anal(self):
         try:
             await self.run_command("toggle-anal")
@@ -2026,6 +2043,12 @@ class ApiMode:
         except Exception as e:
             logger.warning(f"MQTT lid-offset-decrement failed: {e}")
 
+    async def _on_mqtt_reset_filter_counter(self):
+        try:
+            await self.run_command("reset-filter-counter")
+        except Exception as e:
+            logger.warning(f"MQTT reset-filter-counter failed: {e}")
+
     async def _on_mqtt_set_ble_connection(self, value: str):
         try:
             await self.set_ble_connection(value)
@@ -2043,6 +2066,12 @@ class ApiMode:
             await self.set_poll_interval(value)
         except Exception as e:
             logger.warning(f"MQTT set_poll_interval({value}) failed: {e}")
+
+    async def _on_mqtt_connect(self):
+        try:
+            await self.do_connect()
+        except Exception as e:
+            logger.warning(f"MQTT connect failed: {e}")
 
     async def _on_mqtt_disconnect(self):
         try:
