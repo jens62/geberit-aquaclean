@@ -441,6 +441,50 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except Exception as e:
             logger.debug(f"Failed to read ESP32 diagnostic sensors: {e}")
 
+    async def _invalidate_esphome_api(self, api):
+        """Discard an unhealthy API transport without touching a newer connection."""
+        if api is not self._esphome_api:
+            return
+        if self._esphome_unsub_adv is not None:
+            try:
+                self._esphome_unsub_adv()
+            except Exception as exc:
+                logger.debug("ESPHome stale advertisement unsubscribe: %s", exc)
+            self._esphome_unsub_adv = None
+        self._esphome_api = None
+        self.esphome_proxy_connected = False
+        try:
+            close = api.disconnect()
+            if asyncio.iscoroutine(close):
+                await asyncio.wait_for(close, timeout=3.0)
+        except Exception as exc:
+            logger.debug("ESPHome stale API close: %s", exc)
+
+    async def verify_esphome_api(self, api):
+        """Verify the API socket used by BLE, not a separate fresh connection.
+
+        On failure this raises ESPHomeConnectionError (E1001/E1002).
+        A successful API check does not suppress a preceding BLE scan error.
+        Concurrent on-demand operations and the watchdog are serialized by
+        ApiMode._on_demand_lock.
+        """
+        if api is not self._esphome_api or getattr(api, "_connection", None) is None:
+            await self._invalidate_esphome_api(api)
+            raise ESPHomeConnectionError("ESPHome API transport closed")
+        try:
+            await asyncio.wait_for(api.device_info(), timeout=4.0)
+        except asyncio.TimeoutError as exc:
+            await self._invalidate_esphome_api(api)
+            raise ESPHomeConnectionError(
+                f"ESPHome API did not respond at {self.esphome_host}:{self.esphome_port}",
+                timeout=True,
+            ) from exc
+        except Exception as exc:
+            await self._invalidate_esphome_api(api)
+            raise ESPHomeConnectionError(
+                f"ESPHome API connection failed at {self.esphome_host}:{self.esphome_port}: {exc}"
+            ) from exc
+
     async def _connect_via_esphome(self, device_id):
         from aquaclean_console_app.bluetooth_le.LE.ESPHomeAPIClient import ESPHomeAPIClient
 
@@ -464,6 +508,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
         except ESPHomeConnectionError:
             self._esphome_api = None  # Force reconnect on next attempt
             raise
+
+        # Validate this socket before starting BLE; a stale TCP object is not proof
+        # that an interrupted inter-VLAN connection has recovered.
+        await self.verify_esphome_api(api)
 
         # Read WiFi signal strength while API is connected and idle (before BLE scan).
         await self._read_esphome_wifi_rssi_async()
@@ -504,8 +552,12 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 f"address_type={address_type}"
             )
         except asyncio.TimeoutError:
-            unsub_adv()
-            self._esphome_unsub_adv = None  # already called; prevent double-unsubscribe in disconnect()
+            try:
+                unsub_adv()
+            except Exception as exc:
+                logger.debug("ESPHome BLE unsubscribe after scan timeout: %s", exc)
+            finally:
+                self._esphome_unsub_adv = None  # prevent double-unsubscribe in disconnect()
             # Log unique addresses seen — helps diagnose MAC format mismatches or missing advertisements
             top = sorted(seen_addresses.items(), key=lambda x: -x[1])[:8]
             addr_strs = ", ".join(f"{a:#014x}({c})" for a, c in top)
@@ -514,6 +566,10 @@ class BluetoothLeConnector(IBluetoothLeConnector):
                 f"unique_addresses={len(seen_addresses)}, "
                 f"top_seen=[{addr_strs}]"
             )
+            # Check the very same connection that carried BLE advertisements.
+            # If it is broken, classify E1001/E1002 instead of E0002. If it
+            # works, report E0002 now; never silently retry or suppress it.
+            await self.verify_esphome_api(api)
             hint = (
                 "scanner may be stuck or subscription slot in use"
                 if total_packets == 0

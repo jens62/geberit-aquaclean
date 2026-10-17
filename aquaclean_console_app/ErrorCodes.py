@@ -49,14 +49,8 @@ E0001 = ErrorCode(
 )
 E0002 = ErrorCode(
     "E0002", "BLE device not found (ESP32 proxy)", "BLE", "ERROR",
-    hint="The Geberit AquaClean was not found via BLE. "
-         "Most likely cause: the Geberit Home App is open on your phone — "
-         "the device only accepts one BLE connection and stops advertising while the app is connected. "
-         "Close the Geberit Home App completely, then wait ~30 seconds — polling will resume automatically. "
-         "If the app is not running: ensure the AquaClean is powered on and within BLE range of the ESP32 proxy. "
-         "If the device was recently visible and nothing moved, the ESP32 BLE scanner may be stuck — "
-         "power-cycle the ESP32 to recover. "
-         "Verify with: python esphome/ble-scan.py <esp32-ip>",
+    hint="AquaClean not found via the ESP32 BLE proxy. Check BLE range, "
+         "competing connections, and the proxy BLE scanner.",
 )
 E0003 = ErrorCode(
     "E0003", "BLE connection timeout", "BLE", "ERROR",
@@ -120,15 +114,13 @@ E0010 = ErrorCode(
 
 E1001 = ErrorCode(
     "E1001", "ESP32 proxy connection timeout", "ESP32", "ERROR",
-    hint="The ESP32 did not respond in time. "
-         "Ensure it is powered on and connected to the network. "
-         "Try power cycling the ESP32 (unplug for 10 seconds).",
+    hint="ESPHome API did not respond. Check network connectivity, routing "
+         "and firewall rules between the bridge and ESP32.",
 )
 E1002 = ErrorCode(
     "E1002", "ESP32 proxy connection failed", "ESP32", "ERROR",
-    hint="Cannot reach the ESP32 proxy. "
-         "Verify the IP address and port in config.ini [ESPHOME]. "
-         "Ensure the ESP32 is powered on and on the same network as this device.",
+    hint="ESPHome API connection failed. Check the ESP32 address, API port, "
+         "routing and firewall rules.",
 )
 E1003 = ErrorCode(
     "E1003", "ESP32 BLE connection error", "ESP32", "ERROR",
