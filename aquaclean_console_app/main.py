@@ -2764,6 +2764,10 @@ class ApiMode:
             else:
                 await self.service._set_ble_status("disconnected")
                 if esphome_host:
+                    # A successful BLE operation proves this API path is usable.
+                    # Explicit user commands can therefore also end an outage
+                    # and resume background polling without waiting for a probe.
+                    await self._set_esphome_api_health(True)
                     if use_persistent:
                         # TCP stays alive — proxy remains connected between BLE cycles
                         await self.service._update_esphome_proxy_state(
