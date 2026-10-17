@@ -641,6 +641,9 @@ class ServiceMode:
             "free_heap": None,               # ESP32 free heap in bytes
             "max_free_block": None,          # ESP32 max contiguous free block in bytes
         }
+        # MQTT proxy errors are events, not a refreshed telemetry value. Keep
+        # one published error per continuous outage; E0000 rearms reporting.
+        self._last_published_esphome_error_code: str | None = None
         self._reconnect_requested = asyncio.Event()
         self._poll_interval_event = asyncio.Event()  # set by set_poll_interval() in persistent mode
         self._connection_allowed = asyncio.Event()
@@ -1154,21 +1157,24 @@ class ServiceMode:
                 "false"
             )
 
-        # Publish error status (JSON format matching centralDevice/error)
+        # Proxy errors describe a state transition. Publishing the same code
+        # with a fresh timestamp on every poll creates duplicate FHEM alarms.
+        # Publish each code once until a different code (including E0000)
+        # occurs. Repeated failures remain visible in the regular log.
         error_code = self.esphome_proxy_state["error_code"]
-        error_msg = self.esphome_proxy_state["error"]
-        error_hint = self.esphome_proxy_state.get("error_hint", "")
-        if error_code == "E0000":
-            error_json = ErrorManager.clear_error()
-        else:
-            # Create temporary ErrorCode for JSON formatting
-            from aquaclean_console_app.ErrorCodes import ErrorCode
-            temp_error = ErrorCode(error_code, error_msg, "ESP32", "ERROR", error_hint)
-            error_json = ErrorManager.to_json(temp_error, include_timestamp=True)
-        await self.mqtt_service.send_data_async(
-            f"{topic}/esphomeProxy/error",
-            error_json
-        )
+        if error_code != self._last_published_esphome_error_code:
+            error_msg = self.esphome_proxy_state["error"]
+            error_hint = self.esphome_proxy_state.get("error_hint", "")
+            if error_code == "E0000":
+                error_json = ErrorManager.clear_error()
+            else:
+                from aquaclean_console_app.ErrorCodes import ErrorCode
+                temp_error = ErrorCode(error_code, error_msg, "ESP32", "ERROR", error_hint)
+                error_json = ErrorManager.to_json(temp_error, include_timestamp=True)
+            await self.mqtt_service.send_data_async(
+                f"{topic}/esphomeProxy/error", error_json
+            )
+            self._last_published_esphome_error_code = error_code
 
         # Publish WiFi signal strength
         wifi_rssi = self.esphome_proxy_state.get("wifi_rssi")
@@ -2577,6 +2583,9 @@ class ApiMode:
                 await self._probe_esphome_proxy()
                 if self._esphome_watchdog_online is not True:
                     logger.info("ESPHome API watchdog: online")
+                    await self.service._update_esphome_proxy_state(
+                        connected=True, error="No error", error_code="E0000"
+                    )
                     await self.service.mqtt_service.send_data_async(
                         f"{topic}/esphomeProxy/watchdog", "online"
                     )
@@ -2588,8 +2597,9 @@ class ApiMode:
                     await self.service.mqtt_service.send_data_async(
                         f"{topic}/esphomeProxy/watchdog", "offline"
                     )
-                    await self.service.mqtt_service.send_data_async(
-                        f"{topic}/esphomeProxy/error", ErrorManager.to_json(ec, str(exc))
+                    await self.service._update_esphome_proxy_state(
+                        connected=False, error=str(exc),
+                        error_code=ec.code, error_hint=ec.hint
                     )
                 self._esphome_watchdog_online = False
             except asyncio.CancelledError:
@@ -2955,10 +2965,10 @@ class ApiMode:
                 _consecutive_poll_failures += 1
                 _consecutive_ble_failures = 0
                 logger.warning(f"On-demand poll: ESP32 TCP error (failure #{_consecutive_poll_failures}): {e}")
-                await self.service.mqtt_service.send_data_async(
-                    f"{topic}/esphomeProxy/error", ErrorManager.to_json(error_code_obj, str(e)))
                 await self.service._update_esphome_proxy_state(
-                    connected=False, error=str(e), error_code=error_code_obj.code, error_hint=error_code_obj.hint)
+                    connected=False, error=str(e), error_code=error_code_obj.code,
+                    error_hint=error_code_obj.hint
+                )
                 if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
                     logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
             except ESPHomeDeviceNotFoundError as e:
@@ -3000,9 +3010,17 @@ class ApiMode:
                 else:
                     _consecutive_ble_failures = 0
                 logger.warning(f"On-demand poll failed (failure #{_consecutive_poll_failures}): {ec_code} — {ec_msg}")
-                temp_ec = ErrorCode(ec_code, ec_msg, "BLE", "ERROR", ec_hint)
-                await self.service.mqtt_service.send_data_async(
-                    f"{topic}/centralDevice/error", ErrorManager.to_json(temp_ec))
+                if ec_code in ("E1001", "E1002") and esphome_host:
+                    # The ESPHome proxy owns network errors. Do not also send
+                    # them on centralDevice/error (one incident, two topics).
+                    await self.service._update_esphome_proxy_state(
+                        connected=False, error=ec_msg, error_code=ec_code,
+                        error_hint=ec_hint
+                    )
+                else:
+                    temp_ec = ErrorCode(ec_code, ec_msg, "BLE", "ERROR", ec_hint)
+                    await self.service.mqtt_service.send_data_async(
+                        f"{topic}/centralDevice/error", ErrorManager.to_json(temp_ec))
                 if _consecutive_poll_failures == _CIRCUIT_OPEN_THRESHOLD:
                     logger.warning(f"Circuit open after {_consecutive_poll_failures} failures — probing every {_CIRCUIT_OPEN_SLEEP}s")
             except Exception as e:
