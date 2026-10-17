@@ -12,7 +12,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 
 class ESPHomeConnectionError(Exception):
@@ -87,6 +87,21 @@ api_code = "class ApiMode:\n" + api_methods
 ast.parse(api_code)
 exec(api_code, api_ns)
 ApiMode = api_ns["ApiMode"]
+
+publisher_methods = source_methods(
+    "aquaclean_console_app/main.py",
+    "_publish_esphome_proxy_status", "_publish_esphome_proxy_discovery",
+)
+publisher_ns = {
+    "ErrorManager": types.SimpleNamespace(
+        clear_error=lambda: "E0000",
+        to_json=lambda ec, **kwargs: ec.code,
+    )
+}
+publisher_code = "class ProxyPublisher:\n" + publisher_methods
+ast.parse(publisher_code)
+exec(publisher_code, publisher_ns)
+ProxyPublisher = publisher_ns["ProxyPublisher"]
 
 
 class TransportVerificationTests(unittest.IsolatedAsyncioTestCase):
@@ -181,7 +196,9 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
         mode._shutdown_event = asyncio.Event()
         mode._esphome_watchdog_online = None
         mode.service = types.SimpleNamespace(
-            mqttConfig={"topic": "Geberit/AquaClean"}, mqtt_service=FakeMQTT()
+            mqttConfig={"topic": "Geberit/AquaClean"},
+            mqtt_service=FakeMQTT(),
+            _update_esphome_proxy_state=AsyncMock(),
         )
         return mode
 
@@ -210,6 +227,9 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
             mode.service.mqtt_service.sent,
             [("Geberit/AquaClean/esphomeProxy/watchdog", "online")],
         )
+        mode.service._update_esphome_proxy_state.assert_awaited_once_with(
+            connected=True, error="No error", error_code="E0000"
+        )
 
     async def test_offline_transition_reports_network_error(self):
         mode = self.mode()
@@ -224,7 +244,87 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
             mode.service.mqtt_service.sent[0],
             ("Geberit/AquaClean/esphomeProxy/watchdog", "offline"),
         )
-        self.assertIn("E1002", mode.service.mqtt_service.sent[1][1])
+        self.assertEqual(len(mode.service.mqtt_service.sent), 1)
+        mode.service._update_esphome_proxy_state.assert_awaited_once()
+        self.assertEqual(
+            mode.service._update_esphome_proxy_state.await_args.kwargs["error_code"],
+            "E1002",
+        )
+
+
+class ProxyErrorPublicationTests(unittest.IsolatedAsyncioTestCase):
+    def publisher(self):
+        service = ProxyPublisher()
+        service.mqttConfig = {"topic": "Geberit/AquaClean"}
+        service.mqtt_service = FakeMQTT()
+        service._last_published_esphome_error_code = None
+        service.esphome_proxy_state = {
+            "enabled": True, "connected": True, "name": "aquaclean-proxy",
+            "host": "192.168.30.22", "port": 6053,
+            "error_code": "E0000", "error": "No error", "error_hint": "",
+            "wifi_rssi": None, "free_heap": None, "max_free_block": None,
+        }
+        return service
+
+    async def test_repeated_network_poll_errors_publish_once_until_recovery(self):
+        service = self.publisher()
+        fake_package = types.ModuleType("aquaclean_console_app")
+        fake_package.__path__ = []
+        fake_error_module = types.ModuleType("aquaclean_console_app.ErrorCodes")
+        fake_error_module.ErrorCode = lambda code, *_: types.SimpleNamespace(code=code)
+        with patch.dict(sys.modules, {
+            "aquaclean_console_app": fake_package,
+            "aquaclean_console_app.ErrorCodes": fake_error_module,
+        }):
+            await service._publish_esphome_proxy_status()  # initial E0000
+            service.esphome_proxy_state["error_code"] = "E1001"
+            service.esphome_proxy_state["error"] = "ESPHome timeout"
+            for _ in range(3):
+                await service._publish_esphome_proxy_status()
+            errors = [
+                payload for topic, payload in service.mqtt_service.sent
+                if topic == "Geberit/AquaClean/esphomeProxy/error"
+            ]
+            self.assertEqual(errors, ["E0000", "E1001"])
+
+            # Successful API check clears the outage, allowing a future E1001.
+            service.esphome_proxy_state["error_code"] = "E0000"
+            await service._publish_esphome_proxy_status()
+            service.esphome_proxy_state["error_code"] = "E1001"
+            await service._publish_esphome_proxy_status()
+            errors = [
+                payload for topic, payload in service.mqtt_service.sent
+                if topic == "Geberit/AquaClean/esphomeProxy/error"
+            ]
+            self.assertEqual(errors, ["E0000", "E1001", "E0000", "E1001"])
+
+    async def test_different_proxy_code_remains_reportable(self):
+        service = self.publisher()
+        fake_package = types.ModuleType("aquaclean_console_app")
+        fake_package.__path__ = []
+        fake_error_module = types.ModuleType("aquaclean_console_app.ErrorCodes")
+        fake_error_module.ErrorCode = lambda code, *_: types.SimpleNamespace(code=code)
+        with patch.dict(sys.modules, {
+            "aquaclean_console_app": fake_package,
+            "aquaclean_console_app.ErrorCodes": fake_error_module,
+        }):
+            await service._publish_esphome_proxy_status()
+            for code in ("E1001", "E1002", "E1002"):
+                service.esphome_proxy_state["error_code"] = code
+                await service._publish_esphome_proxy_status()
+        errors = [
+            payload for topic, payload in service.mqtt_service.sent
+            if topic == "Geberit/AquaClean/esphomeProxy/error"
+        ]
+        self.assertEqual(errors, ["E0000", "E1001", "E1002"])
+
+    def test_network_http_errors_have_single_mqtt_route(self):
+        source = (ROOT / "aquaclean_console_app/main.py").read_text(encoding="utf-8")
+        start = source.index("            except HTTPException as e:", source.index("    async def _polling_loop("))
+        end = source.index("            except Exception as e:", start)
+        handler = source[start:end]
+        self.assertIn('if ec_code in ("E1001", "E1002") and esphome_host:', handler)
+        self.assertIn('else:\n                    temp_ec = ErrorCode(', handler)
 
 
 if __name__ == "__main__":
