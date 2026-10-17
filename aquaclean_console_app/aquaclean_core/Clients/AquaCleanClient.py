@@ -198,8 +198,19 @@ class AquaCleanClient(IAquaCleanClient):
         ps = ProfileSettings(setting_id)
         await self.base_client.set_stored_profile_setting_async(ps, value)
 
+    # Common settings of the orientation light: 1 = brightness, 2 = colour, 3 = mode.
+    # The stored value (proc 0x52) only takes effect after a power cycle, so these are
+    # also written as active value (proc 0x0B), like the Geberit app does.
+    _COMMON_SETTINGS_ALSO_ACTIVE = (1, 2, 3)
+
     async def set_stored_common_setting(self, setting_id: int, value: int):
-        """Write a single common (device-wide) setting by numeric ID."""
+        """Write a single common (device-wide) setting by numeric ID.
+
+        Orientation light settings are applied immediately as well, see
+        _COMMON_SETTINGS_ALSO_ACTIVE.
+        """
+        if setting_id in self._COMMON_SETTINGS_ALSO_ACTIVE:
+            await self.base_client.set_active_common_setting_async(setting_id, value)
         await self.base_client.set_stored_common_setting_async(setting_id, value)
 
     # --- Restored Original Getter Methods ---

@@ -558,39 +558,6 @@ _COMMON_SETTING_RANGES = {
     7: (0, 1),   # WC Lid close automatically: boolean (confirmed 2026-04-15)
 }
 
-# Valid [min, max] ranges for each profile setting ID.
-# Confirmed from Profile-Settings.xlsx (Excel file provided by user).
-_PROFILE_SETTING_RANGES = {
-    0: (0, 1),   # OdourExtraction: boolean (Off/On)
-    1: (0, 1),   # OscillatorState: boolean (Off/On)
-    2: (0, 4),   # AnalShowerPressure (shower spray intensity)
-    3: (0, 4),   # LadyShowerPressure (lady shower spray intensity)
-    4: (0, 4),   # AnalShowerPosition
-    5: (0, 4),   # LadyShowerPosition
-    6: (0, 5),   # WaterTemperature
-    7: (0, 5),   # WcSeatHeat (seat heating temperature)
-    8: (0, 5),   # DryerTemperature (dryer air temperature)
-    9: (0, 1),   # DryerState: boolean (Off/On)
-}
-
-# Common settings MQTT sub-topic names keyed by common setting ID.
-# Only orientation light IDs (0-3) are exposed; IDs 4-9 not yet confirmed.
-_COMMON_SETTING_MQTT_KEYS = {
-    0: "odourExtractionRunOn",
-    1: "orientationLightBrightness",
-    2: "orientationLightActivation",
-    3: "orientationLightColor",
-}
-
-# Valid [min, max] ranges for each common setting ID.
-# Confirmed from BLE log (iPhone orientation-light session) + Excel.
-_COMMON_SETTING_RANGES = {
-    0: (0, 1),   # Odour extraction run-on time: boolean
-    1: (0, 4),   # Orientation light brightness
-    2: (0, 2),   # Orientation light activation: 0=On, 1=Off, 2=when approached
-    3: (0, 6),   # Orientation light color
-}
-
 
 class ServiceMode:
     def __init__(self, mqtt_enabled=True, shutdown_event: asyncio.Event | None = None,
