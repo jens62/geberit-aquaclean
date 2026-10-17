@@ -49,14 +49,8 @@ E0001 = ErrorCode(
 )
 E0002 = ErrorCode(
     "E0002", "BLE device not found (ESP32 proxy)", "BLE", "ERROR",
-    hint="The Geberit AquaClean was not found via BLE. "
-         "Most likely cause: the Geberit Home App is open on your phone — "
-         "the device only accepts one BLE connection and stops advertising while the app is connected. "
-         "Close the Geberit Home App completely, then wait ~30 seconds — polling will resume automatically. "
-         "If the app is not running: ensure the AquaClean is powered on and within BLE range of the ESP32 proxy. "
-         "If the device was recently visible and nothing moved, the ESP32 BLE scanner may be stuck — "
-         "power-cycle the ESP32 to recover. "
-         "Verify with: python esphome/ble-scan.py <esp32-ip>",
+    hint="AquaClean not found via the ESP32 BLE proxy. Check BLE range, "
+         "competing connections, and the proxy BLE scanner.",
 )
 E0003 = ErrorCode(
     "E0003", "BLE connection timeout", "BLE", "ERROR",
