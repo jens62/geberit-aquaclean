@@ -74,8 +74,8 @@ api_ns = {
     "esphome_host": "192.168.30.22",
     "esphome_port": 6053,
     "esphome_noise_psk": None,
-    "E1001": types.SimpleNamespace(code="E1001"),
-    "E1002": types.SimpleNamespace(code="E1002"),
+    "E1001": types.SimpleNamespace(code="E1001", hint="Timeout"),
+    "E1002": types.SimpleNamespace(code="E1002", hint="Connection failed"),
     "ErrorManager": types.SimpleNamespace(
         to_json=lambda ec, message: f"{ec.code}:{message}"
     ),
@@ -83,7 +83,10 @@ api_ns = {
 api_methods = source_methods(
     "aquaclean_console_app/main.py", "_probe_esphome_proxy", "_on_demand"
 )
-api_code = "class ApiMode:\n" + api_methods
+gate_methods = source_methods(
+    "aquaclean_console_app/main.py", "_on_demand", "_on_demand_inner"
+)
+api_code = "class ApiMode:\n" + api_methods + gate_methods
 ast.parse(api_code)
 exec(api_code, api_ns)
 ApiMode = api_ns["ApiMode"]
@@ -194,6 +197,9 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
         mode.esphome_api_connection = "on-demand"
         mode._esphome_connector = None
         mode._shutdown_event = asyncio.Event()
+        mode._poll_wakeup = asyncio.Event()
+        mode._esphome_api_ready = asyncio.Event()
+        mode._esphome_recovered_pending = False
         mode._esphome_watchdog_online = None
         mode.service = types.SimpleNamespace(
             mqttConfig={"topic": "Geberit/AquaClean"},
@@ -219,6 +225,7 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
         mode = self.mode()
 
         async def probe():
+            await mode._set_esphome_api_health(True)
             mode._shutdown_event.set()
 
         mode._probe_esphome_proxy = probe
@@ -235,6 +242,7 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
         mode = self.mode()
 
         async def probe():
+            await mode._set_esphome_api_health(False, api_ns["E1002"], "API offline")
             mode._shutdown_event.set()
             raise ESPHomeConnectionError("API offline")
 
@@ -250,6 +258,63 @@ class WatchdogTests(unittest.IsolatedAsyncioTestCase):
             mode.service._update_esphome_proxy_state.await_args.kwargs["error_code"],
             "E1002",
         )
+
+
+    async def test_offline_blocks_background_but_not_explicit_requests(self):
+        mode = self.mode()
+        mode._on_demand_inner = AsyncMock(return_value={"ok": True})
+        await mode._set_esphome_api_health(False, api_ns["E1001"], "API offline")
+        self.assertFalse(mode._esphome_api_ready.is_set())
+        self.assertIsNone(await mode._on_demand(None, background_poll=True))
+        mode._on_demand_inner.assert_not_awaited()
+        self.assertEqual(await mode._on_demand(None), {"ok": True})
+        mode._on_demand_inner.assert_awaited_once()
+
+    async def test_poll_does_not_start_if_watchdog_marks_offline_while_waiting_for_lock(self):
+        mode = self.mode()
+        mode._on_demand_inner = AsyncMock(return_value={"ok": True})
+        async with mode._on_demand_lock:
+            delayed_poll = asyncio.create_task(
+                mode._on_demand(None, background_poll=True)
+            )
+            await asyncio.sleep(0)
+            self.assertFalse(delayed_poll.done())
+            await mode._set_esphome_api_health(False, api_ns["E1001"], "offline")
+        self.assertIsNone(await delayed_poll)
+        mode._on_demand_inner.assert_not_awaited()
+
+    async def test_recovery_wakes_poll_and_publishes_one_transition(self):
+        mode = self.mode()
+        await mode._set_esphome_api_health(False, api_ns["E1001"], "offline")
+        await mode._set_esphome_api_health(True)
+        self.assertTrue(mode._esphome_api_ready.is_set())
+        self.assertTrue(mode._esphome_recovered_pending)
+        self.assertTrue(mode._poll_wakeup.is_set())
+        await mode._set_esphome_api_health(True)
+        watchdog_messages = [
+            value for topic, value in mode.service.mqtt_service.sent
+            if topic == "Geberit/AquaClean/esphomeProxy/watchdog"
+        ]
+        self.assertEqual(watchdog_messages, ["offline", "online"])
+
+    async def test_probe_success_sets_health_while_holding_lock(self):
+        mode = self.mode()
+        FakeConnector.instances.clear()
+        await mode._set_esphome_api_health(False, api_ns["E1001"], "down")
+        await mode._probe_esphome_proxy()
+        self.assertTrue(mode._esphome_api_ready.is_set())
+        self.assertIs(mode._esphome_watchdog_online, True)
+        FakeConnector.instances[-1].disconnect.assert_awaited_once()
+
+    def test_polling_gate_and_resume_paths_exist(self):
+        source = (ROOT / "aquaclean_console_app/main.py").read_text(encoding="utf-8")
+        loop = source[source.index("    async def _polling_loop("):
+                      source.index("    async def _firmware_check_loop(")]
+        self.assertIn("await self._esphome_api_ready.wait()", loop)
+        self.assertIn("background_poll=True", loop)
+        self.assertIn("self._esphome_recovered_pending", loop)
+        self.assertIn("if self._poll_interval > 0 and self.ble_connection == \"on-demand\":", loop)
+        self.assertIn("if result is None:", loop)
 
 
 class ProxyErrorPublicationTests(unittest.IsolatedAsyncioTestCase):
