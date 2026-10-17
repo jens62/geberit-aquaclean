@@ -13,20 +13,24 @@ from aquaclean_console_app.myEvent import myEvent
 
 logger = logging.getLogger(__name__)
 
-# GetSystemParameterList (proc 0x0D) indices valid for AquaClean Mera Comfort.
-# Indices 0–7 are supported by all standard AquaClean device variants.
-# Indices 8–14 are device-variant specific:
-#   8  = StateSprayCalibration — not valid for Mera Comfort
-#   9  = StateOrientationLight — AcSela only, not valid for Mera Comfort
-#   10 = StateDraining         — AcCama/AcCamaTestset only, not valid for Mera Comfort
-#   12 = LidOffsetPosition     — Mera Comfort only, requires firmware ≥ RS25
-#   13 = ShowerArmOffsetPosition — Mera Comfort, safe (confirmed from OTA capture 2026-06-01)
-# Sending unsupported indices leaves the device in a state where subsequent
-# GetFilterStatus (proc 0x59) calls time out until the device is power-cycled.
-# NOTE: if support for other device models (AcSela, AcCama, …) is added, a
-# per-model parameter list will be needed here — do not simply extend this list.
-# data_array indexing is POSITION-BASED (not SPL-index-based): data_array[8]=param12, data_array[9]=param13
-SPL_PARAMS_MERA_COMFORT = [0, 1, 2, 3, 4, 5, 6, 7, 12, 13]
+# GetSystemParameterList (proc 0x0D) indices used for AquaClean Mera Comfort.
+#
+# IMPORTANT — keep the primary and auxiliary queries split.
+#
+# On Mera firmware RS30.0 TS206, a single 10-parameter GetSPL request
+# [0,1,2,3,4,5,6,7,12,13] completes successfully and returns all values, but
+# leaves GetFilterStatus (proc 0x59) unresponsive until the WC is power-cycled.
+# The same semantic parameters are safe when requested as two batches:
+# [0..7] followed by [12,13].  This was reproduced directly in the M diagnostic
+# suite: the split sequence preserved 0x59, while the combined request wedged it.
+#
+# With the fixed 13-byte GetSPL payload, <=8 actual parameters keep all
+# non-padding request bytes inside WRITE_0; WRITE_1 contains only zero padding.
+#
+# NOTE: if support for other AquaClean models is added, use a per-model
+# parameter selection; do not extend either batch past the safe boundary.
+SPL_PARAMS_MERA_COMFORT_STATE = [0, 1, 2, 3, 4, 5, 6, 7]
+SPL_PARAMS_MERA_COMFORT_AUX = [12, 13]
 
 class AquaCleanClient(IAquaCleanClient):
     def __init__(self, bluetooth_connector):
@@ -98,15 +102,21 @@ class AquaCleanClient(IAquaCleanClient):
             await asyncio.sleep(interval)
 
     async def _state_changed_timer_elapsed(self):
-        """Poll live device state via GetSystemParameterList (proc 0x0D)."""
-        result = await self.base_client.get_system_parameter_list_async(SPL_PARAMS_MERA_COMFORT)
+        """Poll live device state via two safe GetSystemParameterList batches."""
+        state_result = await self.base_client.get_system_parameter_list_async(
+            SPL_PARAMS_MERA_COMFORT_STATE
+        )
+        aux_result = await self.base_client.get_system_parameter_list_async(
+            SPL_PARAMS_MERA_COMFORT_AUX
+        )
+
         device_state_changed_event_args = DeviceStateChangedEventArgs(
-            IsUserSitting=result.data_array[0] != 0,
-            IsAnalShowerRunning=result.data_array[3] != 0,  # param 3 confirmed = anal shower
-            IsLadyShowerRunning=result.data_array[2] != 0,
-            IsDryerRunning=result.data_array[1] != 0,  # param 1, dryer state unknown
-            LidOffsetPosition=result.data_array[8],       # SPL index 12, position 8
-            ShowerArmOffsetPosition=result.data_array[9], # SPL index 13, position 9
+            IsUserSitting=state_result.data_array[0] != 0,
+            IsAnalShowerRunning=state_result.data_array[3] != 0,  # param 3 confirmed = anal shower
+            IsLadyShowerRunning=state_result.data_array[2] != 0,
+            IsDryerRunning=state_result.data_array[1] != 0,  # param 1, dryer state unknown
+            LidOffsetPosition=aux_result.data_array[0],       # legacy field name; SPL index 12
+            ShowerArmOffsetPosition=aux_result.data_array[1], # legacy field name; SPL index 13
         )
 
         if self.last_device_state_changed_event_args is None:

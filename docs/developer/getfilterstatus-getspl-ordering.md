@@ -1,148 +1,145 @@
-# GetFilterStatus / GetSPL Ordering Investigation
+# GetFilterStatus / GetSystemParameterList investigation
 
-**Status: Root cause UNKNOWN (2026-04-17) — trigger source clarified 2026-04-19**
+**Status: production workaround validated — 2026-08-17**
 
-## Which disconnect leaves GetFilterStatus (0x59) stuck — confirmed 2026-04-19
+## Scope
 
-| Trigger | GetFilterStatus (0x59) stuck? |
-|---------|-------------------------------|
-| iPhone Geberit Home App connect + close | ✅ yes — requires power cycle |
-| Bridge connect + disconnect | ❌ **no** — confirmed by filter-probe.py |
+This document describes a reproducible behavior on the tested **Geberit AquaClean Mera**
+running **RS30.0 TS206**, using the bridge's current BLE transport (ESPHome proxy, ATT MTU 23).
 
-**The bridge does not cause the 0x59 stuck state.** Only iPhone App sessions trigger it.
-No unlock sequence for 0x59 is needed in the bridge — Fix 3 (non-fatal catch in `_fetch_info()`)
-is the correct strategy: the timeout is caught gracefully and polling continues normally.
+Do **not** assume that every AquaClean model or firmware revision behaves identically.
+A newer nRF52840 capture from another Mera firmware shows the iOS app using a larger
+GetSystemParameterList request without the same observed failure.
 
-**No programmatic unlock exists for 0x59 (confirmed 2026-04-19).**
-All of the following were tested via filter-probe.py on a post-iPhone-session stuck device — none worked:
-- 4×Proc_0x11 + 4×Proc_0x13 (subscribe_notifications_async)
-- proc 0x53 profile settings (11 IDs)
-- proc 0x51 common settings (7 IDs)
-- proc 0x0A profile settings iPhone init style (10 IDs)
+## Final finding
 
-Power cycle is the only recovery. filter-probe.py has no init sequence — it reports the
-timeout clearly so the user knows a power cycle is needed.
+`GetSystemParameterList` (proc `0x0D`) can complete successfully while still leaving the
+toilet in an internal state where subsequent `GetFilterStatus` (proc `0x59`) requests receive
+no data response.
 
----
+On RS30.0 TS206 the bridge can reproduce the failure when **meaningful GetSPL request bytes
+extend past the first transport frame into the continuation frame**.
 
----
+The important distinction is not the semantic identity of SPL parameters 12/13:
 
-## Problem
+- `GetSPL [12]` — safe
+- `GetSPL [13]` — safe
+- `GetSPL [12,13]` — safe
+- `GetSPL [0,1,2,3,4,5,6,7]` followed by `GetSPL [12,13]` — safe
+- `GetSPL [0,1,2,3,4,5,6,7,12,13]` in one request — GetSPL succeeds, then 0x59 becomes unresponsive
 
-In the current bridge (post-d5cf93e), `GetFilterStatus` (proc 0x59) times out after
-`GetSPL` (proc 0x0D) is called with the 12-param iPhone list `[0,1,2,3,4,5,6,7,4,8,9,10]`.
+The tested production workaround is therefore:
 
-The device ACKs the GetFilterStatus request normally but then sends no data frames for 5 s,
-resulting in `BLEPeripheralTimeoutError`.
-
----
-
-## Evidence Files
-
-| File | Role |
-|------|------|
-| `local-assets/geberit-aquaclean-logs/standalone/aquaclean-36844ec…-TRACE-with filter-data.log` | Working reference (8-param GetSPL) |
-| `local-assets/geberit-aquaclean-logs/standalone/aquaclean-7d0d821…-TRACE-no-filter-data.log` | Failing case (12-param GetSPL) |
-| `local-assets/Bluetooth-Logs/Stuhlgang-approaching-toilet-lid-opens-sitting-analshower-dryer-leaving-lid-closes.txt` | iPhone reference (12-param, always works) |
-
----
-
-## Confirmed Facts (from TRACE log comparison)
-
-| | Working (36844ec) | Failing (7d0d821) |
-|---|---|---|
-| GetSPL params sent | `[0,1,2,3,4,5,6,9]` (8 params) | `[0,1,2,3,4,5,6,7,4,8,9,10]` (12 params) |
-| GetSPL CONS content | all-zeros (params fit in FIRST) | `04 08 09 0a 00…` |
-| a_byte | 7 | 9 |
-| GetSPL response frames | 4 | 4 |
-| GetSPL ACK bitmap | `0F00000000000000` | `0F00000000000000` (identical) |
-| GetFilterStatus request | `1104ff0011987e0101590d08000102030708090a` | identical |
-| Device ACK for GetFilterStatus | `70000c0a010000000000000000b7090100000df2` | identical |
-| Device data response | 4 frames in ~20 ms | nothing for 5 s → timeout |
-
-**Key finding:** The bridge's consumption of the GetSPL response is bit-for-bit identical in
-both cases. No bridge-side consumption bug can explain the difference.
-
----
-
-## Confirmed Facts (from iPhone BLE log — Stuhlgang log, decoded via `tools/ble-decode.py`)
-
-- iPhone uses **identical** param list: `[0, 1, 2, 3, 4, 5, 6, 7, 4, 8, 9, 10]`
-- iPhone calls GetFilterStatus **59 ms** after GetSPL — no intermediate calls
-- GetFilterStatus succeeds **every time**, on the same BLE connection
-- Calls are on the same BLE connection (no disconnect between GetSPL and GetFilterStatus)
-
----
-
-## Disproved Hypotheses
-
-### ❌ "Params 8/9/10 break GetFilterStatus — device-side firmware behavior"
-
-**Disproved by iPhone log.** ⚠️ *Doubted by user before confirmed.*
-
-iPhone uses the same 12-param list including 8/9/10, and GetFilterStatus always succeeds.
-The device does not break GetFilterStatus merely from receiving params 8/9/10 in GetSPL.
-
-### ❌ "Bridge consumption of GetSPL response is wrong — bridge-side bug"
-
-**Disproved by TRACE log comparison.** Bridge sends identical ACK bitmap `0F00000000000000`,
-identical frame count (4), identical byte values in working and failing cases.
-
-### ❌ "3-frame vs 4-frame GetSPL response"
-
-**Wrong** — both logs show 4-frame GetSPL response.
-
----
-
-## Remaining Hypothesis (UNCONFIRMED)
-
-### 🔍 Intermediate calls between GetSPL and GetFilterStatus
-
-**Bridge sequence (failing):**
-1. GetSPL(12 params) → OK
-2. GetDeviceInitialOperationDate → OK
-3. GetFirmwareVersionList → OK
-4. GetFilterStatus → TIMEOUT
-
-**iPhone sequence (working):**
-1. GetSPL(12 params) → OK
-2. GetFilterStatus → OK (59 ms later, no intermediate calls)
-
-The bridge inserts two extra calls between GetSPL and GetFilterStatus. One of these may
-corrupt device state. **Not yet confirmed** which call is responsible or whether this is
-truly the cause.
-
-**How to test:** On a freshly power-cycled device, run:
-
-```bash
-python tools/getspl-filter-probe.py --order spl-first --trace --log-file /tmp/probe-spl-first.log
+```text
+GetSPL [0,1,2,3,4,5,6,7]
+GetSPL [12,13]
 ```
 
-The probe calls GetSPL then immediately GetFilterStatus with no intermediate calls — matching
-the iPhone sequence. If GetFilterStatus succeeds here, the intermediate-calls hypothesis is
-confirmed. If it still times out, the intermediate calls are not the cause.
+Both persistent and on-demand polling use this split.
 
----
+## Why the combined request is especially deceptive
 
-## Current Workaround (commit d5cf93e)
+The failing combined request is **not rejected**.
 
-`_fetch_state_and_info()` calls GetFilterStatus **before** GetSPL. This helps if the device
-state is clean when the session starts. Whether it fully resolves the issue across reconnects
-is uncertain — probe tests with filter-first also failed, but may have been run on a device
-already in broken state from a prior session.
+The toilet:
 
----
+1. accepts WRITE_0/FIRST;
+2. accepts WRITE_1/CONS;
+3. acknowledges the transport frames;
+4. returns a valid GetSPL result containing the requested values;
+5. only afterwards stops answering GetFilterStatus.
 
-## Why 36844ec Worked
+In the M-series A/B test the failing combined request returned all ten values, including the
+two values requested in the continuation part. The continuation frame was therefore not
+simply lost or ignored.
 
-Version 36844ec sent only 8 params to GetSPL because of a CONS frame zero-padding bug: the
-CONS byte count was always computed from `message.serialize()` without accounting for actual
-parameter count, so extra bytes were zero-padded. The device received `[0,1,2,3,4,5,6,9]`
-with a_byte=7. GetFilterStatus was then called after intermediate calls, and it succeeded.
+## Diagnostic evidence
 
-Since the same intermediate calls existed in 36844ec, the working behavior suggests that
-receiving only 8 (supported) params in GetSPL does not trigger whatever state the device
-enters when it subsequently refuses to respond to GetFilterStatus. The device's behavior
-after 8-param vs 12-param GetSPL is different — but params 8/9/10 alone are not the trigger
-(iPhone disproves that). The interaction between GetSPL param count and the intermediate calls
-is the most likely remaining explanation.
+| Test | GetSPL request / variation | Result for subsequent 0x59 |
+|---|---|---|
+| H1 | 8 real params `[0,1,2,3,4,5,6,4]` | PASS |
+| H2A/H2B | 9 params, ninth real byte `0x00` | PASS |
+| H3A | ninth real byte `0x04` in CONS | FAIL |
+| J1 | ninth real byte `0x08` in CONS | FAIL |
+| L1 | same known-failing request with 30 ms FIRST→CONS delay | FAIL |
+| M1 | `[12]` | PASS |
+| M2 | `[13]` | PASS |
+| M3 | `[12,13]` | PASS |
+| M4 | `[0..7]` then `[12,13]` | PASS |
+| M5 | `[0..7,12,13]` combined | FAIL |
+
+Additional findings:
+
+- a 10-second RPC-free wait after GetSPL does not recover 0x59;
+- BLE disconnect/reconnect does not recover it;
+- a fresh connector/client does not recover it;
+- restarting the ESPHome proxy does not recover it;
+- only a WC power cycle restored 0x59 in the reproduced stuck state;
+- WRITE_0 and WRITE_1 both use ATT Write Without Response;
+- adding up to 30 ms between FIRST and CONS did not fix the failure;
+- CONTROL acknowledgements showed the WC acknowledging both transport frames;
+- the GetSPL response parser's DTO field `a` is not a reliable record-count interpretation.
+
+## Disproved or superseded explanations
+
+The following earlier explanations should no longer be treated as the root cause:
+
+- "Only an iPhone session can trigger the stuck state."
+- "The bridge cannot trigger it."
+- "Parameters 12 and 13 are themselves invalid."
+- "A specific duplicate parameter 4 is the cause."
+- "The continuation frame is simply lost."
+- "The GATT write type is wrong."
+- "A small FIRST→CONS delay is all that is missing."
+- "Intermediate RPCs after GetSPL are required to trigger the failure."
+
+The bridge reproduced the failure directly and the M-series test isolated the combined request
+as the discriminator.
+
+## Production validation
+
+After deploying the split polling implementation, multiple normal on-demand polls completed
+successfully on RS30.0 TS206.
+
+A later explicit REST request to:
+
+```text
+GET /data/filter-status
+```
+
+also succeeded after those polls and returned valid filter data. This is the production
+confirmation that the split polling workaround preserves `GetFilterStatus`.
+
+## Recovery
+
+If the device is already in the reproduced stuck state, reconnecting the bridge is not enough.
+Power-cycle the WC once. After that, the split polling implementation avoids re-triggering the
+known failure in normal operation.
+
+## Implementation rule
+
+For the tested RS30.0 TS206 bridge path:
+
+> Keep each GetSystemParameterList request at **8 or fewer meaningful parameter IDs**.
+
+The fixed 13-byte request payload may still contain zero padding in the continuation area; that
+was safe in the tests. The dangerous condition observed here is meaningful/non-zero request
+content extending into CONS.
+
+This is an empirical interoperability rule for this firmware/transport combination, not a claim
+about the abstract protocol specification.
+
+## Separate semantic issue: SPL 12/13 labels
+
+The filter-status bug and the semantic naming of SPL 12/13 are separate issues.
+
+Current protocol documentation identifies:
+
+- SPL 12 = `UnpostedShowerCycles`
+- SPL 13 = `DaysUntilNextDescale`
+
+The bridge historically exposes the returned values through fields named
+`LidOffsetPosition` / `ShowerArmOffsetPosition`. Those external names are intentionally left
+unchanged by the filter-status fix to avoid silently breaking existing MQTT/FHEM consumers.
+
+The semantic cleanup remains tracked separately in `docs/roadmap.md`.
