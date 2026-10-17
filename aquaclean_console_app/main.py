@@ -1682,6 +1682,7 @@ class ApiMode:
         self._poll_wakeup           = asyncio.Event()
         self._esphome_watchdog_online: bool | None = None  # independent API status
         self._esphome_api_ready     = asyncio.Event()  # gate for background polling
+        self._esphome_recovered_pending = False  # wake a poll even during its 30s sleep
         self._firmware_version_ready = asyncio.Event()  # set once firmware_versions is populated
         self._esphome_connector: "BluetoothLeConnector | None" = None  # Persistent connector (esphome_api_connection=persistent)
         self._esphome_client = None  # Paired client — created once so data_received_handlers don't accumulate
@@ -2548,11 +2549,11 @@ class ApiMode:
         return self._esphome_connector
 
     async def _probe_esphome_proxy(self):
-        """Check API liveness without changing a BLE operation's connection.
+        """Verify the API and commit health state under the BLE transaction lock.
 
-        Serialize probes with on-demand BLE scans. Only on-demand requests may
-        use the cached API client. Persistent BLE mode uses a separate socket.
-        No BLE advertisement subscriptions are created by the watchdog.
+        No BLE advertisement subscription is created. Keeping the state update
+        inside the lock prevents an older successful probe from overwriting a
+        newer failed BLE operation's offline state.
         """
         async with self._on_demand_lock:
             shared = (
@@ -2566,6 +2567,12 @@ class ApiMode:
             try:
                 api = await connector._ensure_esphome_api_connected()
                 await connector.verify_esphome_api(api)
+            except ESPHomeConnectionError as exc:
+                ec = E1001 if exc.timeout else E1002
+                await self._set_esphome_api_health(False, ec, str(exc))
+                raise
+            else:
+                await self._set_esphome_api_health(True)
             finally:
                 if not shared:
                     await connector.disconnect()
@@ -2582,6 +2589,11 @@ class ApiMode:
         topic = self.service.mqttConfig['topic']
         if online:
             self._esphome_api_ready.set()
+            if previous is False:
+                # The poller may be sleeping through a short outage. Signal
+                # immediate recovery without changing the configured interval.
+                self._esphome_recovered_pending = True
+                self._poll_wakeup.set()
             if previous is not True:
                 logger.info("ESPHome API watchdog: online")
                 await self.service._update_esphome_proxy_state(
@@ -2609,11 +2621,9 @@ class ApiMode:
             return
         while not self._shutdown_event.is_set():
             try:
-                await self._probe_esphome_proxy()
-                await self._set_esphome_api_health(True)
-            except ESPHomeConnectionError as exc:
-                ec = E1001 if exc.timeout else E1002
-                await self._set_esphome_api_health(False, ec, str(exc))
+                await self._probe_esphome_proxy()  # commits health state under BLE lock
+            except ESPHomeConnectionError:
+                pass  # already reported; the next probe will try again
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -2885,6 +2895,7 @@ class ApiMode:
                 _consecutive_poll_failures = 0
                 _consecutive_ble_failures = 0
                 _identification_fetched = False
+                self._esphome_recovered_pending = False
                 self._poll_wakeup.clear()
                 logger.info("BLE polling resumed after ESPHome API recovery")
 
@@ -2897,9 +2908,16 @@ class ApiMode:
                         await asyncio.wait_for(self._poll_wakeup.wait(), timeout=self._poll_interval)
                     else:
                         await self._poll_wakeup.wait()   # interval=0: wait until re-enabled
-                    # Woken by set_poll_interval — restart sleep with the new value.
                     self._poll_wakeup.clear()
-                    continue
+                    if self._esphome_recovered_pending:
+                        self._esphome_recovered_pending = False
+                        if self._poll_interval > 0 and self.ble_connection == "on-demand":
+                            logger.info("BLE polling triggered immediately by ESPHome recovery")
+                        else:
+                            continue
+                    else:
+                        # Configuration change: restart sleep with the new interval.
+                        continue
                 except asyncio.TimeoutError:
                     pass   # normal path: interval elapsed
                 except asyncio.CancelledError:
